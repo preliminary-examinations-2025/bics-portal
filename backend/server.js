@@ -133,22 +133,40 @@ const ConfigSchema = new mongoose.Schema({
 });
 const ConfigModel = mongoose.model('Config', ConfigSchema);
 
-// Connect to MongoDB
-mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 3000 })
-    .then(async () => {
-        console.log("--> Connected to MongoDB successfully.");
+// Connect to MongoDB (Serverless-compatible middleware approach)
+let isConnected = false;
+const connectDB = async () => {
+    if (isConnected && mongoose.connection.readyState === 1) {
         useMongo = true;
+        return;
+    }
+    try {
+        console.log("--> Connecting to MongoDB Atlas...");
+        await mongoose.connect(MONGO_URI, { 
+            serverSelectionTimeoutMS: 5000 
+        });
+        isConnected = true;
+        useMongo = true;
+        console.log("--> Connected to MongoDB successfully.");
+        
         // Seed default config if empty
         const count = await ConfigModel.countDocuments();
         if (count === 0) {
             const config = new ConfigModel(initialDB.config);
             await config.save();
+            console.log("--> Default system config seeded in MongoDB.");
         }
-    })
-    .catch(err => {
-        console.warn("--> MongoDB connection timed out/failed. Falling back to local JSON database (db.json).");
+    } catch (err) {
+        console.error("--> MongoDB connection failed:", err.message);
         useMongo = false;
-    });
+    }
+};
+
+// Express Middleware to ensure database connection is ready before handling any requests
+app.use(async (req, res, next) => {
+    await connectDB();
+    next();
+});
 
 // JSON File Access Helpers
 const getJSONData = () => {
