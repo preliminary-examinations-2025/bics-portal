@@ -1,0 +1,17 @@
+{
+  "name": "bics-backend",
+  "version": "1.0.0",
+  "description": "Backend API server for BICS portal under Preliminary Examinations 2026",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cloudinary": "^2.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "mongoose": "^8.4.1",
+    "multer": "^1.4.5-lts.1"
+  }
+}
