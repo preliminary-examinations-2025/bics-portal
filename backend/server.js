@@ -13,6 +13,7 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bics_db';
 
 // Middleware
 app.use(cors());
+app.options('*', cors());
 app.use(express.json());
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
