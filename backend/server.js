@@ -76,7 +76,11 @@ const initialDB = {
 };
 
 if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
+    } catch (e) {
+        console.warn("Could not create local db.json fallback on Serverless:", e.message);
+    }
 }
 
 // Mongoose Schemas (for MongoDB Mode)
@@ -147,8 +151,26 @@ mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 3000 })
     });
 
 // JSON File Access Helpers
-const getJSONData = () => JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-const saveJSONData = (data) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+const getJSONData = () => {
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        }
+    } catch (e) {
+        console.error("Failed to read local JSON data:", e);
+    }
+    return initialDB;
+};
+
+const saveJSONData = (data) => {
+    try {
+        if (!process.env.VERCEL) {
+            fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+        }
+    } catch (e) {
+        console.error("Local JSON write bypassed on serverless:", e.message);
+    }
+};
 
 // API ROUTES
 
