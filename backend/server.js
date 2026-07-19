@@ -55,6 +55,8 @@ const DB_FILE = path.join(__dirname, 'db.json');
 // Initialize local DB layout
 const initialDB = {
     candidates: [],
+    videoLectures: [],
+    courseMaterials: [],
     config: {
         courseRegistrationActive: true,
         midSemFeedbackActive: false,
@@ -132,6 +134,22 @@ const ConfigSchema = new mongoose.Schema({
     announcements: [{ id: Number, date: String, text: String }]
 });
 const ConfigModel = mongoose.model('Config', ConfigSchema);
+
+const VideoLectureSchema = new mongoose.Schema({
+    section: String,
+    title: String,
+    youtubeUrl: String,
+    createdAt: { type: Date, default: Date.now }
+});
+const VideoLectureModel = mongoose.model('VideoLecture', VideoLectureSchema);
+
+const CourseMaterialSchema = new mongoose.Schema({
+    section: String,
+    title: String,
+    fileUrl: String,
+    createdAt: { type: Date, default: Date.now }
+});
+const CourseMaterialModel = mongoose.model('CourseMaterial', CourseMaterialSchema);
 
 // Connect to MongoDB (Serverless-compatible middleware approach)
 let isConnected = false;
@@ -561,6 +579,152 @@ app.post('/api/candidate/exit-form/:id', async (req, res) => {
         const cand = db.candidates.find(c => c.id === id);
         cand.exitAnswers = answers;
         cand.exitFormSubmitted = true;
+        saveJSONData(db);
+        return res.json({ success: true });
+    }
+});
+
+// 13. Video Lectures Endpoints
+app.get('/api/video-lectures', async (req, res) => {
+    if (useMongo) {
+        try {
+            const list = await VideoLectureModel.find({}).sort({ createdAt: 1 });
+            return res.json(list);
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        db.videoLectures = db.videoLectures || [];
+        return res.json(db.videoLectures);
+    }
+});
+
+app.post('/api/admin/video-lectures', async (req, res) => {
+    const { section, title, youtubeUrl } = req.body;
+    if (!section || !title || !youtubeUrl) {
+        return res.status(400).json({ error: "Section, Title, and YouTube Link are required" });
+    }
+
+    if (useMongo) {
+        try {
+            const lect = new VideoLectureModel({ section, title, youtubeUrl });
+            await lect.save();
+            return res.json({ success: true, lecture: lect });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        db.videoLectures = db.videoLectures || [];
+        const newLect = {
+            id: Date.now().toString(),
+            section,
+            title,
+            youtubeUrl,
+            createdAt: new Date()
+        };
+        db.videoLectures.push(newLect);
+        saveJSONData(db);
+        return res.json({ success: true, lecture: newLect });
+    }
+});
+
+app.delete('/api/admin/video-lectures/:id', async (req, res) => {
+    const { id } = req.params;
+
+    if (useMongo) {
+        try {
+            await VideoLectureModel.findByIdAndDelete(id);
+            return res.json({ success: true });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        db.videoLectures = db.videoLectures || [];
+        db.videoLectures = db.videoLectures.filter(l => l.id !== id);
+        saveJSONData(db);
+        return res.json({ success: true });
+    }
+});
+
+// 14. Course Materials Endpoints
+app.get('/api/course-materials', async (req, res) => {
+    if (useMongo) {
+        try {
+            const list = await CourseMaterialModel.find({}).sort({ createdAt: 1 });
+            return res.json(list);
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        db.courseMaterials = db.courseMaterials || [];
+        return res.json(db.courseMaterials);
+    }
+});
+
+app.post('/api/admin/course-materials', upload.single('materialFile'), async (req, res) => {
+    const { section, title } = req.body;
+    const file = req.file;
+
+    if (!section || !title) {
+        return res.status(400).json({ error: "Section and Title are required" });
+    }
+
+    if (!file) {
+        return res.status(400).json({ error: "Document file upload is required." });
+    }
+
+    try {
+        let fileUrl = '';
+        if (useCloudinary) {
+            // Upload the document buffer directly to Cloudinary
+            fileUrl = await uploadToCloudinary(file.buffer, 'BICS_2026/materials');
+        } else {
+            // Mock fallback url
+            fileUrl = 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg';
+        }
+
+        if (useMongo) {
+            const mat = new CourseMaterialModel({ section, title, fileUrl });
+            await mat.save();
+            return res.json({ success: true, material: mat });
+        } else {
+            const db = getJSONData();
+            db.courseMaterials = db.courseMaterials || [];
+            const newMat = {
+                id: Date.now().toString(),
+                section,
+                title,
+                fileUrl,
+                createdAt: new Date()
+            };
+            db.courseMaterials.push(newMat);
+            saveJSONData(db);
+            return res.json({ success: true, material: newMat });
+        }
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: "Uploading course material document failed." });
+    }
+});
+
+app.delete('/api/admin/course-materials/:id', async (req, res) => {
+    const { id } = req.params;
+
+    if (useMongo) {
+        try {
+            await CourseMaterialModel.findByIdAndDelete(id);
+            return res.json({ success: true });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        db.courseMaterials = db.courseMaterials || [];
+        db.courseMaterials = db.courseMaterials.filter(m => m.id !== id);
         saveJSONData(db);
         return res.json({ success: true });
     }

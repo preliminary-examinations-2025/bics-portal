@@ -23,6 +23,7 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [dropdowns, setDropdowns] = useState({
     student: true,
+    coursework: true,
     exam: true,
     feedback: true
   });
@@ -114,6 +115,145 @@ export default function App() {
     { course: "Mathematical Thinking (Discrete Structures)", date: '', time: '' }
   ]);
 
+  // CourseWork states
+  const [videoLectures, setVideoLectures] = useState([]);
+  const [courseMaterials, setCourseMaterials] = useState([]);
+  const [selectedLecture, setSelectedLecture] = useState(null);
+
+  // Admin CourseWork creation states
+  const [newLecture, setNewLecture] = useState({ section: '', title: '', youtubeUrl: '' });
+  const [newMaterial, setNewMaterial] = useState({ section: '', title: '', fileUrl: '' });
+  const [materialFile, setMaterialFile] = useState(null);
+  const [courseworkSuccess, setCourseworkSuccess] = useState('');
+  const [courseworkError, setCourseworkError] = useState('');
+
+  const fetchVideoLectures = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/video-lectures`);
+      const data = await res.json();
+      setVideoLectures(data);
+      if (data.length > 0 && !selectedLecture) {
+        setSelectedLecture(data[0]);
+      }
+    } catch (e) {
+      console.error("Error fetching video lectures:", e);
+    }
+  };
+
+  const fetchCourseMaterials = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/course-materials`);
+      const data = await res.json();
+      setCourseMaterials(data);
+    } catch (e) {
+      console.error("Error fetching course materials:", e);
+    }
+  };
+
+  const handleAddLecture = async (e) => {
+    e.preventDefault();
+    if (!newLecture.section || !newLecture.title || !newLecture.youtubeUrl) {
+      setCourseworkError("All lecture fields are required.");
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/admin/video-lectures`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLecture)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCourseworkSuccess("Video lecture added successfully!");
+        setCourseworkError('');
+        setNewLecture({ section: '', title: '', youtubeUrl: '' });
+        fetchVideoLectures();
+      } else {
+        setCourseworkError(data.error || "Failed to add video lecture.");
+      }
+    } catch (err) {
+      console.error(err);
+      setCourseworkError("Connection error. Could not add video lecture.");
+    }
+  };
+
+  const handleDeleteLecture = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this lecture?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/video-lectures/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCourseworkSuccess("Video lecture deleted successfully!");
+        setCourseworkError('');
+        fetchVideoLectures();
+        setSelectedLecture(prev => prev && (prev.id === id || prev._id === id) ? null : prev);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddMaterial = async (e) => {
+    e.preventDefault();
+    if (!newMaterial.section || !newMaterial.title || !materialFile) {
+      setCourseworkError("Section, Title, and Material Document File are required.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('section', newMaterial.section);
+    formData.append('title', newMaterial.title);
+    formData.append('materialFile', materialFile);
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/course-materials`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCourseworkSuccess("Course material uploaded to Cloud successfully!");
+        setCourseworkError('');
+        setNewMaterial({ section: '', title: '', fileUrl: '' });
+        setMaterialFile(null);
+        e.target.reset();
+        fetchCourseMaterials();
+      } else {
+        setCourseworkError(data.error || "Failed to add course material.");
+      }
+    } catch (err) {
+      console.error(err);
+      setCourseworkError("Connection error. Could not add course material.");
+    }
+  };
+
+  const handleDeleteMaterial = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this course material?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/course-materials/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCourseworkSuccess("Course material deleted successfully!");
+        setCourseworkError('');
+        fetchCourseMaterials();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const getYouTubeEmbedUrl = (url) => {
+    if (!url) return '';
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    const videoId = (match && match[2].length === 11) ? match[2] : null;
+    return videoId ? `https://www.youtube.com/embed/${videoId}` : '';
+  };
+
   useEffect(() => {
     fetchConfig();
     generateCaptcha();
@@ -146,6 +286,8 @@ export default function App() {
 
   useEffect(() => {
     if (user) {
+      fetchVideoLectures();
+      fetchCourseMaterials();
       if (user.role === 'admin') {
         fetchCandidates();
       } else {
@@ -669,6 +811,24 @@ export default function App() {
                     </div>
                   )}
 
+                  <div className="sidebar-category">CourseWork</div>
+                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, coursework: !dropdowns.coursework})}>
+                    Menu Links {dropdowns.coursework ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  {dropdowns.coursework && (
+                    <div className="dropdown-container">
+                      <button className={`dropdown-item ${view === 'lectures' ? 'active' : ''}`} onClick={() => { setView('lectures'); setIsMobileSidebarOpen(false); }}>
+                        Lectures
+                      </button>
+                      <button className={`dropdown-item ${view === 'materials' ? 'active' : ''}`} onClick={() => { setView('materials'); setIsMobileSidebarOpen(false); }}>
+                        Materials
+                      </button>
+                      <button className={`dropdown-item ${view === 'tests' ? 'active' : ''}`} onClick={() => { setView('tests'); setIsMobileSidebarOpen(false); }}>
+                        Tests
+                      </button>
+                    </div>
+                  )}
+
                   <div className="sidebar-category">Examination</div>
                   <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, exam: !dropdowns.exam})}>
                     Menu Links {dropdowns.exam ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1047,6 +1207,179 @@ export default function App() {
                   📢 {systemConfig.timetableNotice}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* COURSEWORK - LECTURES */}
+          {view === 'lectures' && (
+            <div className="cf-card">
+              <div className="cf-card-title">🎥 Course Video Lectures</div>
+              {videoLectures.length === 0 ? (
+                <div className="cf-alert cf-alert-info">No video lectures uploaded yet.</div>
+              ) : (
+                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginTop: '15px' }}>
+                  
+                  {/* Lecture Player Viewport */}
+                  <div style={{ flex: '2 1 600px', minWidth: '300px' }}>
+                    {selectedLecture ? (
+                      <div>
+                        <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#000' }}>
+                          <iframe
+                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+                            src={getYouTubeEmbedUrl(selectedLecture.youtubeUrl)}
+                            title={selectedLecture.title}
+                            frameBorder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowFullScreen
+                          ></iframe>
+                        </div>
+                        <h3 style={{ marginTop: '15px', color: '#002147', fontSize: '14pt', fontWeight: 'bold' }}>
+                          {selectedLecture.title}
+                        </h3>
+                        <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', display: 'inline-block', marginTop: '5px' }}>
+                          📁 {selectedLecture.section}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="cf-alert cf-alert-info">Select a lecture from the side list to begin playing.</div>
+                    )}
+                  </div>
+
+                  {/* Lecture Navigation Side List */}
+                  <div style={{ flex: '1 1 280px', minWidth: '240px', borderLeft: '1px solid #e2e8f0', paddingLeft: '20px', maxHeight: '550px', overflowY: 'auto' }}>
+                    <h4 style={{ color: '#333', fontWeight: 'bold', marginBottom: '12px', paddingBottom: '5px', borderBottom: '2px solid #3b5998' }}>
+                      Lecture Sections
+                    </h4>
+                    {Array.from(new Set(videoLectures.map(l => l.section))).map((section, sIdx) => (
+                      <div key={sIdx} style={{ marginBottom: '20px' }}>
+                        <h5 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', marginBottom: '8px', textTransform: 'uppercase' }}>
+                          📚 {section}
+                        </h5>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {videoLectures.filter(l => l.section === section).map((lect, lIdx) => (
+                            <button
+                              key={lIdx}
+                              onClick={() => setSelectedLecture(lect)}
+                              className="cf-btn-secondary"
+                              style={{
+                                textAlign: 'left',
+                                fontSize: '9pt',
+                                padding: '8px 10px',
+                                width: '100%',
+                                border: selectedLecture && (selectedLecture.id === lect.id || selectedLecture._id === lect._id)
+                                  ? '2px solid #3b5998'
+                                  : '1px solid #e2e8f0',
+                                backgroundColor: selectedLecture && (selectedLecture.id === lect.id || selectedLecture._id === lect._id)
+                                  ? '#f1f5f9'
+                                  : '#fff',
+                                fontWeight: selectedLecture && (selectedLecture.id === lect.id || selectedLecture._id === lect._id)
+                                  ? 'bold'
+                                  : 'normal'
+                              }}
+                            >
+                              {lect.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* COURSEWORK - MATERIALS */}
+          {view === 'materials' && (
+            <div className="cf-card">
+              <div className="cf-card-title">📚 Course Study Materials</div>
+              {courseMaterials.length === 0 ? (
+                <div className="cf-alert cf-alert-info">No study materials uploaded yet.</div>
+              ) : (
+                <div style={{ marginTop: '15px' }}>
+                  
+                  {(() => {
+                    const defaultOrder = ["Curriculum", "Textbooks", "External", "Assignments", "Practicals"];
+                    const allSections = Array.from(new Set(courseMaterials.map(m => m.section)));
+                    const sortedSections = allSections.sort((a, b) => {
+                      const idxA = defaultOrder.indexOf(a);
+                      const idxB = defaultOrder.indexOf(b);
+                      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                      if (idxA !== -1) return -1;
+                      if (idxB !== -1) return 1;
+                      return a.localeCompare(b);
+                    });
+
+                    return sortedSections.map((section, sIdx) => {
+                      const sectionMats = courseMaterials.filter(m => m.section === section);
+                      if (sectionMats.length === 0) return null;
+
+                      return (
+                        <div key={sIdx} style={{ marginBottom: '30px' }}>
+                          <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '10px', paddingBottom: '5px', borderBottom: '2px solid #3b5998', display: 'inline-block' }}>
+                            📁 {section}
+                          </h4>
+                          <table className="cf-table" style={{ width: '100%' }}>
+                            <thead>
+                              <tr>
+                                <th style={{ textAlign: 'left', width: '60%' }}>Material Name</th>
+                                <th style={{ textAlign: 'left', width: '25%' }}>Date Uploaded</th>
+                                <th style={{ textAlign: 'center', width: '15%' }}>Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sectionMats.map((mat, mIdx) => (
+                                <tr key={mIdx}>
+                                  <td>
+                                    <strong>{mat.title}</strong>
+                                  </td>
+                                  <td style={{ color: '#555', fontSize: '9pt' }}>
+                                    {new Date(mat.createdAt).toLocaleDateString()}
+                                  </td>
+                                  <td style={{ textAlign: 'center' }}>
+                                    <a
+                                      href={mat.fileUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="cf-btn-primary"
+                                      style={{ padding: '4px 10px', fontSize: '8pt', textDecoration: 'none', display: 'inline-block' }}
+                                    >
+                                      View/Download
+                                    </a>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    });
+                  })()}
+
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* COURSEWORK - TESTS PLACEHOLDER */}
+          {view === 'tests' && (
+            <div className="cf-card">
+              <div className="cf-card-title">📝 Online Practice & Exam Tests</div>
+              <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
+                <Calendar size={48} style={{ color: '#3b5998', flexShrink: 0 }} />
+                <div>
+                  <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>
+                    Online Exam Module Coming Soon!
+                  </h4>
+                  <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#475569' }}>
+                    We are currently finalising the BICS Online Quiz and Examination module. When launched, this tool will support timed practice tests, auto-grading, and official mock examinations directly within the candidate dashboard.
+                  </p>
+                  <p style={{ fontSize: '9pt', fontWeight: 'bold', marginTop: '10px', color: '#3b5998' }}>
+                    📢 Release Scheduled: Ahead of the BICS 2026 Preliminary Examinations. Please stay tuned to the Announcements board for timeline updates.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1482,6 +1815,188 @@ export default function App() {
                   </table>
                 </div>
               </div>
+
+              {/* ADMIN - MANAGE COURSE VIDEO LECTURES */}
+              <div className="cf-card">
+                <div className="cf-card-title">🎥 Course Video Lectures Manager</div>
+                {courseworkSuccess && <div className="cf-alert cf-alert-success">{courseworkSuccess}</div>}
+                {courseworkError && <div className="cf-alert cf-alert-error">{courseworkError}</div>}
+                
+                {/* Add Lecture Form */}
+                <form onSubmit={handleAddLecture} className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginBottom: '25px', paddingBottom: '20px', borderBottom: '1px solid #cbd5e1' }}>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Course Section Name</label>
+                    <input
+                      type="text"
+                      className="cf-input"
+                      required
+                      value={newLecture.section}
+                      onChange={e => setNewLecture({...newLecture, section: e.target.value})}
+                      placeholder="e.g. Programming with C++"
+                    />
+                  </div>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Lecture Title</label>
+                    <input
+                      type="text"
+                      className="cf-input"
+                      required
+                      value={newLecture.title}
+                      onChange={e => setNewLecture({...newLecture, title: e.target.value})}
+                      placeholder="e.g. Lecture 1: Introduction"
+                    />
+                  </div>
+                  <div className="cf-input-group">
+                    <label className="cf-label">YouTube URL Link</label>
+                    <input
+                      type="text"
+                      className="cf-input"
+                      required
+                      value={newLecture.youtubeUrl}
+                      onChange={e => setNewLecture({...newLecture, youtubeUrl: e.target.value})}
+                      placeholder="e.g. https://www.youtube.com/watch?v=..."
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                    <button type="submit" className="cf-btn-primary" style={{ width: '100%' }}>Add Lecture</button>
+                  </div>
+                </form>
+
+                {/* Lectures List Table */}
+                <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10.5pt', marginBottom: '10px' }}>Active Video Lectures ({videoLectures.length})</h4>
+                {videoLectures.length === 0 ? (
+                  <div className="cf-alert cf-alert-info">No lectures added.</div>
+                ) : (
+                  <div className="cf-table-container">
+                    <table className="cf-table">
+                      <thead>
+                        <tr>
+                          <th>Section</th>
+                          <th>Lecture Title</th>
+                          <th>YouTube Link</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {videoLectures.map((l, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 'bold' }}>{l.section}</td>
+                            <td>{l.title}</td>
+                            <td>
+                              <a href={l.youtubeUrl} target="_blank" rel="noreferrer" style={{ fontSize: '8.5pt', color: '#3b5998', textDecoration: 'underline' }}>
+                                View Link
+                              </a>
+                            </td>
+                            <td>
+                              <button
+                                className="cf-btn-secondary"
+                                style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '3px 8px', fontSize: '8pt', border: '1px solid #fca5a5' }}
+                                onClick={() => handleDeleteLecture(l.id || l._id)}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* ADMIN - MANAGE COURSE MATERIALS */}
+              <div className="cf-card">
+                <div className="cf-card-title">📚 Course Study Materials Manager</div>
+                
+                {/* Add Material Form */}
+                <form onSubmit={handleAddMaterial} className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginBottom: '25px', paddingBottom: '20px', borderBottom: '1px solid #cbd5e1' }}>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Material Section (Select or Type Custom)</label>
+                    <input
+                      type="text"
+                      className="cf-input"
+                      required
+                      value={newMaterial.section}
+                      onChange={e => setNewMaterial({...newMaterial, section: e.target.value})}
+                      placeholder="e.g. Curriculum, Textbooks, Assignments..."
+                      list="material-sections-list"
+                    />
+                    <datalist id="material-sections-list">
+                      <option value="Curriculum" />
+                      <option value="Textbooks" />
+                      <option value="External" />
+                      <option value="Assignments" />
+                      <option value="Practicals" />
+                    </datalist>
+                  </div>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Material Title</label>
+                    <input
+                      type="text"
+                      className="cf-input"
+                      required
+                      value={newMaterial.title}
+                      onChange={e => setNewMaterial({...newMaterial, title: e.target.value})}
+                      placeholder="e.g. BICS C++ Syllabus"
+                    />
+                  </div>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Document File Upload</label>
+                    <input
+                      type="file"
+                      className="cf-input"
+                      required
+                      onChange={e => setMaterialFile(e.target.files[0])}
+                      accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                    <button type="submit" className="cf-btn-primary" style={{ width: '100%' }}>Upload &amp; Add Material</button>
+                  </div>
+                </form>
+
+                {/* Materials List Table */}
+                <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10.5pt', marginBottom: '10px' }}>Active Course Materials ({courseMaterials.length})</h4>
+                {courseMaterials.length === 0 ? (
+                  <div className="cf-alert cf-alert-info">No materials added.</div>
+                ) : (
+                  <div className="cf-table-container">
+                    <table className="cf-table">
+                      <thead>
+                        <tr>
+                          <th>Section</th>
+                          <th>Material Name</th>
+                          <th>File/Link Path</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {courseMaterials.map((m, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 'bold' }}>{m.section}</td>
+                            <td>{m.title}</td>
+                            <td>
+                              <a href={m.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: '8.5pt', color: '#3b5998', textDecoration: 'underline' }}>
+                                View File
+                              </a>
+                            </td>
+                            <td>
+                              <button
+                                className="cf-btn-secondary"
+                                style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '3px 8px', fontSize: '8pt', border: '1px solid #fca5a5' }}
+                                onClick={() => handleDeleteMaterial(m.id || m._id)}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
             </>
