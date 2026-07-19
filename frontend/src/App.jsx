@@ -127,6 +127,79 @@ export default function App() {
   const [courseworkSuccess, setCourseworkSuccess] = useState('');
   const [courseworkError, setCourseworkError] = useState('');
 
+  // Online Test Module states
+  const [allowedTestAccess, setAllowedTestAccess] = useState(false);
+  const [activeExam, setActiveExam] = useState(null);
+  const [activeSubmission, setActiveSubmission] = useState(null);
+  const [examAnswers, setExamAnswers] = useState([]); // Array of { questionId, type, selectedOptionIndex, submittedCode }
+  const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
+  const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0 });
+  const [proctoringAlertMessage, setProctoringAlertMessage] = useState('');
+  const [showProctoringWarningModal, setShowProctoringWarningModal] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [cameraStream, setCameraStream] = useState(null);
+  const [examConsentChecked, setExamConsentChecked] = useState(false);
+  const [activeStudentTests, setActiveStudentTests] = useState([]);
+
+  // Admin Exam configuration states
+  const [adminTests, setAdminTests] = useState([]);
+  const [showTestCreator, setShowTestCreator] = useState(false);
+  const [newExamTitle, setNewExamTitle] = useState('');
+  const [newExamMarks, setNewExamMarks] = useState(100);
+  const [newExamInstructions, setNewExamInstructions] = useState('');
+  const [newExamDuration, setNewExamDuration] = useState(60);
+  const [newExamStart, setNewExamStart] = useState('');
+  const [newExamEnd, setNewExamEnd] = useState('');
+  const [newExamQuestions, setNewExamQuestions] = useState([]); // Questions array builder
+  const [imageUploadingIdx, setImageUploadingIdx] = useState(-1); // Question image upload loader tracker
+  const [adminExamSubmissions, setAdminExamSubmissions] = useState([]);
+
+  // Student exam workspace draft state variables
+  const [draftMCQ, setDraftMCQ] = useState(-1);
+  const [draftCode, setDraftCode] = useState('');
+
+  // Auth Loading Mocking State
+  const [authLoading, setAuthLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
+
+  // Custom dialog modals
+  const [modalState, setModalState] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: null,
+    confirmText: 'OK',
+    cancelText: 'Cancel'
+  });
+
+  const showModalAlert = (title, message) => {
+    setModalState({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: null,
+      confirmText: 'OK',
+      cancelText: 'Cancel'
+    });
+  };
+
+  const showModalConfirm = (title, message, onConfirm, confirmText = 'Yes, Proceed', cancelText = 'Cancel') => {
+    setModalState({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        setModalState(prev => ({ ...prev, isOpen: false }));
+        onConfirm();
+      },
+      confirmText,
+      cancelText
+    });
+  };
+  const [selectedExamSubmission, setSelectedExamSubmission] = useState(null);
+  const [adminGradingCodingScore, setAdminGradingCodingScore] = useState(0);
+  const [adminGradingFeedback, setAdminGradingFeedback] = useState('');
+
   const fetchVideoLectures = async () => {
     try {
       const res = await fetch(`${API_BASE}/video-lectures`);
@@ -254,6 +327,368 @@ export default function App() {
     return videoId ? `https://www.youtube.com/embed/${videoId}` : '';
   };
 
+  // ONLINE TEST MODULE HELPER FUNCTIONS
+  const fetchStudentActiveTests = async () => {
+    try {
+      const candId = user ? (user.id || user._id) : '';
+      const res = await fetch(`${API_BASE}/tests/active?candidateId=${candId}`);
+      const data = await res.json();
+      setActiveStudentTests(data || []);
+    } catch (e) {
+      console.error("Error fetching active student tests:", e);
+    }
+  };
+
+  const fetchAdminTests = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/tests`);
+      const data = await res.json();
+      setAdminTests(data || []);
+    } catch (e) {
+      console.error("Error fetching admin tests:", e);
+    }
+  };
+
+  const handleStartWebcam = async () => {
+    try {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      setCameraStream(stream);
+      setTimeout(() => {
+        const videoElement = document.getElementById('setup-webcam-preview');
+        if (videoElement) {
+          videoElement.srcObject = stream;
+        }
+      }, 100);
+    } catch (err) {
+      console.error("Webcam access denied:", err);
+      showModalAlert("Camera Permissions Required", "Proctoring requires active Web camera permissions. Please check your browser privacy preferences and allow camera calibration.");
+    }
+  };
+
+  const handleStartExam = async (testId) => {
+    if (!examConsentChecked) {
+      showModalAlert("Consent Required", "Please accept the malpractice undertaking terms before starting the exam session.");
+      return;
+    }
+    if (!cameraStream) {
+      showModalAlert("Calibrate Webcam", "Please authorize and calibrate your webcam preview stream before proceeding.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/tests/start/${testId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidateId: user.id || user._id,
+          candidateName: studentProfile?.name || user.username,
+          studentId: studentProfile?.studentId || 'STU1001'
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const submission = data.submission;
+        setActiveSubmission(submission);
+        
+        const examRes = await fetch(`${API_BASE}/tests/${testId}`);
+        const examData = await examRes.json();
+        setActiveExam(examData);
+
+        const initialAnswers = examData.questions.map(q => {
+          const savedAns = submission.answers?.find(a => a.questionId === q.id);
+          return {
+            questionId: q.id,
+            type: q.type,
+            selectedOptionIndex: (savedAns && savedAns.selectedOptionIndex !== undefined) ? savedAns.selectedOptionIndex : -1,
+            submittedCode: savedAns ? savedAns.submittedCode : (q.initialTemplate || '')
+          };
+        });
+        setExamAnswers(initialAnswers);
+        setSelectedQuestionIndex(0);
+
+        setProctoringWarnings({ fullscreenExits: 0, tabSwitches: 0 });
+
+        const elem = document.documentElement;
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen().catch(err => console.warn(err));
+        }
+
+        setTimeout(() => {
+          const examVideo = document.getElementById('exam-webcam-stream');
+          if (examVideo && cameraStream) {
+            examVideo.srcObject = cameraStream;
+          }
+        }, 300);
+
+        setTimerSeconds(Number(examData.duration) * 60);
+        setAllowedTestAccess(true);
+        setView('onlinetest');
+      } else {
+        showModalAlert("Exam Initialization Error", data.error || "Failed to initiate exam session.");
+      }
+    } catch (err) {
+      console.error(err);
+      showModalAlert("Network/Server Error", "Unable to start exam session. Please check your network and backend server status.");
+    }
+  };
+
+  const updateQuestionAnswer = (value, fieldName) => {
+    setExamAnswers(prev => {
+      const updated = [...prev];
+      const cur = { ...updated[selectedQuestionIndex] };
+      if (fieldName === 'mcq') {
+        cur.selectedOptionIndex = value;
+      } else {
+        cur.submittedCode = value;
+      }
+      updated[selectedQuestionIndex] = cur;
+      return updated;
+    });
+  };
+
+  const submitExamPayload = async (isAuto) => {
+    // Automatically capture the current active question's draft selection/code if any
+    let finalAnswers = [...examAnswers];
+    if (selectedQuestionIndex >= 0 && selectedQuestionIndex < finalAnswers.length) {
+      finalAnswers[selectedQuestionIndex] = {
+        ...finalAnswers[selectedQuestionIndex],
+        selectedOptionIndex: draftMCQ,
+        submittedCode: draftCode
+      };
+    }
+
+    try {
+      await fetch(`${API_BASE}/tests/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submissionId: activeSubmission.id || activeSubmission._id,
+          answers: finalAnswers,
+          proctoringLog: {
+            fullscreenExits: proctoringWarnings.fullscreenExits,
+            tabSwitches: proctoringWarnings.tabSwitches,
+            webcamStatus: cameraStream ? 'active' : 'failed'
+          },
+          status: isAuto ? 'auto-submitted' : 'submitted'
+        })
+      });
+    } catch (e) {
+      console.error(e);
+    }
+
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(err => console.warn(err));
+    }
+
+    setAllowedTestAccess(false);
+    setActiveExam(null);
+    setActiveSubmission(null);
+    setExamAnswers([]);
+    setExamConsentChecked(false);
+    setView('announcements');
+
+    showModalAlert(
+      "Submission Complete",
+      isAuto
+        ? "Your session has closed or the proctoring warnings limit was reached. Your answers were automatically saved."
+        : "Congratulations! Your exam was submitted successfully."
+    );
+  };
+
+  const handleSubmitExam = async (isAuto = false) => {
+    if (!activeSubmission) return;
+
+    if (!isAuto) {
+      showModalConfirm(
+        "Finalize & Submit Exam",
+        "Are you sure you want to finalize and submit your answers? Once submitted, you cannot modify this attempt.",
+        () => submitExamPayload(false),
+        "Yes, Submit Test",
+        "Cancel"
+      );
+    } else {
+      await submitExamPayload(true);
+    }
+  };
+
+  const handleEditorTabKey = (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = e.target.selectionStart;
+      const end = e.target.selectionEnd;
+      const value = e.target.value;
+      const newValue = value.substring(0, start) + "    " + value.substring(end);
+      
+      setDraftCode(newValue);
+      
+      setTimeout(() => {
+        e.target.selectionStart = e.target.selectionEnd = start + 4;
+      }, 0);
+    }
+  };
+
+  const handleSaveAndNext = () => {
+    setExamAnswers(prev => {
+      const updated = [...prev];
+      updated[selectedQuestionIndex] = {
+        ...updated[selectedQuestionIndex],
+        selectedOptionIndex: draftMCQ,
+        submittedCode: draftCode
+      };
+      return updated;
+    });
+
+    if (selectedQuestionIndex < (activeExam.questions?.length || 1) - 1) {
+      setSelectedQuestionIndex(selectedQuestionIndex + 1);
+    }
+  };
+
+  const handleUploadQuestionImage = async (e, idx) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setImageUploadingIdx(idx);
+    const formData = new FormData();
+    formData.append('imageFile', file);
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/upload-image`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        const updated = [...newExamQuestions];
+        updated[idx].imageUrl = data.url;
+        setNewExamQuestions(updated);
+        showModalAlert("Upload Successful", "Image uploaded successfully and linked to the question!");
+      } else {
+        showModalAlert("Upload Error", data.error || "Failed to upload image.");
+      }
+    } catch (err) {
+      console.error(err);
+      showModalAlert("Upload Failure", "Network error occurred while uploading image.");
+    } finally {
+      setImageUploadingIdx(-1);
+    }
+  };
+
+  // ADMIN EXAM MANAGEMENT ROUTINES
+  const handleCreateTest = async (e) => {
+    e.preventDefault();
+    if (!newExamTitle || !newExamStart || !newExamEnd || newExamQuestions.length === 0) {
+      showModalAlert("Validation Error", "Please fill in Test Title, Access Dates, and configure at least 1 question before saving.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/tests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newExamTitle,
+          marks: Number(newExamMarks || 0),
+          instructions: newExamInstructions,
+          duration: Number(newExamDuration || 60),
+          startDate: newExamStart,
+          endDate: newExamEnd,
+          questions: newExamQuestions
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showModalAlert("Test Configured", "Online practice test has been configured and created successfully!");
+        setNewExamTitle('');
+        setNewExamMarks(100);
+        setNewExamInstructions('');
+        setNewExamDuration(60);
+        setNewExamStart('');
+        setNewExamEnd('');
+        setNewExamQuestions([]);
+        setShowTestCreator(false);
+        fetchAdminTests();
+      } else {
+        showModalAlert("Configuration Error", data.error || "Failed to create test configuration.");
+      }
+    } catch (err) {
+      console.error(err);
+      showModalAlert("Connection Failure", "Error connecting to the server to create test configuration.");
+    }
+  };
+
+  const handleDeleteTest = async (id) => {
+    showModalConfirm(
+      "Confirm Test Deletion",
+      "Are you sure you want to delete this test? All candidate answer sheets and grading records will be deleted permanently.",
+      async () => {
+        try {
+          const res = await fetch(`${API_BASE}/admin/tests/${id}`, {
+            method: 'DELETE'
+          });
+          const data = await res.json();
+          if (data.success) {
+            showModalAlert("Test Deleted", "The practice test has been successfully deleted.");
+            fetchAdminTests();
+            if (selectedExamSubmission && selectedExamSubmission.testId === id) {
+              setSelectedExamSubmission(null);
+            }
+          }
+        } catch (err) {
+          console.error(err);
+          showModalAlert("Deletion Failure", "Failed to delete the practice test. Please check connection.");
+        }
+      },
+      "Yes, Delete Permanently",
+      "Cancel"
+    );
+  };
+
+  const fetchExamSubmissions = async (testId) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
+      const data = await res.json();
+      setAdminExamSubmissions(data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveEvaluation = async (e) => {
+    e.preventDefault();
+    if (!selectedExamSubmission) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/tests/evaluate/${selectedExamSubmission.id || selectedExamSubmission._id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codingScore: Number(adminGradingCodingScore || 0),
+          feedback: adminGradingFeedback
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showModalAlert("Evaluation Saved", "Candidate sheet evaluation has been saved successfully! Status marked as evaluated.");
+        fetchExamSubmissions(selectedExamSubmission.testId);
+        setSelectedExamSubmission(null);
+        setAdminGradingCodingScore(0);
+        setAdminGradingFeedback('');
+      } else {
+        showModalAlert("Evaluation Error", data.error || "Failed to save candidate evaluation.");
+      }
+    } catch (err) {
+      console.error(err);
+      showModalAlert("Grading Error", "Error connecting to server to save evaluation.");
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     generateCaptcha();
@@ -290,11 +725,13 @@ export default function App() {
       fetchCourseMaterials();
       if (user.role === 'admin') {
         fetchCandidates();
+        fetchAdminTests();
       } else {
         fetchStudentProfile();
+        fetchStudentActiveTests();
       }
     }
-  }, [user]);
+  }, [user, view]);
 
   useEffect(() => {
     if (systemConfig) {
@@ -304,6 +741,89 @@ export default function App() {
       }
     }
   }, [systemConfig]);
+
+  // ONLINE TEST - TIMER & PROCTORING LISTENERS EFFECT
+  useEffect(() => {
+    if (view !== 'onlinetest' || !activeExam) return;
+
+    const timerInterval = setInterval(() => {
+      setTimerSeconds(prev => {
+        if (prev <= 1) {
+          clearInterval(timerInterval);
+          handleSubmitExam(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setProctoringWarnings(prev => {
+          const currentTotal = prev.fullscreenExits + prev.tabSwitches + 1;
+          if (currentTotal >= 3) {
+            clearInterval(timerInterval);
+            handleSubmitExam(true);
+          } else {
+            setProctoringAlertMessage("Malpractice Warning: Fullscreen mode was exited. Fullscreen is mandatory during the exam session.");
+            setShowProctoringWarningModal(true);
+          }
+          return { ...prev, fullscreenExits: prev.fullscreenExits + 1 };
+        });
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        setProctoringWarnings(prev => {
+          const currentTotal = prev.fullscreenExits + prev.tabSwitches + 1;
+          if (currentTotal >= 3) {
+            clearInterval(timerInterval);
+            handleSubmitExam(true);
+          } else {
+            setProctoringAlertMessage("Malpractice Warning: Tab switch detected. You are strictly forbidden from switching tabs or leaving the examination view.");
+            setShowProctoringWarningModal(true);
+          }
+          return { ...prev, tabSwitches: prev.tabSwitches + 1 };
+        });
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (modalState && modalState.isOpen) return;
+      setProctoringWarnings(prev => {
+        const currentTotal = prev.fullscreenExits + prev.tabSwitches + 1;
+        if (currentTotal >= 3) {
+          clearInterval(timerInterval);
+          handleSubmitExam(true);
+        } else {
+          setProctoringAlertMessage("Malpractice Warning: Browser lost focus. Ensure you do not switch active windows.");
+          setShowProctoringWarningModal(true);
+        }
+        return { ...prev, tabSwitches: prev.tabSwitches + 1 };
+      });
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      clearInterval(timerInterval);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [view, activeExam, examAnswers, proctoringWarnings, modalState]);
+
+  // Sync draft states when selecting a different question
+  useEffect(() => {
+    if (activeExam && examAnswers && examAnswers[selectedQuestionIndex]) {
+      const saved = examAnswers[selectedQuestionIndex];
+      setDraftMCQ(saved.selectedOptionIndex !== undefined ? saved.selectedOptionIndex : -1);
+      setDraftCode(saved.submittedCode || '');
+    }
+  }, [selectedQuestionIndex, activeExam, examAnswers]);
 
   const fetchConfig = async () => {
     try {
@@ -363,6 +883,9 @@ export default function App() {
       return;
     }
 
+    setAuthLoading(true);
+    setLoadingMessage("Authenticating credentials & securing portal session...");
+
     try {
       const res = await fetch(`${API_BASE}/login`, {
         method: 'POST',
@@ -370,47 +893,58 @@ export default function App() {
         body: JSON.stringify(loginCreds)
       });
       const data = await res.json();
-      if (data.success) {
-        setLoginCreds({ username: '', password: '' });
-        let userObj = null;
-        if (data.role === 'admin') {
-          userObj = { id: 'admin', role: 'admin', name: data.name };
+      
+      setTimeout(() => {
+        setAuthLoading(false);
+        if (data.success) {
+          setLoginCreds({ username: '', password: '' });
+          let userObj = null;
+          if (data.role === 'admin') {
+            userObj = { id: 'admin', role: 'admin', name: data.name };
+          } else {
+            userObj = { id: data.id, role: 'student', name: 'Student' };
+          }
+
+          setUser(userObj);
+          setView(userObj.role === 'admin' ? 'admin' : 'announcements');
+
+          // Store session
+          const sessionData = {
+            user: userObj,
+            expiry: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
+          };
+
+          if (rememberMe) {
+            localStorage.setItem('bics_session', JSON.stringify(sessionData));
+          } else {
+            sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
+          }
         } else {
-          userObj = { id: data.id, role: 'student', name: 'Student' };
+          setLoginError(data.error);
+          generateCaptcha();
         }
-
-        setUser(userObj);
-        setView(userObj.role === 'admin' ? 'admin' : 'announcements');
-
-        // Store session
-        const sessionData = {
-          user: userObj,
-          expiry: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
-        };
-
-        if (rememberMe) {
-          localStorage.setItem('bics_session', JSON.stringify(sessionData));
-        } else {
-          sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
-        }
-      } else {
-        setLoginError(data.error);
-        generateCaptcha();
-      }
+      }, 1000);
     } catch (err) {
+      setAuthLoading(false);
       setLoginError("Login connection failed.");
       generateCaptcha();
     }
   };
 
   const handleLogout = () => {
-    setUser(null);
-    setStudentProfile(null);
-    setView('login');
-    setIsMobileSidebarOpen(false);
-    localStorage.removeItem('bics_session');
-    sessionStorage.removeItem('bics_session');
-    setShowLogoutModal(false);
+    setAuthLoading(true);
+    setLoadingMessage("Signing out & clearing session cache...");
+    
+    setTimeout(() => {
+      setAuthLoading(false);
+      setUser(null);
+      setStudentProfile(null);
+      setView('login');
+      setIsMobileSidebarOpen(false);
+      localStorage.removeItem('bics_session');
+      sessionStorage.removeItem('bics_session');
+      setShowLogoutModal(false);
+    }, 900);
   };
 
   // Admin Config triggers
@@ -719,6 +1253,7 @@ export default function App() {
     if (view === 'login') return true;
     if (!user) return false;
     if (view === 'changepassword') return true;
+    if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
     if (user.role === 'admin' && view === 'admin') return true;
     if (user.role === 'student' && view !== 'admin') return true;
     return false;
@@ -754,29 +1289,31 @@ export default function App() {
   return (
     <div>
       {/* HEADER */}
-      <header className="app-header">
-        <div className="header-left">
-          {user && (
-            <button className="sidebar-toggle" onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}>
-              {isMobileSidebarOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
-          )}
-          <span className="pixel-logo">BICS Portal</span>
-        </div>
-        <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          {user && (
-            <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#3b5998', fontFamily: 'verdana, arial, sans-serif' }}>
-              👤 {user.role === 'admin' ? 'Administrator' : (studentProfile?.name || 'Student')}
-            </span>
-          )}
-          <img src="/logo.png" alt="Preliminary Examinations Logo" className="pe-logo" />
-        </div>
-      </header>
+      {!(view === 'onlinetest' || view === 'onlinetest_setup') && (
+        <header className="app-header">
+          <div className="header-left">
+            {user && (
+              <button className="sidebar-toggle" onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}>
+                {isMobileSidebarOpen ? <X size={24} /> : <Menu size={24} />}
+              </button>
+            )}
+            <span className="pixel-logo">BICS Portal</span>
+          </div>
+          <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            {user && (
+              <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#3b5998', fontFamily: 'verdana, arial, sans-serif' }}>
+                👤 {user.role === 'admin' ? 'Administrator' : (studentProfile?.name || 'Student')}
+              </span>
+            )}
+            <img src="/logo.png" alt="Preliminary Examinations Logo" className="pe-logo" />
+          </div>
+        </header>
+      )}
 
       {/* DASHBOARD CONTAINER */}
       <div className="app-container">
         {/* SIDEBAR */}
-        {user && (
+        {user && !(view === 'onlinetest' || view === 'onlinetest_setup') && (
           <aside className={`app-sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
             <nav className="sidebar-menu">
               
@@ -879,7 +1416,7 @@ export default function App() {
         )}
 
         {/* CONTENT PANEL */}
-        <main className="app-content">
+        <main className="app-content" style={view === 'onlinetest' ? { padding: 0, margin: 0, minHeight: '100vh', width: '100%', maxWidth: '100%', border: 'none', backgroundColor: '#f8fafc' } : {}}>
           
           {/* ACCESS CONTROL SECURITY GUARD */}
           {!isViewAllowed() ? (
@@ -1362,24 +1899,461 @@ export default function App() {
             </div>
           )}
 
-          {/* COURSEWORK - TESTS PLACEHOLDER */}
+          {/* COURSEWORK - TESTS */}
           {view === 'tests' && (
             <div className="cf-card">
               <div className="cf-card-title">📝 Online Practice & Exam Tests</div>
-              <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
-                <Calendar size={48} style={{ color: '#3b5998', flexShrink: 0 }} />
-                <div>
-                  <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>
-                    Online Exam Module Coming Soon!
-                  </h4>
-                  <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#475569' }}>
-                    We are currently finalising the BICS Online Quiz and Examination module. When launched, this tool will support timed practice tests, auto-grading, and official mock examinations directly within the candidate dashboard.
-                  </p>
-                  <p style={{ fontSize: '9pt', fontWeight: 'bold', marginTop: '10px', color: '#3b5998' }}>
-                    📢 Release Scheduled: Ahead of the BICS 2026 Preliminary Examinations. Please stay tuned to the Announcements board for timeline updates.
-                  </p>
+              {(systemConfig && systemConfig.onlineExamActive === false) ? (
+                <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
+                  <Calendar size={48} style={{ color: '#3b5998', flexShrink: 0 }} />
+                  <div>
+                    <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>
+                      No online exams are scheduled
+                    </h4>
+                    <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#475569' }}>
+                      The online examination module is currently deactivated. Please check back later or contact the administrator for scheduled session updates.
+                    </p>
+                  </div>
+                </div>
+              ) : activeStudentTests.length === 0 ? (
+                <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
+                  <Calendar size={48} style={{ color: '#3b5998', flexShrink: 0 }} />
+                  <div>
+                    <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>
+                      No active tests at this moment
+                    </h4>
+                    <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#475569' }}>
+                      There are no examinations scheduled or open for access at this time. Once an administrator opens access to a mock quiz or official exam, it will appear here.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
+                  {activeStudentTests.map((test, idx) => (
+                    <div key={idx} className="cf-alert cf-alert-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', borderLeft: '5px solid #3b5998', padding: '20px' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                          <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>🏆 {test.title}</h4>
+                          {(test.submissionStatus && test.submissionStatus !== 'started') && (
+                            <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold' }}>
+                              ✅ Completed
+                            </span>
+                          )}
+                        </div>
+                        <p style={{ fontSize: '9pt', color: '#555', marginBottom: '4px' }}>
+                          ⏱️ Duration: <strong>{test.duration} minutes</strong> | 💯 Total Marks: <strong>{test.marks} marks</strong>
+                        </p>
+                        <p style={{ fontSize: '8.5pt', color: '#888' }}>
+                          📅 Open from: {new Date(test.startDate).toLocaleString()} to {new Date(test.endDate).toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        {(test.submissionStatus && test.submissionStatus !== 'started') ? (
+                          <button
+                            className="cf-btn-secondary"
+                            disabled
+                            style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
+                          >
+                            Already Submitted
+                          </button>
+                        ) : (
+                          <button
+                            className="cf-btn-primary"
+                            onClick={() => {
+                              setAllowedTestAccess(true);
+                              setActiveExam(test);
+                              setExamConsentChecked(false);
+                              setView('onlinetest_setup');
+                            }}
+                          >
+                            {test.submissionStatus === 'started' ? 'Resume Test Session' : 'Start Test Session'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ONLINE TEST SETUP PANEL */}
+          {view === 'onlinetest_setup' && activeExam && (
+            <div className="cf-card" style={{ maxWidth: '1100px', margin: '20px auto' }}>
+              <div className="cf-card-title">🏆 Proctoring Verification & Setup: {activeExam.title}</div>
+              
+              <div className="cf-alert cf-alert-info" style={{ borderLeft: '4px solid #3b5998', marginBottom: '20px' }}>
+                <strong>Important Notice:</strong> This examination session is strictly proctored. You must authorize your webcam stream and agree to the exam rules before entering.
+              </div>
+
+              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                {/* Rules & Instructions */}
+                <div style={{ flex: '1 1 350px' }}>
+                  <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '10px' }}>📄 Examination Guidelines:</h4>
+                  <ul style={{ paddingLeft: '20px', fontSize: '9pt', lineHeight: '1.7', color: '#444', marginBottom: '15px' }}>
+                    <li>The time limit for this exam is <strong>{activeExam.duration} minutes</strong>.</li>
+                    <li>Exiting <strong>Fullscreen Mode</strong> will trigger a warning. Exiting more than 3 times will result in <strong>automatic submission</strong>.</li>
+                    <li>Changing browser tabs, closing the window, or losing window focus is tracked and classified as a malpractice violation.</li>
+                    <li>Ensure your web camera is active, unblocked, and captures your face clearly at all times.</li>
+                    <li>You must click <strong>Save &amp; Next</strong> to record each answer. Draft options or code changes are not submitted unless explicitly saved.</li>
+                    <li>All actions are logged in real-time. Do not open developer tools or attempt to copy-paste test questions.</li>
+                  </ul>
+                  
+                  <div style={{ padding: '10px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '8.5pt', marginBottom: '15px' }}>
+                    <strong>Initial Instructions:</strong><br />
+                    <span style={{ whiteSpace: 'pre-wrap', color: '#555' }}>{activeExam.instructions || 'No instructions provided.'}</span>
+                  </div>
+
+                  <label className="checkbox-label" style={{ display: 'flex', gap: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '9pt', marginTop: '15px' }}>
+                    <input type="checkbox" checked={examConsentChecked} onChange={e => setExamConsentChecked(e.target.checked)} />
+                    I accept and agree to the examination terms, proctoring consent, and code of conduct parameters.
+                  </label>
+                </div>
+
+                {/* Webcam Stream Setup */}
+                <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '10px', alignSelf: 'flex-start' }}>📹 Camera Calibration:</h4>
+                  <div style={{ width: '100%', aspectRatio: '4 / 3', backgroundColor: '#000', borderRadius: '4px', border: '1px solid #cbd5e1', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '10px', position: 'relative' }}>
+                    <video id="setup-webcam-preview" autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }}></video>
+                    {!cameraStream && (
+                      <span style={{ position: 'absolute', color: '#fff', fontSize: '8.5pt', textAlign: 'center', padding: '10px' }}>
+                        🔴 Stream Not Calibrated
+                      </span>
+                    )}
+                  </div>
+                  {!cameraStream ? (
+                    <button type="button" className="cf-btn-primary" style={{ width: '100%' }} onClick={handleStartWebcam}>
+                      Authorize &amp; Start Webcam
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#16a34a', fontWeight: 'bold', fontSize: '9pt' }}>
+                      ✓ Webcam Stream Ready
+                    </div>
+                  )}
                 </div>
               </div>
+
+              <div style={{ display: 'flex', gap: '15px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
+                <button
+                  type="button"
+                  className="cf-btn-secondary"
+                  style={{ flexGrow: 1 }}
+                  onClick={() => {
+                    if (cameraStream) {
+                      cameraStream.getTracks().forEach(track => track.stop());
+                      setCameraStream(null);
+                    }
+                    setAllowedTestAccess(false);
+                    setActiveExam(null);
+                    setView('tests');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="cf-btn-primary"
+                  style={{ flexGrow: 2 }}
+                  disabled={!examConsentChecked || !cameraStream}
+                  onClick={() => handleStartExam(activeExam.id || activeExam._id)}
+                >
+                  Enter Fullscreen &amp; Start Exam
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ONLINE PROCTORED EXAMINATION ENVIRONMENT */}
+          {view === 'onlinetest' && activeExam && (
+            <div style={{ padding: '20px', backgroundColor: '#f8fafc', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              
+              {/* Proctoring Webcam Stream Container (Hidden but active for background proctoring) */}
+              <div style={{ display: 'none' }}>
+                <video id="exam-webcam-stream" autoPlay playsInline muted></video>
+              </div>
+
+              {/* Floating Header */}
+              <div className="cf-card" style={{ margin: 0, padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: '5px solid #3b5998', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                <div>
+                  <h3 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{activeExam.title}</h3>
+                  <span style={{ fontSize: '8.5pt', color: '#666' }}>
+                    Candidate: <strong>{studentProfile?.name} ({studentProfile?.studentId})</strong>
+                  </span>
+                </div>
+                
+                {/* Timer Display */}
+                <div style={{
+                  padding: '8px 15px',
+                  borderRadius: '4px',
+                  backgroundColor: timerSeconds < 300 ? '#ffe4e6' : '#e0f2fe',
+                  color: timerSeconds < 300 ? '#be123c' : '#0369a1',
+                  border: timerSeconds < 300 ? '1px solid #fda4af' : '1px solid #7dd3fc',
+                  fontWeight: 'bold',
+                  fontFamily: 'monospace',
+                  fontSize: '11pt'
+                }}>
+                  ⏱️ {Math.floor(timerSeconds / 60)}:{(timerSeconds % 60).toString().padStart(2, '0')} remaining
+                </div>
+
+                <div>
+                  <button className="cf-btn-primary" style={{ borderColor: '#ef4444', color: '#ef4444' }} onClick={() => handleSubmitExam(false)}>
+                    Finalize &amp; Submit Test
+                  </button>
+                </div>
+              </div>
+
+              {/* Split Screen Workspace */}
+              <div style={{ display: 'flex', gap: '20px', flexGrow: 1, minHeight: 'calc(100vh - 160px)' }}>
+                
+                {/* Left Pane: Question Description */}
+                <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px' }}>
+                    <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
+                      Question {selectedQuestionIndex + 1} of {activeExam.questions?.length || 0}
+                    </h4>
+                    <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}>
+                      Points: {activeExam.questions?.[selectedQuestionIndex]?.points || 0}
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#333', lineHeight: '1.5' }}>
+                    {activeExam.questions?.[selectedQuestionIndex]?.title}
+                  </div>
+
+                  {activeExam.questions?.[selectedQuestionIndex]?.imageUrl && (
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center' }}>
+                      <img
+                        src={activeExam.questions[selectedQuestionIndex].imageUrl}
+                        alt="Question Diagram/Visual Context"
+                        style={{ maxWidth: '100%', maxHeight: '220px', objectFit: 'contain', borderRadius: '2px' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* If Coding Question, render markdown description and samples */}
+                  {activeExam.questions?.[selectedQuestionIndex]?.type === 'coding' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{ fontSize: '9.5pt', color: '#555', whiteSpace: 'pre-wrap', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                        {activeExam.questions?.[selectedQuestionIndex]?.description}
+                      </div>
+
+                      {activeExam.questions?.[selectedQuestionIndex]?.testCases?.length > 0 && (
+                        <div>
+                          <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
+                          <table className="cf-table" style={{ width: '100%' }}>
+                            <thead>
+                              <tr>
+                                <th style={{ textAlign: 'left', width: '50%' }}>Sample Input</th>
+                                <th style={{ textAlign: 'left', width: '50%' }}>Expected Output</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {activeExam.questions?.[selectedQuestionIndex]?.testCases?.slice(0, 2).map((tc, tcIdx) => (
+                                <tr key={tcIdx}>
+                                  <td><code style={{ fontSize: '8pt', backgroundColor: '#f1f5f9', padding: '2px 4px' }}>{tc.input}</code></td>
+                                  <td><code style={{ fontSize: '8pt', backgroundColor: '#f1f5f9', padding: '2px 4px' }}>{tc.output}</code></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Navigating between questions */}
+                  <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
+                    <button
+                      className="cf-btn-secondary"
+                      disabled={selectedQuestionIndex === 0}
+                      onClick={() => setSelectedQuestionIndex(selectedQuestionIndex - 1)}
+                    >
+                      ← Previous
+                    </button>
+                    
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                      {activeExam.questions?.map((_, qIdx) => (
+                        <button
+                          key={qIdx}
+                          onClick={() => setSelectedQuestionIndex(qIdx)}
+                          className={selectedQuestionIndex === qIdx ? 'cf-btn-primary' : 'cf-btn-secondary'}
+                          style={{ minWidth: '35px', padding: '6px', fontSize: '9pt' }}
+                        >
+                          {qIdx + 1}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      className="cf-btn-secondary"
+                      disabled={selectedQuestionIndex === (activeExam.questions?.length || 1) - 1}
+                      onClick={() => setSelectedQuestionIndex(selectedQuestionIndex + 1)}
+                    >
+                      Next →
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right Pane: MCQs or coding space */}
+                <div className="cf-card" style={{ flex: '1 1 60%', margin: 0, display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div style={{ borderBottom: '2px solid #3b5998', paddingBottom: '8px' }}>
+                    <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
+                      {activeExam.questions?.[selectedQuestionIndex]?.type === 'mcq' ? 'Select Option' : 'Workspace Editor'}
+                    </h4>
+                  </div>
+
+                  {/* RENDER MCQ OPTIONS */}
+                  {activeExam.questions?.[selectedQuestionIndex]?.type === 'mcq' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+                      {activeExam.questions?.[selectedQuestionIndex]?.options?.map((opt, optIdx) => {
+                        const isSelected = draftMCQ === optIdx;
+                        return (
+                          <div
+                            key={optIdx}
+                            onClick={() => setDraftMCQ(optIdx)}
+                            style={{
+                              padding: '15px',
+                              borderRadius: '6px',
+                              border: isSelected ? '2px solid #3b5998' : '1px solid #cbd5e1',
+                              backgroundColor: isSelected ? '#eff6ff' : '#fff',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '12px',
+                              transition: 'all 0.2s',
+                              userSelect: 'none'
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name={`question-${selectedQuestionIndex}`}
+                              checked={isSelected}
+                              readOnly
+                              style={{ cursor: 'pointer' }}
+                            />
+                            <span style={{ fontSize: '9.5pt', fontWeight: isSelected ? 'bold' : 'normal', color: isSelected ? '#1e3a8a' : '#333' }}>
+                              {opt}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* RENDER CODING WORKSPACE EDITOR */}
+                  {activeExam.questions?.[selectedQuestionIndex]?.type === 'coding' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', backgroundColor: '#f1f5f9', padding: '6px 12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                        <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>
+                          Language: <code>{activeExam.questions?.[selectedQuestionIndex]?.language?.toUpperCase() || 'C++'}</code>
+                        </span>
+                        <span style={{ fontSize: '7.5pt', color: '#888' }}>
+                          💡 Press Tab key to indent
+                        </span>
+                      </div>
+                      
+                      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: '350px', border: '1px solid #3c3c3c', borderRadius: '4px', overflow: 'hidden' }}>
+                        {/* Editor Line Numbers Pane */}
+                        <div style={{
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          width: '35px',
+                          height: '100%',
+                          backgroundColor: '#1e1e1e',
+                          color: '#858585',
+                          borderRight: '1px solid #3c3c3c',
+                          fontFamily: 'Consolas, monospace',
+                          fontSize: '10pt',
+                          lineHeight: '1.5',
+                          paddingTop: '10px',
+                          textAlign: 'right',
+                          paddingRight: '5px',
+                          userSelect: 'none',
+                          overflow: 'hidden'
+                        }}>
+                          {Array.from({ length: (draftCode?.split('\n')?.length || 1) }).map((_, idx) => (
+                            <div key={idx}>{idx + 1}</div>
+                          ))}
+                        </div>
+
+                        {/* Editor Input Space */}
+                        <textarea
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            backgroundColor: '#1e1e1e',
+                            color: '#d4d4d4',
+                            fontFamily: 'Consolas, monospace',
+                            fontSize: '10pt',
+                            lineHeight: '1.5',
+                            border: 'none',
+                            padding: '10px 10px 10px 45px',
+                            outline: 'none',
+                            resize: 'none',
+                            whiteSpace: 'pre',
+                            overflowWrap: 'normal',
+                            overflowX: 'auto',
+                            overflowY: 'auto'
+                          }}
+                          value={draftCode}
+                          onChange={e => setDraftCode(e.target.value)}
+                          onKeyDown={handleEditorTabKey}
+                          placeholder="// Type your code here..."
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Save & Next Action Button */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto' }}>
+                    <button
+                      type="button"
+                      className="cf-btn-primary"
+                      style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', padding: '8px 16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}
+                      onClick={handleSaveAndNext}
+                    >
+                      💾 Save &amp; {selectedQuestionIndex === (activeExam.questions?.length || 1) - 1 ? 'Finish Question' : 'Next Question'}
+                    </button>
+                  </div>
+
+                </div>
+
+              </div>
+
+              {/* Proctoring Warning Overlay Popup */}
+              {showProctoringWarningModal && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100000 }}>
+                  <div className="cf-card" style={{ width: '450px', padding: '20px', textAlign: 'center', border: '2px solid #ef4444' }}>
+                    <div style={{ color: '#ef4444', marginBottom: '15px' }}>
+                      <AlertTriangle size={48} style={{ margin: '0 auto' }} />
+                    </div>
+                    <h3 style={{ color: '#b91c1c', fontSize: '13pt', fontWeight: 'bold', marginBottom: '10px' }}>
+                      PROCTORING EXCEPTION DETECTED!
+                    </h3>
+                    <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#333', marginBottom: '20px' }}>
+                      {proctoringAlertMessage}
+                    </p>
+                    <div style={{ padding: '10px', backgroundColor: '#ffe4e6', color: '#be123c', border: '1px solid #fda4af', borderRadius: '4px', fontSize: '9pt', fontWeight: 'bold', marginBottom: '20px' }}>
+                      ⚠️ Total Warnings: {proctoringWarnings.fullscreenExits + proctoringWarnings.tabSwitches} / 3. Exceeding 3 will force automatic submission.
+                    </div>
+                    <button
+                      className="cf-btn-primary"
+                      style={{ width: '100%', color: '#ef4444', borderColor: '#ef4444' }}
+                      onClick={async () => {
+                        setShowProctoringWarningModal(false);
+                        const elem = document.documentElement;
+                        if (!document.fullscreenElement) {
+                          if (elem.requestFullscreen) await elem.requestFullscreen().catch(err => console.warn(err));
+                        }
+                      }}
+                    >
+                      I Understand, Return to Test
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -1670,6 +2644,14 @@ export default function App() {
                       <span className="slider"></span>
                     </label>
                     <span style={{ fontWeight: 'bold', fontSize: '9.5pt' }}>Hall Ticket Downloads Active</span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label className="switch">
+                      <input type="checkbox" checked={systemConfig ? (systemConfig.onlineExamActive !== false) : true} onChange={e => handleToggleSetting('onlineExamActive', e.target.checked)} />
+                      <span className="slider"></span>
+                    </label>
+                    <span style={{ fontWeight: 'bold', fontSize: '9.5pt' }}>Online Practice &amp; Exam Module Active</span>
                   </div>
                 </div>
               </div>
@@ -1997,6 +2979,712 @@ export default function App() {
                 )}
               </div>
 
+              {/* ADMIN - ONLINE TEST CREATOR & BUILDER */}
+              <div className="cf-card">
+                <div className="cf-card-title">🏆 Online Test Configurations Manager</div>
+                
+                {/* Active Test Configurations */}
+                <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10.5pt', marginBottom: '10px' }}>Configured Examinations ({adminTests.length})</h4>
+                {adminTests.length === 0 ? (
+                  <div className="cf-alert cf-alert-info">No test configurations created yet.</div>
+                ) : (
+                  <div className="cf-table-container" style={{ marginBottom: '20px' }}>
+                    <table className="cf-table">
+                      <thead>
+                        <tr>
+                          <th>Exam Title</th>
+                          <th>Duration</th>
+                          <th>Access Window</th>
+                          <th>Questions</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminTests.map((t, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 'bold' }}>{t.title}</td>
+                            <td>{t.duration} mins</td>
+                            <td style={{ fontSize: '8.5pt', color: '#555' }}>
+                              {new Date(t.startDate).toLocaleString()} - <br />{new Date(t.endDate).toLocaleString()}
+                            </td>
+                            <td>{t.questions?.length || 0} items</td>
+                            <td>
+                              <div style={{ display: 'flex', gap: '5px' }}>
+                                <button
+                                  className="cf-btn-primary"
+                                  style={{ padding: '3px 8px', fontSize: '8pt' }}
+                                  onClick={() => {
+                                    fetchExamSubmissions(t.id || t._id);
+                                    setTimeout(() => {
+                                      document.getElementById('admin-submissions-section')?.scrollIntoView({ behavior: 'smooth' });
+                                    }, 100);
+                                  }}
+                                >
+                                  Grades ({t.submissionsCount || 'View'})
+                                </button>
+                                <button
+                                  className="cf-btn-secondary"
+                                  style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '3px 8px', fontSize: '8pt', border: '1px solid #fca5a5' }}
+                                  onClick={() => handleDeleteTest(t.id || t._id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="cf-btn-primary"
+                  onClick={() => setShowTestCreator(!showTestCreator)}
+                  style={{ marginBottom: '15px' }}
+                >
+                  {showTestCreator ? 'Hide Exam Builder Form' : '+ Create New Online Test Configuration'}
+                </button>
+
+                {showTestCreator && (
+                  <form onSubmit={handleCreateTest} className="cf-form-grid" style={{ gridTemplateColumns: '1fr', gap: '20px', borderTop: '1px solid #cbd5e1', paddingTop: '20px' }}>
+                    <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                      <div className="cf-input-group">
+                        <label className="cf-label">Test Title</label>
+                        <input
+                          type="text"
+                          className="cf-input"
+                          required
+                          value={newExamTitle}
+                          onChange={e => setNewExamTitle(e.target.value)}
+                          placeholder="e.g. BICS Mid Semester Coding Test"
+                        />
+                      </div>
+                      <div className="cf-input-group">
+                        <label className="cf-label">Time Duration (Minutes)</label>
+                        <input
+                          type="number"
+                          className="cf-input"
+                          required
+                          value={newExamDuration}
+                          onChange={e => setNewExamDuration(e.target.value)}
+                        />
+                      </div>
+                      <div className="cf-input-group">
+                        <label className="cf-label">Total Marks</label>
+                        <input
+                          type="number"
+                          className="cf-input"
+                          required
+                          value={newExamMarks}
+                          onChange={e => setNewExamMarks(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                      <div className="cf-input-group">
+                        <label className="cf-label">Starting Access Time</label>
+                        <input
+                          type="datetime-local"
+                          className="cf-input"
+                          required
+                          value={newExamStart}
+                          onChange={e => setNewExamStart(e.target.value)}
+                        />
+                      </div>
+                      <div className="cf-input-group">
+                        <label className="cf-label">Ending Access Time</label>
+                        <input
+                          type="datetime-local"
+                          className="cf-input"
+                          required
+                          value={newExamEnd}
+                          onChange={e => setNewExamEnd(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="cf-input-group">
+                      <label className="cf-label">Initial Candidate Instructions (Displays pre-test)</label>
+                      <textarea
+                        className="cf-input"
+                        rows="3"
+                        value={newExamInstructions}
+                        onChange={e => setNewExamInstructions(e.target.value)}
+                        placeholder="Write pre-test guidelines and code rules here..."
+                      />
+                    </div>
+
+                    {/* Question Array Builder */}
+                    <div style={{ border: '1px solid #cbd5e1', padding: '15px', borderRadius: '4px', backgroundColor: '#f8fafc' }}>
+                      <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10.5pt', marginBottom: '15px' }}>
+                        Questions Pool Configuration ({newExamQuestions.length} added)
+                      </h4>
+
+                      {newExamQuestions.map((q, idx) => (
+                        <div key={idx} style={{ padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#fff', marginBottom: '15px', position: 'relative' }}>
+                          <span style={{ position: 'absolute', top: '10px', right: '10px', fontSize: '8pt', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                            {q.type.toUpperCase()} Question
+                          </span>
+                          <h5 style={{ fontSize: '9.5pt', fontWeight: 'bold', margin: '0 0 8px 0', color: '#002147' }}>
+                            Q{idx + 1}: {q.title} <span style={{ color: '#666', fontWeight: 'normal' }}>({q.points} points)</span>
+                          </h5>
+                          
+                          {q.type === 'mcq' && (
+                            <div style={{ fontSize: '8.5pt', paddingLeft: '10px' }}>
+                              {q.options.map((opt, oIdx) => (
+                                <div key={oIdx} style={{ color: oIdx === q.correctOptionIndex ? '#16a34a' : '#555', fontWeight: oIdx === q.correctOptionIndex ? 'bold' : 'normal' }}>
+                                  o Option {oIdx + 1}: {opt} {oIdx === q.correctOptionIndex && '(Correct Key)'}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {q.type === 'coding' && (
+                            <div style={{ fontSize: '8.5pt', color: '#555', paddingLeft: '10px' }}>
+                              Language: <strong>{q.language?.toUpperCase() || 'C++'}</strong> <br />
+                              Test Cases Count: <strong>{q.testCases?.length || 0} cases</strong>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            className="cf-btn-secondary"
+                            style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '2px 8px', fontSize: '7.5pt', marginTop: '10px' }}
+                            onClick={() => {
+                              setNewExamQuestions(prev => prev.filter((_, qIdx) => qIdx !== idx));
+                            }}
+                          >
+                            Remove Question
+                          </button>
+                        </div>
+                      ))}
+
+                      {/* Add MCQ Question Panel */}
+                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '15px' }}>
+                        <button
+                          type="button"
+                          className="cf-btn-secondary"
+                          onClick={() => {
+                            const newQ = {
+                              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                              type: 'mcq',
+                              title: 'New MCQ Question Statement',
+                              points: 10,
+                              options: ['Option A', 'Option B', 'Option C', 'Option D'],
+                              correctOptionIndex: 0
+                            };
+                            setNewExamQuestions([...newExamQuestions, newQ]);
+                          }}
+                        >
+                          + Add MCQ Question
+                        </button>
+                        <button
+                          type="button"
+                          className="cf-btn-secondary"
+                          onClick={() => {
+                            const newQ = {
+                              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                              type: 'coding',
+                              title: 'Coding Task Title',
+                              points: 20,
+                              description: 'Write a program to solve...',
+                              initialTemplate: '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Code here\n    return 0;\n}',
+                              language: 'cpp',
+                              testCases: [{ input: 'Input variable', output: 'Expected output variable' }]
+                            };
+                            setNewExamQuestions([...newExamQuestions, newQ]);
+                          }}
+                        >
+                          + Add Coding Question
+                        </button>
+                      </div>
+
+                      {/* Editing forms for added questions */}
+                      {newExamQuestions.length > 0 && (
+                        <div style={{ borderTop: '1px solid #cbd5e1', marginTop: '20px', paddingTop: '15px' }}>
+                          <h5 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '15px' }}>✍️ Edit Question Details</h5>
+                          {newExamQuestions.map((q, idx) => (
+                            <div key={idx} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '15px', marginBottom: '20px' }}>
+                              <strong style={{ fontSize: '9pt', color: '#333' }}>Edit Q{idx + 1}:</strong>
+                              <div className="cf-form-grid" style={{ gridTemplateColumns: '3fr 1fr', gap: '10px', marginTop: '8px' }}>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Question Text / Title</label>
+                                  <input
+                                    type="text"
+                                    className="cf-input"
+                                    value={q.title}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[idx].title = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                  />
+                                </div>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Points</label>
+                                  <input
+                                    type="number"
+                                    className="cf-input"
+                                    value={q.points}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[idx].points = Number(e.target.value);
+                                      setNewExamQuestions(updated);
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="cf-input-group" style={{ marginTop: '8px', marginBottom: '10px' }}>
+                                <label className="cf-label">Question Image (Optional - perfect for HTML/CSS layout mockups)</label>
+                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '4px' }}>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    style={{ display: 'none' }}
+                                    id={`q-img-upload-${idx}`}
+                                    onChange={e => handleUploadQuestionImage(e, idx)}
+                                  />
+                                  <label
+                                    htmlFor={`q-img-upload-${idx}`}
+                                    className="cf-btn-primary"
+                                    style={{ margin: 0, display: 'inline-block', padding: '6px 12px', fontSize: '8.5pt', background: '#3b5998', color: '#fff', borderColor: '#3b5998', cursor: 'pointer' }}
+                                  >
+                                    📤 {imageUploadingIdx === idx ? 'Uploading to Cloudinary...' : 'Upload Image to Cloudinary'}
+                                  </label>
+
+                                  <input
+                                    type="text"
+                                    className="cf-input"
+                                    style={{ flexGrow: 1, minWidth: '200px' }}
+                                    placeholder="Cloudinary secure URL displays here after upload"
+                                    value={q.imageUrl || ''}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[idx].imageUrl = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                  />
+                                </div>
+                                {q.imageUrl && (
+                                  <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <img
+                                      src={q.imageUrl}
+                                      alt="Thumbnail preview"
+                                      style={{ maxWidth: '80px', maxHeight: '50px', objectFit: 'contain', border: '1px solid #cbd5e1', borderRadius: '2px' }}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="cf-btn-secondary"
+                                      style={{ padding: '2px 8px', fontSize: '8pt', color: '#ef4444', borderColor: '#ef4444' }}
+                                      onClick={() => {
+                                        const updated = [...newExamQuestions];
+                                        updated[idx].imageUrl = '';
+                                        setNewExamQuestions(updated);
+                                      }}
+                                    >
+                                      Remove Image
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {q.type === 'mcq' && (
+                                <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #cbd5e1' }}>
+                                  <span className="cf-label" style={{ fontWeight: 'bold' }}>MCQ Options &amp; Correct Answer Key:</span>
+                                  <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginTop: '5px' }}>
+                                    {q.options.map((opt, oIdx) => (
+                                      <div key={oIdx} className="cf-input-group">
+                                        <label className="cf-label">Option {oIdx + 1}</label>
+                                        <input
+                                          type="text"
+                                          className="cf-input"
+                                          value={opt}
+                                          onChange={e => {
+                                            const updated = [...newExamQuestions];
+                                            updated[idx].options[oIdx] = e.target.value;
+                                            setNewExamQuestions(updated);
+                                          }}
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="cf-input-group" style={{ marginTop: '10px', maxWidth: '200px' }}>
+                                    <label className="cf-label">Correct Option Index</label>
+                                    <select
+                                      className="cf-input"
+                                      value={q.correctOptionIndex}
+                                      onChange={e => {
+                                        const updated = [...newExamQuestions];
+                                        updated[idx].correctOptionIndex = Number(e.target.value);
+                                        setNewExamQuestions(updated);
+                                      }}
+                                    >
+                                      <option value="0">Option 1</option>
+                                      <option value="1">Option 2</option>
+                                      <option value="2">Option 3</option>
+                                      <option value="3">Option 4</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              )}
+
+                              {q.type === 'coding' && (
+                                <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #cbd5e1' }}>
+                                  <span className="cf-label" style={{ fontWeight: 'bold' }}>Coding Description &amp; Workspace Presets:</span>
+                                  <div className="cf-input-group" style={{ marginTop: '8px' }}>
+                                    <label className="cf-label">Detailed Markdown Description</label>
+                                    <textarea
+                                      className="cf-input"
+                                      rows="3"
+                                      value={q.description}
+                                      onChange={e => {
+                                        const updated = [...newExamQuestions];
+                                        updated[idx].description = e.target.value;
+                                        setNewExamQuestions(updated);
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="cf-input-group" style={{ marginTop: '8px' }}>
+                                    <label className="cf-label">Preloaded Code Template</label>
+                                    <textarea
+                                      className="cf-input"
+                                      rows="4"
+                                      style={{ fontFamily: 'monospace', fontSize: '9pt' }}
+                                      value={q.initialTemplate}
+                                      onChange={e => {
+                                        const updated = [...newExamQuestions];
+                                        updated[idx].initialTemplate = e.target.value;
+                                        setNewExamQuestions(updated);
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginTop: '10px' }}>
+                                    <div className="cf-input-group">
+                                      <label className="cf-label">Expected Input Variable</label>
+                                      <input
+                                        type="text"
+                                        className="cf-input"
+                                        value={q.testCases[0]?.input || ''}
+                                        onChange={e => {
+                                          const updated = [...newExamQuestions];
+                                          updated[idx].testCases[0] = {
+                                            input: e.target.value,
+                                            output: updated[idx].testCases[0]?.output || ''
+                                          };
+                                          setNewExamQuestions(updated);
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="cf-input-group">
+                                      <label className="cf-label">Expected Output Variable</label>
+                                      <input
+                                        type="text"
+                                        className="cf-input"
+                                        value={q.testCases[0]?.output || ''}
+                                        onChange={e => {
+                                          const updated = [...newExamQuestions];
+                                          updated[idx].testCases[0] = {
+                                            input: updated[idx].testCases[0]?.input || '',
+                                            output: e.target.value
+                                          };
+                                          setNewExamQuestions(updated);
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                    </div>
+
+                    <button type="submit" className="cf-btn-primary" style={{ marginTop: '10px' }}>Save Test Configuration</button>
+                  </form>
+                )}
+              </div>
+
+              {/* ADMIN - CANDIDATE SUBMISSIONS EVALUATION CONSOLE */}
+              <div className="cf-card" id="admin-submissions-section">
+                <div className="cf-card-title">
+                  <span>📝 Exam Submissions Evaluation Console</span>
+                  {adminExamSubmissions.length > 0 && (
+                    <button
+                      type="button"
+                      className="cf-btn-secondary"
+                      style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: '8pt', background: '#ffffff', color: '#002147', borderColor: '#cbd5e1', cursor: 'pointer' }}
+                      onClick={() => {
+                        const firstSub = adminExamSubmissions[0];
+                        const testId = firstSub?.testId;
+                        if (testId) {
+                          fetchExamSubmissions(testId);
+                        }
+                      }}
+                    >
+                      🔄 Refresh Submissions
+                    </button>
+                  )}
+                </div>
+                
+                {adminExamSubmissions.length === 0 ? (
+                  <div className="cf-alert cf-alert-info">
+                    Select an exam from the configured list above to view candidate answers and sheets.
+                  </div>
+                ) : (
+                  <div className="cf-table-container">
+                    <table className="cf-table">
+                      <thead>
+                        <tr>
+                          <th>Student ID</th>
+                          <th>Candidate Name</th>
+                          <th>Started</th>
+                          <th>Submitted</th>
+                          <th>Malpractice Warnings</th>
+                          <th>Status</th>
+                          <th>Marks</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminExamSubmissions.map((s, idx) => (
+                          <tr key={idx}>
+                            <td>{s.studentId}</td>
+                            <td style={{ fontWeight: 'bold' }}>{s.candidateName}</td>
+                            <td style={{ fontSize: '8pt', color: '#555' }}>
+                              {new Date(s.startedAt).toLocaleTimeString()}
+                            </td>
+                            <td style={{ fontSize: '8pt', color: '#555' }}>
+                              {s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString() : 'In Progress'}
+                            </td>
+                            <td>
+                              <span style={{
+                                color: (Number(s.proctoringLog?.fullscreenExits || 0) + Number(s.proctoringLog?.tabSwitches || 0)) > 1 ? '#be123c' : '#475569',
+                                fontWeight: 'bold'
+                              }}>
+                                Exits: {s.proctoringLog?.fullscreenExits || 0} • Tabs: {s.proctoringLog?.tabSwitches || 0}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${
+                                s.status === 'evaluated' ? 'status-eligible' :
+                                s.status === 'submitted' ? 'status-pending' :
+                                s.status === 'auto-submitted' ? 'status-pending' : 'status-ineligible'
+                              }`} style={{ fontSize: '7.5pt', padding: '1px 5px' }}>
+                                {s.status?.toUpperCase() || 'STARTED'}
+                              </span>
+                            </td>
+                            <td style={{ fontWeight: 'bold' }}>
+                              {s.status === 'evaluated'
+                                ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0))
+                                : `${s.evaluation?.mcqScore || 0} (MCQ)`}
+                            </td>
+                            <td>
+                              <button
+                                className="cf-btn-primary"
+                                style={{ padding: '3px 8px', fontSize: '8pt' }}
+                                onClick={() => {
+                                  setSelectedExamSubmission(s);
+                                  setAdminGradingCodingScore(s.evaluation?.codingScore || 0);
+                                  setAdminGradingFeedback(s.evaluation?.feedback || '');
+                                }}
+                              >
+                                {s.status === 'evaluated' ? 'Re-Grade' : 'Evaluate'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* DETAILED CANDIDATE EVALUATION MODAL */}
+              {selectedExamSubmission && (() => {
+                const testConfig = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
+                return (
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>
+                    <div className="cf-card" style={{ width: '85%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', padding: '20px', border: '1px solid #b9c9fe', backgroundColor: '#fff' }}>
+                      <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Grade Exam Sheet: {selectedExamSubmission.candidateName} ({selectedExamSubmission.studentId})</span>
+                        <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedExamSubmission(null)}>✕</button>
+                      </div>
+
+                      <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                        <span>📋 Title: <strong>{selectedExamSubmission.testTitle}</strong></span>
+                        <span>⚠️ Fullscreen Exits: <strong>{selectedExamSubmission.proctoringLog?.fullscreenExits || 0}</strong> • Tab Switches: <strong>{selectedExamSubmission.proctoringLog?.tabSwitches || 0}</strong></span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
+                        <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', borderBottom: '2px solid #3b5998', paddingBottom: '6px', margin: 0 }}>
+                          Candidate Answer Sheets (Full Details)
+                        </h4>
+
+                        {selectedExamSubmission.answers?.map((ans, idx) => {
+                          const questionConfig = testConfig?.questions?.[idx] || testConfig?.questions?.find(q => q.id === ans.questionId);
+                          
+                          return (
+                            <div key={idx} style={{ padding: '15px', border: '1px solid #cbd5e1', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px' }}>
+                                <h5 style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', margin: 0 }}>
+                                  Question {idx + 1}: {ans.type?.toUpperCase()}
+                                </h5>
+                                <span style={{ fontSize: '8pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                  Points: {questionConfig?.points || 0}
+                                </span>
+                              </div>
+
+                              {/* Question Title & Description */}
+                              <div style={{ fontSize: '9.5pt', color: '#333', fontWeight: 'bold', marginBottom: '8px' }}>
+                                {questionConfig?.title || "No question title available"}
+                              </div>
+
+                              {questionConfig?.description && (
+                                <div style={{ fontSize: '9pt', color: '#475569', backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '4px', marginBottom: '10px', whiteSpace: 'pre-wrap', fontFamily: 'sans-serif' }}>
+                                  {questionConfig.description}
+                                </div>
+                              )}
+
+                              {/* Render image if present */}
+                              {questionConfig?.imageUrl && (
+                                <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center', marginBottom: '10px' }}>
+                                  <img
+                                    src={questionConfig.imageUrl}
+                                    alt="Question Layout/Diagram"
+                                    style={{ maxWidth: '100%', maxHeight: '200px', objectFit: 'contain' }}
+                                  />
+                                </div>
+                              )}
+
+                              {/* MCQ Answers Display */}
+                              {ans.type === 'mcq' && questionConfig && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                                  {questionConfig.options?.map((opt, optIdx) => {
+                                    const isCandidateSelect = Number(ans.selectedOptionIndex) === optIdx;
+                                    const isCorrectKey = Number(questionConfig.correctOptionIndex) === optIdx;
+                                    
+                                    let borderStyle = '1px solid #cbd5e1';
+                                    let bgStyle = '#fff';
+                                    let badgeText = '';
+
+                                    if (isCorrectKey) {
+                                      borderStyle = '2px solid #10b981';
+                                      bgStyle = '#ecfdf5';
+                                      badgeText = '✅ Correct Answer';
+                                    } else if (isCandidateSelect) {
+                                      borderStyle = '2px solid #ef4444';
+                                      bgStyle = '#fef2f2';
+                                      badgeText = '❌ Candidate Choice (Incorrect)';
+                                    }
+
+                                    if (isCorrectKey && isCandidateSelect) {
+                                      badgeText = '✅ Candidate Choice (Correct)';
+                                    }
+
+                                    return (
+                                      <div
+                                        key={optIdx}
+                                        style={{
+                                          padding: '10px 12px',
+                                          borderRadius: '4px',
+                                          border: borderStyle,
+                                          backgroundColor: bgStyle,
+                                          fontSize: '9pt',
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center'
+                                        }}
+                                      >
+                                        <span>Option {optIdx + 1}: {opt}</span>
+                                        {badgeText && (
+                                          <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: isCorrectKey ? '#047857' : '#b91c1c' }}>
+                                            {badgeText}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Coding Workspace Submitted Answers */}
+                              {ans.type === 'coding' && (
+                                <div style={{ marginTop: '10px' }}>
+                                  <span className="cf-label" style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', fontSize: '9pt' }}>
+                                    Candidate Submitted Source Code:
+                                  </span>
+                                  <pre style={{
+                                    backgroundColor: '#1e1e1e',
+                                    color: '#d4d4d4',
+                                    fontFamily: 'Consolas, monospace',
+                                    fontSize: '8.5pt',
+                                    padding: '12px',
+                                    borderRadius: '4px',
+                                    overflowX: 'auto',
+                                    maxHeight: '300px',
+                                    margin: 0,
+                                    whiteSpace: 'pre-wrap'
+                                  }}>
+                                    {ans.submittedCode || '// No code submitted'}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                    {/* Grading Form */}
+                    <form onSubmit={handleSaveEvaluation} style={{ borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
+                      <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '15px' }}>🖋️ Score Sheet Evaluation</h4>
+                      
+                      <div className="cf-form-grid" style={{ gridTemplateColumns: '1fr 2fr', gap: '15px', marginBottom: '15px' }}>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Add Score (Coding Tasks)</label>
+                          <input
+                            type="number"
+                            className="cf-input"
+                            required
+                            value={adminGradingCodingScore}
+                            onChange={e => setAdminGradingCodingScore(e.target.value)}
+                          />
+                          <span style={{ fontSize: '7.5pt', color: '#888', marginTop: '3px' }}>
+                            MCQ Score auto-graded: <strong>{selectedExamSubmission.evaluation?.mcqScore || 0}</strong>
+                          </span>
+                        </div>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Evaluator Comments &amp; Feedback</label>
+                          <textarea
+                            className="cf-input"
+                            rows="2"
+                            required
+                            value={adminGradingFeedback}
+                            onChange={e => setAdminGradingFeedback(e.target.value)}
+                            placeholder="Provide feedback remarks for candidate..."
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                        <button type="button" className="cf-btn-secondary" onClick={() => setSelectedExamSubmission(null)}>
+                          Cancel
+                        </button>
+                        <button type="submit" className="cf-btn-primary">
+                          Save Candidate Evaluation
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+                );
+              })()}
+
             </div>
           )}
             </>
@@ -2220,6 +3908,116 @@ export default function App() {
             </div>
           </div>
         )}
+
+      {/* AUTHENTICATION LOADING SCREEN */}
+      {authLoading && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(5px)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000000
+        }}>
+          <style>{`
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '15px'
+          }}>
+            <div style={{
+              width: '50px',
+              height: '50px',
+              border: '4px solid rgba(255, 255, 255, 0.1)',
+              borderTopColor: '#ffffff',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }}></div>
+            <div style={{
+              color: '#ffffff',
+              fontSize: '11pt',
+              fontWeight: 'bold',
+              letterSpacing: '0.5px',
+              textAlign: 'center',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              {loadingMessage}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM DIALOG MODAL SYSTEM */}
+      {modalState.isOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 100000
+        }}>
+          <div className="cf-card" style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '8px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: '90%',
+            maxWidth: '500px',
+            padding: '24px',
+            margin: 0,
+            border: '1px solid #e2e8f0',
+          }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '13pt', color: '#002147', fontWeight: 'bold', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+              {modalState.title}
+            </h3>
+            <p style={{ margin: '0 0 20px 0', fontSize: '10pt', color: '#475569', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
+              {modalState.message}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              {modalState.onConfirm && (
+                <button
+                  type="button"
+                  className="cf-btn-secondary"
+                  onClick={() => setModalState(prev => ({ ...prev, isOpen: false }))}
+                  style={{ minWidth: '80px', padding: '6px 12px', fontSize: '9pt' }}
+                >
+                  {modalState.cancelText}
+                </button>
+              )}
+              <button
+                type="button"
+                className="cf-btn-primary"
+                onClick={() => {
+                  if (modalState.onConfirm) {
+                    modalState.onConfirm();
+                  } else {
+                    setModalState(prev => ({ ...prev, isOpen: false }));
+                  }
+                }}
+                style={{ minWidth: '80px', padding: '6px 12px', fontSize: '9pt' }}
+              >
+                {modalState.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

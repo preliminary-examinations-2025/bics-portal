@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Press+Start+2P&family=VT323&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Press+Start+2P&family=VT323&family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap');
 
 :root {
     --oxford-blue: #3b5998; /* Codeforces Steel Blue */
@@ -44,7 +44,7 @@ body {
 }
 
 .pixel-logo {
-    font-family: 'Fira Code', monospace;
+    font-family: 'Geist Mono', monospace;
     font-weight: 700;
     font-size: 22pt;
     color: var(--oxford-blue);
