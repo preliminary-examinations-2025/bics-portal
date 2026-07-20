@@ -597,8 +597,8 @@ export default function App() {
           marks: Number(newExamMarks || 0),
           instructions: newExamInstructions,
           duration: Number(newExamDuration || 60),
-          startDate: newExamStart,
-          endDate: newExamEnd,
+          startDate: new Date(newExamStart).toISOString(),
+          endDate: new Date(newExamEnd).toISOString(),
           questions: newExamQuestions
         })
       });
