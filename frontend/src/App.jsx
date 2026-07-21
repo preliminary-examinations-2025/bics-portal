@@ -104,6 +104,124 @@ export default function App() {
   const [undertakingFile, setUndertakingFile] = useState(null);
   const [regSuccess, setRegSuccess] = useState('');
   const [regError, setRegError] = useState('');
+
+  const compressImage = (file, maxBytes, callback) => {
+    if (!file || !file.type.startsWith('image/')) {
+      callback(file);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        
+        const maxDim = 1200;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            callback(file);
+            return;
+          }
+          const compressedFile = new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+          callback(compressedFile);
+        }, 'image/jpeg', 0.7);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) {
+      setPhotoFile(null);
+      return;
+    }
+    setRegError('');
+    if (file.type.startsWith('image/')) {
+      compressImage(file, 2 * 1024 * 1024, (compressed) => {
+        if (compressed.size > 2 * 1024 * 1024) {
+          setRegError("Profile Photo is too large (exceeds 2 MB limit even after compression). Please upload a smaller image.");
+          setPhotoFile(null);
+          e.target.value = '';
+        } else {
+          setPhotoFile(compressed);
+        }
+      });
+    } else {
+      if (file.size > 2 * 1024 * 1024) {
+        setRegError("Profile Photo file size cannot exceed 2 MB.");
+        setPhotoFile(null);
+        e.target.value = '';
+      } else {
+        setPhotoFile(file);
+      }
+    }
+  };
+
+  const handleSigChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) {
+      setSigFile(null);
+      return;
+    }
+    setRegError('');
+    if (file.type.startsWith('image/')) {
+      compressImage(file, 2 * 1024 * 1024, (compressed) => {
+        if (compressed.size > 2 * 1024 * 1024) {
+          setRegError("Signature Image is too large (exceeds 2 MB limit even after compression). Please upload a smaller image.");
+          setSigFile(null);
+          e.target.value = '';
+        } else {
+          setSigFile(compressed);
+        }
+      });
+    } else {
+      if (file.size > 2 * 1024 * 1024) {
+        setRegError("Signature Image file size cannot exceed 2 MB.");
+        setSigFile(null);
+        e.target.value = '';
+      } else {
+        setSigFile(file);
+      }
+    }
+  };
+
+  const handleUndertakingChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) {
+      setUndertakingFile(null);
+      return;
+    }
+    setRegError('');
+    if (file.size > 2 * 1024 * 1024) {
+      setRegError("Signed Undertaking PDF file size cannot exceed 2 MB. Please compress your PDF before uploading.");
+      setUndertakingFile(null);
+      e.target.value = '';
+    } else {
+      setUndertakingFile(file);
+    }
+  };
   const [showRegConfirmModal, setShowRegConfirmModal] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
 
@@ -1753,15 +1871,15 @@ export default function App() {
                     <div className="cf-form-grid">
                       <div className="cf-input-group">
                         <label className="cf-label">Profile Photo (JPEG/PNG)</label>
-                        <input type="file" required onChange={e => setPhotoFile(e.target.files[0])} />
+                        <input type="file" required onChange={handlePhotoChange} />
                       </div>
                       <div className="cf-input-group">
                         <label className="cf-label">Signature Image (JPEG/PNG)</label>
-                        <input type="file" required onChange={e => setSigFile(e.target.files[0])} />
+                        <input type="file" required onChange={handleSigChange} />
                       </div>
                       <div className="cf-input-group">
                         <label className="cf-label">Signed Undertaking PDF</label>
-                        <input type="file" required onChange={e => setUndertakingFile(e.target.files[0])} />
+                        <input type="file" required onChange={handleUndertakingChange} />
                       </div>
                     </div>
 
