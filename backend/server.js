@@ -249,7 +249,8 @@ const TestConfigSchema = new mongoose.Schema({
     duration: Number, // in minutes
     startDate: Date,
     endDate: Date,
-    questions: [QuestionSchema]
+    questions: [QuestionSchema],
+    answersReleased: { type: Boolean, default: false } // Admin release toggle for answer sheets
 });
 const TestConfigModel = mongoose.model('TestConfigV2', TestConfigSchema, 'testconfigs_v2');
 
@@ -257,7 +258,9 @@ const AnswerSchema = new mongoose.Schema({
     questionId: String,
     type: String, // 'mcq' or 'coding'
     selectedOptionIndex: Number, // for MCQ
-    submittedCode: String // for Coding
+    submittedCode: String, // for Coding
+    selectedLanguage: String, // Selected programming language (c, cpp, python, java)
+    score: { type: Number, default: 0 } // Scored marks for this question
 }, { _id: false });
 
 const TestSubmissionSchema = new mongoose.Schema({
@@ -280,9 +283,26 @@ const TestSubmissionSchema = new mongoose.Schema({
         codingScore: { type: Number, default: 0 },
         feedback: { type: String, default: '' },
         evaluatedAt: Date
+    },
+    reevaluation: {
+        applied: { type: Boolean, default: false },
+        appliedAt: Date,
+        complaintText: String,
+        complainedQuestions: [String],
+        proofImages: [String],
+        status: { type: String, default: 'pending' }, // 'pending', 'resolved', 'rejected'
+        resolutionFeedback: String
     }
 }, { versionKey: false });
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
+
+const TestTokenSchema = new mongoose.Schema({
+    token: { type: String, unique: true },
+    candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate' },
+    testId: { type: mongoose.Schema.Types.ObjectId, ref: 'TestConfigV2' },
+    createdAt: { type: Date, default: Date.now, expires: 120 }
+});
+const TestTokenModel = mongoose.model('TestToken', TestTokenSchema, 'testtokens');
 
 // Connect to MongoDB (Serverless-compatible middleware approach)
 let isConnected = false;
@@ -980,6 +1000,7 @@ app.get('/api/tests/active', async (req, res) => {
                     const db = getJSONData();
                     db.testSubmissions = db.testSubmissions || [];
                     const sub = db.testSubmissions.find(s => 
+                        s.candidateId && s.testId &&
                         s.candidateId.toString() === candidateId.toString() && 
                         s.testId.toString() === testId.toString()
                     );
@@ -1008,6 +1029,66 @@ app.get('/api/tests/active', async (req, res) => {
         }));
 
         return res.json(sanitizedTests);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 1b. Get submitted tests for verification answers copy (Candidate view)
+app.get('/api/tests/submitted', async (req, res) => {
+    const { candidateId } = req.query;
+    if (!candidateId) {
+        return res.status(400).json({ error: "candidateId is required" });
+    }
+    try {
+        let submissions = [];
+        if (useMongo) {
+            const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
+            submissions = await TestSubmissionModel.find({ candidateId: queryCandidateId }).lean();
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submissions = db.testSubmissions.filter(s => s.candidateId && s.candidateId.toString() === candidateId.toString());
+        }
+
+        const enrichedList = await Promise.all(submissions.map(async (sub) => {
+            let test = null;
+            const testId = sub.testId;
+            if (useMongo) {
+                test = await TestConfigModel.findById(testId).lean();
+            } else {
+                const db = getJSONData();
+                db.tests = db.tests || [];
+                test = db.tests.find(t => (t.id || t._id).toString() === testId.toString());
+            }
+
+            if (!test) return null;
+
+            const isReleased = !!test.answersReleased;
+
+            return {
+                id: testId,
+                title: test.title,
+                marks: test.marks,
+                startDate: test.startDate,
+                endDate: test.endDate,
+                answersReleased: isReleased,
+                submission: {
+                    id: sub._id || sub.id,
+                    status: sub.status,
+                    submittedAt: sub.submittedAt,
+                    proctoringLog: sub.proctoringLog,
+                    evaluation: sub.evaluation,
+                    reevaluation: sub.reevaluation,
+                    answers: isReleased ? sub.answers : [],
+                    questions: isReleased ? test.questions : []
+                }
+            };
+        }));
+
+        const finalResults = enrichedList.filter(item => item !== null);
+        return res.json(finalResults);
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: e.message });
@@ -1068,63 +1149,195 @@ app.post('/api/tests/start/:id', async (req, res) => {
             const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
             const queryTestId = mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id;
             submission = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId });
-            if (submission && submission.status !== 'started') {
-                return res.status(400).json({ error: "You have already completed and submitted this examination. Re-attempts are not permitted." });
+            if (submission) {
+                return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
             }
-            if (!submission) {
-                submission = new TestSubmissionModel({
-                    candidateId,
-                    candidateName,
-                    studentId,
-                    testId: id,
-                    testTitle: test.title,
-                    startedAt: new Date(),
-                    status: 'started',
-                    answers: []
-                });
-                await submission.save();
-            } else {
-                // Resume session in progress
-                submission.status = 'started';
-                await submission.save();
-            }
+            submission = new TestSubmissionModel({
+                candidateId,
+                candidateName,
+                studentId,
+                testId: id,
+                testTitle: test.title,
+                startedAt: new Date(),
+                status: 'submitted',
+                answers: []
+            });
+            await submission.save();
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
             submission = db.testSubmissions.find(s => 
+                s.candidateId && s.testId &&
                 s.candidateId.toString() === candidateId.toString() && 
                 s.testId.toString() === id.toString()
             );
-            if (submission && submission.status !== 'started') {
-                return res.status(400).json({ error: "You have already completed and submitted this examination. Re-attempts are not permitted." });
+            if (submission) {
+                return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
             }
-            if (!submission) {
-                submission = {
-                    id: Date.now().toString(),
-                    _id: Date.now().toString(),
-                    candidateId,
-                    candidateName,
-                    studentId,
-                    testId: id,
-                    testTitle: test.title,
-                    startedAt: new Date(),
-                    status: 'started',
-                    proctoringLog: { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' },
-                    answers: []
-                };
-                db.testSubmissions.push(submission);
-                saveJSONData(db);
-            } else {
-                // Resume session in progress
-                submission.status = 'started';
-                saveJSONData(db);
-            }
+            submission = {
+                id: Date.now().toString(),
+                _id: Date.now().toString(),
+                candidateId,
+                candidateName,
+                studentId,
+                testId: id,
+                testTitle: test.title,
+                startedAt: new Date(),
+                status: 'submitted',
+                proctoringLog: { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' },
+                answers: []
+            };
+            db.testSubmissions.push(submission);
+            saveJSONData(db);
         }
 
         return res.json({ success: true, submission });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: e.message });
+    }
+});
+
+// Secure One-Time Exam Token Generator
+app.post('/api/tests/generate-token', async (req, res) => {
+    const { candidateId, testId } = req.body;
+    if (!candidateId || !testId) {
+        return res.status(400).json({ error: "Candidate ID and Test ID are required." });
+    }
+    try {
+        // Verify if candidate has already completed/submitted this test
+        let submission = null;
+        if (useMongo) {
+            const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
+            const queryTestId = mongoose.Types.ObjectId.isValid(testId) ? new mongoose.Types.ObjectId(testId) : testId;
+            submission = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId });
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.candidateId === candidateId && s.testId === testId);
+        }
+        if (submission && submission.status !== 'started') {
+            return res.status(400).json({ error: "You have already completed and submitted this examination. Re-attempts are not permitted." });
+        }
+
+        // Generate a cryptographically secure token
+        const tokenStr = require('crypto').randomBytes(24).toString('hex');
+
+        if (useMongo) {
+            const newToken = new TestTokenModel({
+                token: tokenStr,
+                candidateId,
+                testId
+            });
+            await newToken.save();
+        } else {
+            const db = getJSONData();
+            db.tokens = db.tokens || [];
+            // Clean up expired tokens (older than 2 minutes)
+            db.tokens = db.tokens.filter(t => (Date.now() - new Date(t.createdAt).getTime()) < 120000);
+            db.tokens.push({
+                token: tokenStr,
+                candidateId,
+                testId,
+                createdAt: new Date()
+            });
+            saveJSONData(db);
+        }
+
+        return res.json({ success: true, token: tokenStr });
+    } catch (err) {
+        console.error("Token generation failed:", err);
+        return res.status(500).json({ error: "Failed to generate exam access token." });
+    }
+});
+
+// Secure One-Time Exam Token Verification
+app.post('/api/tests/verify-token', async (req, res) => {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: "Token is required." });
+
+    try {
+        let tokenDoc = null;
+        if (useMongo) {
+            tokenDoc = await TestTokenModel.findOne({ token });
+        } else {
+            const db = getJSONData();
+            db.tokens = db.tokens || [];
+            tokenDoc = db.tokens.find(t => t.token === token && (Date.now() - new Date(t.createdAt).getTime()) < 120000);
+        }
+
+        if (!tokenDoc) {
+            return res.status(401).json({ error: "Invalid or expired exam token. Please login through the main portal dashboard again." });
+        }
+
+        // Fetch student profile details (candidate) and test details
+        let student = null;
+        let test = null;
+        if (useMongo) {
+            student = await CandidateModel.findById(tokenDoc.candidateId);
+            test = await TestConfigModel.findById(tokenDoc.testId);
+            // Delete the token immediately after verification (one-time use!)
+            await TestTokenModel.deleteOne({ token });
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === tokenDoc.candidateId || c._id === tokenDoc.candidateId);
+            db.tests = db.tests || [];
+            test = db.tests.find(t => t.id === tokenDoc.testId || t._id === tokenDoc.testId);
+            db.tokens = db.tokens.filter(t => t.token !== token);
+            saveJSONData(db);
+        }
+
+        if (!student || !test) {
+            return res.status(404).json({ error: "Student or Test configuration associated with this token not found." });
+        }
+
+        // Strip correct MCQ options from the response sent to the client (to match existing student active tests endpoint design)
+        const qSanitized = (test.questions || []).map(q => {
+            let qObj = q.toObject ? q.toObject() : { ...q };
+            if (qObj.type === 'mcq') {
+                const { correctOptionIndex, ...rest } = qObj;
+                return rest;
+            }
+            return qObj;
+        });
+
+        // Fetch submission details if already attempted
+        let submission = null;
+        if (useMongo) {
+            submission = await TestSubmissionModel.findOne({ candidateId: student._id, testId: test._id });
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            const studId = student.id || student._id;
+            const tId = test.id || test._id;
+            submission = db.testSubmissions.find(s => s.candidateId === studId && s.testId === tId);
+        }
+
+        if (submission) {
+            return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
+        }
+
+        return res.json({
+            success: true,
+            candidate: {
+                id: student._id || student.id,
+                name: student.name,
+                studentId: student.studentId,
+                photoUrl: student.registrationData?.photoUrl || "/public/uploads/default-photo.png"
+            },
+            test: {
+                id: test._id || test.id,
+                title: test.title,
+                duration: test.duration,
+                marks: test.marks,
+                instructions: test.instructions,
+                questions: qSanitized
+            },
+            submission: submission
+        });
+    } catch (err) {
+        console.error("Token verification failed:", err);
+        return res.status(500).json({ error: "Internal server error during exam token verification." });
     }
 });
 
@@ -1155,8 +1368,13 @@ app.post('/api/tests/submit', async (req, res) => {
                     const quest = test.questions.find(q => q.id === ans.questionId);
                     if (quest && quest.type === 'mcq') {
                         if (quest.correctOptionIndex === ans.selectedOptionIndex) {
+                            ans.score = quest.points || 0;
                             mcqPoints += quest.points || 0;
+                        } else {
+                            ans.score = 0;
                         }
+                    } else {
+                        ans.score = 0;
                     }
                 });
             }
@@ -1189,8 +1407,13 @@ app.post('/api/tests/submit', async (req, res) => {
                     const quest = test.questions.find(q => q.id === ans.questionId);
                     if (quest && quest.type === 'mcq') {
                         if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                            ans.score = Number(quest.points || 0);
                             mcqPoints += Number(quest.points || 0);
+                        } else {
+                            ans.score = 0;
                         }
+                    } else {
+                        ans.score = 0;
                     }
                 });
             }
@@ -1228,6 +1451,37 @@ app.get('/api/admin/tests', async (req, res) => {
     }
 });
 
+// 5b. Toggle answers release state for candidate answer sheets view (Admin only)
+app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        let answersReleased = false;
+        if (useMongo) {
+            const test = await TestConfigModel.findById(id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
+            }
+            test.answersReleased = !test.answersReleased;
+            await test.save();
+            answersReleased = test.answersReleased;
+        } else {
+            const db = getJSONData();
+            db.tests = db.tests || [];
+            const test = db.tests.find(t => t.id === id || t._id === id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
+            }
+            test.answersReleased = !test.answersReleased;
+            answersReleased = test.answersReleased;
+            saveJSONData(db);
+        }
+        return res.json({ success: true, answersReleased });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 // 6. Create/configure a new test (Admin only)
 app.post('/api/admin/tests', async (req, res) => {
     const { title, marks, instructions, duration, startDate, endDate, questions } = req.body;
@@ -1254,7 +1508,8 @@ app.post('/api/admin/tests', async (req, res) => {
                 duration: Number(duration),
                 startDate,
                 endDate,
-                questions: questions || []
+                questions: questions || [],
+                answersReleased: false
             };
             db.tests.push(savedTest);
             saveJSONData(db);
@@ -1308,7 +1563,7 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
 // 9. Save manual grading score and feedback for coding tasks (Admin only)
 app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
-    const { codingScore, feedback } = req.body;
+    const { codingScore, feedback, reevaluationStatus, resolutionFeedback, answers } = req.body;
 
     try {
         let submission = null;
@@ -1320,6 +1575,19 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
             submission.evaluation.feedback = feedback || '';
             submission.evaluation.evaluatedAt = new Date();
             submission.status = 'evaluated';
+
+            if (answers && Array.isArray(answers)) {
+                submission.answers = answers;
+            }
+
+            if (reevaluationStatus) {
+                if (!submission.reevaluation) {
+                    submission.reevaluation = { applied: true };
+                }
+                submission.reevaluation.status = reevaluationStatus;
+                submission.reevaluation.resolutionFeedback = resolutionFeedback || '';
+            }
+
             await submission.save();
         } else {
             const db = getJSONData();
@@ -1331,10 +1599,75 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
             submission.evaluation.feedback = feedback || '';
             submission.evaluation.evaluatedAt = new Date();
             submission.status = 'evaluated';
+
+            if (answers && Array.isArray(answers)) {
+                submission.answers = answers;
+            }
+
+            if (reevaluationStatus) {
+                if (!submission.reevaluation) {
+                    submission.reevaluation = { applied: true };
+                }
+                submission.reevaluation.status = reevaluationStatus;
+                submission.reevaluation.resolutionFeedback = resolutionFeedback || '';
+            }
+
             saveJSONData(db);
         }
         return res.json({ success: true, submission });
     } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 10. File candidate complaint for re-evaluation (Candidate view)
+app.post('/api/tests/reevaluation/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    const { complaintText, complainedQuestions, proofImages } = req.body;
+    
+    if (!complaintText) {
+        return res.status(400).json({ error: "Complaint explanation is required." });
+    }
+
+    try {
+        let submission = null;
+        if (useMongo) {
+            submission = await TestSubmissionModel.findById(submissionId);
+            if (!submission) {
+                return res.status(404).json({ error: "Exam submission not found." });
+            }
+            submission.reevaluation = {
+                applied: true,
+                appliedAt: new Date(),
+                complaintText,
+                complainedQuestions: complainedQuestions || [],
+                proofImages: proofImages || [],
+                status: 'pending',
+                resolutionFeedback: ''
+            };
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            if (!submission) {
+                return res.status(404).json({ error: "Exam submission not found." });
+            }
+            submission.reevaluation = {
+                applied: true,
+                appliedAt: new Date(),
+                complaintText,
+                complainedQuestions: complainedQuestions || [],
+                proofImages: proofImages || [],
+                status: 'pending',
+                resolutionFeedback: ''
+            };
+            saveJSONData(db);
+        }
+
+        return res.json({ success: true, submission });
+    } catch (e) {
+        console.error(e);
         return res.status(500).json({ error: e.message });
     }
 });

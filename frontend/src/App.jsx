@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Menu, X, Bell, User, Lock, LogOut, ChevronDown, ChevronRight, 
-  Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert 
+  Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert,
+  Key, Video, BookOpen, ClipboardList, Settings, Users,
+  GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || (window.location.origin.includes('localhost') ? 'http://localhost:5000/api' : `${window.location.origin}/api`);
@@ -38,6 +40,14 @@ export default function App() {
       document.body.style.overflow = '';
     };
   }, [isMobileSidebarOpen]);
+
+  useEffect(() => {
+    const handlePageShow = (event) => {
+      setEnteringTestId(null);
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
 
   // Login inputs
   const [loginCreds, setLoginCreds] = useState({ username: '', password: '' });
@@ -140,6 +150,22 @@ export default function App() {
   const [cameraStream, setCameraStream] = useState(null);
   const [examConsentChecked, setExamConsentChecked] = useState(false);
   const [activeStudentTests, setActiveStudentTests] = useState([]);
+  const [enteringTestId, setEnteringTestId] = useState(null);
+  const [submittedTestsList, setSubmittedTestsList] = useState([]);
+  const [selectedVerificationTestId, setSelectedVerificationTestId] = useState('');
+
+  // Re-evaluation form states
+  const [showReevalForm, setShowReevalForm] = useState(false);
+  const [reevalComplaintText, setReevalComplaintText] = useState('');
+  const [reevalSelectedQuestions, setReevalSelectedQuestions] = useState([]);
+  const [reevalProofUrls, setReevalProofUrls] = useState([]);
+  const [reevalUploading, setReevalUploading] = useState(false);
+  const [reevalSubmitting, setReevalSubmitting] = useState(false);
+
+  // Admin Re-evaluation grading states
+  const [adminReevalStatus, setAdminReevalStatus] = useState('pending');
+  const [adminReevalResolutionFeedback, setAdminReevalResolutionFeedback] = useState('');
+  const [adminGradingAnswers, setAdminGradingAnswers] = useState({});
 
   // Admin Exam configuration states
   const [adminTests, setAdminTests] = useState([]);
@@ -349,6 +375,83 @@ export default function App() {
     }
   };
 
+  const fetchSubmittedTestsList = async (candidateId) => {
+    try {
+      const res = await fetch(`${API_BASE}/tests/submitted?candidateId=${candidateId}`);
+      const data = await res.json();
+      if (res.ok) {
+        setSubmittedTestsList(data || []);
+        if (data && data.length > 0) {
+          setSelectedVerificationTestId(data[0].id || data[0]._id);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to retrieve candidate submitted tests:", e);
+    }
+  };
+
+  const handleReevalImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setReevalUploading(true);
+    const formData = new FormData();
+    formData.append('imageFile', file);
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/upload-image`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.url) {
+        setReevalProofUrls(prev => [...prev, data.url]);
+      } else {
+        alert(data.error || "Failed to upload proof image.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network Error uploading proof image.");
+    } finally {
+      setReevalUploading(false);
+    }
+  };
+
+  const handleApplyReevalSubmit = async (submissionId) => {
+    if (!reevalComplaintText.trim()) {
+      alert("Please provide a detailed explanation of your complaint.");
+      return;
+    }
+    
+    setReevalSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/tests/reevaluation/${submissionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complaintText: reevalComplaintText,
+          complainedQuestions: reevalSelectedQuestions,
+          proofImages: reevalProofUrls
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setShowReevalForm(false);
+        setReevalComplaintText('');
+        setReevalSelectedQuestions([]);
+        setReevalProofUrls([]);
+        if (user) fetchSubmittedTestsList(user.id || user._id);
+      } else {
+        alert(data.error || "Failed to file re-evaluation claim.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network Error filing re-evaluation complaint.");
+    } finally {
+      setReevalSubmitting(false);
+    }
+  };
+
   const handleStartWebcam = async () => {
     try {
       if (cameraStream) {
@@ -369,69 +472,35 @@ export default function App() {
   };
 
   const handleStartExam = async (testId) => {
-    if (!examConsentChecked) {
-      showModalAlert("Consent Required", "Please accept the malpractice undertaking terms before starting the exam session.");
-      return;
-    }
-    if (!cameraStream) {
-      showModalAlert("Calibrate Webcam", "Please authorize and calibrate your webcam preview stream before proceeding.");
-      return;
-    }
-
+    setEnteringTestId(testId);
     try {
-      const res = await fetch(`${API_BASE}/tests/start/${testId}`, {
+      const res = await fetch(`${API_BASE}/tests/generate-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           candidateId: user.id || user._id,
-          candidateName: studentProfile?.name || user.username,
-          studentId: studentProfile?.studentId || 'STU1001'
+          testId: testId
         })
       });
       const data = await res.json();
-      if (data.success) {
-        const submission = data.submission;
-        setActiveSubmission(submission);
-        
-        const examRes = await fetch(`${API_BASE}/tests/${testId}`);
-        const examData = await examRes.json();
-        setActiveExam(examData);
-
-        const initialAnswers = examData.questions.map(q => {
-          const savedAns = submission.answers?.find(a => a.questionId === q.id);
-          return {
-            questionId: q.id,
-            type: q.type,
-            selectedOptionIndex: (savedAns && savedAns.selectedOptionIndex !== undefined) ? savedAns.selectedOptionIndex : -1,
-            submittedCode: savedAns ? savedAns.submittedCode : (q.initialTemplate || '')
-          };
-        });
-        setExamAnswers(initialAnswers);
-        setSelectedQuestionIndex(0);
-
-        setProctoringWarnings({ fullscreenExits: 0, tabSwitches: 0 });
-
-        const elem = document.documentElement;
-        if (elem.requestFullscreen) {
-          await elem.requestFullscreen().catch(err => console.warn(err));
-        }
-
-        setTimeout(() => {
-          const examVideo = document.getElementById('exam-webcam-stream');
-          if (examVideo && cameraStream) {
-            examVideo.srcObject = cameraStream;
-          }
-        }, 300);
-
-        setTimerSeconds(Number(examData.duration) * 60);
-        setAllowedTestAccess(true);
-        setView('onlinetest');
-      } else {
-        showModalAlert("Exam Initialization Error", data.error || "Failed to initiate exam session.");
+      if (!res.ok || !data.success) {
+        setEnteringTestId(null);
+        showModalAlert("Access Denied", data.error || "Failed to generate exam access token.");
+        return;
       }
+ 
+      // Redirect to FrontendOT (port 5174 in development)
+      const examUrl = window.location.origin.includes('localhost')
+        ? `http://localhost:5174/?token=${data.token}`
+        : `${window.location.origin.replace('bics-portal', 'ot-bics')}/?token=${data.token}`;
+      
+      setTimeout(() => {
+        window.location.href = examUrl;
+      }, 1200);
     } catch (err) {
+      setEnteringTestId(null);
       console.error(err);
-      showModalAlert("Network/Server Error", "Unable to start exam session. Please check your network and backend server status.");
+      showModalAlert("Connection Failed", "Unable to establish secure tunnel to Exam portal.");
     }
   };
 
@@ -664,13 +733,25 @@ export default function App() {
     e.preventDefault();
     if (!selectedExamSubmission) return;
 
+    // Automatically calculate total coding score from individual fields
+    const totalCodingScore = Object.entries(adminGradingAnswers).reduce((sum, [qId, score]) => {
+      const ans = selectedExamSubmission.answers?.find(a => a.questionId === qId);
+      return (ans && ans.type === 'coding') ? sum + Number(score || 0) : sum;
+    }, 0);
+
     try {
       const res = await fetch(`${API_BASE}/admin/tests/evaluate/${selectedExamSubmission.id || selectedExamSubmission._id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          codingScore: Number(adminGradingCodingScore || 0),
-          feedback: adminGradingFeedback
+          codingScore: totalCodingScore,
+          feedback: adminGradingFeedback,
+          reevaluationStatus: selectedExamSubmission.reevaluation?.applied ? adminReevalStatus : undefined,
+          resolutionFeedback: selectedExamSubmission.reevaluation?.applied ? adminReevalResolutionFeedback : undefined,
+          answers: selectedExamSubmission.answers?.map(ans => ({
+            ...ans,
+            score: ans.type === 'coding' ? Number(adminGradingAnswers[ans.questionId] || 0) : ans.score
+          }))
         })
       });
       const data = await res.json();
@@ -732,6 +813,17 @@ export default function App() {
       }
     }
   }, [user, view]);
+
+  // Short-polling active student tests status when view === 'tests'
+  useEffect(() => {
+    if (view !== 'tests' || !user || user.role === 'admin') return;
+    
+    const interval = setInterval(() => {
+      fetchStudentActiveTests();
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [view, user]);
 
   useEffect(() => {
     if (systemConfig) {
@@ -1254,7 +1346,7 @@ export default function App() {
     if (!user) return false;
     if (view === 'changepassword') return true;
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
-    if (user.role === 'admin' && view === 'admin') return true;
+    if (user.role === 'admin' && (view === 'admin' || view === 'admin_candidates' || view === 'admin_coursework' || view === 'admin_tests')) return true;
     if (user.role === 'student' && view !== 'admin') return true;
     return false;
   };
@@ -1316,20 +1408,28 @@ export default function App() {
         {user && !(view === 'onlinetest' || view === 'onlinetest_setup') && (
           <aside className={`app-sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
             <nav className="sidebar-menu">
-              
               {user.role === 'admin' ? (
                 <>
-                  <button className={`sidebar-item ${view === 'admin' ? 'active' : ''}`} onClick={() => { setView('admin'); setIsMobileSidebarOpen(false); }}>
-                    Admin Controls
+                  <button className={`sidebar-item ${view === 'admin' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin'); setIsMobileSidebarOpen(false); }}>
+                    <Settings size={16} /> Portal Settings
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_candidates' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_candidates'); setIsMobileSidebarOpen(false); }}>
+                    <Users size={16} /> Candidates
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_coursework' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_coursework'); setIsMobileSidebarOpen(false); }}>
+                    <BookOpen size={16} /> Coursework
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
+                    <ClipboardList size={16} /> Tests Manager
                   </button>
                 </>
               ) : (
                 <>
                   {/* Candidate Side Navigation Menu items */}
-                  <button className={`sidebar-item ${view === 'announcements' ? 'active' : ''}`} onClick={() => { setView('announcements'); setIsMobileSidebarOpen(false); }}>
-                    Announcements
+                  <button className={`sidebar-item ${view === 'announcements' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('announcements'); setIsMobileSidebarOpen(false); }}>
+                    <Bell size={16} /> Announcements
                   </button>
-
+ 
                   <div className="sidebar-category">Student Related</div>
                   <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, student: !dropdowns.student})}>
                     Menu Links {dropdowns.student ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1337,17 +1437,17 @@ export default function App() {
                   {dropdowns.student && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'register' ? 'active' : ''}`} onClick={() => { setView('register'); setIsMobileSidebarOpen(false); }}>
-                        Course Registration
+                        <Upload size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Course Registration
                       </button>
                       <button className={`dropdown-item ${view === 'info' ? 'active' : ''}`} onClick={() => { setView('info'); setIsMobileSidebarOpen(false); }}>
-                        Student Information
+                        <User size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Student Information
                       </button>
                       <button className={`dropdown-item ${view === 'conduct' ? 'active' : ''}`} onClick={() => { setView('conduct'); setIsMobileSidebarOpen(false); }}>
-                        Code of Conduct
+                        <ShieldAlert size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Code of Conduct
                       </button>
                     </div>
                   )}
-
+ 
                   <div className="sidebar-category">CourseWork</div>
                   <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, coursework: !dropdowns.coursework})}>
                     Menu Links {dropdowns.coursework ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1355,17 +1455,17 @@ export default function App() {
                   {dropdowns.coursework && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'lectures' ? 'active' : ''}`} onClick={() => { setView('lectures'); setIsMobileSidebarOpen(false); }}>
-                        Lectures
+                        <Video size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Lectures
                       </button>
                       <button className={`dropdown-item ${view === 'materials' ? 'active' : ''}`} onClick={() => { setView('materials'); setIsMobileSidebarOpen(false); }}>
-                        Materials
+                        <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Materials
                       </button>
                       <button className={`dropdown-item ${view === 'tests' ? 'active' : ''}`} onClick={() => { setView('tests'); setIsMobileSidebarOpen(false); }}>
-                        Tests
+                        <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Online Tests
                       </button>
                     </div>
                   )}
-
+ 
                   <div className="sidebar-category">Examination</div>
                   <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, exam: !dropdowns.exam})}>
                     Menu Links {dropdowns.exam ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1373,14 +1473,17 @@ export default function App() {
                   {dropdowns.exam && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'timetable' ? 'active' : ''}`} onClick={() => { setView('timetable'); setIsMobileSidebarOpen(false); }}>
-                        Time-table
+                        <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Time-table
                       </button>
                       <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess(''); }}>
-                        Hall ticket
+                        <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket
+                      </button>
+                      <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user) fetchSubmittedTestsList(user.id || user._id); }}>
+                        <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
                       </button>
                     </div>
                   )}
-
+ 
                   <div className="sidebar-category">Feedback</div>
                   <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, feedback: !dropdowns.feedback})}>
                     Menu Links {dropdowns.feedback ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -1388,27 +1491,29 @@ export default function App() {
                   {dropdowns.feedback && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'midsem' ? 'active' : ''}`} onClick={() => { setView('midsem'); setFeedbackType('mid'); setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
-                        Mid Sem Feedback {systemConfig && !systemConfig.midSemFeedbackActive && <span style={{ float: 'right', fontSize: '7.5pt', color: '#e11d48', opacity: 0.8 }}>(Closed)</span>}
+                        <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
+                        <span>Mid Sem Feedback {systemConfig && !systemConfig.midSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
                       </button>
                       <button className={`dropdown-item ${view === 'endsem' ? 'active' : ''}`} onClick={() => { setView('endsem'); setFeedbackType('end'); setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
-                        End Sem Feedback {systemConfig && !systemConfig.endSemFeedbackActive && <span style={{ float: 'right', fontSize: '7.5pt', color: '#e11d48', opacity: 0.8 }}>(Closed)</span>}
+                        <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
+                        <span>End Sem Feedback {systemConfig && !systemConfig.endSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
                       </button>
                     </div>
                   )}
-
+ 
                   <div className="sidebar-category">Exit Program</div>
-                  <button className={`sidebar-item ${view === 'exit' ? 'active' : ''}`} onClick={() => { setView('exit'); setExitSuccess(''); setIsMobileSidebarOpen(false); }}>
-                    Exit Form
+                  <button className={`sidebar-item ${view === 'exit' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('exit'); setExitSuccess(''); setIsMobileSidebarOpen(false); }}>
+                    <GraduationCap size={16} /> Exit Form
                   </button>
                 </>
               )}
-
-              <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); }}>
-                🔑 Change Password
+ 
+              <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1', justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); }}>
+                <Key size={16} /> Change Password
               </button>
-
-              <button className="sidebar-item" style={{ color: '#e11d48' }} onClick={() => setShowLogoutModal(true)}>
-                <LogOut size={16} style={{ marginRight: '8px' }} /> Sign Out
+ 
+              <button className="sidebar-item" style={{ color: '#e11d48', justifyContent: 'flex-start', gap: '8px' }} onClick={() => setShowLogoutModal(true)}>
+                <LogOut size={16} /> Sign Out
               </button>
 
             </nav>
@@ -1902,7 +2007,9 @@ export default function App() {
           {/* COURSEWORK - TESTS */}
           {view === 'tests' && (
             <div className="cf-card">
-              <div className="cf-card-title">📝 Online Practice & Exam Tests</div>
+              <div className="cf-card-title">
+                <ClipboardList size={18} style={{ marginRight: '8px', verticalAlign: 'middle', color: '#3b5998' }} /> Online Practice &amp; Exam Tests
+              </div>
               {(systemConfig && systemConfig.onlineExamActive === false) ? (
                 <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
                   <Calendar size={48} style={{ color: '#3b5998', flexShrink: 0 }} />
@@ -1933,22 +2040,22 @@ export default function App() {
                     <div key={idx} className="cf-alert cf-alert-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', borderLeft: '5px solid #3b5998', padding: '20px' }}>
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                          <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>🏆 {test.title}</h4>
+                          <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test.title}</h4>
                           {(test.submissionStatus && test.submissionStatus !== 'started') && (
-                            <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold' }}>
-                              ✅ Completed
+                            <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <CheckCircle size={10} /> Completed
                             </span>
                           )}
                         </div>
                         <p style={{ fontSize: '9pt', color: '#555', marginBottom: '4px' }}>
-                          ⏱️ Duration: <strong>{test.duration} minutes</strong> | 💯 Total Marks: <strong>{test.marks} marks</strong>
+                          Duration: <strong>{test.duration} minutes</strong> | Total Marks: <strong>{test.marks} marks</strong>
                         </p>
                         <p style={{ fontSize: '8.5pt', color: '#888' }}>
-                          📅 Open from: {new Date(test.startDate).toLocaleString()} to {new Date(test.endDate).toLocaleString()}
+                          Open from: {new Date(test.startDate).toLocaleString()} to {new Date(test.endDate).toLocaleString()}
                         </p>
                       </div>
                       <div>
-                        {(test.submissionStatus && test.submissionStatus !== 'started') ? (
+                        {test.submissionStatus ? (
                           <button
                             className="cf-btn-secondary"
                             disabled
@@ -1959,14 +2066,18 @@ export default function App() {
                         ) : (
                           <button
                             className="cf-btn-primary"
-                            onClick={() => {
-                              setAllowedTestAccess(true);
-                              setActiveExam(test);
-                              setExamConsentChecked(false);
-                              setView('onlinetest_setup');
-                            }}
+                            disabled={enteringTestId !== null}
+                            onClick={() => handleStartExam(test.id || test._id)}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                           >
-                            {test.submissionStatus === 'started' ? 'Resume Test Session' : 'Start Test Session'}
+                            {(enteringTestId === test.id || enteringTestId === test._id) ? (
+                              <>
+                                <Loader2 className="spinner" size={12} style={{ width: '12px', height: '12px', borderWidth: '2px', marginRight: '4px' }} />
+                                Loading Exam...
+                              </>
+                            ) : (
+                              'Enter Test'
+                            )}
                           </button>
                         )}
                       </div>
@@ -1974,386 +2085,6 @@ export default function App() {
                   ))}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* ONLINE TEST SETUP PANEL */}
-          {view === 'onlinetest_setup' && activeExam && (
-            <div className="cf-card" style={{ maxWidth: '1100px', margin: '20px auto' }}>
-              <div className="cf-card-title">🏆 Proctoring Verification & Setup: {activeExam.title}</div>
-              
-              <div className="cf-alert cf-alert-info" style={{ borderLeft: '4px solid #3b5998', marginBottom: '20px' }}>
-                <strong>Important Notice:</strong> This examination session is strictly proctored. You must authorize your webcam stream and agree to the exam rules before entering.
-              </div>
-
-              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                {/* Rules & Instructions */}
-                <div style={{ flex: '1 1 350px' }}>
-                  <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '10px' }}>📄 Examination Guidelines:</h4>
-                  <ul style={{ paddingLeft: '20px', fontSize: '9pt', lineHeight: '1.7', color: '#444', marginBottom: '15px' }}>
-                    <li>The time limit for this exam is <strong>{activeExam.duration} minutes</strong>.</li>
-                    <li>Exiting <strong>Fullscreen Mode</strong> will trigger a warning. Exiting more than 3 times will result in <strong>automatic submission</strong>.</li>
-                    <li>Changing browser tabs, closing the window, or losing window focus is tracked and classified as a malpractice violation.</li>
-                    <li>Ensure your web camera is active, unblocked, and captures your face clearly at all times.</li>
-                    <li>You must click <strong>Save &amp; Next</strong> to record each answer. Draft options or code changes are not submitted unless explicitly saved.</li>
-                    <li>All actions are logged in real-time. Do not open developer tools or attempt to copy-paste test questions.</li>
-                  </ul>
-                  
-                  <div style={{ padding: '10px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '8.5pt', marginBottom: '15px' }}>
-                    <strong>Initial Instructions:</strong><br />
-                    <span style={{ whiteSpace: 'pre-wrap', color: '#555' }}>{activeExam.instructions || 'No instructions provided.'}</span>
-                  </div>
-
-                  <label className="checkbox-label" style={{ display: 'flex', gap: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '9pt', marginTop: '15px' }}>
-                    <input type="checkbox" checked={examConsentChecked} onChange={e => setExamConsentChecked(e.target.checked)} />
-                    I accept and agree to the examination terms, proctoring consent, and code of conduct parameters.
-                  </label>
-                </div>
-
-                {/* Webcam Stream Setup */}
-                <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '10px', alignSelf: 'flex-start' }}>📹 Camera Calibration:</h4>
-                  <div style={{ width: '100%', aspectRatio: '4 / 3', backgroundColor: '#000', borderRadius: '4px', border: '1px solid #cbd5e1', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '10px', position: 'relative' }}>
-                    <video id="setup-webcam-preview" autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }}></video>
-                    {!cameraStream && (
-                      <span style={{ position: 'absolute', color: '#fff', fontSize: '8.5pt', textAlign: 'center', padding: '10px' }}>
-                        🔴 Stream Not Calibrated
-                      </span>
-                    )}
-                  </div>
-                  {!cameraStream ? (
-                    <button type="button" className="cf-btn-primary" style={{ width: '100%' }} onClick={handleStartWebcam}>
-                      Authorize &amp; Start Webcam
-                    </button>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#16a34a', fontWeight: 'bold', fontSize: '9pt' }}>
-                      ✓ Webcam Stream Ready
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '15px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
-                <button
-                  type="button"
-                  className="cf-btn-secondary"
-                  style={{ flexGrow: 1 }}
-                  onClick={() => {
-                    if (cameraStream) {
-                      cameraStream.getTracks().forEach(track => track.stop());
-                      setCameraStream(null);
-                    }
-                    setAllowedTestAccess(false);
-                    setActiveExam(null);
-                    setView('tests');
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="cf-btn-primary"
-                  style={{ flexGrow: 2 }}
-                  disabled={!examConsentChecked || !cameraStream}
-                  onClick={() => handleStartExam(activeExam.id || activeExam._id)}
-                >
-                  Enter Fullscreen &amp; Start Exam
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ONLINE PROCTORED EXAMINATION ENVIRONMENT */}
-          {view === 'onlinetest' && activeExam && (
-            <div style={{ padding: '20px', backgroundColor: '#f8fafc', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              
-              {/* Proctoring Webcam Stream Container (Hidden but active for background proctoring) */}
-              <div style={{ display: 'none' }}>
-                <video id="exam-webcam-stream" autoPlay playsInline muted></video>
-              </div>
-
-              {/* Floating Header */}
-              <div className="cf-card" style={{ margin: 0, padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: '5px solid #3b5998', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div>
-                  <h3 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{activeExam.title}</h3>
-                  <span style={{ fontSize: '8.5pt', color: '#666' }}>
-                    Candidate: <strong>{studentProfile?.name} ({studentProfile?.studentId})</strong>
-                  </span>
-                </div>
-                
-                {/* Timer Display */}
-                <div style={{
-                  padding: '8px 15px',
-                  borderRadius: '4px',
-                  backgroundColor: timerSeconds < 300 ? '#ffe4e6' : '#e0f2fe',
-                  color: timerSeconds < 300 ? '#be123c' : '#0369a1',
-                  border: timerSeconds < 300 ? '1px solid #fda4af' : '1px solid #7dd3fc',
-                  fontWeight: 'bold',
-                  fontFamily: 'monospace',
-                  fontSize: '11pt'
-                }}>
-                  ⏱️ {Math.floor(timerSeconds / 60)}:{(timerSeconds % 60).toString().padStart(2, '0')} remaining
-                </div>
-
-                <div>
-                  <button className="cf-btn-primary" style={{ borderColor: '#ef4444', color: '#ef4444' }} onClick={() => handleSubmitExam(false)}>
-                    Finalize &amp; Submit Test
-                  </button>
-                </div>
-              </div>
-
-              {/* Split Screen Workspace */}
-              <div style={{ display: 'flex', gap: '20px', flexGrow: 1, minHeight: 'calc(100vh - 160px)' }}>
-                
-                {/* Left Pane: Question Description */}
-                <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px' }}>
-                    <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
-                      Question {selectedQuestionIndex + 1} of {activeExam.questions?.length || 0}
-                    </h4>
-                    <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}>
-                      Points: {activeExam.questions?.[selectedQuestionIndex]?.points || 0}
-                    </span>
-                  </div>
-
-                  <div style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#333', lineHeight: '1.5' }}>
-                    {activeExam.questions?.[selectedQuestionIndex]?.title}
-                  </div>
-
-                  {activeExam.questions?.[selectedQuestionIndex]?.imageUrl && (
-                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center' }}>
-                      <img
-                        src={activeExam.questions[selectedQuestionIndex].imageUrl}
-                        alt="Question Diagram/Visual Context"
-                        style={{ maxWidth: '100%', maxHeight: '220px', objectFit: 'contain', borderRadius: '2px' }}
-                      />
-                    </div>
-                  )}
-
-                  {/* If Coding Question, render markdown description and samples */}
-                  {activeExam.questions?.[selectedQuestionIndex]?.type === 'coding' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div style={{ fontSize: '9.5pt', color: '#555', whiteSpace: 'pre-wrap', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
-                        {activeExam.questions?.[selectedQuestionIndex]?.description}
-                      </div>
-
-                      {activeExam.questions?.[selectedQuestionIndex]?.testCases?.length > 0 && (
-                        <div>
-                          <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
-                          <table className="cf-table" style={{ width: '100%' }}>
-                            <thead>
-                              <tr>
-                                <th style={{ textAlign: 'left', width: '50%' }}>Sample Input</th>
-                                <th style={{ textAlign: 'left', width: '50%' }}>Expected Output</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {activeExam.questions?.[selectedQuestionIndex]?.testCases?.slice(0, 2).map((tc, tcIdx) => (
-                                <tr key={tcIdx}>
-                                  <td><code style={{ fontSize: '8pt', backgroundColor: '#f1f5f9', padding: '2px 4px' }}>{tc.input}</code></td>
-                                  <td><code style={{ fontSize: '8pt', backgroundColor: '#f1f5f9', padding: '2px 4px' }}>{tc.output}</code></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Navigating between questions */}
-                  <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
-                    <button
-                      className="cf-btn-secondary"
-                      disabled={selectedQuestionIndex === 0}
-                      onClick={() => setSelectedQuestionIndex(selectedQuestionIndex - 1)}
-                    >
-                      ← Previous
-                    </button>
-                    
-                    <div style={{ display: 'flex', gap: '5px' }}>
-                      {activeExam.questions?.map((_, qIdx) => (
-                        <button
-                          key={qIdx}
-                          onClick={() => setSelectedQuestionIndex(qIdx)}
-                          className={selectedQuestionIndex === qIdx ? 'cf-btn-primary' : 'cf-btn-secondary'}
-                          style={{ minWidth: '35px', padding: '6px', fontSize: '9pt' }}
-                        >
-                          {qIdx + 1}
-                        </button>
-                      ))}
-                    </div>
-
-                    <button
-                      className="cf-btn-secondary"
-                      disabled={selectedQuestionIndex === (activeExam.questions?.length || 1) - 1}
-                      onClick={() => setSelectedQuestionIndex(selectedQuestionIndex + 1)}
-                    >
-                      Next →
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right Pane: MCQs or coding space */}
-                <div className="cf-card" style={{ flex: '1 1 60%', margin: 0, display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  <div style={{ borderBottom: '2px solid #3b5998', paddingBottom: '8px' }}>
-                    <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
-                      {activeExam.questions?.[selectedQuestionIndex]?.type === 'mcq' ? 'Select Option' : 'Workspace Editor'}
-                    </h4>
-                  </div>
-
-                  {/* RENDER MCQ OPTIONS */}
-                  {activeExam.questions?.[selectedQuestionIndex]?.type === 'mcq' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
-                      {activeExam.questions?.[selectedQuestionIndex]?.options?.map((opt, optIdx) => {
-                        const isSelected = draftMCQ === optIdx;
-                        return (
-                          <div
-                            key={optIdx}
-                            onClick={() => setDraftMCQ(optIdx)}
-                            style={{
-                              padding: '15px',
-                              borderRadius: '6px',
-                              border: isSelected ? '2px solid #3b5998' : '1px solid #cbd5e1',
-                              backgroundColor: isSelected ? '#eff6ff' : '#fff',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px',
-                              transition: 'all 0.2s',
-                              userSelect: 'none'
-                            }}
-                          >
-                            <input
-                              type="radio"
-                              name={`question-${selectedQuestionIndex}`}
-                              checked={isSelected}
-                              readOnly
-                              style={{ cursor: 'pointer' }}
-                            />
-                            <span style={{ fontSize: '9.5pt', fontWeight: isSelected ? 'bold' : 'normal', color: isSelected ? '#1e3a8a' : '#333' }}>
-                              {opt}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* RENDER CODING WORKSPACE EDITOR */}
-                  {activeExam.questions?.[selectedQuestionIndex]?.type === 'coding' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', backgroundColor: '#f1f5f9', padding: '6px 12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
-                        <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>
-                          Language: <code>{activeExam.questions?.[selectedQuestionIndex]?.language?.toUpperCase() || 'C++'}</code>
-                        </span>
-                        <span style={{ fontSize: '7.5pt', color: '#888' }}>
-                          💡 Press Tab key to indent
-                        </span>
-                      </div>
-                      
-                      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: '350px', border: '1px solid #3c3c3c', borderRadius: '4px', overflow: 'hidden' }}>
-                        {/* Editor Line Numbers Pane */}
-                        <div style={{
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          width: '35px',
-                          height: '100%',
-                          backgroundColor: '#1e1e1e',
-                          color: '#858585',
-                          borderRight: '1px solid #3c3c3c',
-                          fontFamily: 'Consolas, monospace',
-                          fontSize: '10pt',
-                          lineHeight: '1.5',
-                          paddingTop: '10px',
-                          textAlign: 'right',
-                          paddingRight: '5px',
-                          userSelect: 'none',
-                          overflow: 'hidden'
-                        }}>
-                          {Array.from({ length: (draftCode?.split('\n')?.length || 1) }).map((_, idx) => (
-                            <div key={idx}>{idx + 1}</div>
-                          ))}
-                        </div>
-
-                        {/* Editor Input Space */}
-                        <textarea
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            backgroundColor: '#1e1e1e',
-                            color: '#d4d4d4',
-                            fontFamily: 'Consolas, monospace',
-                            fontSize: '10pt',
-                            lineHeight: '1.5',
-                            border: 'none',
-                            padding: '10px 10px 10px 45px',
-                            outline: 'none',
-                            resize: 'none',
-                            whiteSpace: 'pre',
-                            overflowWrap: 'normal',
-                            overflowX: 'auto',
-                            overflowY: 'auto'
-                          }}
-                          value={draftCode}
-                          onChange={e => setDraftCode(e.target.value)}
-                          onKeyDown={handleEditorTabKey}
-                          placeholder="// Type your code here..."
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Save & Next Action Button */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto' }}>
-                    <button
-                      type="button"
-                      className="cf-btn-primary"
-                      style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', padding: '8px 16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}
-                      onClick={handleSaveAndNext}
-                    >
-                      💾 Save &amp; {selectedQuestionIndex === (activeExam.questions?.length || 1) - 1 ? 'Finish Question' : 'Next Question'}
-                    </button>
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* Proctoring Warning Overlay Popup */}
-              {showProctoringWarningModal && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100000 }}>
-                  <div className="cf-card" style={{ width: '450px', padding: '20px', textAlign: 'center', border: '2px solid #ef4444' }}>
-                    <div style={{ color: '#ef4444', marginBottom: '15px' }}>
-                      <AlertTriangle size={48} style={{ margin: '0 auto' }} />
-                    </div>
-                    <h3 style={{ color: '#b91c1c', fontSize: '13pt', fontWeight: 'bold', marginBottom: '10px' }}>
-                      PROCTORING EXCEPTION DETECTED!
-                    </h3>
-                    <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#333', marginBottom: '20px' }}>
-                      {proctoringAlertMessage}
-                    </p>
-                    <div style={{ padding: '10px', backgroundColor: '#ffe4e6', color: '#be123c', border: '1px solid #fda4af', borderRadius: '4px', fontSize: '9pt', fontWeight: 'bold', marginBottom: '20px' }}>
-                      ⚠️ Total Warnings: {proctoringWarnings.fullscreenExits + proctoringWarnings.tabSwitches} / 3. Exceeding 3 will force automatic submission.
-                    </div>
-                    <button
-                      className="cf-btn-primary"
-                      style={{ width: '100%', color: '#ef4444', borderColor: '#ef4444' }}
-                      onClick={async () => {
-                        setShowProctoringWarningModal(false);
-                        const elem = document.documentElement;
-                        if (!document.fullscreenElement) {
-                          if (elem.requestFullscreen) await elem.requestFullscreen().catch(err => console.warn(err));
-                        }
-                      }}
-                    >
-                      I Understand, Return to Test
-                    </button>
-                  </div>
-                </div>
-              )}
-
             </div>
           )}
 
@@ -2409,6 +2140,490 @@ export default function App() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ANSWERS COPY VERIFICATION VIEW */}
+          {view === 'verification' && (
+            <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <BookOpen size={16} />
+                <span>Evaluated Answer Sheet Verification</span>
+              </div>
+
+              {submittedTestsList.length === 0 ? (
+                <div className="cf-alert cf-alert-info">
+                  No submitted tests or evaluated responses are available on your candidate profile at this moment.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  
+                  {/* Select Dropdown */}
+                  <div className="cf-input-group">
+                    <label className="cf-label" style={{ fontWeight: 'bold' }}>Select Completed Exam:</label>
+                    <select
+                      className="cf-input"
+                      value={selectedVerificationTestId}
+                      onChange={(e) => setSelectedVerificationTestId(e.target.value)}
+                      style={{ padding: '8px 12px', fontSize: '9.5pt' }}
+                    >
+                      {submittedTestsList.map((st, sIdx) => (
+                        <option key={sIdx} value={st.id || st._id}>
+                          {st.title} (Submitted: {new Date(st.submission.submittedAt || st.submission.startedAt).toLocaleString()})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {(() => {
+                    const activeVer = submittedTestsList.find(st => (st.id || st._id) === selectedVerificationTestId);
+                    if (!activeVer) return null;
+
+                    if (!activeVer.answersReleased) {
+                      return (
+                        <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
+                          <ShieldAlert size={28} style={{ color: '#0284c7' }} />
+                          <div>
+                            <strong>Answer Sheets Locked:</strong><br />
+                            The administrator has not released the evaluated answer sheets for <strong>{activeVer.title}</strong> yet. Evaluation results will be published once grading is finalized.
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Render released evaluated answer sheet!
+                    const sub = activeVer.submission;
+                    return (
+                      <div style={{ borderTop: '2px solid #3b5998', paddingTop: '20px', display: 'flex', flexDirection: 'column', gap: '25px' }}>
+                        
+                        {/* Grades Card */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', padding: '15px', borderRadius: '6px' }}>
+                          <div>
+                            <h4 style={{ fontSize: '10pt', color: '#002147', fontWeight: 'bold', margin: '0 0 6px 0' }}>Evaluation Grades Overview:</h4>
+                            <div style={{ fontSize: '9pt', color: '#555', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <div>MCQ Marks: <strong>{sub.evaluation?.mcqScore || 0} marks</strong></div>
+                              <div>Coding Marks: <strong>{sub.evaluation?.codingScore || 0} marks</strong></div>
+                              <div>Total Grade: <strong>{Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0)} / {activeVer.marks} marks</strong></div>
+                            </div>
+                          </div>
+                          <div style={{ borderLeft: '1px solid #cbd5e1', paddingLeft: '15px' }}>
+                            <h4 style={{ fontSize: '10pt', color: '#002147', fontWeight: 'bold', margin: '0 0 6px 0' }}>Proctoring Compliance Log:</h4>
+                            <div style={{ fontSize: '9pt', color: '#555', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <div>Fullscreen Exits: <strong>{sub.proctoringLog?.fullscreenExits || 0} warnings</strong></div>
+                              <div>Tab Switches / Focus Loss: <strong>{sub.proctoringLog?.tabSwitches || 0} warnings</strong></div>
+                              <div>Webcam Status: <strong>{sub.proctoringLog?.webcamStatus || 'Active'}</strong></div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* RE-EVALUATION FILING AND STATUS GATEWAY */}
+                        <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', backgroundColor: '#ffffff', marginBottom: '10px' }}>
+                          
+                          {/* Case 1: Re-evaluation Request is already filed */}
+                          {sub.reevaluation?.applied ? (
+                            <div>
+                              
+                              {/* Status Header Bar */}
+                              <div style={{
+                                padding: '10px 15px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                fontWeight: 'bold',
+                                fontSize: '9.5pt',
+                                backgroundColor: sub.reevaluation.status === 'pending' ? '#fef3c7' : sub.reevaluation.status === 'resolved' ? '#d1fae5' : '#fee2e2',
+                                color: sub.reevaluation.status === 'pending' ? '#d97706' : sub.reevaluation.status === 'resolved' ? '#065f46' : '#b91c1c',
+                                borderBottom: '1px solid #cbd5e1'
+                              }}>
+                                {sub.reevaluation.status === 'pending' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={15} /> Re-evaluation Claim Filed - Pending Review</span>}
+                                {sub.reevaluation.status === 'resolved' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><CheckCircle size={15} /> Re-evaluation Request Resolved</span>}
+                                {sub.reevaluation.status === 'rejected' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><XCircle size={15} /> Re-evaluation Request Rejected</span>}
+                              </div>
+
+                              <div style={{ padding: '15px', fontSize: '9pt', display: 'flex', flexDirection: 'column', gap: '12px', lineHeight: '1.5' }}>
+                                <div>
+                                  <span style={{ fontWeight: 'bold', color: '#002147' }}>Date Filed: </span> 
+                                  {new Date(sub.reevaluation.appliedAt).toLocaleString()}
+                                </div>
+
+                                {sub.reevaluation.complainedQuestions?.length > 0 && (
+                                  <div>
+                                    <span style={{ fontWeight: 'bold', color: '#002147' }}>Contested Questions: </span>
+                                    <span style={{ fontSize: '8.5pt', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                      {sub.reevaluation.complainedQuestions.map(qId => {
+                                        const foundQIdx = sub.questions.findIndex(q => q.id === qId);
+                                        return foundQIdx !== -1 ? `Q${foundQIdx + 1}` : qId;
+                                      }).join(', ')}
+                                    </span>
+                                  </div>
+                                )}
+
+                                <div>
+                                  <div style={{ fontWeight: 'bold', color: '#002147', marginBottom: '4px' }}>Candidate Explanation:</div>
+                                  <div style={{ backgroundColor: '#f8fafc', padding: '10px', borderRadius: '4px', border: '1px solid #e2e8f0', whiteSpace: 'pre-wrap', color: '#334155' }}>
+                                    {sub.reevaluation.complaintText}
+                                  </div>
+                                </div>
+
+                                {sub.reevaluation.proofImages?.length > 0 && (
+                                  <div>
+                                    <div style={{ fontWeight: 'bold', color: '#002147', marginBottom: '6px' }}>Uploaded Proof Screenshots:</div>
+                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                      {sub.reevaluation.proofImages.map((imgUrl, imgIdx) => (
+                                        <a key={imgIdx} href={imgUrl} target="_blank" rel="noreferrer" style={{ display: 'block', width: '80px', height: '80px', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                          <img src={imgUrl} alt={`Proof screenshot ${imgIdx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        </a>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {sub.reevaluation.status !== 'pending' && (
+                                  <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
+                                    <div style={{ fontWeight: 'bold', color: sub.reevaluation.status === 'resolved' ? '#065f46' : '#b91c1c', marginBottom: '4px' }}>
+                                      {sub.reevaluation.status === 'resolved' ? '✓ Resolution Comments:' : '✗ Rejection Comments:'}
+                                    </div>
+                                    <div style={{ backgroundColor: sub.reevaluation.status === 'resolved' ? '#f0fdf4' : '#fef2f2', border: `1px solid ${sub.reevaluation.status === 'resolved' ? '#bbf7d0' : '#fecaca'}`, padding: '10px', borderRadius: '4px', color: '#333', whiteSpace: 'pre-wrap' }}>
+                                      {sub.reevaluation.resolutionFeedback || 'No evaluator resolution comments provided.'}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                            </div>
+                          ) : (
+                            <div>
+                              
+                              {/* Case 2: Apply Form is closed - show Apply Button */}
+                              {!showReevalForm ? (
+                                <div style={{ padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc' }}>
+                                  <div style={{ fontSize: '8.5pt', color: '#555', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <HelpCircle size={16} style={{ color: '#64748b' }} />
+                                    <span>If you identify discrepancies in the grading keys or evaluation marks, you can apply for verification re-evaluation.</span>
+                                  </div>
+                                  <button
+                                    className="cf-btn-primary"
+                                    style={{ padding: '6px 12px', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '6px', background: '#0f172a', borderColor: '#0f172a', color: '#ffffff' }}
+                                    onClick={() => setShowReevalForm(true)}
+                                  >
+                                    Apply for Re-evaluation
+                                  </button>
+                                </div>
+                              ) : (
+                                
+                                /* Case 3: Apply Form is open */
+                                <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                  <h4 style={{ fontSize: '10pt', color: '#002147', fontWeight: 'bold', margin: '0 0 5px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <FileEdit size={16} />
+                                    <span>File Re-evaluation Claim: {activeVer.title}</span>
+                                  </h4>
+
+                                  {/* Select complained questions */}
+                                  <div>
+                                    <label className="cf-label" style={{ fontWeight: 'bold', marginBottom: '8px' }}>Select Contested Questions: (Optional)</label>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                      {(sub.questions || []).map((q, qIdx) => {
+                                        const isChecked = reevalSelectedQuestions.includes(q.id);
+                                        return (
+                                          <label
+                                            key={qIdx}
+                                            style={{
+                                              padding: '8px 12px',
+                                              border: '1px solid #cbd5e1',
+                                              borderRadius: '4px',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              cursor: 'pointer',
+                                              fontSize: '8.5pt',
+                                              backgroundColor: isChecked ? '#eff6ff' : '#ffffff'
+                                            }}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={(e) => {
+                                                if (e.target.checked) {
+                                                  setReevalSelectedQuestions(prev => [...prev, q.id]);
+                                                } else {
+                                                  setReevalSelectedQuestions(prev => prev.filter(id => id !== q.id));
+                                                }
+                                              }}
+                                            />
+                                            <span>Question {qIdx + 1}: {q.title}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  {/* Explanation input */}
+                                  <div className="cf-input-group">
+                                    <label className="cf-label" style={{ fontWeight: 'bold' }}>Complaint Explanation &amp; Argument: <span style={{ color: '#ef4444' }}>*</span></label>
+                                    <textarea
+                                      className="cf-input"
+                                      rows={4}
+                                      value={reevalComplaintText}
+                                      onChange={(e) => setReevalComplaintText(e.target.value)}
+                                      placeholder="Please explain clearly why you think your response is correct and matches the evaluation criteria..."
+                                      style={{ padding: '10px', fontSize: '9pt', fontFamily: 'inherit', resize: 'vertical' }}
+                                    />
+                                  </div>
+
+                                  {/* Screen proof files upload */}
+                                  <div>
+                                    <label className="cf-label" style={{ fontWeight: 'bold' }}>Provide Image Proof: (Upload screenshots)</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginTop: '5px' }}>
+                                      <label style={{
+                                        padding: '6px 12px',
+                                        fontSize: '8.5pt',
+                                        fontWeight: 'bold',
+                                        backgroundColor: '#ffffff',
+                                        border: '1px solid #cbd5e1',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                      }}>
+                                        {reevalUploading ? (
+                                          <>
+                                            <Loader2 className="spinner" size={14} /> Uploading...
+                                          </>
+                                        ) : (
+                                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <Image size={14} /> Add Screenshot Proof
+                                          </span>
+                                        )}
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          disabled={reevalUploading}
+                                          onChange={handleReevalImageUpload}
+                                          style={{ display: 'none' }}
+                                        />
+                                      </label>
+                                      <span style={{ fontSize: '8pt', color: '#64748b' }}>PNG, JPG acceptable. Max size 5MB.</span>
+                                    </div>
+
+                                    {/* Proof preview grid */}
+                                    {reevalProofUrls.length > 0 && (
+                                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
+                                        {reevalProofUrls.map((url, urlIdx) => (
+                                          <div key={urlIdx} style={{ position: 'relative', width: '70px', height: '70px', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                            <img src={url} alt={`Uploaded proof ${urlIdx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            <button
+                                              type="button"
+                                              onClick={() => setReevalProofUrls(prev => prev.filter((_, idx) => idx !== urlIdx))}
+                                              style={{
+                                                position: 'absolute',
+                                                top: '2px',
+                                                right: '2px',
+                                                backgroundColor: 'rgba(239, 68, 68, 0.85)',
+                                                color: '#ffffff',
+                                                border: 'none',
+                                                borderRadius: '50%',
+                                                width: '16px',
+                                                height: '16px',
+                                                fontSize: '8px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center'
+                                              }}
+                                            >
+                                              ✕
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Actions */}
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '5px' }}>
+                                    <button
+                                      type="button"
+                                      className="cf-btn-secondary"
+                                      style={{ padding: '5px 12px', fontSize: '8.5pt' }}
+                                      onClick={() => {
+                                        setShowReevalForm(false);
+                                        setReevalComplaintText('');
+                                        setReevalSelectedQuestions([]);
+                                        setReevalProofUrls([]);
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="cf-btn-primary"
+                                      disabled={reevalSubmitting}
+                                      style={{ padding: '5px 15px', fontSize: '8.5pt', fontWeight: 'bold' }}
+                                      onClick={() => handleApplyReevalSubmit(sub.id || sub._id)}
+                                    >
+                                      {reevalSubmitting ? 'Filing Complaint...' : 'Submit Re-evaluation Claim'}
+                                    </button>
+                                  </div>
+
+                                </div>
+                              )}
+
+                            </div>
+                          )}
+
+                        </div>
+
+                        {sub.evaluation?.feedback && (
+                          <div style={{ backgroundColor: '#eff6ff', borderLeft: '4px solid #3b5998', padding: '12px 15px', borderRadius: '4px' }}>
+                            <h5 style={{ fontSize: '9pt', fontWeight: 'bold', color: '#1e3a8a', margin: '0 0 4px 0' }}>Evaluator Feedback Comments:</h5>
+                            <p style={{ fontSize: '9pt', color: '#1e3a8a', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{sub.evaluation.feedback}</p>
+                          </div>
+                        )}
+
+                        {/* Questions & Responses Details */}
+                        <div>
+                          <h4 style={{ fontSize: '10.5pt', color: '#002147', fontWeight: 'bold', margin: '0 0 15px 0' }}>Question-wise Evaluation Details:</h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {(sub.questions || []).map((q, qIdx) => {
+                              const candAns = (sub.answers || []).find(a => a.questionId === q.id);
+                              
+                              return (
+                                <div key={qIdx} style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                                  
+                                  {/* Header bar */}
+                                  <div style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1', padding: '10px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147' }}>
+                                      Question {qIdx + 1}: {q.title}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                      {(() => {
+                                        let scored = 0;
+                                        if (q.type === 'mcq') {
+                                          scored = candAns?.selectedOptionIndex === q.correctOptionIndex ? q.points : 0;
+                                        } else {
+                                          scored = candAns?.score || 0;
+                                        }
+                                        
+                                        return (
+                                          <span style={{
+                                            fontSize: '8.5pt',
+                                            backgroundColor: scored > 0 ? '#dcfce7' : '#fee2e2',
+                                            color: scored > 0 ? '#15803d' : '#b91c1c',
+                                            padding: '2px 8px',
+                                            borderRadius: '4px',
+                                            fontWeight: 'bold',
+                                            border: `1px solid ${scored > 0 ? '#bbf7d0' : '#fecaca'}`
+                                          }}>
+                                            Scored: {scored} / {q.points || 0} Marks
+                                          </span>
+                                        );
+                                      })()}
+                                      <span style={{ fontSize: '8.5pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                        Weight: {q.points || 0} Points
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Description */}
+                                  <div style={{ padding: '15px', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '9pt', lineHeight: '1.5', color: '#333' }}>
+                                    
+                                    {q.description && (
+                                      <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '10px', borderRadius: '4px', whiteSpace: 'pre-wrap' }}>
+                                        {q.description}
+                                      </div>
+                                    )}
+
+                                    {/* MCQ Layout */}
+                                    {q.type === 'mcq' && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        {q.options?.map((opt, oIdx) => {
+                                          const isCorrect = q.correctOptionIndex === oIdx;
+                                          const isSelected = candAns?.selectedOptionIndex === oIdx;
+                                          
+                                          let borderCol = '#cbd5e1';
+                                          let bgCol = '#fff';
+                                          let statusText = '';
+
+                                          if (isCorrect) {
+                                            borderCol = '#10b981';
+                                            bgCol = '#ecfdf5';
+                                            statusText = ' (Correct Answer)';
+                                          } else if (isSelected) {
+                                            borderCol = '#ef4444';
+                                            bgCol = '#fef2f2';
+                                            statusText = ' (Your Answer - Incorrect)';
+                                          }
+
+                                          if (isCorrect && isSelected) {
+                                            statusText = ' (Your Answer - Correct)';
+                                          }
+
+                                          return (
+                                            <div
+                                              key={oIdx}
+                                              style={{
+                                                padding: '10px 12px',
+                                                border: `1px solid ${borderCol}`,
+                                                backgroundColor: bgCol,
+                                                borderRadius: '4px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px'
+                                              }}
+                                            >
+                                              <input
+                                                type="radio"
+                                                checked={isSelected}
+                                                disabled
+                                                style={{ cursor: 'default' }}
+                                              />
+                                              <span style={{ fontWeight: (isCorrect || isSelected) ? 'bold' : 'normal', color: isCorrect ? '#065f46' : isSelected ? '#991b1b' : '#333' }}>
+                                                {opt}{statusText}
+                                              </span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {/* Coding Layout */}
+                                    {q.type === 'coding' && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8pt', color: '#64748b' }}>
+                                          <span>Submitted Code: (Language: {candAns?.selectedLanguage?.toUpperCase() || 'CPP'})</span>
+                                        </div>
+                                        <pre style={{
+                                          padding: '12px',
+                                          backgroundColor: '#1e1e1e',
+                                          color: '#d4d4d4',
+                                          borderRadius: '4px',
+                                          fontFamily: 'Consolas, monospace',
+                                          fontSize: '8.5pt',
+                                          lineHeight: '1.4',
+                                          overflowX: 'auto',
+                                          margin: 0
+                                        }}>
+                                          {candAns?.submittedCode || '// No code response was saved.'}
+                                        </pre>
+                                      </div>
+                                    )}
+
+                                  </div>
+
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                      </div>
+                    );
+                  })()}
+
+                </div>
+              )}
+
             </div>
           )}
 
@@ -2711,6 +2926,15 @@ export default function App() {
                   <button type="submit" className="cf-btn-primary">Save Course Timetable Dates</button>
                 </form>
               </div>
+            </div>
+          )}
+
+          {/* ADMIN - CANDIDATES VIEW */}
+          {view === 'admin_candidates' && systemConfig && (
+            <div>
+              <h2 style={{ fontSize: '18pt', color: '#002147', marginBottom: '20px' }}>Candidates Manager</h2>
+              {adminMessage && <div className="cf-alert cf-alert-success">{adminMessage}</div>}
+              {adminError && <div className="cf-alert cf-alert-error">{adminError}</div>}
 
               {/* Register Candidate Form */}
               <div className="cf-card">
@@ -2797,6 +3021,15 @@ export default function App() {
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ADMIN - COURSEWORK VIEW */}
+          {view === 'admin_coursework' && systemConfig && (
+            <div>
+              <h2 style={{ fontSize: '18pt', color: '#002147', marginBottom: '20px' }}>Coursework Content Manager</h2>
+              {adminMessage && <div className="cf-alert cf-alert-success">{adminMessage}</div>}
+              {adminError && <div className="cf-alert cf-alert-error">{adminError}</div>}
 
               {/* ADMIN - MANAGE COURSE VIDEO LECTURES */}
               <div className="cf-card">
@@ -2978,6 +3211,15 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* ADMIN - TESTS VIEW */}
+          {view === 'admin_tests' && systemConfig && (
+            <div>
+              <h2 style={{ fontSize: '18pt', color: '#002147', marginBottom: '20px' }}>Exam &amp; Tests Manager</h2>
+              {adminMessage && <div className="cf-alert cf-alert-success">{adminMessage}</div>}
+              {adminError && <div className="cf-alert cf-alert-error">{adminError}</div>}
 
               {/* ADMIN - ONLINE TEST CREATOR & BUILDER */}
               <div className="cf-card">
@@ -3021,6 +3263,34 @@ export default function App() {
                                   }}
                                 >
                                   Grades ({t.submissionsCount || 'View'})
+                                </button>
+                                <button
+                                  className="cf-btn-primary"
+                                  style={{ 
+                                    padding: '3px 8px', 
+                                    fontSize: '8pt', 
+                                    background: t.answersReleased ? '#10b981' : '#64748b', 
+                                    borderColor: t.answersReleased ? '#10b981' : '#64748b',
+                                    color: '#ffffff' 
+                                  }}
+                                  onClick={async () => {
+                                    try {
+                                      const res = await fetch(`${API_BASE}/admin/tests/toggle-release/${t.id || t._id}`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' }
+                                      });
+                                      const data = await res.json();
+                                      if (data.success) {
+                                        fetchAdminTests();
+                                      } else {
+                                        alert(data.error || "Failed to toggle answer sheet release state.");
+                                      }
+                                    } catch (e) {
+                                      alert("Network Error: Unable to contact API server.");
+                                    }
+                                  }}
+                                >
+                                  {t.answersReleased ? '✓ Released' : 'Release Sheets'}
                                 </button>
                                 <button
                                   className="cf-btn-secondary"
@@ -3490,8 +3760,15 @@ export default function App() {
                                 style={{ padding: '3px 8px', fontSize: '8pt' }}
                                 onClick={() => {
                                   setSelectedExamSubmission(s);
+                                  const initialScores = {};
+                                  s.answers?.forEach(ans => {
+                                    initialScores[ans.questionId] = ans.score || 0;
+                                  });
+                                  setAdminGradingAnswers(initialScores);
                                   setAdminGradingCodingScore(s.evaluation?.codingScore || 0);
                                   setAdminGradingFeedback(s.evaluation?.feedback || '');
+                                  setAdminReevalStatus(s.reevaluation?.status || 'pending');
+                                  setAdminReevalResolutionFeedback(s.reevaluation?.resolutionFeedback || '');
                                 }}
                               >
                                 {s.status === 'evaluated' ? 'Re-Grade' : 'Evaluate'}
@@ -3615,8 +3892,8 @@ export default function App() {
 
                               {/* Coding Workspace Submitted Answers */}
                               {ans.type === 'coding' && (
-                                <div style={{ marginTop: '10px' }}>
-                                  <span className="cf-label" style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', fontSize: '9pt' }}>
+                                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                  <span className="cf-label" style={{ display: 'block', fontWeight: 'bold', fontSize: '9pt' }}>
                                     Candidate Submitted Source Code:
                                   </span>
                                   <pre style={{
@@ -3633,6 +3910,20 @@ export default function App() {
                                   }}>
                                     {ans.submittedCode || '// No code submitted'}
                                   </pre>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Score:</span>
+                                    <input
+                                      type="number"
+                                      className="cf-input"
+                                      style={{ width: '80px', padding: '4px 8px' }}
+                                      value={adminGradingAnswers[ans.questionId] ?? 0}
+                                      onChange={(e) => {
+                                        const val = Number(e.target.value || 0);
+                                        setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
+                                      }}
+                                    />
+                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {questionConfig?.points || 0} points</span>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -3642,18 +3933,90 @@ export default function App() {
 
                     {/* Grading Form */}
                     <form onSubmit={handleSaveEvaluation} style={{ borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
-                      <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '15px' }}>🖋️ Score Sheet Evaluation</h4>
+                      
+                      {/* Contested Re-evaluation Info */}
+                      {selectedExamSubmission.reevaluation?.applied && (
+                        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fef3c7', padding: '15px', borderRadius: '6px', marginBottom: '20px', fontSize: '9pt', display: 'flex', flexDirection: 'column', gap: '10px', lineHeight: '1.5' }}>
+                          <h5 style={{ fontWeight: 'bold', color: '#b45309', fontSize: '9.5pt', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <ShieldAlert size={16} />
+                                    <span>ACTIVE RE-EVALUATION CLAIM FILED</span>
+                                  </h5>
+                          
+                          {selectedExamSubmission.reevaluation.complainedQuestions?.length > 0 && (
+                            <div>
+                              <span style={{ fontWeight: 'bold', color: '#78350f' }}>Contested Questions: </span>
+                              <span style={{ fontSize: '8pt', backgroundColor: '#fef3c7', border: '1px solid #f59e0b', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                {selectedExamSubmission.reevaluation.complainedQuestions.map(qId => {
+                                  const foundQIdx = testConfig?.questions?.findIndex(q => q.id === qId);
+                                  return foundQIdx !== -1 ? `Q${foundQIdx + 1}` : qId;
+                                }).join(', ')}
+                              </span>
+                            </div>
+                          )}
+
+                          <div>
+                            <div style={{ fontWeight: 'bold', color: '#78350f' }}>Candidate Complaint Text:</div>
+                            <div style={{ backgroundColor: '#ffffff', padding: '10px', borderRadius: '4px', border: '1px solid #fef3c7', whiteSpace: 'pre-wrap', color: '#333' }}>
+                              {selectedExamSubmission.reevaluation.complaintText}
+                            </div>
+                          </div>
+
+                          {selectedExamSubmission.reevaluation.proofImages?.length > 0 && (
+                            <div>
+                              <div style={{ fontWeight: 'bold', color: '#78350f', marginBottom: '6px' }}>Candidate Screen Proofs:</div>
+                              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                {selectedExamSubmission.reevaluation.proofImages.map((imgUrl, imgIdx) => (
+                                  <a key={imgIdx} href={imgUrl} target="_blank" rel="noreferrer" style={{ display: 'block', width: '80px', height: '80px', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <img src={imgUrl} alt={`Proof screenshot ${imgIdx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '15px', borderTop: '1px solid #fef3c7', paddingTop: '15px' }}>
+                            <div className="cf-input-group">
+                              <label className="cf-label" style={{ color: '#78350f', fontWeight: 'bold' }}>Re-evaluation Status:</label>
+                              <select
+                                className="cf-input"
+                                value={adminReevalStatus}
+                                onChange={e => setAdminReevalStatus(e.target.value)}
+                                style={{ padding: '8px 12px', fontSize: '9pt' }}
+                              >
+                                <option value="pending">Pending Review</option>
+                                <option value="resolved">Resolve Claim</option>
+                                <option value="rejected">Reject Claim</option>
+                              </select>
+                            </div>
+                            <div className="cf-input-group">
+                              <label className="cf-label" style={{ color: '#78350f', fontWeight: 'bold' }}>Resolution Response Remarks:</label>
+                              <textarea
+                                className="cf-input"
+                                rows="2"
+                                value={adminReevalResolutionFeedback}
+                                onChange={e => setAdminReevalResolutionFeedback(e.target.value)}
+                                placeholder="Explain your resolution decision to the candidate..."
+                                style={{ padding: '8px 12px', fontSize: '9pt' }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FileEdit size={16} />
+                        <span>Score Sheet Evaluation</span>
+                      </h4>
                       
                       <div className="cf-form-grid" style={{ gridTemplateColumns: '1fr 2fr', gap: '15px', marginBottom: '15px' }}>
                         <div className="cf-input-group">
-                          <label className="cf-label">Add Score (Coding Tasks)</label>
-                          <input
-                            type="number"
-                            className="cf-input"
-                            required
-                            value={adminGradingCodingScore}
-                            onChange={e => setAdminGradingCodingScore(e.target.value)}
-                          />
+                          <label className="cf-label">Scored Coding Marks</label>
+                          <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', padding: '6px 0' }}>
+                            {Object.entries(adminGradingAnswers).reduce((sum, [qId, score]) => {
+                              const ans = selectedExamSubmission.answers?.find(a => a.questionId === qId);
+                              return (ans && ans.type === 'coding') ? sum + Number(score || 0) : sum;
+                            }, 0)} marks (Auto-summed)
+                          </div>
                           <span style={{ fontSize: '7.5pt', color: '#888', marginTop: '3px' }}>
                             MCQ Score auto-graded: <strong>{selectedExamSubmission.evaluation?.mcqScore || 0}</strong>
                           </span>

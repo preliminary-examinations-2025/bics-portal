@@ -81,7 +81,7 @@ body {
 
 /* Collapsible sidebar styles */
 .app-sidebar {
-    width: 250px;
+    width: 260px;
     background-color: white;
     border-right: 1px solid var(--cf-border);
     padding: 15px;
@@ -145,7 +145,9 @@ body {
 }
 
 .dropdown-item {
-    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
     font-size: 9pt;
     color: #555555;
     text-decoration: none;
@@ -154,7 +156,8 @@ body {
     background: none;
     border: none;
     text-align: left;
-    transition: color 0.2s ease;
+    width: 100%;
+    transition: color 0.2s ease, background-color 0.2s ease;
 }
 
 .dropdown-item:hover, .dropdown-item.active {
