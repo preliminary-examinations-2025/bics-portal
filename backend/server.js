@@ -1068,7 +1068,7 @@ app.get('/api/tests/submitted', async (req, res) => {
         let submissions = [];
         if (useMongo) {
             const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
-            submissions = await TestSubmissionModel.find({ candidateId: queryCandidateId }).lean();
+            submissions = await TestSubmissionModel.find({ candidateId: queryCandidateId });
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
