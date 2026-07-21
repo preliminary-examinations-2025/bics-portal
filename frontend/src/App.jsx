@@ -49,6 +49,15 @@ export default function App() {
     return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Login inputs
   const [loginCreds, setLoginCreds] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
@@ -2048,53 +2057,79 @@ export default function App() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
-                  {activeStudentTests.map((test, idx) => (
-                    <div key={idx} className="cf-alert cf-alert-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', borderLeft: '5px solid #3b5998', padding: '20px' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                          <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test.title}</h4>
-                          {(test.submissionStatus && test.submissionStatus !== 'started') && (
-                            <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              <CheckCircle size={10} /> Completed
-                            </span>
+                  {activeStudentTests.map((test, idx) => {
+                    const startTime = new Date(test.startDate);
+                    const isFuture = startTime > currentTime;
+                    let countdownStr = '';
+                    if (isFuture) {
+                      const diffSecs = Math.max(0, Math.floor((startTime.getTime() - currentTime.getTime()) / 1000));
+                      const hours = Math.floor(diffSecs / 3600);
+                      const minutes = Math.floor((diffSecs % 3600) / 60);
+                      const seconds = diffSecs % 60;
+                      countdownStr = `${hours}h ${minutes}m ${seconds}s`;
+                    }
+
+                    return (
+                      <div key={idx} className="cf-alert cf-alert-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', borderLeft: '5px solid #3b5998', padding: '20px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                            <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test.title}</h4>
+                            {(test.submissionStatus && test.submissionStatus !== 'started') && (
+                              <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <CheckCircle size={10} /> Completed
+                              </span>
+                            )}
+                            {isFuture && (
+                              <span style={{ fontSize: '8pt', backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Clock size={10} /> Starts in: {countdownStr}
+                              </span>
+                            )}
+                          </div>
+                          <p style={{ fontSize: '9pt', color: '#555', marginBottom: '4px' }}>
+                            Duration: <strong>{test.duration} minutes</strong> | Total Marks: <strong>{test.marks} marks</strong>
+                          </p>
+                          <p style={{ fontSize: '8.5pt', color: '#888' }}>
+                            Open from: {new Date(test.startDate).toLocaleString()} to {new Date(test.endDate).toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          {test.submissionStatus ? (
+                            <button
+                              className="cf-btn-secondary"
+                              disabled
+                              style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
+                            >
+                              Already Submitted
+                            </button>
+                          ) : isFuture ? (
+                            <button
+                              className="cf-btn-secondary"
+                              disabled
+                              style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
+                            >
+                              Locked
+                            </button>
+                          ) : (
+                            <button
+                              className="cf-btn-primary"
+                              disabled={enteringTestId !== null}
+                              onClick={() => handleStartExam(test.id || test._id)}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                            >
+                              {(enteringTestId === test.id || enteringTestId === test._id) ? (
+                                <>
+                                  <Loader2 className="spinner" size={12} style={{ width: '12px', height: '12px', borderWidth: '2px', marginRight: '4px' }} />
+                                  Loading Exam...
+                                </>
+                              ) : (
+                                'Enter Test'
+                              )}
+                            </button>
                           )}
                         </div>
-                        <p style={{ fontSize: '9pt', color: '#555', marginBottom: '4px' }}>
-                          Duration: <strong>{test.duration} minutes</strong> | Total Marks: <strong>{test.marks} marks</strong>
-                        </p>
-                        <p style={{ fontSize: '8.5pt', color: '#888' }}>
-                          Open from: {new Date(test.startDate).toLocaleString()} to {new Date(test.endDate).toLocaleString()}
-                        </p>
                       </div>
-                      <div>
-                        {test.submissionStatus ? (
-                          <button
-                            className="cf-btn-secondary"
-                            disabled
-                            style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
-                          >
-                            Already Submitted
-                          </button>
-                        ) : (
-                          <button
-                            className="cf-btn-primary"
-                            disabled={enteringTestId !== null}
-                            onClick={() => handleStartExam(test.id || test._id)}
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-                          >
-                            {(enteringTestId === test.id || enteringTestId === test._id) ? (
-                              <>
-                                <Loader2 className="spinner" size={12} style={{ width: '12px', height: '12px', borderWidth: '2px', marginRight: '4px' }} />
-                                Loading Exam...
-                              </>
-                            ) : (
-                              'Enter Test'
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -3303,6 +3338,35 @@ export default function App() {
                                   }}
                                 >
                                   {t.answersReleased ? '✓ Released' : 'Release Sheets'}
+                                </button>
+                                <button
+                                  className="cf-btn-primary"
+                                  style={{ 
+                                    padding: '3px 8px', 
+                                    fontSize: '8pt', 
+                                    background: t.isPublished ? '#10b981' : '#64748b', 
+                                    borderColor: t.isPublished ? '#10b981' : '#64748b',
+                                    color: '#ffffff' 
+                                  }}
+                                  onClick={async () => {
+                                    try {
+                                      const res = await fetch(`${API_BASE}/admin/tests/toggle-publish/${t.id || t._id}`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' }
+                                      });
+                                      const data = await res.json();
+                                      if (data.success) {
+                                        fetchAdminTests();
+                                        fetchStudentActiveTests();
+                                      } else {
+                                        alert(data.error || "Failed to toggle display status.");
+                                      }
+                                    } catch (e) {
+                                      alert("Network Error: Unable to contact API server.");
+                                    }
+                                  }}
+                                >
+                                  {t.isPublished ? 'Displayed' : 'Display Test'}
                                 </button>
                                 <button
                                   className="cf-btn-secondary"

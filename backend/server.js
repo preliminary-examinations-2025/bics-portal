@@ -250,7 +250,8 @@ const TestConfigSchema = new mongoose.Schema({
     startDate: Date,
     endDate: Date,
     questions: [QuestionSchema],
-    answersReleased: { type: Boolean, default: false } // Admin release toggle for answer sheets
+    answersReleased: { type: Boolean, default: false }, // Admin release toggle for answer sheets
+    isPublished: { type: Boolean, default: false } // Admin display/publish toggle for student visibility
 });
 const TestConfigModel = mongoose.model('TestConfigV2', TestConfigSchema, 'testconfigs_v2');
 
@@ -973,16 +974,15 @@ app.get('/api/tests/active', async (req, res) => {
 
         if (useMongo) {
             activeTests = await TestConfigModel.find({
-                startDate: { $lte: now },
+                $or: [{ isPublished: true }, { isPublished: { $exists: false } }],
                 endDate: { $gte: now }
             }).lean();
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
             activeTests = db.tests.filter(t => {
-                const start = new Date(t.startDate);
                 const end = new Date(t.endDate);
-                return start <= now && end >= now;
+                return t.isPublished !== false && end >= now;
             });
         }
 
@@ -1482,9 +1482,40 @@ app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
     }
 });
 
+// 5c. Toggle display/publish state for student visibility (Admin only)
+app.post('/api/admin/tests/toggle-publish/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        let isPublished = false;
+        if (useMongo) {
+            const test = await TestConfigModel.findById(id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
+            }
+            test.isPublished = !test.isPublished;
+            await test.save();
+            isPublished = test.isPublished;
+        } else {
+            const db = getJSONData();
+            db.tests = db.tests || [];
+            const test = db.tests.find(t => t.id === id || t._id === id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
+            }
+            test.isPublished = !test.isPublished;
+            isPublished = test.isPublished;
+            saveJSONData(db);
+        }
+        return res.json({ success: true, isPublished });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 // 6. Create/configure a new test (Admin only)
 app.post('/api/admin/tests', async (req, res) => {
-    const { title, marks, instructions, duration, startDate, endDate, questions } = req.body;
+    const { title, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
     console.log("DEBUG: POST /api/admin/tests req.body =", JSON.stringify(req.body, null, 2));
     if (!title || !duration || !startDate || !endDate) {
         return res.status(400).json({ error: "Title, Duration, Start Date, and End Date are required" });
@@ -1493,7 +1524,7 @@ app.post('/api/admin/tests', async (req, res) => {
     try {
         let savedTest = null;
         if (useMongo) {
-            const test = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions });
+            const test = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions, isPublished: isPublished || false });
             await test.save();
             savedTest = test;
         } else {
@@ -1509,7 +1540,8 @@ app.post('/api/admin/tests', async (req, res) => {
                 startDate,
                 endDate,
                 questions: questions || [],
-                answersReleased: false
+                answersReleased: false,
+                isPublished: isPublished || false
             };
             db.tests.push(savedTest);
             saveJSONData(db);
