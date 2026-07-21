@@ -116,9 +116,11 @@ export default function App() {
       setKickoutCount(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          const dashboardUrl = window.location.origin.includes('localhost')
-            ? 'http://localhost:5173/'
-            : window.location.origin.replace('ot-bics', 'bics-portal');
+          const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
+            window.location.origin.includes('localhost')
+              ? 'http://localhost:5173/'
+              : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
+          );
           window.location.href = dashboardUrl;
           return 0;
         }
@@ -141,9 +143,11 @@ export default function App() {
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(err => console.warn(err));
       }
-      const dashboardUrl = window.location.origin.includes('localhost')
-        ? 'http://localhost:5173/'
-        : window.location.origin.replace('ot-bics', 'bics-portal');
+      const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
+        window.location.origin.includes('localhost')
+          ? 'http://localhost:5173/'
+          : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
+      );
       window.location.href = dashboardUrl;
     }, 7000);
 
@@ -791,7 +795,12 @@ export default function App() {
             <button className="cf-btn-secondary" style={{ padding: '6px 20px', fontSize: '9pt' }} onClick={() => {
               if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
               if (micStream) micStream.getTracks().forEach(t => t.stop());
-              window.location.href = `http://localhost:5173/`;
+              const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
+                window.location.origin.includes('localhost')
+                  ? 'http://localhost:5173/'
+                  : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
+              );
+              window.location.href = dashboardUrl;
             }}>
               Cancel
             </button>
