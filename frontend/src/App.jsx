@@ -2533,7 +2533,7 @@ export default function App() {
                           <h4 style={{ fontSize: '10.5pt', color: '#002147', fontWeight: 'bold', margin: '0 0 15px 0' }}>Question-wise Evaluation Details:</h4>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                             {(sub.questions || []).map((q, qIdx) => {
-                              const candAns = (sub.answers || []).find(a => a.questionId === q.id);
+                              const candAns = (sub.answers || []).find(a => String(a.questionId) === String(q.id));
                               
                               return (
                                 <div key={qIdx} style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
@@ -2587,8 +2587,8 @@ export default function App() {
                                     {q.type === 'mcq' && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         {q.options?.map((opt, oIdx) => {
-                                          const isCorrect = q.correctOptionIndex === oIdx;
-                                          const isSelected = candAns?.selectedOptionIndex === oIdx;
+                                          const isCorrect = Number(q.correctOptionIndex) === oIdx;
+                                          const isSelected = candAns && candAns.selectedOptionIndex !== undefined && candAns.selectedOptionIndex !== null && Number(candAns.selectedOptionIndex) === oIdx;
                                           
                                           let borderCol = '#cbd5e1';
                                           let bgCol = '#fff';
