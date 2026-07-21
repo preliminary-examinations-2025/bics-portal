@@ -657,6 +657,15 @@ export default function App() {
       return;
     }
 
+    const parseLocalDatetime = (dtStr) => {
+      if (!dtStr) return new Date();
+      const [datePart, timePart] = dtStr.split('T');
+      if (!datePart || !timePart) return new Date(dtStr);
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute] = timePart.split(':').map(Number);
+      return new Date(year, month - 1, day, hour, minute);
+    };
+
     try {
       const res = await fetch(`${API_BASE}/admin/tests`, {
         method: 'POST',
@@ -666,8 +675,8 @@ export default function App() {
           marks: Number(newExamMarks || 0),
           instructions: newExamInstructions,
           duration: Number(newExamDuration || 60),
-          startDate: new Date(newExamStart).toISOString(),
-          endDate: new Date(newExamEnd).toISOString(),
+          startDate: parseLocalDatetime(newExamStart).toISOString(),
+          endDate: parseLocalDatetime(newExamEnd).toISOString(),
           questions: newExamQuestions
         })
       });
