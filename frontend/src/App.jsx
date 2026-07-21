@@ -493,7 +493,7 @@ export default function App() {
       const otBaseUrl = import.meta.env.VITE_OT_URL || (
         window.location.origin.includes('localhost')
           ? 'http://localhost:5174'
-          : window.location.origin
+          : `${window.location.origin.replace('bics-portal', 'ot-bics').replace('bicsportal', 'otbicsexam')}`
       );
       const examUrl = `${otBaseUrl}/?token=${data.token}`;
       

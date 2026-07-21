@@ -7,7 +7,7 @@ import Editor from '@monaco-editor/react';
 const API_BASE = import.meta.env.VITE_API_BASE || (
   window.location.origin.includes('localhost')
     ? 'http://localhost:5000/api'
-    : `${window.location.origin}/api`
+    : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`
 );
 
 const DEFAULT_TEMPLATES = {
@@ -123,7 +123,7 @@ export default function App() {
           const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
             window.location.origin.includes('localhost')
               ? 'http://localhost:5173/'
-              : window.location.origin
+              : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
           );
           window.location.href = dashboardUrl;
           return 0;
@@ -150,7 +150,7 @@ export default function App() {
       const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
         window.location.origin.includes('localhost')
           ? 'http://localhost:5173/'
-          : window.location.origin
+          : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
       );
       window.location.href = dashboardUrl;
     }, 7000);
@@ -802,7 +802,7 @@ export default function App() {
               const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
                 window.location.origin.includes('localhost')
                   ? 'http://localhost:5173/'
-                  : window.location.origin
+                  : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
               );
               window.location.href = dashboardUrl;
             }}>
