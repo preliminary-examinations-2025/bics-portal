@@ -489,10 +489,13 @@ export default function App() {
         return;
       }
  
-      // Redirect to FrontendOT (port 5174 in development)
-      const examUrl = window.location.origin.includes('localhost')
-        ? `http://localhost:5174/?token=${data.token}`
-        : `${window.location.origin.replace('bics-portal', 'ot-bics')}/?token=${data.token}`;
+      // Redirect to FrontendOT (port 5174 in development or custom Netlify deployment URL)
+      const otBaseUrl = import.meta.env.VITE_OT_URL || (
+        window.location.origin.includes('localhost')
+          ? 'http://localhost:5174'
+          : `${window.location.origin.replace('bics-portal', 'ot-bics')}`
+      );
+      const examUrl = `${otBaseUrl}/?token=${data.token}`;
       
       setTimeout(() => {
         window.location.href = examUrl;
