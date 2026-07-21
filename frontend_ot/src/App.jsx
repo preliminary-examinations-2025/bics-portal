@@ -4,7 +4,11 @@ import {
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
-const API_BASE = import.meta.env.VITE_API_BASE || (window.location.origin.includes('localhost') ? 'http://localhost:5000/api' : `${window.location.origin}/api`);
+const API_BASE = import.meta.env.VITE_API_BASE || (
+  window.location.origin.includes('localhost')
+    ? 'http://localhost:5000/api'
+    : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`
+);
 
 const DEFAULT_TEMPLATES = {
   c: ``,
