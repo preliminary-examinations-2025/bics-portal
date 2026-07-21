@@ -1083,7 +1083,6 @@ app.get('/api/tests/submitted', async (req, res) => {
                 test = await TestConfigModel.findById(testId);
                 if (test) {
                     recalculateMCQScore(sub, test);
-                    await sub.save();
                 }
             } else {
                 const db = getJSONData();
@@ -1600,7 +1599,6 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
             if (test) {
                 for (let sub of subs) {
                     recalculateMCQScore(sub, test);
-                    await sub.save();
                 }
             }
         } else {
