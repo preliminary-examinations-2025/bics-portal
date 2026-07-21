@@ -297,6 +297,29 @@ const TestSubmissionSchema = new mongoose.Schema({
 }, { versionKey: false });
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
 
+function recalculateMCQScore(submission, test) {
+    if (!test || !submission) return;
+    let mcqPoints = 0;
+    submission.answers = submission.answers || [];
+    submission.answers.forEach(ans => {
+        const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
+        if (quest && quest.type === 'mcq') {
+            if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
+                if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                    ans.score = Number(quest.points || 0);
+                    mcqPoints += Number(quest.points || 0);
+                } else {
+                    ans.score = 0;
+                }
+            } else {
+                ans.score = 0;
+            }
+        }
+    });
+    submission.evaluation = submission.evaluation || {};
+    submission.evaluation.mcqScore = mcqPoints;
+}
+
 const TestTokenSchema = new mongoose.Schema({
     token: { type: String, unique: true },
     candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate' },
@@ -1052,15 +1075,28 @@ app.get('/api/tests/submitted', async (req, res) => {
             submissions = db.testSubmissions.filter(s => s.candidateId && s.candidateId.toString() === candidateId.toString());
         }
 
-        const enrichedList = await Promise.all(submissions.map(async (sub) => {
+        const enrichedList = await Promise.all(submissions.map(async (subDoc) => {
+            let sub = subDoc;
             let test = null;
             const testId = sub.testId;
             if (useMongo) {
-                test = await TestConfigModel.findById(testId).lean();
+                test = await TestConfigModel.findById(testId);
+                if (test) {
+                    recalculateMCQScore(sub, test);
+                    await sub.save();
+                }
             } else {
                 const db = getJSONData();
                 db.tests = db.tests || [];
                 test = db.tests.find(t => (t.id || t._id).toString() === testId.toString());
+                if (test) {
+                    const dbSub = db.testSubmissions.find(s => s.id === sub.id || s._id === sub._id);
+                    if (dbSub) {
+                        recalculateMCQScore(dbSub, test);
+                        saveJSONData(db);
+                        sub = dbSub;
+                    }
+                }
             }
 
             if (!test) return null;
@@ -1362,28 +1398,16 @@ app.post('/api/tests/submit', async (req, res) => {
             submission.submittedAt = new Date();
 
             const test = await TestConfigModel.findById(submission.testId);
-            let mcqPoints = 0;
             if (test) {
-                submission.answers.forEach(ans => {
-                    const quest = test.questions.find(q => q.id === ans.questionId);
-                    if (quest && quest.type === 'mcq') {
-                        if (quest.correctOptionIndex === ans.selectedOptionIndex) {
-                            ans.score = quest.points || 0;
-                            mcqPoints += quest.points || 0;
-                        } else {
-                            ans.score = 0;
-                        }
-                    } else {
-                        ans.score = 0;
-                    }
-                });
+                recalculateMCQScore(submission, test);
+            } else {
+                submission.evaluation = {
+                    mcqScore: 0,
+                    codingScore: 0,
+                    feedback: '',
+                    evaluatedAt: null
+                };
             }
-            submission.evaluation = {
-                mcqScore: mcqPoints,
-                codingScore: 0,
-                feedback: '',
-                evaluatedAt: null
-            };
 
             await submission.save();
         } else {
@@ -1401,28 +1425,16 @@ app.post('/api/tests/submit', async (req, res) => {
 
             db.tests = db.tests || [];
             const test = db.tests.find(t => t.id === submission.testId || t._id === submission.testId);
-            let mcqPoints = 0;
             if (test) {
-                submission.answers.forEach(ans => {
-                    const quest = test.questions.find(q => q.id === ans.questionId);
-                    if (quest && quest.type === 'mcq') {
-                        if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                            ans.score = Number(quest.points || 0);
-                            mcqPoints += Number(quest.points || 0);
-                        } else {
-                            ans.score = 0;
-                        }
-                    } else {
-                        ans.score = 0;
-                    }
-                });
+                recalculateMCQScore(submission, test);
+            } else {
+                submission.evaluation = {
+                    mcqScore: 0,
+                    codingScore: 0,
+                    feedback: '',
+                    evaluatedAt: null
+                };
             }
-            submission.evaluation = {
-                mcqScore: mcqPoints,
-                codingScore: 0,
-                feedback: '',
-                evaluatedAt: null
-            };
 
             saveJSONData(db);
         }
@@ -1578,13 +1590,28 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
     const { testId } = req.params;
     try {
         let subs = [];
+        let test = null;
         if (useMongo) {
+            test = await TestConfigModel.findById(testId);
             const queryTestId = mongoose.Types.ObjectId.isValid(testId) ? new mongoose.Types.ObjectId(testId) : testId;
             subs = await TestSubmissionModel.find({ testId: queryTestId });
+            
+            // Auto-heal MCQ scores dynamically
+            if (test) {
+                for (let sub of subs) {
+                    recalculateMCQScore(sub, test);
+                    await sub.save();
+                }
+            }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
             subs = db.testSubmissions.filter(s => s.testId === testId);
+            test = db.tests.find(t => t.id === testId || t._id === testId);
+            if (test) {
+                subs.forEach(sub => recalculateMCQScore(sub, test));
+                saveJSONData(db);
+            }
         }
         return res.json(subs);
     } catch (e) {
@@ -1603,14 +1630,17 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
             submission = await TestSubmissionModel.findById(submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
+            if (answers && Array.isArray(answers)) {
+                submission.answers = answers;
+            }
+            const test = await TestConfigModel.findById(submission.testId);
+            if (test) {
+                recalculateMCQScore(submission, test);
+            }
             submission.evaluation.codingScore = Number(codingScore || 0);
             submission.evaluation.feedback = feedback || '';
             submission.evaluation.evaluatedAt = new Date();
             submission.status = 'evaluated';
-
-            if (answers && Array.isArray(answers)) {
-                submission.answers = answers;
-            }
 
             if (reevaluationStatus) {
                 if (!submission.reevaluation) {
@@ -1627,14 +1657,17 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
             submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
+            if (answers && Array.isArray(answers)) {
+                submission.answers = answers;
+            }
+            const test = db.tests.find(t => t.id === submission.testId || t._id === submission.testId);
+            if (test) {
+                recalculateMCQScore(submission, test);
+            }
             submission.evaluation.codingScore = Number(codingScore || 0);
             submission.evaluation.feedback = feedback || '';
             submission.evaluation.evaluatedAt = new Date();
             submission.status = 'evaluated';
-
-            if (answers && Array.isArray(answers)) {
-                submission.answers = answers;
-            }
 
             if (reevaluationStatus) {
                 if (!submission.reevaluation) {

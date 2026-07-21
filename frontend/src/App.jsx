@@ -2547,7 +2547,9 @@ export default function App() {
                                       {(() => {
                                         let scored = 0;
                                         if (q.type === 'mcq') {
-                                          scored = candAns?.selectedOptionIndex === q.correctOptionIndex ? q.points : 0;
+                                          scored = (candAns && candAns.selectedOptionIndex !== undefined && candAns.selectedOptionIndex !== null)
+                                            ? (Number(candAns.selectedOptionIndex) === Number(q.correctOptionIndex) ? q.points : 0)
+                                            : 0;
                                         } else {
                                           scored = candAns?.score || 0;
                                         }
@@ -4096,7 +4098,22 @@ export default function App() {
                             }, 0)} marks (Auto-summed)
                           </div>
                           <span style={{ fontSize: '7.5pt', color: '#888', marginTop: '3px' }}>
-                            MCQ Score auto-graded: <strong>{selectedExamSubmission.evaluation?.mcqScore || 0}</strong>
+                            MCQ Score auto-graded: <strong>{(() => {
+                               const relatedTest = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
+                               if (!relatedTest || !selectedExamSubmission.answers) return selectedExamSubmission.evaluation?.mcqScore || 0;
+                               let score = 0;
+                               selectedExamSubmission.answers.forEach(ans => {
+                                 const q = relatedTest.questions?.find(quest => quest.id === ans.questionId);
+                                 if (q && q.type === 'mcq') {
+                                   if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
+                                     if (Number(q.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                                       score += Number(q.points || 0);
+                                     }
+                                   }
+                                 }
+                               });
+                               return score;
+                             })()}</strong>
                           </span>
                         </div>
                         <div className="cf-input-group">
