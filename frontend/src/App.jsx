@@ -3341,12 +3341,14 @@ export default function App() {
                                 </button>
                                 <button
                                   className="cf-btn-primary"
+                                  disabled={new Date(t.endDate) < currentTime}
                                   style={{ 
                                     padding: '3px 8px', 
                                     fontSize: '8pt', 
-                                    background: t.isPublished ? '#10b981' : '#64748b', 
-                                    borderColor: t.isPublished ? '#10b981' : '#64748b',
-                                    color: '#ffffff' 
+                                    background: (new Date(t.endDate) < currentTime) ? '#cbd5e1' : (t.isPublished ? '#10b981' : '#64748b'), 
+                                    borderColor: (new Date(t.endDate) < currentTime) ? '#cbd5e1' : (t.isPublished ? '#10b981' : '#64748b'),
+                                    color: (new Date(t.endDate) < currentTime) ? '#64748b' : '#ffffff',
+                                    cursor: (new Date(t.endDate) < currentTime) ? 'not-allowed' : 'pointer'
                                   }}
                                   onClick={async () => {
                                     try {
