@@ -405,28 +405,28 @@ const connectDB = async () => {
         useMongo = true;
         console.log("--> Connected to MongoDB successfully.");
         
-        // Seed default config if empty
+        // Seed default database schema configurations if completely empty
         const count = await ConfigModel.countDocuments();
         if (count === 0) {
             const config = new ConfigModel(initialDB.config);
             await config.save();
             console.log("--> Default system config seeded in MongoDB.");
-        }
 
-        // Seed default candidate if empty
-        const candCount = await CandidateModel.countDocuments();
-        if (candCount === 0) {
-            const defaultCand = new CandidateModel(initialDB.candidates[0]);
-            await defaultCand.save();
-            console.log("--> Default eligible candidate seeded in MongoDB.");
-        }
+            // Seed default candidate if empty
+            const candCount = await CandidateModel.countDocuments();
+            if (candCount === 0) {
+                const defaultCand = new CandidateModel(initialDB.candidates[0]);
+                await defaultCand.save();
+                console.log("--> Default eligible candidate seeded in MongoDB.");
+            }
 
-        // Seed default practice test if empty
-        const testCount = await TestConfigModel.countDocuments();
-        if (testCount === 0) {
-            const defaultTest = new TestConfigModel(initialDB.tests[0]);
-            await defaultTest.save();
-            console.log("--> Default practice examination seeded in MongoDB.");
+            // Seed default practice test if empty
+            const testCount = await TestConfigModel.countDocuments();
+            if (testCount === 0) {
+                const defaultTest = new TestConfigModel(initialDB.tests[0]);
+                await defaultTest.save();
+                console.log("--> Default practice examination seeded in MongoDB.");
+            }
         }
     } catch (err) {
         console.error("--> MongoDB connection failed:", err.message);
