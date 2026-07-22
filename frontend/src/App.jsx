@@ -328,7 +328,7 @@ export default function App() {
 
   const fetchStudentTickets = async (candidateId) => {
     try {
-      const res = await fetch(`${API_BASE}/tickets/candidate/${candidateId}`);
+      const res = await fetch(`${API_BASE}/candidate/tickets/list/${candidateId}`);
       if (res.ok) {
         const data = await res.json();
         setStudentTickets(data.tickets || []);
@@ -1630,7 +1630,7 @@ export default function App() {
     }
     
     if (user.role === 'student') {
-      return ['announcements', 'register', 'info', 'conduct', 'timetable', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup'].includes(view);
+      return ['announcements', 'register', 'info', 'conduct', 'timetable', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests'].includes(view);
     }
     
     return false;
@@ -2993,7 +2993,7 @@ export default function App() {
                     setContactSuccess('');
                     setContactError('');
                     try {
-                      const res = await fetch(`${API_BASE}/tickets/${user.id || user._id}`, {
+                      const res = await fetch(`${API_BASE}/candidate/tickets/${user.id || user._id}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

@@ -1986,7 +1986,7 @@ app.get('/api/tests/proctoring/signal/:submissionId', async (req, res) => {
 // 14. Helpdesk & Tickets Endpoints
 
 // Create a new helpdesk ticket (Student portal submit)
-app.post('/api/tickets/:candidateId', async (req, res) => {
+app.post('/api/candidate/tickets/:candidateId', async (req, res) => {
     const { candidateId } = req.params;
     const { category, subject, message } = req.body;
     if (!category || !subject || !message) {
@@ -2058,7 +2058,7 @@ app.post('/api/tickets/:candidateId', async (req, res) => {
 });
 
 // Fetch student's own tickets (Student portal history view)
-app.get('/api/tickets/candidate/:candidateId', async (req, res) => {
+app.get('/api/candidate/tickets/list/:candidateId', async (req, res) => {
     const { candidateId } = req.params;
     try {
         let tickets = [];
