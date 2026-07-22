@@ -1786,7 +1786,7 @@ export default function App() {
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'contact' ? 'active' : ''}`} onClick={() => { setView('contact'); setContactSuccess(''); setContactError(''); setContactSubView('form'); setIsMobileSidebarOpen(false); if (user) fetchStudentTickets(user.id || user._id); }}>
                         <Mail size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                        <span>Contact</span>
+                        <span>Support Helpdesk</span>
                       </button>
                       <button className={`dropdown-item ${view === 'midsem' ? 'active' : ''}`} onClick={() => { setView('midsem'); setFeedbackType('mid'); setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
                         <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
@@ -2957,7 +2957,7 @@ export default function App() {
           {view === 'contact' && studentProfile && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
-                <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Contact Helpdesk</h2>
+                <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Support Helpdesk</h2>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button 
                     className={`cf-btn-${contactSubView === 'form' ? 'primary' : 'secondary'}`} 
