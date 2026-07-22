@@ -276,7 +276,12 @@ const TestSubmissionSchema = new mongoose.Schema({
     proctoringLog: {
         fullscreenExits: { type: Number, default: 0 },
         tabSwitches: { type: Number, default: 0 },
-        webcamStatus: { type: String, default: 'active' }
+        webcamStatus: { type: String, default: 'active' },
+        events: [{
+            timestamp: { type: Date, default: Date.now },
+            type: { type: String }, // "TAB_SWITCH", "FULLSCREEN_EXIT", "WEBCAM_LOST", "MIC_MUTED", "MIC_UNMUTED", "CAM_GRANTED", "CAM_DENIED"
+            details: String
+        }]
     },
     answers: [AnswerSchema],
     evaluation: {
@@ -319,6 +324,47 @@ function recalculateMCQScore(submission, test) {
     submission.evaluation = submission.evaluation || {};
     submission.evaluation.mcqScore = mcqPoints;
 }
+
+const SystemLogSchema = new mongoose.Schema({
+    timestamp: { type: Date, default: Date.now },
+    actor: String,
+    action: String,
+    details: String,
+    severity: { type: String, default: 'info' } // 'info', 'warning', 'error'
+}, { versionKey: false });
+const SystemLogModel = mongoose.model('SystemLog', SystemLogSchema, 'systemlogs');
+
+const TestSignalSchema = new mongoose.Schema({
+    submissionId: { type: String, index: true },
+    sender: String, // 'candidate' or 'admin'
+    type: String, // 'sdp' or 'ice'
+    data: String, // SDP string or ICE candidate JSON string
+    createdAt: { type: Date, default: Date.now, expires: 180 } // 3 minutes expiry
+}, { versionKey: false });
+const TestSignalModel = mongoose.model('TestSignal', TestSignalSchema, 'testsignals');
+
+const logSystemAction = async (actor, action, details, severity = 'info') => {
+    try {
+        console.log(`LOG [${severity.toUpperCase()}]: actor=${actor}, action=${action}, details=${details}`);
+        if (useMongo) {
+            const newLog = new SystemLogModel({ actor, action, details, severity });
+            await newLog.save();
+        } else {
+            const db = getJSONData();
+            db.systemLogs = db.systemLogs || [];
+            db.systemLogs.push({
+                timestamp: new Date(),
+                actor,
+                action,
+                details,
+                severity
+            });
+            saveJSONData(db);
+        }
+    } catch (err) {
+        console.error("Logger Error:", err.message);
+    }
+};
 
 const TestTokenSchema = new mongoose.Schema({
     token: { type: String, unique: true },
@@ -408,13 +454,18 @@ app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
 
     if (username === 'admin' && password === 'admin123') {
+        await logSystemAction('admin', 'USER_SIGN_IN', 'Admin logged into portal', 'info');
         return res.json({ success: true, role: 'admin', name: 'System Administrator' });
     }
 
     if (useMongo) {
         try {
             const student = await CandidateModel.findOne({ username, password });
-            if (!student) return res.status(401).json({ error: "Invalid username or password" });
+            if (!student) {
+                await logSystemAction(username || 'unknown', 'SIGN_IN_FAILED', `Failed login attempt for username: ${username}`, 'warning');
+                return res.status(401).json({ error: "Invalid username or password" });
+            }
+            await logSystemAction(student.name || username, 'USER_SIGN_IN', `Student "${student.name || username}" logged into portal`, 'info');
             return res.json({ success: true, role: 'student', id: student._id });
         } catch (e) {
             return res.status(500).json({ error: e.message });
@@ -422,9 +473,27 @@ app.post('/api/login', async (req, res) => {
     } else {
         const db = getJSONData();
         const student = db.candidates.find(c => c.username === username && c.password === password);
-        if (!student) return res.status(401).json({ error: "Invalid username or password" });
+        if (!student) {
+            await logSystemAction(username || 'unknown', 'SIGN_IN_FAILED', `Failed login attempt for username: ${username}`, 'warning');
+            return res.status(401).json({ error: "Invalid username or password" });
+        }
+        await logSystemAction(student.name || username, 'USER_SIGN_IN', `Student "${student.name || username}" logged into portal`, 'info');
         return res.json({ success: true, role: 'student', id: student.id });
     }
+});
+
+app.post('/api/logout', async (req, res) => {
+    const { username, role } = req.body;
+    if (username) {
+        await logSystemAction(username, 'USER_SIGN_OUT', `${role === 'admin' ? 'Admin' : 'Student'} logged out of portal`, 'info');
+    }
+    return res.json({ success: true });
+});
+
+app.post('/api/log-client-error', async (req, res) => {
+    const { actor, action, details, severity } = req.body;
+    await logSystemAction(actor || 'client', action || 'CLIENT_ERROR', details || 'An external error occurred', severity || 'error');
+    return res.json({ success: true });
 });
 
 // 2. Fetch System Configuration
@@ -438,6 +507,7 @@ app.get('/api/config', async (req, res) => {
             }
             return res.json(conf);
         } catch (e) {
+            await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to fetch system configuration: ${e.message || e}`, 'error');
             return res.status(500).json({ error: e.message });
         }
     } else {
@@ -685,6 +755,7 @@ app.post('/api/candidate/complete-registration/:id', upload.fields([
             cand.registeredCourses = parsedCourses;
             cand.registrationSubmitted = true;
             await cand.save();
+            await logSystemAction(cand.name || id, "REGISTRATION_COMPLETE", `Completed BICS portal student registration for ${cand.name || id}`, "info");
             return res.json({ success: true, profile: cand });
         } else {
             const db = getJSONData();
@@ -693,10 +764,12 @@ app.post('/api/candidate/complete-registration/:id', upload.fields([
             cand.registeredCourses = parsedCourses;
             cand.registrationSubmitted = true;
             saveJSONData(db);
+            await logSystemAction(cand.name || id, "REGISTRATION_COMPLETE", `Completed BICS portal student registration for ${cand.name || id}`, "info");
             return res.json({ success: true, profile: cand });
         }
     } catch (e) {
         console.error(e);
+        await logSystemAction(id, "REGISTRATION_FAILED", `Failed student registration attempt: ${e.message || e}`, "error");
         return res.status(500).json({ error: "Uploading files failed. Please verify Cloudinary keys." });
     }
 });
@@ -705,21 +778,25 @@ app.post('/api/candidate/complete-registration/:id', upload.fields([
 app.post('/api/candidate/consent/:id', async (req, res) => {
     const { id } = req.params;
 
-    if (useMongo) {
-        try {
+    try {
+        if (useMongo) {
             const cand = await CandidateModel.findById(id);
             cand.signedConsent = true;
             await cand.save();
+            await logSystemAction(cand.name || id, 'CONSENT_SIGNED', `Candidate signed malpractice & proctoring consent, unlocking Hall Ticket`, 'info');
             return res.json({ success: true, signedConsent: true });
-        } catch (e) {
-            return res.status(500).json({ error: e.message });
+        } else {
+            const db = getJSONData();
+            const cand = db.candidates.find(c => c.id === id);
+            cand.signedConsent = true;
+            saveJSONData(db);
+            await logSystemAction(cand.name || id, 'CONSENT_SIGNED', `Candidate signed malpractice & proctoring consent, unlocking Hall Ticket`, 'info');
+            return res.json({ success: true, signedConsent: true });
         }
-    } else {
-        const db = getJSONData();
-        const cand = db.candidates.find(c => c.id === id);
-        cand.signedConsent = true;
-        saveJSONData(db);
-        return res.json({ success: true, signedConsent: true });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to sign malpractice consent for candidate ID ${id}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
     }
 });
 
@@ -1194,7 +1271,7 @@ app.post('/api/tests/start/:id', async (req, res) => {
                 testId: id,
                 testTitle: test.title,
                 startedAt: new Date(),
-                status: 'submitted',
+                status: 'started',
                 answers: []
             });
             await submission.save();
@@ -1218,7 +1295,7 @@ app.post('/api/tests/start/:id', async (req, res) => {
                 testId: id,
                 testTitle: test.title,
                 startedAt: new Date(),
-                status: 'submitted',
+                status: 'started',
                 proctoringLog: { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' },
                 answers: []
             };
@@ -1226,9 +1303,11 @@ app.post('/api/tests/start/:id', async (req, res) => {
             saveJSONData(db);
         }
 
+        await logSystemAction(candidateName || studentId || 'Candidate', 'TEST_STARTED', `Candidate started the examination "${test.title}" (${id})`, 'info');
         return res.json({ success: true, submission });
     } catch (e) {
         console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to initialize test session for candidate ID ${candidateId}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
@@ -1391,7 +1470,10 @@ app.post('/api/tests/submit', async (req, res) => {
 
             submission.answers = answers;
             if (proctoringLog) {
-                submission.proctoringLog = proctoringLog;
+                submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active', events: [] };
+                submission.proctoringLog.fullscreenExits = proctoringLog.fullscreenExits !== undefined ? proctoringLog.fullscreenExits : submission.proctoringLog.fullscreenExits;
+                submission.proctoringLog.tabSwitches = proctoringLog.tabSwitches !== undefined ? proctoringLog.tabSwitches : submission.proctoringLog.tabSwitches;
+                submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
             }
             submission.status = status || 'submitted';
             submission.submittedAt = new Date();
@@ -1417,7 +1499,10 @@ app.post('/api/tests/submit', async (req, res) => {
 
             submission.answers = answers;
             if (proctoringLog) {
-                submission.proctoringLog = proctoringLog;
+                submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active', events: [] };
+                submission.proctoringLog.fullscreenExits = proctoringLog.fullscreenExits !== undefined ? proctoringLog.fullscreenExits : submission.proctoringLog.fullscreenExits;
+                submission.proctoringLog.tabSwitches = proctoringLog.tabSwitches !== undefined ? proctoringLog.tabSwitches : submission.proctoringLog.tabSwitches;
+                submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
             }
             submission.status = status || 'submitted';
             submission.submittedAt = new Date();
@@ -1438,9 +1523,11 @@ app.post('/api/tests/submit', async (req, res) => {
             saveJSONData(db);
         }
 
+        await logSystemAction(submission?.candidateName || 'Candidate', status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', `Candidate submitted examination answers for "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'}) with status ${status || 'submitted'}`, 'info');
         return res.json({ success: true, submission });
     } catch (e) {
         console.error("DEBUG ERROR: POST /api/tests/submit failed:", e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to process exam submission for candidate submission ID ${submissionId}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
@@ -1475,6 +1562,7 @@ app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
             test.answersReleased = !test.answersReleased;
             await test.save();
             answersReleased = test.answersReleased;
+            await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Toggled answersReleased for test "${test.title}" (${id}) to ${answersReleased}`, 'info');
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
@@ -1485,6 +1573,7 @@ app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
             test.answersReleased = !test.answersReleased;
             answersReleased = test.answersReleased;
             saveJSONData(db);
+            await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Toggled answersReleased for test "${test.title}" (${id}) to ${answersReleased}`, 'info');
         }
         return res.json({ success: true, answersReleased });
     } catch (e) {
@@ -1506,6 +1595,7 @@ app.post('/api/admin/tests/toggle-publish/:id', async (req, res) => {
             test.isPublished = !test.isPublished;
             await test.save();
             isPublished = test.isPublished;
+            await logSystemAction('admin', 'TEST_PUBLISH_TOGGLE', `Toggled isPublished visibility status for test "${test.title}" (${id}) to ${isPublished}`, 'info');
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
@@ -1516,6 +1606,7 @@ app.post('/api/admin/tests/toggle-publish/:id', async (req, res) => {
             test.isPublished = !test.isPublished;
             isPublished = test.isPublished;
             saveJSONData(db);
+            await logSystemAction('admin', 'TEST_PUBLISH_TOGGLE', `Toggled isPublished visibility status for test "${test.title}" (${id}) to ${isPublished}`, 'info');
         }
         return res.json({ success: true, isPublished });
     } catch (e) {
@@ -1557,8 +1648,10 @@ app.post('/api/admin/tests', async (req, res) => {
             db.tests.push(savedTest);
             saveJSONData(db);
         }
+        await logSystemAction('admin', 'TEST_CREATED', `Created new test config: "${title}" (${marks} marks, Duration: ${duration} mins)`, 'info');
         return res.json({ success: true, test: savedTest });
     } catch (e) {
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to create new test config: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
@@ -1578,8 +1671,10 @@ app.delete('/api/admin/tests/:id', async (req, res) => {
             db.testSubmissions = db.testSubmissions.filter(s => s.testId !== id);
             saveJSONData(db);
         }
+        await logSystemAction('admin', 'TEST_DELETED', `Deleted test config with ID: ${id} and all related student submissions`, 'info');
         return res.json({ success: true });
     } catch (e) {
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to delete test config ID ${id}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
@@ -1677,8 +1772,10 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
 
             saveJSONData(db);
         }
+        await logSystemAction('admin', 'STUDENT_EVALUATED', `Evaluated exam submission ID: ${submissionId} for student "${submission?.candidateName || 'Unknown'}" (Coding: ${codingScore} marks)`, 'info');
         return res.json({ success: true, submission });
     } catch (e) {
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to save candidate evaluation details: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
@@ -1728,11 +1825,162 @@ app.post('/api/tests/reevaluation/:submissionId', async (req, res) => {
             saveJSONData(db);
         }
 
+        await logSystemAction(submission?.candidateName || 'Candidate', 'COMPLAINT_SUBMITTED', `Candidate filed a re-evaluation request for test "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'})`, 'warning');
+        return res.json({ success: true, submission });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to register candidate complaint for submission ID ${submissionId}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 11. Fetch System Logs (Admin only)
+app.get('/api/admin/system-logs', async (req, res) => {
+    try {
+        let logs = [];
+        if (useMongo) {
+            logs = await SystemLogModel.find({}).sort({ timestamp: -1 }).limit(100);
+        } else {
+            const db = getJSONData();
+            db.systemLogs = db.systemLogs || [];
+            // Sort by timestamp descending
+            logs = [...db.systemLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 100);
+        }
+        return res.json(logs);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 12. Save Live Proctoring Event during test (Student client)
+app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    const { type, details } = req.body;
+    if (!type) return res.status(400).json({ error: "Event type is required." });
+
+    try {
+        let submission = null;
+        if (useMongo) {
+            submission = await TestSubmissionModel.findById(submissionId);
+            if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+            submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
+            submission.proctoringLog.events = submission.proctoringLog.events || [];
+            submission.proctoringLog.events.push({ type, details, timestamp: new Date() });
+
+            if (type === 'FULLSCREEN_EXIT') {
+                submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
+            } else if (type === 'TAB_SWITCH') {
+                submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+            } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
+                submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
+            }
+
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+            submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
+            submission.proctoringLog.events = submission.proctoringLog.events || [];
+            submission.proctoringLog.events.push({ type, details, timestamp: new Date() });
+
+            if (type === 'FULLSCREEN_EXIT') {
+                submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
+            } else if (type === 'TAB_SWITCH') {
+                submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+            } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
+                submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
+            }
+
+            saveJSONData(db);
+        }
+
+        // Trigger system log for high severity events
+        if (type === 'FULLSCREEN_EXIT' || type === 'TAB_SWITCH') {
+            await logSystemAction(
+                submission.candidateName || 'Candidate',
+                `PROCTOR_ALERT_${type}`,
+                `Candidate triggered proctoring warning: ${details} during exam ${submission.testTitle}`,
+                'warning'
+            );
+        }
+
         return res.json({ success: true, submission });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: e.message });
     }
+});
+
+// 13. WebRTC Signal Exchange Broker (Serverless REST channel)
+app.post('/api/tests/proctoring/signal/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    const { sender, type, data } = req.body;
+    if (!sender || !type || !data) return res.status(400).json({ error: "Sender, type, and data are required." });
+
+    try {
+        if (useMongo) {
+            const sig = new TestSignalModel({ submissionId, sender, type, data });
+            await sig.save();
+        } else {
+            const db = getJSONData();
+            db.testSignals = db.testSignals || [];
+            db.testSignals.push({
+                id: Date.now().toString() + Math.random().toString(),
+                submissionId,
+                sender,
+                type,
+                data,
+                createdAt: new Date()
+            });
+            saveJSONData(db);
+        }
+        return res.json({ success: true });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to write WebRTC signals for submission ${submissionId}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/tests/proctoring/signal/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    const { sender } = req.query;
+    if (!sender) return res.status(400).json({ error: "Query target sender is required." });
+
+    try {
+        let signals = [];
+        if (useMongo) {
+            signals = await TestSignalModel.find({ submissionId, sender });
+        } else {
+            const db = getJSONData();
+            db.testSignals = db.testSignals || [];
+            signals = db.testSignals.filter(s => s.submissionId === submissionId && s.sender === sender);
+        }
+        return res.json({ success: true, signals });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to read WebRTC signals for submission ${submissionId}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+app.use(async (err, req, res, next) => {
+    console.error("TECHNICAL ERROR:", err);
+    try {
+        await logSystemAction(
+            req.body?.username || 'system',
+            'TECHNICAL_ERROR',
+            `Error on ${req.method} ${req.url}: ${err.message || err}`,
+            'error'
+        );
+    } catch (logErr) {
+        console.error("Failed to write system log for error:", logErr);
+    }
+    res.status(500).json({ error: "Internal server error. The technical team has been notified." });
 });
 
 // Start Express Server

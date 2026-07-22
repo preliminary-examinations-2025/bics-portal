@@ -3,10 +3,18 @@ import {
   Menu, X, Bell, User, Lock, LogOut, ChevronDown, ChevronRight, 
   Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert,
   Key, Video, BookOpen, ClipboardList, Settings, Users,
-  GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit
+  GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
+  Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2
 } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_BASE || (window.location.origin.includes('localhost') ? 'http://localhost:5000/api' : `${window.location.origin}/api`);
+const API_BASE = import.meta.env.VITE_API_BASE || (() => {
+  const isLocal = window.location.hostname === 'localhost' || 
+                  window.location.hostname === '127.0.0.1' || 
+                  window.location.hostname.startsWith('192.168.') || 
+                  window.location.hostname.startsWith('10.') || 
+                  window.location.hostname.startsWith('172.');
+  return isLocal ? `http://${window.location.hostname}:5000/api` : `${window.location.origin}/api`;
+})();
 
 const COURSES_LIST = [
   "Introduction to Computer Science",
@@ -47,6 +55,40 @@ export default function App() {
     };
     window.addEventListener('pageshow', handlePageShow);
     return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
+
+  useEffect(() => {
+    const flushPendingLogs = async () => {
+      try {
+        const queueStr = localStorage.getItem('bics_pending_logs');
+        if (!queueStr) return;
+        const queue = JSON.parse(queueStr);
+        if (queue.length === 0) return;
+
+        let successCount = 0;
+        for (let item of queue) {
+          const res = await fetch(`${API_BASE}/log-client-error`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+          });
+          if (res.ok) {
+            successCount++;
+          }
+        }
+        const remaining = queue.slice(successCount);
+        if (remaining.length === 0) {
+          localStorage.removeItem('bics_pending_logs');
+        } else {
+          localStorage.setItem('bics_pending_logs', JSON.stringify(remaining));
+        }
+      } catch (e) {
+        console.warn("Log flushing error:", e);
+      }
+    };
+    flushPendingLogs();
+    const interval = setInterval(flushPendingLogs, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -112,7 +154,7 @@ export default function App() {
     }
     const reader = new FileReader();
     reader.onload = (e) => {
-      const img = new Image();
+      const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
         let width = img.width;
@@ -256,6 +298,46 @@ export default function App() {
   const [videoLectures, setVideoLectures] = useState([]);
   const [courseMaterials, setCourseMaterials] = useState([]);
   const [selectedLecture, setSelectedLecture] = useState(null);
+
+  // Admin System Logs & Live Proctoring Monitoring states
+  const [systemLogs, setSystemLogs] = useState([]);
+  const [liveSubmissions, setLiveSubmissions] = useState([]);
+  const [selectedProctorTest, setSelectedProctorTest] = useState(null);
+  const [selectedProctorStudent, setSelectedProctorStudent] = useState(null);
+  const [logFilterActor, setLogFilterActor] = useState('');
+  const [logFilterAction, setLogFilterAction] = useState('ALL');
+  const [logFilterSeverity, setLogFilterSeverity] = useState('ALL');
+  const [logPage, setLogPage] = useState(1);
+
+  const fetchSystemLogs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/system-logs`);
+      if (res.ok) {
+        const data = await res.json();
+        setSystemLogs(data || []);
+      }
+    } catch (e) {
+      console.error("Error fetching system logs:", e);
+    }
+  };
+
+  const fetchLiveSubmissions = async () => {
+    try {
+      let allSubs = [];
+      for (let test of adminTests) {
+        const testId = test.id || test._id;
+        const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
+        if (res.ok) {
+          const subs = await res.json();
+          allSubs = [...allSubs, ...subs];
+        }
+      }
+      const activeSubs = allSubs.filter(s => s.status === 'started');
+      setLiveSubmissions(activeSubs);
+    } catch (e) {
+      console.error("Error fetching live submissions:", e);
+    }
+  };
 
   // Admin CourseWork creation states
   const [newLecture, setNewLecture] = useState({ section: '', title: '', youtubeUrl: '' });
@@ -1166,6 +1248,14 @@ export default function App() {
     setAuthLoading(true);
     setLoadingMessage("Signing out & clearing session cache...");
     
+    if (user) {
+      fetch(`${API_BASE}/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: user.name || user.id, role: user.role })
+      }).catch(err => console.error(err));
+    }
+    
     setTimeout(() => {
       setAuthLoading(false);
       setUser(null);
@@ -1403,6 +1493,14 @@ export default function App() {
     } catch (err) {
       setRegSuccess('');
       setRegError("Server connection failed.");
+      const queue = JSON.parse(localStorage.getItem('bics_pending_logs') || '[]');
+      queue.push({
+        actor: user?.name || user?.id || 'candidate',
+        action: 'REGISTRATION_CONNECTION_FAILED',
+        details: `Candidate encountered connection failure when sending registration: ${err.message || err}`,
+        severity: 'error'
+      });
+      localStorage.setItem('bics_pending_logs', JSON.stringify(queue));
     }
   };
 
@@ -1485,7 +1583,7 @@ export default function App() {
     if (!user) return false;
     if (view === 'changepassword') return true;
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
-    if (user.role === 'admin' && (view === 'admin' || view === 'admin_candidates' || view === 'admin_coursework' || view === 'admin_tests')) return true;
+    if (user.role === 'admin' && (view === 'admin' || view === 'admin_candidates' || view === 'admin_coursework' || view === 'admin_tests' || view === 'admin_logs' || view === 'admin_proctoring')) return true;
     if (user.role === 'student' && view !== 'admin') return true;
     return false;
   };
@@ -1560,6 +1658,12 @@ export default function App() {
                   </button>
                   <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
                     <ClipboardList size={16} /> Tests Manager
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs(); }}>
+                    <Activity size={16} /> System Logs
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_proctoring' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_proctoring'); setIsMobileSidebarOpen(false); fetchLiveSubmissions(); }}>
+                    <Video size={16} /> Live Proctoring
                   </button>
                 </>
               ) : (
@@ -4263,6 +4367,331 @@ export default function App() {
 
             </div>
           )}
+
+          {view === 'admin_logs' && (
+            <div className="cf-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>System Audit & Exception Logs</h2>
+                <button className="cf-btn-secondary" onClick={fetchSystemLogs} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <RefreshCw size={14} /> Refresh Logs
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '4px', marginBottom: '20px', border: '1px solid var(--cf-border)' }}>
+                <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Search Actor</label>
+                  <input
+                    type="text"
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px' }}
+                    placeholder="Enter actor name..."
+                    value={logFilterActor}
+                    onChange={e => { setLogFilterActor(e.target.value); setLogPage(1); }}
+                  />
+                </div>
+
+                <div style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Action Type</label>
+                  <select
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
+                    value={logFilterAction}
+                    onChange={e => { setLogFilterAction(e.target.value); setLogPage(1); }}
+                  >
+                    <option value="ALL">All Actions</option>
+                    <option value="USER_SIGN_IN">USER_SIGN_IN</option>
+                    <option value="USER_SIGN_OUT">USER_SIGN_OUT</option>
+                    <option value="SIGN_IN_FAILED">SIGN_IN_FAILED</option>
+                    <option value="REGISTRATION_COMPLETE">REGISTRATION_COMPLETE</option>
+                    <option value="REGISTRATION_FAILED">REGISTRATION_FAILED</option>
+                    <option value="REGISTRATION_CONNECTION_FAILED">REGISTRATION_CONNECTION_FAILED</option>
+                    <option value="PROCTOR_ALERT_FULLSCREEN_EXIT">PROCTOR_ALERT_FULLSCREEN_EXIT</option>
+                    <option value="PROCTOR_ALERT_TAB_SWITCH">PROCTOR_ALERT_TAB_SWITCH</option>
+                    <option value="TECHNICAL_ERROR">TECHNICAL_ERROR</option>
+                    <option value="TEST_CREATED">TEST_CREATED</option>
+                    <option value="TEST_DELETED">TEST_DELETED</option>
+                    <option value="CANDIDATE_EVALUATED">CANDIDATE_EVALUATED</option>
+                  </select>
+                </div>
+
+                <div style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Severity</label>
+                  <select
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
+                    value={logFilterSeverity}
+                    onChange={e => { setLogFilterSeverity(e.target.value); setLogPage(1); }}
+                  >
+                    <option value="ALL">All Severities</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="table-responsive" style={{ border: '1px solid var(--cf-border)', borderRadius: '4px', overflow: 'hidden' }}>
+                <table className="cf-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '180px' }}>Timestamp</th>
+                      <th>Actor</th>
+                      <th>Action</th>
+                      <th>Details</th>
+                      <th style={{ width: '120px' }}>Severity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      let list = [...systemLogs];
+                      if (logFilterActor.trim()) {
+                        const q = logFilterActor.toLowerCase();
+                        list = list.filter(l => l.actor && l.actor.toLowerCase().includes(q));
+                      }
+                      if (logFilterAction !== 'ALL') {
+                        list = list.filter(l => l.action === logFilterAction);
+                      }
+                      if (logFilterSeverity !== 'ALL') {
+                        list = list.filter(l => l.severity === logFilterSeverity);
+                      }
+
+                      const limit = 15;
+                      const totalCount = list.length;
+                      const maxPage = Math.ceil(totalCount / limit) || 1;
+                      const pageIndex = Math.min(logPage, maxPage);
+                      const paginatedList = list.slice((pageIndex - 1) * limit, pageIndex * limit);
+
+                      if (paginatedList.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan="5" style={{ fontStyle: 'italic', textAlign: 'center', padding: '20px', color: '#64748b' }}>No system logs match the current filters.</td>
+                          </tr>
+                        );
+                      }
+
+                      return (
+                        <>
+                          {paginatedList.map((log, idx) => {
+                            let badgeBg = '#f1f5f9';
+                            let badgeCol = '#475569';
+                            if (log.severity === 'warning') {
+                              badgeBg = '#fef3c7';
+                              badgeCol = '#d97706';
+                            } else if (log.severity === 'error') {
+                              badgeBg = '#fee2e2';
+                              badgeCol = '#dc2626';
+                            }
+                            return (
+                              <tr key={idx}>
+                                <td style={{ fontSize: '8.5pt' }}>{new Date(log.timestamp).toLocaleString()}</td>
+                                <td style={{ fontWeight: 'bold', fontSize: '9pt', color: '#1e293b' }}>{log.actor}</td>
+                                <td style={{ fontSize: '9pt' }}>
+                                  <span style={{ fontFamily: 'Fira Code, monospace', padding: '2px 6px', backgroundColor: '#e2e8f0', borderRadius: '4px', fontSize: '8pt', color: '#0f172a' }}>
+                                    {log.action}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '9pt', color: '#334155', maxWidth: '420px', whiteSpace: 'pre-wrap' }}>{log.details}</td>
+                                <td>
+                                  <span className="status-badge" style={{ backgroundColor: badgeBg, color: badgeCol, fontWeight: 'bold' }}>
+                                    {log.severity?.toUpperCase()}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+
+              {(() => {
+                let list = [...systemLogs];
+                if (logFilterActor.trim()) {
+                  const q = logFilterActor.toLowerCase();
+                  list = list.filter(l => l.actor && l.actor.toLowerCase().includes(q));
+                }
+                if (logFilterAction !== 'ALL') {
+                  list = list.filter(l => l.action === logFilterAction);
+                }
+                if (logFilterSeverity !== 'ALL') {
+                  list = list.filter(l => l.severity === logFilterSeverity);
+                }
+
+                const limit = 15;
+                const totalCount = list.length;
+                const maxPage = Math.ceil(totalCount / limit) || 1;
+                const pageIndex = Math.min(logPage, maxPage);
+                const startIdx = totalCount === 0 ? 0 : (pageIndex - 1) * limit + 1;
+                const endIdx = Math.min(pageIndex * limit, totalCount);
+
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', paddingTop: '12px', borderTop: '1px solid var(--cf-border)' }}>
+                    <span style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                      Showing {startIdx} to {endIdx} of {totalCount} log entries
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className="cf-btn-secondary"
+                        disabled={pageIndex <= 1}
+                        onClick={() => setLogPage(pageIndex - 1)}
+                        style={{ padding: '4px 10px', fontSize: '8.5pt', margin: 0 }}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        className="cf-btn-secondary"
+                        disabled={pageIndex >= maxPage}
+                        onClick={() => setLogPage(pageIndex + 1)}
+                        style={{ padding: '4px 10px', fontSize: '8.5pt', margin: 0 }}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {view === 'admin_proctoring' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Live Exam Proctoring Terminal</h2>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '20px', minHeight: '520px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', borderRight: '1px solid var(--cf-border)', paddingRight: '20px' }}>
+                  <div>
+                    <h4 style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <BookOpen size={16} /> Configured Examinations
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {(() => {
+                        const now = new Date();
+                        const runningTests = adminTests.filter(t => {
+                          const start = new Date(t.startDate);
+                          const end = new Date(t.endDate);
+                          return now >= start && now <= end;
+                        });
+
+                        if (runningTests.length === 0) {
+                          return <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>No active examinations in progress.</div>;
+                        }
+
+                        return runningTests.map(t => {
+                          const tId = t.id || t._id;
+                          const activeCount = liveSubmissions.filter(s => (s.testId === tId) && s.status === 'started').length;
+                          const isSelected = selectedProctorTest && (selectedProctorTest.id === tId || selectedProctorTest._id === tId);
+                          return (
+                            <button
+                              key={tId}
+                              onClick={() => {
+                                setSelectedProctorTest(t);
+                                setSelectedProctorStudent(null);
+                              }}
+                              className="cf-btn-secondary"
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                textAlign: 'left',
+                                padding: '8px 12px',
+                                fontSize: '8.5pt',
+                                border: isSelected ? '1px solid #1e40af' : '1px solid var(--cf-border)',
+                                backgroundColor: isSelected ? '#eff6ff' : '#fff',
+                                color: isSelected ? '#1e40af' : '#334155',
+                                fontWeight: isSelected ? 'bold' : 'normal',
+                                width: '100%'
+                              }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>{t.title}</span>
+                              {activeCount > 0 && (
+                                <span style={{ backgroundColor: '#dc2626', color: '#fff', borderRadius: '4px', padding: '2px 6px', fontSize: '7.5pt', fontWeight: 'bold' }}>
+                                  {activeCount} active
+                                </span>
+                              )}
+                            </button>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+
+                  {selectedProctorTest && (
+                    <div>
+                      <h4 style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Users size={16} /> Active Examinees
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {(() => {
+                          const tId = selectedProctorTest.id || selectedProctorTest._id;
+                          const testStudents = liveSubmissions.filter(s => s.testId === tId && s.status === 'started');
+                          if (testStudents.length === 0) {
+                            return <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>No active examinees found.</div>;
+                          }
+                          return testStudents.map(sub => {
+                            const subId = sub.id || sub._id;
+                            const isSelected = selectedProctorStudent && (selectedProctorStudent.id === subId || selectedProctorStudent._id === subId);
+                            return (
+                              <button
+                                key={subId}
+                                onClick={() => setSelectedProctorStudent(sub)}
+                                className="cf-btn-secondary"
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  textAlign: 'left',
+                                  padding: '8px 12px',
+                                  fontSize: '8.5pt',
+                                  border: isSelected ? '1px solid #1e40af' : '1px solid var(--cf-border)',
+                                  backgroundColor: isSelected ? '#eff6ff' : '#fff',
+                                  color: isSelected ? '#1e40af' : '#334155',
+                                  fontWeight: isSelected ? 'bold' : 'normal',
+                                  width: '100%'
+                                }}
+                              >
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }}></span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.candidateName}</span>
+                              </button>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    className="cf-btn-primary"
+                    onClick={fetchLiveSubmissions}
+                    style={{ marginTop: 'auto', display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', fontSize: '8.5pt', padding: '8px' }}
+                  >
+                    <RefreshCw size={14} /> Refresh Active Lists
+                  </button>
+                </div>
+
+                <div style={{ minWidth: 0 }}>
+                  {!selectedProctorStudent ? (
+                    <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', textAlign: 'center', color: '#64748b', borderStyle: 'dashed', height: '100%', minHeight: '360px' }}>
+                      <Video size={48} style={{ color: '#94a3b8', marginBottom: '15px' }} />
+                      <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#334155', margin: '0 0 5px 0' }}>Examinee Stream Offline</h3>
+                      <p style={{ fontSize: '8.5pt', color: '#64748b', maxWidth: '320px', margin: 0 }}>
+                        Select a configured examination and click on an active candidate's name from the left monitor panel to initialize the proctoring connection.
+                      </p>
+                    </div>
+                  ) : (
+                    <StudentProctorDashboard
+                      sub={selectedProctorStudent}
+                      onClose={() => setSelectedProctorStudent(null)}
+                      fetchLiveSubmissions={fetchLiveSubmissions}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
             </>
           )}
         </main>
@@ -4594,6 +5023,266 @@ export default function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
+  const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
+  const [isMuted, setIsMuted] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('Disconnected');
+  const videoRef = React.useRef(null);
+  const pcRef = React.useRef(null);
+  const subId = sub.id || sub._id;
+
+  useEffect(() => {
+    let active = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/admin/tests/submissions/${sub.testId}`);
+        if (res.ok && active) {
+          const subs = await res.json();
+          const match = subs.find(s => (s.id || s._id) === subId);
+          if (match && match.proctoringLog) {
+            setLogs(match.proctoringLog.events || []);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [subId, sub.testId]);
+
+  const startWebRTC = async () => {
+    try {
+      setConnectionStatus('Connecting...');
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      pcRef.current = pc;
+
+      pc.ontrack = (event) => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = event.streams[0];
+        }
+        setConnectionStatus('Connected');
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'disconnected') {
+          setConnectionStatus('Disconnected');
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          fetch(`${API_BASE}/tests/proctoring/signal/${subId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sender: 'admin', type: 'ice', data: JSON.stringify(event.candidate) })
+          }).catch(err => console.error(err));
+        }
+      };
+
+      const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true });
+      await pc.setLocalDescription(offer);
+
+      await fetch(`${API_BASE}/tests/proctoring/signal/${subId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sender: 'admin', type: 'sdp', data: JSON.stringify(offer) })
+      });
+
+      let processedEventIds = new Set();
+      const pollAnswer = setInterval(async () => {
+        try {
+          const res = await fetch(`${API_BASE}/tests/proctoring/signal/${subId}?sender=candidate`);
+          if (res.ok) {
+            const data = await res.json();
+            const signals = data.signals || [];
+            for (let sig of signals) {
+              const sigId = sig.id || sig._id || sig.timestamp || sig.data;
+              if (processedEventIds.has(sigId)) continue;
+              processedEventIds.add(sigId);
+
+              if (sig.type === 'sdp') {
+                const answer = JSON.parse(sig.data);
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+              } else if (sig.type === 'ice') {
+                const candidate = JSON.parse(sig.data);
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Polling WebRTC answer error:", e);
+        }
+      }, 2000);
+
+      pc.pollInterval = pollAnswer;
+
+    } catch (err) {
+      console.error("WebRTC Error:", err);
+      setConnectionStatus('Failed');
+    }
+  };
+
+  useEffect(() => {
+    startWebRTC();
+    return () => {
+      if (pcRef.current) {
+        if (pcRef.current.pollInterval) {
+          clearInterval(pcRef.current.pollInterval);
+        }
+        pcRef.current.close();
+      }
+    };
+  }, [subId]);
+
+  const handleTerminateExam = async () => {
+    if (!window.confirm(`Are you absolutely sure you want to terminate ${sub.candidateName || 'this student'}'s exam attempt?`)) return;
+    try {
+      await fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'DISQUALIFIED',
+          details: 'Exam terminated remotely by Administrator'
+        })
+      });
+      await fetch(`${API_BASE}/admin/tests/evaluate/${subId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codingScore: 0,
+          feedback: 'Candidate disqualified due to proctoring violations.',
+          answers: sub.answers
+        })
+      });
+      onClose();
+      fetchLiveSubmissions();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="cf-card" style={{ padding: '20px', margin: 0, border: '1px solid var(--cf-border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+        <div>
+          <h3 style={{ fontSize: '12pt', fontWeight: 'bold', color: '#002147', margin: 0 }}>{sub.candidateName}</h3>
+          <span style={{ fontSize: '8.5pt', color: '#64748b' }}>Candidate ID: {sub.studentId} • {sub.testTitle}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+            backgroundColor: connectionStatus === 'Connected' ? '#ecfdf5' : '#fffbeb',
+            color: connectionStatus === 'Connected' ? '#059669' : '#d97706',
+            fontSize: '8.5pt',
+            fontWeight: 'bold',
+            padding: '4px 10px',
+            borderRadius: '4px'
+          }}>
+            <Video size={14} /> {connectionStatus}
+          </span>
+          <button onClick={onClose} className="cf-btn-secondary" style={{ padding: '4px 8px', fontSize: '8.5pt', margin: 0 }}>Close</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{
+            backgroundColor: '#000',
+            borderRadius: '4px',
+            overflow: 'hidden',
+            aspectRatio: '4/3',
+            width: '100%',
+            position: 'relative',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            border: '1px solid var(--cf-border)'
+          }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted={isMuted}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
+            />
+            <button
+              onClick={() => setIsMuted(!isMuted)}
+              style={{
+                position: 'absolute',
+                bottom: '12px',
+                right: '12px',
+                backgroundColor: isMuted ? '#ef4444' : '#10b981',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '6px 12px',
+                fontSize: '8.5pt',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                zIndex: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+              {isMuted ? 'Muted' : 'Audible'}
+            </button>
+          </div>
+
+          <button
+            onClick={handleTerminateExam}
+            className="cf-btn-primary"
+            style={{ width: '100%', padding: '10px', fontSize: '9.5pt', backgroundColor: '#dc2626', borderColor: '#dc2626', fontWeight: 'bold' }}
+          >
+            Disqualify Candidate
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <ClipboardList size={16} /> Compliance Warnings & Alerts
+          </h4>
+          <div style={{
+            flexGrow: 1,
+            overflowY: 'auto',
+            border: '1px solid #cbd5e1',
+            padding: '8px',
+            borderRadius: '4px',
+            backgroundColor: '#f8fafc',
+            fontSize: '8pt',
+            maxHeight: '380px',
+            minHeight: '260px'
+          }}>
+            {logs.length === 0 ? (
+              <div style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: '20px' }}>
+                No compliance events recorded.
+              </div>
+            ) : (
+              logs.map((log, idx) => (
+                <div key={idx} style={{ borderBottom: '1px dotted #e2e8f0', paddingBottom: '6px', marginBottom: '6px', color: log.type?.includes('ALERT') || log.type?.includes('EXIT') ? '#dc2626' : '#1e293b' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '7.5pt', marginBottom: '2px' }}>
+                    <span>{log.type}</span>
+                    <span style={{ color: '#64748b' }}>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                  <div style={{ fontSize: '8pt' }}>{log.details}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

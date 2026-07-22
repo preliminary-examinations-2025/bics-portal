@@ -4,11 +4,16 @@ import {
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
-const API_BASE = import.meta.env.VITE_API_BASE || (
-  window.location.origin.includes('localhost')
-    ? 'http://localhost:5000/api'
-    : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`
-);
+const API_BASE = import.meta.env.VITE_API_BASE || (() => {
+  const isLocal = window.location.hostname === 'localhost' || 
+                  window.location.hostname === '127.0.0.1' || 
+                  window.location.hostname.startsWith('192.168.') || 
+                  window.location.hostname.startsWith('10.') || 
+                  window.location.hostname.startsWith('172.');
+  return isLocal 
+    ? `http://${window.location.hostname}:5000/api` 
+    : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`;
+})();
 
 const DEFAULT_TEMPLATES = {
   c: ``,
@@ -269,7 +274,7 @@ export default function App() {
             autoSubmitExam(val);
           } else {
             setShowWarningModal(true);
-            syncProctoringLogs(val);
+            syncProctoringLogs(val, 'FULLSCREEN_EXIT', `Candidate exited fullscreen mode. Total warnings: ${val.fullscreenExits + val.tabSwitches} / 3`);
           }
           return val;
         });
@@ -291,7 +296,7 @@ export default function App() {
             autoSubmitExam(val);
           } else {
             setShowWarningModal(true);
-            syncProctoringLogs(val);
+            syncProctoringLogs(val, 'TAB_SWITCH', `Candidate switched tab or lost focus. Total warnings: ${val.fullscreenExits + val.tabSwitches} / 3`);
           }
           return val;
         });
@@ -363,6 +368,139 @@ export default function App() {
     return () => clearInterval(timer);
   }, [flow, proctoringWarnings]);
 
+  // WebRTC Live stream proctoring signal responder (for Admin Live Monitor)
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+
+    let active = true;
+    let pc = null;
+    const subId = submission.id || submission._id;
+    let processedEventIds = new Set();
+
+    const checkAdminSignals = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/tests/proctoring/signal/${subId}?sender=admin`);
+        if (res.ok && active) {
+          const data = await res.json();
+          const signals = data.signals || [];
+          for (let sig of signals) {
+            const sigId = sig.id || sig._id || sig.timestamp || sig.data;
+            if (processedEventIds.has(sigId)) continue;
+            processedEventIds.add(sigId);
+
+            if (sig.type === 'sdp') {
+              console.log("WebRTC: Received Admin Connection request.");
+              const offer = JSON.parse(sig.data);
+
+              if (pc) {
+                pc.close();
+              }
+
+              pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+              });
+
+              if (webcamStream) {
+                webcamStream.getTracks().forEach(track => {
+                  pc.addTrack(track, webcamStream);
+                });
+              }
+
+              // Send candidate generated local ICE candidates
+              pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                  fetch(`${API_BASE}/tests/proctoring/signal/${subId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender: 'candidate', type: 'ice', data: JSON.stringify(event.candidate) })
+                  }).catch(err => console.error(err));
+                }
+              };
+
+              await pc.setRemoteDescription(new RTCSessionDescription(offer));
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+
+              // Post SDP answer back
+              await fetch(`${API_BASE}/tests/proctoring/signal/${subId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sender: 'candidate', type: 'sdp', data: JSON.stringify(answer) })
+              });
+            } else if (sig.type === 'ice') {
+              // Add Admin ICE candidate
+              const candidate = JSON.parse(sig.data);
+              if (pc) {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("WebRTC responder error:", err);
+      }
+    };
+
+    const interval = setInterval(checkAdminSignals, 3000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      if (pc) {
+        pc.close();
+      }
+    };
+  }, [flow, submission, webcamStream]);
+
+  // Poll candidate submission status for admin warning and disqualification events
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+
+    let active = true;
+    const subId = submission.id || submission._id;
+    let checkedEventIds = new Set();
+
+    const checkAdminMessages = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/tests/submitted?candidateId=${candidate?.id || candidate?._id}`);
+        if (res.ok && active) {
+          const subs = await res.json();
+          const match = subs.find(s => (s.submission?.id || s.submission?._id) === subId);
+          if (match && match.submission) {
+            const pLog = match.submission.proctoringLog || {};
+            const events = pLog.events || [];
+            
+            const hasDisqualified = events.some(e => e.type === 'DISQUALIFIED');
+            if (hasDisqualified) {
+              clearInterval(checkAdminMessages);
+              triggerCustomAlert("Malpractice Terminated", "This exam attempt has been terminated remotely by the Administrator due to proctoring/malpractice violations.");
+              setFlow('finished');
+              if (document.fullscreenElement) {
+                document.exitFullscreen().catch(err => console.warn(err));
+              }
+              return;
+            }
+
+            events.forEach(e => {
+              const eventId = e._id || e.timestamp;
+              if (e.type === 'ADMIN_WARNING' && !checkedEventIds.has(eventId)) {
+                checkedEventIds.add(eventId);
+                triggerCustomAlert("ADMINISTRATOR WARNING", `Message from Proctor: "${e.details}"`);
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Warning checker error:", e);
+      }
+    }, 4000);
+
+    return () => {
+      active = false;
+      clearInterval(checkAdminMessages);
+    };
+  }, [flow, submission, candidate]);
+
   // Sync current question values into draft buffers
   useEffect(() => {
     if (test && test.questions?.[selectedQuestionIndex]) {
@@ -429,7 +567,7 @@ export default function App() {
           submissionId: submission._id || submission.id,
           answers: answersList,
           proctoringLog: proctoringWarnings,
-          status: 'submitted'
+          status: 'started'
         })
       });
     } catch (e) {
@@ -437,19 +575,31 @@ export default function App() {
     }
   };
 
-  const syncProctoringLogs = async (warningsObj) => {
+  const syncProctoringLogs = async (warningsObj, eventType, eventDetails) => {
     try {
       if (!submission) return;
+      const subId = submission._id || submission.id;
       await fetch(`${API_BASE}/tests/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          submissionId: submission._id || submission.id,
+          submissionId: subId,
           answers: examAnswers,
           proctoringLog: warningsObj,
-          status: 'submitted'
+          status: 'started'
         })
       });
+
+      if (eventType) {
+        await fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: eventType,
+            details: eventDetails
+          })
+        });
+      }
     } catch (e) {
       console.error(e);
     }
@@ -667,7 +817,7 @@ export default function App() {
           
           {/* Card Header Bar */}
           <div className="cf-card-title" style={{ fontSize: '10.5pt', margin: 0, borderBottom: '1px solid var(--cf-border)', padding: '10px 15px' }}>
-            🏆 Proctoring Verification &amp; Setup: {test?.title}
+            Proctoring Verification &amp; Setup: {test?.title}
           </div>
           
           {/* Important Notice */}
@@ -680,7 +830,7 @@ export default function App() {
             
             {/* Left guidelines column */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', margin: 0 }}>📄 Examination Guidelines:</h4>
+              <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', margin: 0 }}>Examination Guidelines:</h4>
               <ul style={{ listStyleType: 'disc', paddingLeft: '20px', fontSize: '9pt', color: '#333', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <li>The time limit for this exam is <strong>{test?.duration} minutes</strong>.</li>
                 <li>Exiting <strong>Fullscreen Mode</strong> will trigger a warning. Exiting more than 3 times will result in <strong>automatic submission</strong>.</li>
@@ -712,7 +862,7 @@ export default function App() {
 
             {/* Right webcam stream calibration column */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', margin: 0 }}>📷 Camera Calibration:</h4>
+              <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', margin: 0 }}>Camera Calibration:</h4>
               
               <div style={{ backgroundColor: '#000', borderRadius: '4px', overflow: 'hidden', aspectRatio: '4/3', width: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', border: '1px solid var(--cf-border)' }}>
                 {webcamStream && webcamGranted ? (
@@ -1134,7 +1284,7 @@ export default function App() {
             zIndex: 2000
           }}>
             <div className="cf-card" style={{ maxWidth: '450px', padding: '25px', textAlign: 'center', border: '2px solid #e11d48' }}>
-              <div style={{ color: '#e11d48', fontSize: '32pt', marginBottom: '10px' }}>🚨</div>
+              <div style={{ color: '#e11d48', display: 'flex', justifyContent: 'center', marginBottom: '12px' }}><ShieldAlert size={48} /></div>
               <h3 style={{ fontSize: '13pt', color: '#b91c1c', fontWeight: 'bold', marginBottom: '10px' }}>
                 PROCTORING WARNING: WINDOW ACCESS DETECTED
               </h3>
