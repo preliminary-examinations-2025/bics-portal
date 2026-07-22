@@ -4,7 +4,7 @@ import {
   Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert,
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
-  Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2
+  Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || (() => {
@@ -308,6 +308,47 @@ export default function App() {
   const [logFilterAction, setLogFilterAction] = useState('ALL');
   const [logFilterSeverity, setLogFilterSeverity] = useState('ALL');
   const [logPage, setLogPage] = useState(1);
+
+  // Tickets & Contact Helpdesk states
+  const [contactCategory, setContactCategory] = useState('suggestion');
+  const [contactSubject, setContactSubject] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [contactSuccess, setContactSuccess] = useState('');
+  const [contactError, setContactError] = useState('');
+  const [studentTickets, setStudentTickets] = useState([]);
+  const [contactSubView, setContactSubView] = useState('form');
+  const [isSubmittingContact, setIsSubmittingContact] = useState(false);
+
+  const [adminTickets, setAdminTickets] = useState([]);
+  const [selectedAdminTicket, setSelectedAdminTicket] = useState(null);
+  const [adminTicketResolutionFeedback, setAdminTicketResolutionFeedback] = useState('');
+  const [adminTicketResolutionStatus, setAdminTicketResolutionStatus] = useState('resolved');
+  const [adminTicketFilterCategory, setAdminTicketFilterCategory] = useState('ALL');
+  const [adminTicketFilterStatus, setAdminTicketFilterStatus] = useState('ALL');
+
+  const fetchStudentTickets = async (candidateId) => {
+    try {
+      const res = await fetch(`${API_BASE}/tickets/candidate/${candidateId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStudentTickets(data.tickets || []);
+      }
+    } catch (e) {
+      console.error("Error fetching student tickets:", e);
+    }
+  };
+
+  const fetchAdminTickets = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/tickets`);
+      if (res.ok) {
+        const data = await res.json();
+        setAdminTickets(data.tickets || []);
+      }
+    } catch (e) {
+      console.error("Error fetching admin tickets:", e);
+    }
+  };
 
   const fetchSystemLogs = async () => {
     try {
@@ -1583,8 +1624,15 @@ export default function App() {
     if (!user) return false;
     if (view === 'changepassword') return true;
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
-    if (user.role === 'admin' && (view === 'admin' || view === 'admin_candidates' || view === 'admin_coursework' || view === 'admin_tests' || view === 'admin_logs' || view === 'admin_proctoring')) return true;
-    if (user.role === 'student' && view !== 'admin') return true;
+    
+    if (user.role === 'admin') {
+      return ['admin', 'admin_candidates', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets'].includes(view);
+    }
+    
+    if (user.role === 'student') {
+      return ['announcements', 'register', 'info', 'conduct', 'timetable', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup'].includes(view);
+    }
+    
     return false;
   };
 
@@ -1609,7 +1657,7 @@ export default function App() {
       <p style={{ fontSize: '9.5pt', color: '#555', marginBottom: '20px' }}>
         You do not have the required student or administrator credentials to access this section of the BICS Portal, or your session has expired.
       </p>
-      <button className="cf-btn-primary" onClick={() => setView('login')}>
+      <button className="cf-btn-primary" onClick={handleLogout}>
         Return to Sign In Page
       </button>
     </div>
@@ -1618,7 +1666,7 @@ export default function App() {
   return (
     <div>
       {/* HEADER */}
-      {!(view === 'onlinetest' || view === 'onlinetest_setup') && (
+      {!(view === 'onlinetest' || view === 'onlinetest_setup' || view === 'login') && (
         <header className="app-header">
           <div className="header-left">
             {user && (
@@ -1642,7 +1690,7 @@ export default function App() {
       {/* DASHBOARD CONTAINER */}
       <div className="app-container">
         {/* SIDEBAR */}
-        {user && !(view === 'onlinetest' || view === 'onlinetest_setup') && (
+        {user && !(view === 'onlinetest' || view === 'onlinetest_setup' || view === 'login') && (
           <aside className={`app-sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
             <nav className="sidebar-menu">
               {user.role === 'admin' ? (
@@ -1664,6 +1712,9 @@ export default function App() {
                   </button>
                   <button className={`sidebar-item ${view === 'admin_proctoring' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_proctoring'); setIsMobileSidebarOpen(false); fetchLiveSubmissions(); }}>
                     <Video size={16} /> Live Proctoring
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_tickets' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tickets'); setIsMobileSidebarOpen(false); fetchAdminTickets(); }}>
+                    <Ticket size={16} /> Tickets
                   </button>
                 </>
               ) : (
@@ -1733,6 +1784,10 @@ export default function App() {
                   </button>
                   {dropdowns.feedback && (
                     <div className="dropdown-container">
+                      <button className={`dropdown-item ${view === 'contact' ? 'active' : ''}`} onClick={() => { setView('contact'); setContactSuccess(''); setContactError(''); setContactSubView('form'); setIsMobileSidebarOpen(false); if (user) fetchStudentTickets(user.id || user._id); }}>
+                        <Mail size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
+                        <span>Contact</span>
+                      </button>
                       <button className={`dropdown-item ${view === 'midsem' ? 'active' : ''}`} onClick={() => { setView('midsem'); setFeedbackType('mid'); setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
                         <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
                         <span>Mid Sem Feedback {systemConfig && !systemConfig.midSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
@@ -2895,6 +2950,203 @@ export default function App() {
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* CONTACT HELPDESK & TICKETS MODULE */}
+          {view === 'contact' && studentProfile && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Contact Helpdesk</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button 
+                    className={`cf-btn-${contactSubView === 'form' ? 'primary' : 'secondary'}`} 
+                    onClick={() => { setContactSubView('form'); setContactSuccess(''); setContactError(''); }}
+                    style={{ fontSize: '8.5pt', padding: '6px 12px' }}
+                  >
+                    <Mail size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Submit Request
+                  </button>
+                  <button 
+                    className={`cf-btn-${contactSubView === 'history' ? 'primary' : 'secondary'}`} 
+                    onClick={() => { setContactSubView('history'); setContactSuccess(''); setContactError(''); fetchStudentTickets(user.id || user._id); }}
+                    style={{ fontSize: '8.5pt', padding: '6px 12px' }}
+                  >
+                    <LifeBuoy size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> My Requests ({studentTickets.length})
+                  </button>
+                </div>
+              </div>
+
+              {contactSubView === 'form' && (
+                <div className="cf-card" style={{ maxWidth: '640px', margin: '0 auto' }}>
+                  <div className="cf-card-title">Send a Suggestion, Feedback, Complaint, or Open a Ticket</div>
+                  
+                  {contactSuccess && <div className="cf-alert cf-alert-success" style={{ fontSize: '9pt', padding: '8px 12px', marginBottom: '15px' }}>{contactSuccess}</div>}
+                  {contactError && <div className="cf-alert cf-alert-danger" style={{ fontSize: '9pt', padding: '8px 12px', marginBottom: '15px' }}>{contactError}</div>}
+
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!contactSubject.trim() || !contactMessage.trim()) {
+                      setContactError("Please fill out all required fields.");
+                      return;
+                    }
+                    setIsSubmittingContact(true);
+                    setContactSuccess('');
+                    setContactError('');
+                    try {
+                      const res = await fetch(`${API_BASE}/tickets/${user.id || user._id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          category: contactCategory,
+                          subject: contactSubject,
+                          message: contactMessage
+                        })
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        setContactSuccess("Your helpdesk request has been successfully submitted!");
+                        setContactSubject('');
+                        setContactMessage('');
+                        fetchStudentTickets(user.id || user._id);
+                      } else {
+                        setContactError(data.error || "Submission failed.");
+                      }
+                    } catch (err) {
+                      setContactError("Network error. Failed to connect to server.");
+                    } finally {
+                      setIsSubmittingContact(false);
+                    }
+                  }}>
+                    <div className="cf-input-group" style={{ marginBottom: '15px' }}>
+                      <label className="cf-label">Request Category *</label>
+                      <select 
+                        className="cf-input" 
+                        value={contactCategory} 
+                        onChange={e => setContactCategory(e.target.value)}
+                        required
+                      >
+                        <option value="suggestion">Suggestion</option>
+                        <option value="general_feedback">General Feedback</option>
+                        <option value="complaint">Complaint</option>
+                        <option value="enquiry">General Enquiry</option>
+                        <option value="technical_problem">Technical Problem (Open Ticket)</option>
+                      </select>
+                    </div>
+
+                    <div className="cf-input-group" style={{ marginBottom: '15px' }}>
+                      <label className="cf-label">Subject *</label>
+                      <input 
+                        type="text" 
+                        className="cf-input" 
+                        placeholder="Brief summary of your request..."
+                        value={contactSubject}
+                        onChange={e => setContactSubject(e.target.value)}
+                        required
+                        maxLength={100}
+                      />
+                    </div>
+
+                    <div className="cf-input-group" style={{ marginBottom: '20px' }}>
+                      <label className="cf-label">Message / Details *</label>
+                      <textarea 
+                        className="cf-input" 
+                        rows="6" 
+                        placeholder="Provide details about your query, feedback, or technical issue..."
+                        value={contactMessage}
+                        onChange={e => setContactMessage(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <button 
+                      type="submit" 
+                      className="cf-btn-primary" 
+                      style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}
+                      disabled={isSubmittingContact}
+                    >
+                      {isSubmittingContact ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" /> Submitting Request...
+                        </>
+                      ) : (
+                        contactCategory === 'technical_problem' ? "Open Support Ticket" : "Submit Request"
+                      )}
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {contactSubView === 'history' && (
+                <div>
+                  {studentTickets.length === 0 ? (
+                    <div className="cf-card" style={{ padding: '30px', textAlign: 'center', color: '#64748b', borderStyle: 'dashed' }}>
+                      <Mail size={40} style={{ color: '#cbd5e1', marginBottom: '10px' }} />
+                      <p style={{ margin: 0, fontSize: '9.5pt' }}>You have not submitted any helpdesk requests or support tickets yet.</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                      {studentTickets.map(t => {
+                        const tId = t.id || t._id;
+                        let categoryLabel = t.category;
+                        if (t.category === 'suggestion') categoryLabel = 'Suggestion';
+                        else if (t.category === 'general_feedback') categoryLabel = 'General Feedback';
+                        else if (t.category === 'complaint') categoryLabel = 'Complaint';
+                        else if (t.category === 'enquiry') categoryLabel = 'Enquiry';
+                        else if (t.category === 'technical_problem') categoryLabel = 'Technical Problem';
+
+                        let statusBg = '#f1f5f9';
+                        let statusColor = '#475569';
+                        if (t.status === 'open') {
+                          statusBg = '#eff6ff';
+                          statusColor = '#2563eb';
+                        } else if (t.status === 'resolved') {
+                          statusBg = '#ecfdf5';
+                          statusColor = '#059669';
+                        } else if (t.status === 'closed') {
+                          statusBg = '#f8fafc';
+                          statusColor = '#64748b';
+                        }
+
+                        return (
+                          <div key={tId} className="cf-card" style={{ padding: '20px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px', marginBottom: '12px', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px' }}>
+                              <div>
+                                <span style={{ fontSize: '8pt', color: '#64748b', display: 'block' }}>{new Date(t.createdAt).toLocaleString()}</span>
+                                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '4px 0 0 0' }}>
+                                  {t.subject}
+                                </h3>
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <span style={{ fontSize: '8pt', fontWeight: 'bold', padding: '2px 8px', backgroundColor: '#e2e8f0', color: '#334155', borderRadius: '4px' }}>
+                                  {categoryLabel}
+                                </span>
+                                <span style={{ fontSize: '8pt', fontWeight: 'bold', padding: '2px 8px', backgroundColor: statusBg, color: statusColor, borderRadius: '4px', textTransform: 'uppercase' }}>
+                                  {t.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <p style={{ fontSize: '9pt', color: '#334155', whiteSpace: 'pre-wrap', lineHeight: '1.5', margin: '0 0 15px 0' }}>
+                              {t.message}
+                            </p>
+
+                            {(t.status === 'resolved' || t.resolutionFeedback) && (
+                              <div style={{ backgroundColor: '#f8fafc', borderLeft: '4px solid #10b981', padding: '12px', borderRadius: '4px', marginTop: '10px' }}>
+                                <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#065f46', display: 'block', marginBottom: '4px' }}>
+                                  Support Resolution Response:
+                                </span>
+                                <p style={{ fontSize: '9pt', color: '#0f172a', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+                                  {t.resolutionFeedback || 'This request has been marked as resolved by the portal administrator.'}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -4690,6 +4942,245 @@ export default function App() {
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {view === 'admin_tickets' && (
+            <div className="cf-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Helpdesk Tickets & Requests</h2>
+                <button className="cf-btn-secondary" onClick={fetchAdminTickets} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <RefreshCw size={14} /> Refresh Tickets
+                </button>
+              </div>
+
+              {/* Advanced Filter Bar */}
+              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '4px', marginBottom: '20px', border: '1px solid var(--cf-border)' }}>
+                <div style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Category Filter</label>
+                  <select
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
+                    value={adminTicketFilterCategory}
+                    onChange={e => setAdminTicketFilterCategory(e.target.value)}
+                  >
+                    <option value="ALL">All Categories</option>
+                    <option value="suggestion">Suggestions</option>
+                    <option value="general_feedback">General Feedback</option>
+                    <option value="complaint">Complaints</option>
+                    <option value="enquiry">Enquiries</option>
+                    <option value="technical_problem">Technical Problems</option>
+                  </select>
+                </div>
+
+                <div style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Status Filter</label>
+                  <select
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
+                    value={adminTicketFilterStatus}
+                    onChange={e => setAdminTicketFilterStatus(e.target.value)}
+                  >
+                    <option value="ALL">All Statuses</option>
+                    <option value="open">Open</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Tickets Table */}
+              <div className="table-responsive" style={{ border: '1px solid var(--cf-border)', borderRadius: '4px', overflow: 'hidden' }}>
+                <table className="cf-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '150px' }}>Submitted Date</th>
+                      <th>Candidate Details</th>
+                      <th>Category</th>
+                      <th>Subject</th>
+                      <th style={{ width: '120px' }}>Status</th>
+                      <th style={{ width: '140px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      let list = [...adminTickets];
+                      if (adminTicketFilterCategory !== 'ALL') {
+                        list = list.filter(t => t.category === adminTicketFilterCategory);
+                      }
+                      if (adminTicketFilterStatus !== 'ALL') {
+                        list = list.filter(t => t.status === adminTicketFilterStatus);
+                      }
+
+                      if (list.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan="6" style={{ fontStyle: 'italic', textAlign: 'center', padding: '20px', color: '#64748b' }}>No helpdesk tickets match the current filters.</td>
+                          </tr>
+                        );
+                      }
+
+                      return (
+                        <>
+                          {list.map((ticket, idx) => {
+                            let statusBg = '#f1f5f9';
+                            let statusColor = '#475569';
+                            if (ticket.status === 'open') {
+                              statusBg = '#eff6ff';
+                              statusColor = '#2563eb';
+                            } else if (ticket.status === 'resolved') {
+                              statusBg = '#ecfdf5';
+                              statusColor = '#059669';
+                            } else if (ticket.status === 'closed') {
+                              statusBg = '#f8fafc';
+                              statusColor = '#64748b';
+                            }
+
+                            let categoryLabel = ticket.category;
+                            if (ticket.category === 'suggestion') categoryLabel = 'Suggestion';
+                            else if (ticket.category === 'general_feedback') categoryLabel = 'General Feedback';
+                            else if (ticket.category === 'complaint') categoryLabel = 'Complaint';
+                            else if (ticket.category === 'enquiry') categoryLabel = 'Enquiry';
+                            else if (ticket.category === 'technical_problem') categoryLabel = 'Technical Problem';
+
+                            const tId = ticket.id || ticket._id;
+
+                            return (
+                              <tr key={tId || idx}>
+                                <td style={{ fontSize: '8.5pt' }}>{new Date(ticket.createdAt).toLocaleString()}</td>
+                                <td>
+                                  <div style={{ fontWeight: 'bold', fontSize: '9pt', color: '#1e293b' }}>{ticket.candidateName}</div>
+                                  <div style={{ fontSize: '7.5pt', color: '#64748b' }}>ID: {ticket.studentId}</div>
+                                </td>
+                                <td>
+                                  <span style={{ fontSize: '8.5pt', fontWeight: 'bold', padding: '2px 8px', backgroundColor: '#e2e8f0', color: '#334155', borderRadius: '4px' }}>
+                                    {categoryLabel}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '9pt', color: '#334155', fontWeight: '500' }}>{ticket.subject}</td>
+                                <td>
+                                  <span className="status-badge" style={{ backgroundColor: statusBg, color: statusColor, fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                    {ticket.status}
+                                  </span>
+                                </td>
+                                <td>
+                                  <button
+                                    className="cf-btn-secondary"
+                                    onClick={() => {
+                                      setSelectedAdminTicket(ticket);
+                                      setAdminTicketResolutionFeedback(ticket.resolutionFeedback || '');
+                                      setAdminTicketResolutionStatus(ticket.status || 'resolved');
+                                    }}
+                                    style={{ padding: '4px 10px', fontSize: '8.5pt', margin: 0 }}
+                                  >
+                                    View / Resolve
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ADMIN RESOLUTION DETAIL MODAL */}
+              {selectedAdminTicket && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  zIndex: 1000
+                }}>
+                  <div className="cf-card" style={{ width: '90%', maxWidth: '600px', padding: '20px', border: '1px solid #b9c9fe', boxShadow: 'none', backgroundColor: '#fff', maxHeight: '90vh', overflowY: 'auto' }}>
+                    <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Ticket Details & Resolution</span>
+                      <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedAdminTicket(null)}>✕</button>
+                    </div>
+
+                    <div style={{ borderBottom: '1px solid var(--cf-border)', paddingBottom: '15px', marginBottom: '15px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '8.5pt', color: '#64748b', marginBottom: '10px' }}>
+                        <div><strong>Candidate:</strong> {selectedAdminTicket.candidateName} ({selectedAdminTicket.studentId})</div>
+                        <div><strong>Submitted:</strong> {new Date(selectedAdminTicket.createdAt).toLocaleString()}</div>
+                        <div><strong>Category:</strong> <span style={{ textTransform: 'capitalize' }}>{selectedAdminTicket.category?.replace('_', ' ')}</span></div>
+                        <div><strong>Current Status:</strong> <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{selectedAdminTicket.status}</span></div>
+                      </div>
+                      <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '10px 0 6px 0' }}>
+                        Subject: {selectedAdminTicket.subject}
+                      </h3>
+                      <div style={{ backgroundColor: '#f8fafc', padding: '12px', border: '1px solid var(--cf-border)', borderRadius: '4px', fontSize: '9pt', color: '#0f172a', whiteSpace: 'pre-wrap', lineHeight: '1.5', maxHeight: '180px', overflowY: 'auto' }}>
+                        {selectedAdminTicket.message}
+                      </div>
+                    </div>
+
+                    <form onSubmit={async (e) => {
+                      e.preventDefault();
+                      try {
+                        const ticketId = selectedAdminTicket.id || selectedAdminTicket._id;
+                        const res = await fetch(`${API_BASE}/admin/tickets/resolve/${ticketId}`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            status: adminTicketResolutionStatus,
+                            resolutionFeedback: adminTicketResolutionFeedback
+                          })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                          setSelectedAdminTicket(null);
+                          fetchAdminTickets();
+                        } else {
+                          alert(data.error || "Failed to update ticket.");
+                        }
+                      } catch (err) {
+                        alert("Network error. Failed to resolve ticket.");
+                      }
+                    }}>
+                      <div className="cf-input-group" style={{ marginBottom: '15px' }}>
+                        <label className="cf-label">Update Status *</label>
+                        <select
+                          className="cf-input"
+                          value={adminTicketResolutionStatus}
+                          onChange={e => setAdminTicketResolutionStatus(e.target.value)}
+                          required
+                        >
+                          <option value="open">Open</option>
+                          <option value="resolved">Resolved</option>
+                          <option value="closed">Closed</option>
+                        </select>
+                      </div>
+
+                      <div className="cf-input-group" style={{ marginBottom: '20px' }}>
+                        <label className="cf-label">Administrative Response / Comments</label>
+                        <textarea
+                          className="cf-input"
+                          rows="4"
+                          placeholder="Provide feedback or resolution details to the candidate..."
+                          value={adminTicketResolutionFeedback}
+                          onChange={e => setAdminTicketResolutionFeedback(e.target.value)}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                        <button type="button" className="cf-btn-secondary" onClick={() => setSelectedAdminTicket(null)}>
+                          Cancel
+                        </button>
+                        <button type="submit" className="cf-btn-primary">
+                          Save Resolution
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
             </div>
           )}
             </>

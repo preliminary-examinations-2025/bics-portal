@@ -129,6 +129,7 @@ const initialDB = {
         }
     ],
     testSubmissions: [],
+    tickets: [],
     config: {
         courseRegistrationActive: true,
         onlineExamActive: true,
@@ -333,6 +334,20 @@ const SystemLogSchema = new mongoose.Schema({
     severity: { type: String, default: 'info' } // 'info', 'warning', 'error'
 }, { versionKey: false });
 const SystemLogModel = mongoose.model('SystemLog', SystemLogSchema, 'systemlogs');
+
+const TicketSchema = new mongoose.Schema({
+    candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate' },
+    candidateName: String,
+    studentId: String,
+    category: String,          // 'suggestion', 'general_feedback', 'complaint', 'enquiry', 'technical_problem'
+    subject: String,
+    message: String,
+    status: { type: String, default: 'open' }, // 'open', 'resolved', 'closed'
+    resolutionFeedback: { type: String, default: '' },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+const TicketModel = mongoose.model('Ticket', TicketSchema, 'tickets');
 
 const TestSignalSchema = new mongoose.Schema({
     submissionId: { type: String, index: true },
@@ -1964,6 +1979,162 @@ app.get('/api/tests/proctoring/signal/:submissionId', async (req, res) => {
     } catch (e) {
         console.error(e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to read WebRTC signals for submission ${submissionId}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 14. Helpdesk & Tickets Endpoints
+
+// Create a new helpdesk ticket (Student portal submit)
+app.post('/api/tickets/:candidateId', async (req, res) => {
+    const { candidateId } = req.params;
+    const { category, subject, message } = req.body;
+    if (!category || !subject || !message) {
+        return res.status(400).json({ error: "Category, subject, and message are required." });
+    }
+
+    try {
+        let newTicket = null;
+        let candidateName = 'Unknown Candidate';
+        let studentId = 'Unknown ID';
+
+        if (useMongo) {
+            const cand = await CandidateModel.findById(candidateId);
+            if (cand) {
+                candidateName = cand.name || candidateName;
+                studentId = cand.studentId || studentId;
+            }
+
+            newTicket = new TicketModel({
+                candidateId,
+                candidateName,
+                studentId,
+                category,
+                subject,
+                message,
+                status: 'open'
+            });
+            await newTicket.save();
+        } else {
+            const db = getJSONData();
+            const cand = db.candidates.find(c => c.id === candidateId || c._id === candidateId);
+            if (cand) {
+                candidateName = cand.name || candidateName;
+                studentId = cand.studentId || studentId;
+            }
+
+            newTicket = {
+                id: Date.now().toString(),
+                _id: Date.now().toString(),
+                candidateId,
+                candidateName,
+                studentId,
+                category,
+                subject,
+                message,
+                status: 'open',
+                resolutionFeedback: '',
+                createdAt: new Date(),
+                updatedAt: new Date()
+            };
+            db.tickets = db.tickets || [];
+            db.tickets.push(newTicket);
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            candidateName,
+            'TICKET_CREATED',
+            `Candidate opened a new ticket under category "${category}": ${subject}`,
+            'info'
+        );
+
+        return res.json({ success: true, ticket: newTicket });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to create ticket: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// Fetch student's own tickets (Student portal history view)
+app.get('/api/tickets/candidate/:candidateId', async (req, res) => {
+    const { candidateId } = req.params;
+    try {
+        let tickets = [];
+        if (useMongo) {
+            tickets = await TicketModel.find({ candidateId }).sort({ createdAt: -1 });
+        } else {
+            const db = getJSONData();
+            db.tickets = db.tickets || [];
+            tickets = db.tickets
+                .filter(t => t.candidateId === candidateId)
+                .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        }
+        return res.json({ success: true, tickets });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to fetch candidate tickets: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// Fetch all tickets (Admin dashboard view)
+app.get('/api/admin/tickets', async (req, res) => {
+    try {
+        let tickets = [];
+        if (useMongo) {
+            tickets = await TicketModel.find({}).sort({ createdAt: -1 });
+        } else {
+            const db = getJSONData();
+            db.tickets = db.tickets || [];
+            tickets = [...db.tickets].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        }
+        return res.json({ success: true, tickets });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to fetch all tickets: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// Resolve/Update ticket status (Admin dashboard resolution)
+app.post('/api/admin/tickets/resolve/:ticketId', async (req, res) => {
+    const { ticketId } = req.params;
+    const { status, resolutionFeedback } = req.body;
+    if (!status) return res.status(400).json({ error: "Status is required." });
+
+    try {
+        let ticket = null;
+        if (useMongo) {
+            ticket = await TicketModel.findById(ticketId);
+            if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+            ticket.status = status;
+            ticket.resolutionFeedback = resolutionFeedback || '';
+            ticket.updatedAt = new Date();
+            await ticket.save();
+        } else {
+            const db = getJSONData();
+            db.tickets = db.tickets || [];
+            ticket = db.tickets.find(t => t.id === ticketId || t._id === ticketId);
+            if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+            ticket.status = status;
+            ticket.resolutionFeedback = resolutionFeedback || '';
+            ticket.updatedAt = new Date();
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            'admin',
+            'TICKET_RESOLVED',
+            `Admin updated ticket ID ${ticketId} status to "${status}"`,
+            'info'
+        );
+
+        return res.json({ success: true, ticket });
+    } catch (e) {
+        console.error(e);
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to resolve ticket: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
