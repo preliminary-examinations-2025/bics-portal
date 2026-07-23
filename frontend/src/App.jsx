@@ -373,8 +373,7 @@ export default function App() {
           allSubs = [...allSubs, ...subs];
         }
       }
-      const activeSubs = allSubs.filter(s => s.status === 'started');
-      setLiveSubmissions(activeSubs);
+      setLiveSubmissions(allSubs);
     } catch (e) {
       console.error("Error fetching live submissions:", e);
     }
@@ -4846,17 +4845,9 @@ export default function App() {
                     }}
                   >
                     <option value="">-- Choose Live Access Exam --</option>
-                    {(() => {
-                      const now = new Date();
-                      const runningTests = adminTests.filter(t => {
-                        const start = new Date(t.startDate);
-                        const end = new Date(t.endDate);
-                        return now >= start && now <= end;
-                      });
-                      return runningTests.map(t => (
-                        <option key={t.id || t._id} value={t.id || t._id}>{t.title}</option>
-                      ));
-                    })()}
+                    {adminTests.map(t => (
+                      <option key={t.id || t._id} value={t.id || t._id}>{t.title}</option>
+                    ))}
                   </select>
                 </div>
 
