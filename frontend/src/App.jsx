@@ -5508,6 +5508,14 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
             }
             if (match.status) {
               setStatus(match.status);
+              if (match.status !== 'started' && pcRef.current) {
+                if (pcRef.current.pollInterval) {
+                  clearInterval(pcRef.current.pollInterval);
+                }
+                pcRef.current.close();
+                pcRef.current = null;
+                setConnectionStatus('Offline (Session Completed)');
+              }
             }
           }
         }
@@ -5596,7 +5604,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   };
 
   useEffect(() => {
-    if (status === 'started') {
+    if (sub.status === 'started') {
       startWebRTC();
     } else {
       setConnectionStatus('Offline (Session Completed)');
@@ -5609,7 +5617,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
         pcRef.current.close();
       }
     };
-  }, [subId, status]);
+  }, [subId]);
 
   const handleTerminateExam = async () => {
     if (!window.confirm(`Are you absolutely sure you want to terminate ${sub.candidateName || 'this student'}'s exam attempt?`)) return;
