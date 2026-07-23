@@ -4809,138 +4809,105 @@ export default function App() {
 
           {view === 'admin_proctoring' && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              {/* TOP HEADER SECTION */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
                 <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Live Exam Proctoring Terminal</h2>
+                <button
+                  className="cf-btn-secondary"
+                  onClick={fetchLiveSubmissions}
+                  style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '8.5pt', margin: 0 }}
+                >
+                  <RefreshCw size={14} /> Refresh Lists
+                </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '20px', minHeight: '520px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', borderRight: '1px solid var(--cf-border)', paddingRight: '20px' }}>
-                  <div>
-                    <h4 style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <BookOpen size={16} /> Configured Examinations
-                    </h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {(() => {
-                        const now = new Date();
-                        const runningTests = adminTests.filter(t => {
-                          const start = new Date(t.startDate);
-                          const end = new Date(t.endDate);
-                          return now >= start && now <= end;
-                        });
-
-                        if (runningTests.length === 0) {
-                          return <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>No active examinations in progress.</div>;
-                        }
-
-                        return runningTests.map(t => {
-                          const tId = t.id || t._id;
-                          const activeCount = liveSubmissions.filter(s => (s.testId === tId) && s.status === 'started').length;
-                          const isSelected = selectedProctorTest && (selectedProctorTest.id === tId || selectedProctorTest._id === tId);
-                          return (
-                            <button
-                              key={tId}
-                              onClick={() => {
-                                setSelectedProctorTest(t);
-                                setSelectedProctorStudent(null);
-                              }}
-                              className="cf-btn-secondary"
-                              style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                textAlign: 'left',
-                                padding: '8px 12px',
-                                fontSize: '8.5pt',
-                                border: isSelected ? '1px solid #1e40af' : '1px solid var(--cf-border)',
-                                backgroundColor: isSelected ? '#eff6ff' : '#fff',
-                                color: isSelected ? '#1e40af' : '#334155',
-                                fontWeight: isSelected ? 'bold' : 'normal',
-                                width: '100%'
-                              }}
-                            >
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>{t.title}</span>
-                              {activeCount > 0 && (
-                                <span style={{ backgroundColor: '#dc2626', color: '#fff', borderRadius: '4px', padding: '2px 6px', fontSize: '7.5pt', fontWeight: 'bold' }}>
-                                  {activeCount} active
-                                </span>
-                              )}
-                            </button>
-                          );
-                        });
-                      })()}
-                    </div>
-                  </div>
-
-                  {selectedProctorTest && (
-                    <div>
-                      <h4 style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Users size={16} /> Active Examinees
-                      </h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {(() => {
-                          const tId = selectedProctorTest.id || selectedProctorTest._id;
-                          const testStudents = liveSubmissions.filter(s => s.testId === tId && s.status === 'started');
-                          if (testStudents.length === 0) {
-                            return <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>No active examinees found.</div>;
-                          }
-                          return testStudents.map(sub => {
-                            const subId = sub.id || sub._id;
-                            const isSelected = selectedProctorStudent && (selectedProctorStudent.id === subId || selectedProctorStudent._id === subId);
-                            return (
-                              <button
-                                key={subId}
-                                onClick={() => setSelectedProctorStudent(sub)}
-                                className="cf-btn-secondary"
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  textAlign: 'left',
-                                  padding: '8px 12px',
-                                  fontSize: '8.5pt',
-                                  border: isSelected ? '1px solid #1e40af' : '1px solid var(--cf-border)',
-                                  backgroundColor: isSelected ? '#eff6ff' : '#fff',
-                                  color: isSelected ? '#1e40af' : '#334155',
-                                  fontWeight: isSelected ? 'bold' : 'normal',
-                                  width: '100%'
-                                }}
-                              >
-                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }}></span>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.candidateName}</span>
-                              </button>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    className="cf-btn-primary"
-                    onClick={fetchLiveSubmissions}
-                    style={{ marginTop: 'auto', display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', fontSize: '8.5pt', padding: '8px' }}
+              {/* SPACE-SAVING TOP CONTROL BAR */}
+              <div style={{
+                display: 'flex',
+                gap: '20px',
+                flexWrap: 'wrap',
+                backgroundColor: '#f8fafc',
+                padding: '15px',
+                borderRadius: '4px',
+                marginBottom: '20px',
+                border: '1px solid var(--cf-border)',
+                alignItems: 'flex-end'
+              }}>
+                <div style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Select Examination</label>
+                  <select
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
+                    value={selectedProctorTest ? (selectedProctorTest.id || selectedProctorTest._id) : ''}
+                    onChange={e => {
+                      const found = adminTests.find(t => (t.id || t._id) === e.target.value);
+                      setSelectedProctorTest(found || null);
+                      setSelectedProctorStudent(null);
+                    }}
                   >
-                    <RefreshCw size={14} /> Refresh Active Lists
-                  </button>
+                    <option value="">-- Choose Live Access Exam --</option>
+                    {(() => {
+                      const now = new Date();
+                      const runningTests = adminTests.filter(t => {
+                        const start = new Date(t.startDate);
+                        const end = new Date(t.endDate);
+                        return now >= start && now <= end;
+                      });
+                      return runningTests.map(t => (
+                        <option key={t.id || t._id} value={t.id || t._id}>{t.title}</option>
+                      ));
+                    })()}
+                  </select>
                 </div>
 
-                <div style={{ minWidth: 0 }}>
-                  {!selectedProctorStudent ? (
-                    <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', textAlign: 'center', color: '#64748b', borderStyle: 'dashed', height: '100%', minHeight: '360px' }}>
-                      <Video size={48} style={{ color: '#94a3b8', marginBottom: '15px' }} />
-                      <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#334155', margin: '0 0 5px 0' }}>Examinee Stream Offline</h3>
-                      <p style={{ fontSize: '8.5pt', color: '#64748b', maxWidth: '320px', margin: 0 }}>
-                        Select a configured examination and click on an active candidate's name from the left monitor panel to initialize the proctoring connection.
-                      </p>
-                    </div>
-                  ) : (
-                    <StudentProctorDashboard
-                      sub={selectedProctorStudent}
-                      onClose={() => setSelectedProctorStudent(null)}
-                      fetchLiveSubmissions={fetchLiveSubmissions}
-                    />
-                  )}
+                <div style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Select Examinee</label>
+                  <select
+                    className="cf-input"
+                    style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
+                    value={selectedProctorStudent ? (selectedProctorStudent.id || selectedProctorStudent._id) : ''}
+                    onChange={e => {
+                      const found = liveSubmissions.find(s => (s.id || s._id) === e.target.value);
+                      setSelectedProctorStudent(found || null);
+                    }}
+                    disabled={!selectedProctorTest}
+                  >
+                    <option value="">{selectedProctorTest ? "-- Choose Student Support --" : "-- Select an Exam First --"}</option>
+                    {selectedProctorTest && (() => {
+                      const tId = selectedProctorTest.id || selectedProctorTest._id;
+                      const testStudents = liveSubmissions.filter(s => s.testId === tId);
+                      return testStudents.map(sub => {
+                        const subId = sub.id || sub._id;
+                        const isActive = sub.status === 'started';
+                        const prefix = isActive ? '🟢 [Active] ' : '⚪ [Completed] ';
+                        return (
+                          <option key={subId} value={subId}>
+                            {prefix} {sub.candidateName} ({sub.studentId})
+                          </option>
+                        );
+                      });
+                    })()}
+                  </select>
                 </div>
+              </div>
+
+              {/* MONITOR SCREEN CONTAINER */}
+              <div style={{ minHeight: '400px' }}>
+                {!selectedProctorStudent ? (
+                  <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', textAlign: 'center', color: '#64748b', borderStyle: 'dashed', minHeight: '360px' }}>
+                    <Video size={48} style={{ color: '#94a3b8', marginBottom: '15px' }} />
+                    <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#334155', margin: '0 0 5px 0' }}>Examinee Session Monitor</h3>
+                    <p style={{ fontSize: '8.5pt', color: '#64748b', maxWidth: '380px', margin: 0 }}>
+                      Select a configured examination and choose a candidate from the top dropdown selectors to view real-time camera proctoring feeds or review historic logs.
+                    </p>
+                  </div>
+                ) : (
+                  <StudentProctorDashboard
+                    sub={selectedProctorStudent}
+                    onClose={() => setSelectedProctorStudent(null)}
+                    fetchLiveSubmissions={fetchLiveSubmissions}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -5522,6 +5489,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
   const [isMuted, setIsMuted] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
+  const [status, setStatus] = useState(sub.status || 'started');
   const videoRef = React.useRef(null);
   const pcRef = React.useRef(null);
   const subId = sub.id || sub._id;
@@ -5534,14 +5502,19 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
         if (res.ok && active) {
           const subs = await res.json();
           const match = subs.find(s => (s.id || s._id) === subId);
-          if (match && match.proctoringLog) {
-            setLogs(match.proctoringLog.events || []);
+          if (match) {
+            if (match.proctoringLog) {
+              setLogs(match.proctoringLog.events || []);
+            }
+            if (match.status) {
+              setStatus(match.status);
+            }
           }
         }
       } catch (e) {
         console.error(e);
       }
-    }, 3000);
+    }, 5000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -5623,7 +5596,11 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   };
 
   useEffect(() => {
-    startWebRTC();
+    if (status === 'started') {
+      startWebRTC();
+    } else {
+      setConnectionStatus('Offline (Session Completed)');
+    }
     return () => {
       if (pcRef.current) {
         if (pcRef.current.pollInterval) {
@@ -5632,7 +5609,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
         pcRef.current.close();
       }
     };
-  }, [subId]);
+  }, [subId, status]);
 
   const handleTerminateExam = async () => {
     if (!window.confirm(`Are you absolutely sure you want to terminate ${sub.candidateName || 'this student'}'s exam attempt?`)) return;
@@ -5661,6 +5638,8 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
     }
   };
 
+  const isCompleted = status === 'submitted' || status === 'auto-submitted';
+
   return (
     <div className="cf-card" style={{ padding: '20px', margin: 0, border: '1px solid var(--cf-border)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
@@ -5673,8 +5652,8 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
             display: 'inline-flex',
             alignItems: 'center',
             gap: '5px',
-            backgroundColor: connectionStatus === 'Connected' ? '#ecfdf5' : '#fffbeb',
-            color: connectionStatus === 'Connected' ? '#059669' : '#d97706',
+            backgroundColor: isCompleted ? '#f1f5f9' : (connectionStatus === 'Connected' ? '#ecfdf5' : '#fffbeb'),
+            color: isCompleted ? '#64748b' : (connectionStatus === 'Connected' ? '#059669' : '#d97706'),
             fontSize: '8.5pt',
             fontWeight: 'bold',
             padding: '4px 10px',
@@ -5686,59 +5665,86 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '20px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{
-            backgroundColor: '#000',
-            borderRadius: '4px',
-            overflow: 'hidden',
-            aspectRatio: '4/3',
-            width: '100%',
-            position: 'relative',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            border: '1px solid var(--cf-border)'
-          }}>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted={isMuted}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
-            />
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              style={{
-                position: 'absolute',
-                bottom: '12px',
-                right: '12px',
-                backgroundColor: isMuted ? '#ef4444' : '#10b981',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '6px 12px',
-                fontSize: '8.5pt',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                zIndex: 10,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-              {isMuted ? 'Muted' : 'Audible'}
-            </button>
-          </div>
+          {isCompleted ? (
+            <div style={{
+              backgroundColor: '#1e293b',
+              borderRadius: '4px',
+              overflow: 'hidden',
+              aspectRatio: '4/3',
+              width: '100%',
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              alignItems: 'center',
+              border: '1px solid var(--cf-border)',
+              color: '#cbd5e1',
+              padding: '40px 20px',
+              textAlign: 'center'
+            }}>
+              <Video size={48} style={{ color: '#64748b', marginBottom: '15px' }} />
+              <strong style={{ fontSize: '11pt', color: '#fff', marginBottom: '4px' }}>Exam Session Completed</strong>
+              <span style={{ fontSize: '8.5pt', color: '#94a3b8', maxWidth: '320px' }}>
+                This candidate has finalized and submitted their exam answers. Live camera feed is offline. Historic activity logs are preserved.
+              </span>
+            </div>
+          ) : (
+            <div style={{
+              backgroundColor: '#000',
+              borderRadius: '4px',
+              overflow: 'hidden',
+              aspectRatio: '4/3',
+              width: '100%',
+              position: 'relative',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              border: '1px solid var(--cf-border)'
+            }}>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted={isMuted}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
+              />
+              <button
+                onClick={() => setIsMuted(!isMuted)}
+                style={{
+                  position: 'absolute',
+                  bottom: '12px',
+                  right: '12px',
+                  backgroundColor: isMuted ? '#ef4444' : '#10b981',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '6px 12px',
+                  fontSize: '8.5pt',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  zIndex: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                {isMuted ? 'Muted' : 'Audible'}
+              </button>
+            </div>
+          )}
 
-          <button
-            onClick={handleTerminateExam}
-            className="cf-btn-primary"
-            style={{ width: '100%', padding: '10px', fontSize: '9.5pt', backgroundColor: '#dc2626', borderColor: '#dc2626', fontWeight: 'bold' }}
-          >
-            Disqualify Candidate
-          </button>
+          {!isCompleted && (
+            <button
+              onClick={handleTerminateExam}
+              className="cf-btn-primary"
+              style={{ width: '100%', padding: '10px', fontSize: '9.5pt', backgroundColor: '#dc2626', borderColor: '#dc2626', fontWeight: 'bold' }}
+            >
+              Disqualify Candidate
+            </button>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

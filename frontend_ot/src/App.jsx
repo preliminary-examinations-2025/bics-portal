@@ -338,6 +338,11 @@ export default function App() {
       setSubmission(data.submission);
       setExamTimeLeft(Number(test.duration) * 60);
 
+      // Log initial proctoring events
+      logProctoringEvent(data.submission, 'TEST_STARTED', `${candidate.name || 'Candidate'} started the test.`);
+      logProctoringEvent(data.submission, 'PROCTORING_ALLOWED', 'Webcam and microphone access allowed.');
+      logProctoringEvent(data.submission, 'CONSENT_ACCEPTED', 'Malpractice undertaking consent accepted.');
+
       setFlow('active_exam');
       setTimeout(() => {
         if (examVideoRef.current && webcamStream) {
@@ -521,6 +526,17 @@ export default function App() {
       selectedLanguage: draftLanguage
     };
     setExamAnswers(updated);
+
+    const activeQuestion = test.questions?.[selectedQuestionIndex];
+    if (activeQuestion) {
+      const qNum = selectedQuestionIndex + 1;
+      if (activeQuestion.type === 'mcq' && draftMCQ !== null) {
+        const optionLetter = String.fromCharCode(65 + draftMCQ);
+        logProctoringEvent(submission, 'OPTION_MARKED', `Marked option ${optionLetter} for Q${qNum}.`);
+      } else if (activeQuestion.type === 'code') {
+        logProctoringEvent(submission, 'CODE_UPDATED', `Updated code implementation for Q${qNum}.`);
+      }
+    }
     
     // Save to sessionStorage cache
     const storageKey = `bics_draft_${test.id}_${candidate.id}`;
@@ -572,6 +588,21 @@ export default function App() {
       });
     } catch (e) {
       console.warn("Failed to sync background draft with database:", e);
+    }
+  };
+
+  const logProctoringEvent = async (subObj, type, details) => {
+    try {
+      const targetSub = subObj || submission;
+      if (!targetSub) return;
+      const subId = targetSub.id || targetSub._id;
+      await fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, details })
+      });
+    } catch (e) {
+      console.error("Failed to log proctoring event:", e);
     }
   };
 
@@ -635,6 +666,7 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success) {
+        await logProctoringEvent(submission, 'TEST_SUBMITTED', `Candidate finalized and submitted exam (Status: ${statusVal}).`);
         // Clear sessionStorage cache on successful submit
         sessionStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
         
