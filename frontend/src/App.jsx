@@ -4,7 +4,8 @@ import {
   Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert,
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
-  Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy
+  Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy,
+  Check, Plus
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || (() => {
@@ -48,6 +49,20 @@ export default function App() {
       document.body.style.overflow = '';
     };
   }, [isMobileSidebarOpen]);
+
+  // Heartbeat ping loop to keep Render backend awake
+  useEffect(() => {
+    const pingBackend = async () => {
+      try {
+        await fetch(`${API_BASE}/health`);
+      } catch (err) {
+        console.warn("Backend heartbeat ping failed:", err);
+      }
+    };
+    pingBackend();
+    const interval = setInterval(pingBackend, 300000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const handlePageShow = (event) => {
@@ -419,6 +434,8 @@ export default function App() {
   // Admin Exam configuration states
   const [adminTests, setAdminTests] = useState([]);
   const [showTestCreator, setShowTestCreator] = useState(false);
+  const [creatorStep, setCreatorStep] = useState(1); // 1 = Details, 2 = Questions, 3 = Review
+  const [editingQuestionIdx, setEditingQuestionIdx] = useState(null); // null = Question list view, index = specific question editor
   const [newExamTitle, setNewExamTitle] = useState('');
   const [newExamMarks, setNewExamMarks] = useState(100);
   const [newExamInstructions, setNewExamInstructions] = useState('');
@@ -428,6 +445,8 @@ export default function App() {
   const [newExamQuestions, setNewExamQuestions] = useState([]); // Questions array builder
   const [imageUploadingIdx, setImageUploadingIdx] = useState(-1); // Question image upload loader tracker
   const [adminExamSubmissions, setAdminExamSubmissions] = useState([]);
+  const [adminActiveWebTabs, setAdminActiveWebTabs] = useState({});
+  const [studentActiveWebTabs, setStudentActiveWebTabs] = useState({});
 
   // Student exam workspace draft state variables
   const [draftMCQ, setDraftMCQ] = useState(-1);
@@ -474,6 +493,7 @@ export default function App() {
   const [selectedExamSubmission, setSelectedExamSubmission] = useState(null);
   const [adminGradingCodingScore, setAdminGradingCodingScore] = useState(0);
   const [adminGradingFeedback, setAdminGradingFeedback] = useState('');
+  const [codingEvaluationResults, setCodingEvaluationResults] = useState({});
 
   const fetchVideoLectures = async () => {
     try {
@@ -942,6 +962,8 @@ export default function App() {
         setNewExamStart('');
         setNewExamEnd('');
         setNewExamQuestions([]);
+        setCreatorStep(1);
+        setEditingQuestionIdx(null);
         setShowTestCreator(false);
         fetchAdminTests();
       } else {
@@ -997,7 +1019,7 @@ export default function App() {
     // Automatically calculate total coding score from individual fields
     const totalCodingScore = Object.entries(adminGradingAnswers).reduce((sum, [qId, score]) => {
       const ans = selectedExamSubmission.answers?.find(a => a.questionId === qId);
-      return (ans && ans.type === 'coding') ? sum + Number(score || 0) : sum;
+      return (ans && (ans.type === 'coding' || ans.type === 'web')) ? sum + Number(score || 0) : sum;
     }, 0);
 
     try {
@@ -1011,7 +1033,7 @@ export default function App() {
           resolutionFeedback: selectedExamSubmission.reevaluation?.applied ? adminReevalResolutionFeedback : undefined,
           answers: selectedExamSubmission.answers?.map(ans => ({
             ...ans,
-            score: ans.type === 'coding' ? Number(adminGradingAnswers[ans.questionId] || 0) : ans.score
+            score: (ans.type === 'coding' || ans.type === 'web') ? Number(adminGradingAnswers[ans.questionId] || 0) : ans.score
           }))
         })
       });
@@ -1030,6 +1052,76 @@ export default function App() {
       showModalAlert("Grading Error", "Error connecting to server to save evaluation.");
     }
   };
+
+  const runAdminCodeVerification = async (questionId, sourceCode, testCases) => {
+    if (!sourceCode || !testCases || testCases.length === 0) return;
+    
+    setCodingEvaluationResults(prev => ({
+      ...prev,
+      [questionId]: { isRunning: true, results: null, compileError: null }
+    }));
+    
+    try {
+      const res = await fetch(`${API_BASE}/tests/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceCode, testCases })
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        setCodingEvaluationResults(prev => ({
+          ...prev,
+          [questionId]: {
+            isRunning: false,
+            results: data.results || [],
+            compileError: data.status === 'Compilation Error' ? data.compileError : null,
+            success: data.success
+          }
+        }));
+      } else {
+        setCodingEvaluationResults(prev => ({
+          ...prev,
+          [questionId]: {
+            isRunning: false,
+            results: null,
+            compileError: data.error || 'Failed to verify code compilation.',
+            success: false
+          }
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+      setCodingEvaluationResults(prev => ({
+        ...prev,
+        [questionId]: {
+          isRunning: false,
+          results: null,
+          compileError: 'Network error occurred during compilation.',
+          success: false
+        }
+      }));
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedExamSubmission) {
+      setCodingEvaluationResults({});
+      return;
+    }
+    
+    const testConfig = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
+    if (!testConfig) return;
+    
+    selectedExamSubmission.answers?.forEach(ans => {
+      if (ans.type === 'coding') {
+        const questionConfig = testConfig.questions?.find(q => q.id === ans.questionId);
+        if (questionConfig && ans.submittedCode) {
+          runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig.testCases);
+        }
+      }
+    });
+  }, [selectedExamSubmission, adminTests]);
 
   useEffect(() => {
     fetchConfig();
@@ -1677,8 +1769,9 @@ export default function App() {
           </div>
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             {user && (
-              <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#3b5998', fontFamily: 'verdana, arial, sans-serif' }}>
-                👤 {user.role === 'admin' ? 'Administrator' : (studentProfile?.name || 'Student')}
+              <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#3b5998', fontFamily: 'verdana, arial, sans-serif', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <User size={14} style={{ color: '#3b5998' }} />
+                <span>{user.role === 'admin' ? 'Administrator' : (studentProfile?.name || 'Student')}</span>
               </span>
             )}
             <img src="/logo.png" alt="Preliminary Examinations Logo" className="pe-logo" />
@@ -1935,7 +2028,13 @@ export default function App() {
                   <div className="cf-card-title">Course Registration Form</div>
                   {studentProfile.registrationStatus === 'Rejected' && (
                     <div className="cf-alert cf-alert-error" style={{ marginBottom: '20px' }}>
-                      ⚠️ <strong>Registration Rejected:</strong> Your previous registration attempt was rejected by the administrator. Please review your entries and files and re-submit.
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <AlertTriangle size={16} style={{ color: '#dc2626' }} />
+                        <strong>Registration Rejected:</strong>
+                      </div>
+                      <div style={{ marginTop: '4px' }}>
+                        Your previous registration attempt was rejected by the administrator. Please review your entries and files and re-submit.
+                      </div>
                     </div>
                   )}
                   {regError && <div className="cf-alert cf-alert-error">{regError}</div>}
@@ -1943,7 +2042,10 @@ export default function App() {
 
                   <form onSubmit={handleStudentRegistrationSubmit}>
                     
-                    <div className="cf-form-section">👤 1. Core Personal Information</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <User size={14} />
+                      <span>1. Core Personal Information</span>
+                    </div>
                     <div className="cf-form-grid">
                       <div className="cf-input-group">
                         <label className="cf-label">Full Legal Name</label>
@@ -2080,7 +2182,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="cf-form-section">👤 Core Personal Information</div>
+                  <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <User size={14} />
+                    <span>Core Personal Information</span>
+                  </div>
                   <div className="profile-info-grid">
                     <span className="profile-info-label">Full Legal Name:</span>
                     <span className="profile-info-value">{studentProfile.registrationData.preferredName}</span>
@@ -2142,8 +2247,9 @@ export default function App() {
               <div className="cf-card-title">Examination Timetable</div>
               
               {systemConfig.timetableNotice && (
-                <div className="cf-alert cf-alert-info" style={{ fontWeight: 'bold', margin: 0, borderLeft: '4px solid #3b5998' }}>
-                  📢 {systemConfig.timetableNotice}
+                <div className="cf-alert cf-alert-info" style={{ fontWeight: 'bold', margin: 0, borderLeft: '4px solid #3b5998', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Bell size={16} style={{ color: '#3b5998' }} />
+                  <span>{systemConfig.timetableNotice}</span>
                 </div>
               )}
             </div>
@@ -2152,7 +2258,10 @@ export default function App() {
           {/* COURSEWORK - LECTURES */}
           {view === 'lectures' && (
             <div className="cf-card">
-              <div className="cf-card-title">🎥 Course Video Lectures</div>
+              <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Video size={18} style={{ color: '#3b5998' }} />
+                <span>Course Video Lectures</span>
+              </div>
               {videoLectures.length === 0 ? (
                 <div className="cf-alert cf-alert-info">No video lectures uploaded yet.</div>
               ) : (
@@ -2931,6 +3040,99 @@ export default function App() {
                                         }}>
                                           {candAns?.submittedCode || '// No code response was saved.'}
                                         </pre>
+                                      </div>
+                                    )}
+
+                                    {/* Web Workspace Submitted Answers */}
+                                    {q.type === 'web' && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        <span style={{ fontWeight: 'bold', fontSize: '9pt', color: '#475569' }}>
+                                          Your Submitted Web Page Response (HTML/CSS/JS):
+                                        </span>
+                                        
+                                        {/* Tab Switchers */}
+                                        <div style={{ display: 'flex', gap: '5px', marginBottom: '5px' }}>
+                                          {['html', 'css', 'js', 'preview'].map(tab => (
+                                            <button
+                                              key={tab}
+                                              type="button"
+                                              className="cf-btn-secondary"
+                                              style={{
+                                                padding: '3px 10px',
+                                                fontSize: '8pt',
+                                                margin: 0,
+                                                backgroundColor: (studentActiveWebTabs[q.id] || 'preview') === tab ? '#e2e8f0' : '#ffffff',
+                                                fontWeight: (studentActiveWebTabs[q.id] || 'preview') === tab ? 'bold' : 'normal'
+                                              }}
+                                              onClick={() => setStudentActiveWebTabs(prev => ({ ...prev, [q.id]: tab }))}
+                                            >
+                                              {tab.toUpperCase()}
+                                            </button>
+                                          ))}
+                                        </div>
+
+                                        {/* Tab Contents */}
+                                        {(studentActiveWebTabs[q.id] || 'preview') === 'html' && (
+                                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                            {candAns?.submittedHtml || '<!-- No HTML submitted -->'}
+                                          </pre>
+                                        )}
+                                        {(studentActiveWebTabs[q.id] || 'preview') === 'css' && (
+                                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                            {candAns?.submittedCss || '/* No CSS submitted */'}
+                                          </pre>
+                                        )}
+                                        {(studentActiveWebTabs[q.id] || 'preview') === 'js' && (
+                                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                            {candAns?.submittedJs || '// No JS submitted'}
+                                          </pre>
+                                        )}
+                                        {(studentActiveWebTabs[q.id] || 'preview') === 'preview' && (
+                                          <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                            <iframe
+                                              title={`Web Sandbox Student Preview ${q.id}`}
+                                              srcDoc={`
+                                                <!DOCTYPE html>
+                                                <html>
+                                                  <head>
+                                                    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+                                                    <base href="https://invalid-sandbox-origin.invalid/">
+                                                    <style>
+                                                      html, body {
+                                                        margin: 0;
+                                                        padding: 10px;
+                                                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                                                        word-wrap: break-word;
+                                                        word-break: break-word;
+                                                        overflow-x: hidden;
+                                                        box-sizing: border-box;
+                                                      }
+                                                      *, *:before, *:after {
+                                                        box-sizing: inherit;
+                                                      }
+                                                      img, video, iframe, canvas {
+                                                        max-width: 100%;
+                                                        height: auto;
+                                                        display: block;
+                                                      }
+                                                      pre, code {
+                                                        white-space: pre-wrap;
+                                                        word-break: break-all;
+                                                      }
+                                                    </style>
+                                                    <style>${candAns?.submittedCss || ''}</style>
+                                                  </head>
+                                                  <body>
+                                                    ${candAns?.submittedHtml || ''}
+                                                    <script>${candAns?.submittedJs || ''}</script>
+                                                  </body>
+                                                </html>
+                                              `}
+                                              sandbox="allow-scripts"
+                                              style={{ width: '100%', height: '240px', border: 'none', backgroundColor: '#ffffff' }}
+                                            />
+                                          </div>
+                                        )}
                                       </div>
                                     )}
 
@@ -3745,7 +3947,10 @@ export default function App() {
 
               {/* ADMIN - ONLINE TEST CREATOR & BUILDER */}
               <div className="cf-card">
-                <div className="cf-card-title">🏆 Online Test Configurations Manager</div>
+                <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ClipboardList size={18} style={{ color: '#3b82f6' }} />
+                  <span>Online Test Configurations Manager</span>
+                </div>
                 
                 {/* Active Test Configurations */}
                 <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10.5pt', marginBottom: '10px' }}>Configured Examinations ({adminTests.length})</h4>
@@ -3871,372 +4076,712 @@ export default function App() {
                 </button>
 
                 {showTestCreator && (
-                  <form onSubmit={handleCreateTest} className="cf-form-grid" style={{ gridTemplateColumns: '1fr', gap: '20px', borderTop: '1px solid #cbd5e1', paddingTop: '20px' }}>
-                    <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                      <div className="cf-input-group">
-                        <label className="cf-label">Test Title</label>
-                        <input
-                          type="text"
-                          className="cf-input"
-                          required
-                          value={newExamTitle}
-                          onChange={e => setNewExamTitle(e.target.value)}
-                          placeholder="e.g. BICS Mid Semester Coding Test"
-                        />
-                      </div>
-                      <div className="cf-input-group">
-                        <label className="cf-label">Time Duration (Minutes)</label>
-                        <input
-                          type="number"
-                          className="cf-input"
-                          required
-                          value={newExamDuration}
-                          onChange={e => setNewExamDuration(e.target.value)}
-                        />
-                      </div>
-                      <div className="cf-input-group">
-                        <label className="cf-label">Total Marks</label>
-                        <input
-                          type="number"
-                          className="cf-input"
-                          required
-                          value={newExamMarks}
-                          onChange={e => setNewExamMarks(e.target.value)}
-                        />
+                  <div style={{ borderTop: '1px solid #cbd5e1', paddingTop: '20px', marginTop: '20px' }}>
+                    {/* Stepper Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', backgroundColor: '#f1f5f9', padding: '12px 20px', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', gap: '30px', alignItems: 'center', width: '100%', justifyContent: 'space-around' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: creatorStep === 1 ? '#3b82f6' : '#64748b', fontWeight: creatorStep === 1 ? 'bold' : 'normal' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '50%', backgroundColor: creatorStep === 1 ? '#3b82f6' : '#cbd5e1', color: '#fff', fontSize: '9pt' }}>1</span>
+                          <span>Details &amp; Schedule</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: creatorStep === 2 ? '#3b82f6' : '#64748b', fontWeight: creatorStep === 2 ? 'bold' : 'normal' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '50%', backgroundColor: creatorStep === 2 ? '#3b82f6' : '#cbd5e1', color: '#fff', fontSize: '9pt' }}>2</span>
+                          <span>Questions Config ({newExamQuestions.length})</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: creatorStep === 3 ? '#3b82f6' : '#64748b', fontWeight: creatorStep === 3 ? 'bold' : 'normal' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '50%', backgroundColor: creatorStep === 3 ? '#3b82f6' : '#cbd5e1', color: '#fff', fontSize: '9pt' }}>3</span>
+                          <span>Review &amp; Publish</span>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                      <div className="cf-input-group">
-                        <label className="cf-label">Starting Access Time</label>
-                        <input
-                          type="datetime-local"
-                          className="cf-input"
-                          required
-                          value={newExamStart}
-                          onChange={e => setNewExamStart(e.target.value)}
-                        />
-                      </div>
-                      <div className="cf-input-group">
-                        <label className="cf-label">Ending Access Time</label>
-                        <input
-                          type="datetime-local"
-                          className="cf-input"
-                          required
-                          value={newExamEnd}
-                          onChange={e => setNewExamEnd(e.target.value)}
-                        />
-                      </div>
-                    </div>
+                    {/* Step 1: Details & Schedule */}
+                    {creatorStep === 1 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
+                          <div className="cf-input-group">
+                            <label className="cf-label">Test Title</label>
+                            <input
+                              type="text"
+                              className="cf-input"
+                              value={newExamTitle}
+                              onChange={e => setNewExamTitle(e.target.value)}
+                              placeholder="e.g. BICS Mid Semester Coding Test"
+                            />
+                          </div>
+                          <div className="cf-input-group">
+                            <label className="cf-label">Time Duration (Minutes)</label>
+                            <input
+                              type="number"
+                              className="cf-input"
+                              value={newExamDuration}
+                              onChange={e => setNewExamDuration(Number(e.target.value))}
+                            />
+                          </div>
+                          <div className="cf-input-group">
+                            <label className="cf-label">Total Marks</label>
+                            <input
+                              type="number"
+                              className="cf-input"
+                              value={newExamMarks}
+                              onChange={e => setNewExamMarks(Number(e.target.value))}
+                            />
+                          </div>
+                        </div>
 
-                    <div className="cf-input-group">
-                      <label className="cf-label">Initial Candidate Instructions (Displays pre-test)</label>
-                      <textarea
-                        className="cf-input"
-                        rows="3"
-                        value={newExamInstructions}
-                        onChange={e => setNewExamInstructions(e.target.value)}
-                        placeholder="Write pre-test guidelines and code rules here..."
-                      />
-                    </div>
+                        <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
+                          <div className="cf-input-group">
+                            <label className="cf-label">Starting Access Time</label>
+                            <input
+                              type="datetime-local"
+                              className="cf-input"
+                              value={newExamStart}
+                              onChange={e => setNewExamStart(e.target.value)}
+                            />
+                          </div>
+                          <div className="cf-input-group">
+                            <label className="cf-label">Ending Access Time</label>
+                            <input
+                              type="datetime-local"
+                              className="cf-input"
+                              value={newExamEnd}
+                              onChange={e => setNewExamEnd(e.target.value)}
+                            />
+                          </div>
+                        </div>
 
-                    {/* Question Array Builder */}
-                    <div style={{ border: '1px solid #cbd5e1', padding: '15px', borderRadius: '4px', backgroundColor: '#f8fafc' }}>
-                      <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10.5pt', marginBottom: '15px' }}>
-                        Questions Pool Configuration ({newExamQuestions.length} added)
-                      </h4>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Initial Candidate Instructions (Markdown Supported)</label>
+                          <textarea
+                            className="cf-input"
+                            rows="4"
+                            value={newExamInstructions}
+                            onChange={e => setNewExamInstructions(e.target.value)}
+                            placeholder="Write pre-test guidelines and code rules here..."
+                          />
+                        </div>
 
-                      {newExamQuestions.map((q, idx) => (
-                        <div key={idx} style={{ padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#fff', marginBottom: '15px', position: 'relative' }}>
-                          <span style={{ position: 'absolute', top: '10px', right: '10px', fontSize: '8pt', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
-                            {q.type.toUpperCase()} Question
-                          </span>
-                          <h5 style={{ fontSize: '9.5pt', fontWeight: 'bold', margin: '0 0 8px 0', color: '#002147' }}>
-                            Q{idx + 1}: {q.title} <span style={{ color: '#666', fontWeight: 'normal' }}>({q.points} points)</span>
-                          </h5>
-                          
-                          {q.type === 'mcq' && (
-                            <div style={{ fontSize: '8.5pt', paddingLeft: '10px' }}>
-                              {q.options.map((opt, oIdx) => (
-                                <div key={oIdx} style={{ color: oIdx === q.correctOptionIndex ? '#16a34a' : '#555', fontWeight: oIdx === q.correctOptionIndex ? 'bold' : 'normal' }}>
-                                  o Option {oIdx + 1}: {opt} {oIdx === q.correctOptionIndex && '(Correct Key)'}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {q.type === 'coding' && (
-                            <div style={{ fontSize: '8.5pt', color: '#555', paddingLeft: '10px' }}>
-                              Language: <strong>{q.language?.toUpperCase() || 'C++'}</strong> <br />
-                              Test Cases Count: <strong>{q.testCases?.length || 0} cases</strong>
-                            </div>
-                          )}
-
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px' }}>
+                          <button type="button" className="cf-btn-secondary" onClick={() => setShowTestCreator(false)}>Cancel</button>
                           <button
                             type="button"
-                            className="cf-btn-secondary"
-                            style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '2px 8px', fontSize: '7.5pt', marginTop: '10px' }}
+                            className="cf-btn-primary"
                             onClick={() => {
-                              setNewExamQuestions(prev => prev.filter((_, qIdx) => qIdx !== idx));
+                              if (!newExamTitle || !newExamStart || !newExamEnd) {
+                                alert("Please configure Test Title and Access Window dates before continuing.");
+                                return;
+                              }
+                              setCreatorStep(2);
                             }}
                           >
-                            Remove Question
+                            Next: Configure Questions
                           </button>
                         </div>
-                      ))}
-
-                      {/* Add MCQ Question Panel */}
-                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '15px' }}>
-                        <button
-                          type="button"
-                          className="cf-btn-secondary"
-                          onClick={() => {
-                            const newQ = {
-                              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-                              type: 'mcq',
-                              title: 'New MCQ Question Statement',
-                              points: 10,
-                              options: ['Option A', 'Option B', 'Option C', 'Option D'],
-                              correctOptionIndex: 0
-                            };
-                            setNewExamQuestions([...newExamQuestions, newQ]);
-                          }}
-                        >
-                          + Add MCQ Question
-                        </button>
-                        <button
-                          type="button"
-                          className="cf-btn-secondary"
-                          onClick={() => {
-                            const newQ = {
-                              id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-                              type: 'coding',
-                              title: 'Coding Task Title',
-                              points: 20,
-                              description: 'Write a program to solve...',
-                              initialTemplate: '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Code here\n    return 0;\n}',
-                              language: 'cpp',
-                              testCases: [{ input: 'Input variable', output: 'Expected output variable' }]
-                            };
-                            setNewExamQuestions([...newExamQuestions, newQ]);
-                          }}
-                        >
-                          + Add Coding Question
-                        </button>
                       </div>
+                    )}
 
-                      {/* Editing forms for added questions */}
-                      {newExamQuestions.length > 0 && (
-                        <div style={{ borderTop: '1px solid #cbd5e1', marginTop: '20px', paddingTop: '15px' }}>
-                          <h5 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '15px' }}>✍️ Edit Question Details</h5>
-                          {newExamQuestions.map((q, idx) => (
-                            <div key={idx} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '15px', marginBottom: '20px' }}>
-                              <strong style={{ fontSize: '9pt', color: '#333' }}>Edit Q{idx + 1}:</strong>
-                              <div className="cf-form-grid" style={{ gridTemplateColumns: '3fr 1fr', gap: '10px', marginTop: '8px' }}>
-                                <div className="cf-input-group">
-                                  <label className="cf-label">Question Text / Title</label>
-                                  <input
-                                    type="text"
-                                    className="cf-input"
-                                    value={q.title}
-                                    onChange={e => {
+                    {/* Step 2: Questions Editor */}
+                    {creatorStep === 2 && (
+                      <div>
+                        {editingQuestionIdx !== null ? (
+                          /* Question Editor Sub-Workspace */
+                          <div style={{ border: '1px solid #cbd5e1', padding: '20px', borderRadius: '6px', backgroundColor: '#ffffff' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                              <h4 style={{ margin: 0, color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <FileEdit size={16} /> Edit Question Details (Q{editingQuestionIdx + 1})
+                              </h4>
+                              <button
+                                type="button"
+                                className="cf-btn-secondary"
+                                style={{ margin: 0, padding: '4px 10px', fontSize: '8pt' }}
+                                onClick={() => setEditingQuestionIdx(null)}
+                              >
+                                Back to Question Pool
+                              </button>
+                            </div>
+
+                            <div className="cf-form-grid" style={{ gridTemplateColumns: '2fr 1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                              <div className="cf-input-group">
+                                <label className="cf-label">Question Title</label>
+                                <input
+                                  type="text"
+                                  className="cf-input"
+                                  value={newExamQuestions[editingQuestionIdx]?.title || ''}
+                                  onChange={e => {
+                                    const updated = [...newExamQuestions];
+                                    updated[editingQuestionIdx].title = e.target.value;
+                                    setNewExamQuestions(updated);
+                                  }}
+                                  placeholder="Enter question task short summary"
+                                />
+                              </div>
+                              <div className="cf-input-group">
+                                <label className="cf-label">Question Type</label>
+                                <select
+                                  className="cf-input"
+                                  value={newExamQuestions[editingQuestionIdx]?.type || 'mcq'}
+                                  onChange={e => {
+                                    const updated = [...newExamQuestions];
+                                    const nextType = e.target.value;
+                                    updated[editingQuestionIdx].type = nextType;
+                                    // Reset default properties
+                                    if (nextType === 'mcq') {
+                                      updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
+                                      updated[editingQuestionIdx].correctOptionIndex = 0;
+                                    } else if (nextType === 'coding') {
+                                      updated[editingQuestionIdx].description = 'Solve the problem.';
+                                      updated[editingQuestionIdx].initialTemplate = '#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}';
+                                      updated[editingQuestionIdx].language = 'cpp';
+                                      updated[editingQuestionIdx].testCases = [{ input: '', output: '', isSample: true, points: 10 }];
+                                    } else if (nextType === 'web') {
+                                      updated[editingQuestionIdx].description = 'Create a webpage.';
+                                      updated[editingQuestionIdx].initialHtml = '<h1>Hello World</h1>';
+                                      updated[editingQuestionIdx].initialCss = 'h1 {\n  color: red;\n}';
+                                      updated[editingQuestionIdx].initialJs = '// Write script here';
+                                    }
+                                    setNewExamQuestions(updated);
+                                  }}
+                                >
+                                  <option value="mcq">Multiple Choice (MCQ)</option>
+                                  <option value="coding">C++ Coding</option>
+                                  <option value="web">Web Workspace (HTML/CSS/JS)</option>
+                                </select>
+                              </div>
+                              <div className="cf-input-group">
+                                <label className="cf-label">Points Allocation</label>
+                                <input
+                                  type="number"
+                                  className="cf-input"
+                                  value={newExamQuestions[editingQuestionIdx]?.points || 0}
+                                  onChange={e => {
+                                    const updated = [...newExamQuestions];
+                                    updated[editingQuestionIdx].points = Number(e.target.value);
+                                    setNewExamQuestions(updated);
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Image Uploader */}
+                            <div className="cf-input-group" style={{ marginBottom: '15px' }}>
+                              <label className="cf-label">Reference Image (Optional)</label>
+                              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  style={{ display: 'none' }}
+                                  id={`q-img-upload-wizard`}
+                                  onChange={e => handleUploadQuestionImage(e, editingQuestionIdx)}
+                                />
+                                <label
+                                  htmlFor={`q-img-upload-wizard`}
+                                  className="cf-btn-secondary"
+                                  style={{
+                                    margin: 0,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 14px',
+                                    fontSize: '8.5pt',
+                                    fontWeight: 'bold',
+                                    color: '#3b5998',
+                                    border: '1px dashed #3b5998',
+                                    backgroundColor: '#f0f4ff',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease'
+                                  }}
+                                  onMouseOver={e => {
+                                    e.currentTarget.style.backgroundColor = '#e0e9ff';
+                                  }}
+                                  onMouseOut={e => {
+                                    e.currentTarget.style.backgroundColor = '#f0f4ff';
+                                  }}
+                                >
+                                  <Upload size={14} /> {imageUploadingIdx === editingQuestionIdx ? 'Uploading...' : 'Upload Image'}
+                                </label>
+                                <input
+                                  type="text"
+                                  className="cf-input"
+                                  placeholder="Or paste direct image URL here"
+                                  value={newExamQuestions[editingQuestionIdx]?.imageUrl || ''}
+                                  onChange={e => {
+                                    const updated = [...newExamQuestions];
+                                    updated[editingQuestionIdx].imageUrl = e.target.value;
+                                    setNewExamQuestions(updated);
+                                  }}
+                                />
+                              </div>
+                              {newExamQuestions[editingQuestionIdx]?.imageUrl && (
+                                <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <img
+                                    src={newExamQuestions[editingQuestionIdx].imageUrl}
+                                    alt="Wizard Preview"
+                                    style={{ maxWidth: '100px', maxHeight: '60px', objectFit: 'contain', border: '1px solid #cbd5e1', borderRadius: '4px' }}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="cf-btn-secondary"
+                                    style={{ padding: '2px 8px', fontSize: '8pt', color: '#ef4444', borderColor: '#ef4444' }}
+                                    onClick={() => {
                                       const updated = [...newExamQuestions];
-                                      updated[idx].title = e.target.value;
+                                      updated[editingQuestionIdx].imageUrl = '';
                                       setNewExamQuestions(updated);
                                     }}
-                                  />
+                                  >
+                                    Remove Image
+                                  </button>
                                 </div>
-                                <div className="cf-input-group">
-                                  <label className="cf-label">Points</label>
-                                  <input
-                                    type="number"
+                              )}
+                            </div>
+
+                            {/* MCQ Sub-Form */}
+                            {newExamQuestions[editingQuestionIdx]?.type === 'mcq' && (
+                              <div style={{ marginTop: '15px', padding: '15px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                                <label className="cf-label" style={{ fontWeight: 'bold' }}>MCQ Options &amp; Correct Answer Key:</label>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
+                                  {newExamQuestions[editingQuestionIdx]?.options.map((opt, oIdx) => (
+                                    <div key={oIdx} className="cf-input-group">
+                                      <label className="cf-label">Option {oIdx + 1}</label>
+                                      <input
+                                        type="text"
+                                        className="cf-input"
+                                        value={opt}
+                                        onChange={e => {
+                                          const updated = [...newExamQuestions];
+                                          updated[editingQuestionIdx].options[oIdx] = e.target.value;
+                                          setNewExamQuestions(updated);
+                                        }}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="cf-input-group" style={{ marginTop: '15px', maxWidth: '250px' }}>
+                                  <label className="cf-label">Correct Option Index</label>
+                                  <select
                                     className="cf-input"
-                                    value={q.points}
+                                    value={newExamQuestions[editingQuestionIdx]?.correctOptionIndex}
                                     onChange={e => {
                                       const updated = [...newExamQuestions];
-                                      updated[idx].points = Number(e.target.value);
+                                      updated[editingQuestionIdx].correctOptionIndex = Number(e.target.value);
                                       setNewExamQuestions(updated);
                                     }}
-                                  />
+                                  >
+                                    <option value="0">Option 1</option>
+                                    <option value="1">Option 2</option>
+                                    <option value="2">Option 3</option>
+                                    <option value="3">Option 4</option>
+                                  </select>
                                 </div>
                               </div>
+                            )}
 
-                              <div className="cf-input-group" style={{ marginTop: '8px', marginBottom: '10px' }}>
-                                <label className="cf-label">Question Image (Optional - perfect for HTML/CSS layout mockups)</label>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '4px' }}>
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    style={{ display: 'none' }}
-                                    id={`q-img-upload-${idx}`}
-                                    onChange={e => handleUploadQuestionImage(e, idx)}
-                                  />
-                                  <label
-                                    htmlFor={`q-img-upload-${idx}`}
-                                    className="cf-btn-primary"
-                                    style={{ margin: 0, display: 'inline-block', padding: '6px 12px', fontSize: '8.5pt', background: '#3b5998', color: '#fff', borderColor: '#3b5998', cursor: 'pointer' }}
-                                  >
-                                    📤 {imageUploadingIdx === idx ? 'Uploading to Cloudinary...' : 'Upload Image to Cloudinary'}
-                                  </label>
-
-                                  <input
-                                    type="text"
+                            {/* C++ Coding Sub-Form */}
+                            {newExamQuestions[editingQuestionIdx]?.type === 'coding' && (
+                              <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Problem Task Description (Markdown Guidelines)</label>
+                                  <textarea
                                     className="cf-input"
-                                    style={{ flexGrow: 1, minWidth: '200px' }}
-                                    placeholder="Cloudinary secure URL displays here after upload"
-                                    value={q.imageUrl || ''}
+                                    rows="4"
+                                    value={newExamQuestions[editingQuestionIdx]?.description || ''}
                                     onChange={e => {
                                       const updated = [...newExamQuestions];
-                                      updated[idx].imageUrl = e.target.value;
+                                      updated[editingQuestionIdx].description = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                    placeholder="Explain C++ coding rules, specifications, and stdin inputs format details..."
+                                  />
+                                </div>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Preloaded Code Editor Template</label>
+                                  <textarea
+                                    className="cf-input"
+                                    rows="5"
+                                    style={{ fontFamily: 'monospace', fontSize: '9pt' }}
+                                    value={newExamQuestions[editingQuestionIdx]?.initialTemplate || ''}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[editingQuestionIdx].initialTemplate = e.target.value;
                                       setNewExamQuestions(updated);
                                     }}
                                   />
                                 </div>
-                                {q.imageUrl && (
-                                  <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <img
-                                      src={q.imageUrl}
-                                      alt="Thumbnail preview"
-                                      style={{ maxWidth: '80px', maxHeight: '50px', objectFit: 'contain', border: '1px solid #cbd5e1', borderRadius: '2px' }}
-                                    />
+
+                                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                    <label className="cf-label" style={{ fontWeight: 'bold', margin: 0 }}>C++ Test Cases Configurations:</label>
                                     <button
                                       type="button"
                                       className="cf-btn-secondary"
-                                      style={{ padding: '2px 8px', fontSize: '8pt', color: '#ef4444', borderColor: '#ef4444' }}
+                                      style={{ fontSize: '8pt', padding: '4px 10px', margin: 0 }}
                                       onClick={() => {
                                         const updated = [...newExamQuestions];
-                                        updated[idx].imageUrl = '';
+                                        updated[editingQuestionIdx].testCases = updated[editingQuestionIdx].testCases || [];
+                                        updated[editingQuestionIdx].testCases.push({ input: '', output: '', isSample: true, points: 10 });
                                         setNewExamQuestions(updated);
                                       }}
                                     >
-                                      Remove Image
+                                      + Add Test Case
                                     </button>
                                   </div>
-                                )}
+
+                                  {(!newExamQuestions[editingQuestionIdx]?.testCases || newExamQuestions[editingQuestionIdx]?.testCases.length === 0) ? (
+                                    <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic', padding: '15px', border: '1px dashed #cbd5e1', borderRadius: '4px', textAlign: 'center' }}>
+                                      No test cases configured. At least one test case is required to compile and grade code.
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                      {newExamQuestions[editingQuestionIdx]?.testCases.map((tc, tcIdx) => (
+                                        <div key={tcIdx} style={{ border: '1px solid #e2e8f0', borderRadius: '4px', padding: '12px', backgroundColor: '#f8fafc' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                            <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#1e293b' }}>
+                                              Test Case #{tcIdx + 1} {!tc.isSample && <span style={{ marginLeft: '6px', fontSize: '7.5pt', color: '#64748b', display: 'inline-flex', alignItems: 'center', gap: '2px' }}><Lock size={10} /> Hidden</span>}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="cf-btn-secondary"
+                                              style={{ fontSize: '8pt', padding: '2px 8px', color: '#dc2626', borderColor: '#fca5a5', margin: 0 }}
+                                              onClick={() => {
+                                                const updated = [...newExamQuestions];
+                                                updated[editingQuestionIdx].testCases.splice(tcIdx, 1);
+                                                setNewExamQuestions(updated);
+                                              }}
+                                            >
+                                              Delete Case
+                                            </button>
+                                          </div>
+                                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '8px' }}>
+                                            <div className="cf-input-group">
+                                              <label className="cf-label" style={{ fontSize: '7.5pt' }}>Input (stdin)</label>
+                                              <textarea
+                                                className="cf-input"
+                                                rows="2"
+                                                style={{ fontFamily: 'monospace', fontSize: '8.5pt' }}
+                                                value={tc.input || ''}
+                                                onChange={e => {
+                                                  const updated = [...newExamQuestions];
+                                                  updated[editingQuestionIdx].testCases[tcIdx].input = e.target.value;
+                                                  setNewExamQuestions(updated);
+                                                }}
+                                              />
+                                            </div>
+                                            <div className="cf-input-group">
+                                              <label className="cf-label" style={{ fontSize: '7.5pt' }}>Expected Output (stdout)</label>
+                                              <textarea
+                                                className="cf-input"
+                                                rows="2"
+                                                style={{ fontFamily: 'monospace', fontSize: '8.5pt' }}
+                                                value={tc.output || ''}
+                                                onChange={e => {
+                                                  const updated = [...newExamQuestions];
+                                                  updated[editingQuestionIdx].testCases[tcIdx].output = e.target.value;
+                                                  setNewExamQuestions(updated);
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '8pt', color: '#475569', cursor: 'pointer' }}>
+                                              <input
+                                                type="checkbox"
+                                                checked={!!tc.isSample}
+                                                onChange={e => {
+                                                  const updated = [...newExamQuestions];
+                                                  updated[editingQuestionIdx].testCases[tcIdx].isSample = e.target.checked;
+                                                  setNewExamQuestions(updated);
+                                                }}
+                                              />
+                                              Is Sample Case? (Visible to student running code)
+                                            </label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                              <label className="cf-label" style={{ fontSize: '8pt', margin: 0 }}>Points:</label>
+                                              <input
+                                                type="number"
+                                                className="cf-input"
+                                                style={{ width: '60px', padding: '4px', fontSize: '8.5pt', height: '24px' }}
+                                                value={tc.points || 10}
+                                                onChange={e => {
+                                                  const updated = [...newExamQuestions];
+                                                  updated[editingQuestionIdx].testCases[tcIdx].points = Number(e.target.value);
+                                                  setNewExamQuestions(updated);
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+                            )}
 
-                              {q.type === 'mcq' && (
-                                <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #cbd5e1' }}>
-                                  <span className="cf-label" style={{ fontWeight: 'bold' }}>MCQ Options &amp; Correct Answer Key:</span>
-                                  <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginTop: '5px' }}>
-                                    {q.options.map((opt, oIdx) => (
-                                      <div key={oIdx} className="cf-input-group">
-                                        <label className="cf-label">Option {oIdx + 1}</label>
-                                        <input
-                                          type="text"
-                                          className="cf-input"
-                                          value={opt}
-                                          onChange={e => {
-                                            const updated = [...newExamQuestions];
-                                            updated[idx].options[oIdx] = e.target.value;
-                                            setNewExamQuestions(updated);
-                                          }}
-                                        />
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <div className="cf-input-group" style={{ marginTop: '10px', maxWidth: '200px' }}>
-                                    <label className="cf-label">Correct Option Index</label>
-                                    <select
-                                      className="cf-input"
-                                      value={q.correctOptionIndex}
-                                      onChange={e => {
-                                        const updated = [...newExamQuestions];
-                                        updated[idx].correctOptionIndex = Number(e.target.value);
-                                        setNewExamQuestions(updated);
-                                      }}
-                                    >
-                                      <option value="0">Option 1</option>
-                                      <option value="1">Option 2</option>
-                                      <option value="2">Option 3</option>
-                                      <option value="3">Option 4</option>
-                                    </select>
-                                  </div>
+                            {/* HTML/CSS/JS Web Coding Sub-Form */}
+                            {newExamQuestions[editingQuestionIdx]?.type === 'web' && (
+                              <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Web Problem Description &amp; Requirements</label>
+                                  <textarea
+                                    className="cf-input"
+                                    rows="4"
+                                    value={newExamQuestions[editingQuestionIdx]?.description || ''}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[editingQuestionIdx].description = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                    placeholder="Explain page formatting, DOM elements requirements, styling specifications..."
+                                  />
                                 </div>
-                              )}
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Initial HTML Template Code</label>
+                                  <textarea
+                                    className="cf-input"
+                                    rows="4"
+                                    style={{ fontFamily: 'monospace', fontSize: '9pt' }}
+                                    value={newExamQuestions[editingQuestionIdx]?.initialHtml || ''}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[editingQuestionIdx].initialHtml = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                  />
+                                </div>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Initial CSS Template Code</label>
+                                  <textarea
+                                    className="cf-input"
+                                    rows="4"
+                                    style={{ fontFamily: 'monospace', fontSize: '9pt' }}
+                                    value={newExamQuestions[editingQuestionIdx]?.initialCss || ''}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[editingQuestionIdx].initialCss = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                  />
+                                </div>
+                                <div className="cf-input-group">
+                                  <label className="cf-label">Initial JavaScript Template Code</label>
+                                  <textarea
+                                    className="cf-input"
+                                    rows="4"
+                                    style={{ fontFamily: 'monospace', fontSize: '9pt' }}
+                                    value={newExamQuestions[editingQuestionIdx]?.initialJs || ''}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[editingQuestionIdx].initialJs = e.target.value;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
 
-                              {q.type === 'coding' && (
-                                <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #cbd5e1' }}>
-                                  <span className="cf-label" style={{ fontWeight: 'bold' }}>Coding Description &amp; Workspace Presets:</span>
-                                  <div className="cf-input-group" style={{ marginTop: '8px' }}>
-                                    <label className="cf-label">Detailed Markdown Description</label>
-                                    <textarea
-                                      className="cf-input"
-                                      rows="3"
-                                      value={q.description}
-                                      onChange={e => {
-                                        const updated = [...newExamQuestions];
-                                        updated[idx].description = e.target.value;
-                                        setNewExamQuestions(updated);
-                                      }}
-                                    />
-                                  </div>
-                                  <div className="cf-input-group" style={{ marginTop: '8px' }}>
-                                    <label className="cf-label">Preloaded Code Template</label>
-                                    <textarea
-                                      className="cf-input"
-                                      rows="4"
-                                      style={{ fontFamily: 'monospace', fontSize: '9pt' }}
-                                      value={q.initialTemplate}
-                                      onChange={e => {
-                                        const updated = [...newExamQuestions];
-                                        updated[idx].initialTemplate = e.target.value;
-                                        setNewExamQuestions(updated);
-                                      }}
-                                    />
-                                  </div>
-                                  <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginTop: '10px' }}>
-                                    <div className="cf-input-group">
-                                      <label className="cf-label">Expected Input Variable</label>
-                                      <input
-                                        type="text"
-                                        className="cf-input"
-                                        value={q.testCases[0]?.input || ''}
-                                        onChange={e => {
-                                          const updated = [...newExamQuestions];
-                                          updated[idx].testCases[0] = {
-                                            input: e.target.value,
-                                            output: updated[idx].testCases[0]?.output || ''
-                                          };
-                                          setNewExamQuestions(updated);
-                                        }}
-                                      />
-                                    </div>
-                                    <div className="cf-input-group">
-                                      <label className="cf-label">Expected Output Variable</label>
-                                      <input
-                                        type="text"
-                                        className="cf-input"
-                                        value={q.testCases[0]?.output || ''}
-                                        onChange={e => {
-                                          const updated = [...newExamQuestions];
-                                          updated[idx].testCases[0] = {
-                                            input: updated[idx].testCases[0]?.input || '',
-                                            output: e.target.value
-                                          };
-                                          setNewExamQuestions(updated);
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
+                              <button
+                                type="button"
+                                className="cf-btn-primary"
+                                onClick={() => setEditingQuestionIdx(null)}
+                              >
+                                Save &amp; Return to List
+                              </button>
                             </div>
-                          ))}
+                          </div>
+                        ) : (
+                          /* Questions List View (Step 2 Main Panel) */
+                          <div style={{ border: '1px solid #cbd5e1', padding: '18px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                              <h4 style={{ margin: 0, color: '#002147', fontWeight: 'bold' }}>Questions Pool Configurator</h4>
+                              <div style={{ fontSize: '9pt', color: '#475569', fontWeight: 'bold' }}>
+                                Total Points: {newExamQuestions.reduce((acc, curr) => acc + (curr.points || 0), 0)} / {newExamMarks}
+                              </div>
+                            </div>
+
+                            {newExamQuestions.length === 0 ? (
+                              <div style={{ border: '1px dashed #cbd5e1', padding: '30px 15px', borderRadius: '6px', textAlign: 'center', backgroundColor: '#fff', marginBottom: '20px' }}>
+                                <HelpCircle size={32} style={{ color: '#94a3b8', margin: '0 auto 10px auto' }} />
+                                <p style={{ fontSize: '9.5pt', color: '#64748b', margin: 0 }}>No questions added to this test configuration yet.</p>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                                {newExamQuestions.map((q, idx) => (
+                                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px 15px', backgroundColor: '#ffffff' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '8pt', backgroundColor: '#e0f2fe', color: '#0369a1', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px' }}>
+                                          {q.type.toUpperCase()}
+                                        </span>
+                                        <strong style={{ fontSize: '9.5pt', color: '#1e293b' }}>Q{idx + 1}: {q.title}</strong>
+                                      </div>
+                                      <span style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                                        Value: {q.points} points
+                                        {q.type === 'coding' && ` | ${q.testCases?.length || 0} C++ testcases`}
+                                        {q.type === 'web' && ` | HTML/CSS/JS (Manual Grade)`}
+                                      </span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-primary"
+                                        style={{ padding: '4px 10px', fontSize: '8pt', margin: 0 }}
+                                        onClick={() => setEditingQuestionIdx(idx)}
+                                      >
+                                        Configure
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '4px 10px', fontSize: '8pt', color: '#dc2626', borderColor: '#fca5a5', margin: 0 }}
+                                        onClick={() => {
+                                          setNewExamQuestions(prev => prev.filter((_, qIdx) => qIdx !== idx));
+                                        }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Question Creator Triggers */}
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
+                              <button
+                                type="button"
+                                className="cf-btn-secondary"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', margin: 0 }}
+                                onClick={() => {
+                                  const newQ = {
+                                    id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                                    type: 'mcq',
+                                    title: 'New MCQ Question',
+                                    points: 10,
+                                    options: ['Option A', 'Option B', 'Option C', 'Option D'],
+                                    correctOptionIndex: 0
+                                  };
+                                  setNewExamQuestions([...newExamQuestions, newQ]);
+                                  setEditingQuestionIdx(newExamQuestions.length);
+                                }}
+                              >
+                                <Plus size={14} /> MCQ Question
+                              </button>
+                              <button
+                                type="button"
+                                className="cf-btn-secondary"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', margin: 0 }}
+                                onClick={() => {
+                                  const newQ = {
+                                    id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                                    type: 'coding',
+                                    title: 'C++ Coding Question',
+                                    points: 20,
+                                    description: 'Write a C++ program to solve...',
+                                    initialTemplate: '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Code here\n    return 0;\n}',
+                                    language: 'cpp',
+                                    testCases: [{ input: '', output: '', isSample: true, points: 10 }]
+                                  };
+                                  setNewExamQuestions([...newExamQuestions, newQ]);
+                                  setEditingQuestionIdx(newExamQuestions.length);
+                                }}
+                              >
+                                <Plus size={14} /> C++ Coding Question
+                              </button>
+                              <button
+                                type="button"
+                                className="cf-btn-secondary"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', margin: 0 }}
+                                onClick={() => {
+                                  const newQ = {
+                                    id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                                    type: 'web',
+                                    title: 'Web Design Question',
+                                    points: 20,
+                                    description: 'Build a responsive card component with HTML and CSS.',
+                                    initialHtml: '<div class="card">\n  <h2>Title</h2>\n</div>',
+                                    initialCss: '.card {\n  padding: 20px;\n  background: #f1f5f9;\n}',
+                                    initialJs: 'console.log("Web card loaded");'
+                                  };
+                                  setNewExamQuestions([...newExamQuestions, newQ]);
+                                  setEditingQuestionIdx(newExamQuestions.length);
+                                }}
+                              >
+                                <Plus size={14} /> HTML/CSS/JS Question
+                              </button>
+                            </div>
+
+                            {/* Step navigation */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '25px', borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
+                              <button type="button" className="cf-btn-secondary" onClick={() => setCreatorStep(1)}>Back: Details</button>
+                              <button
+                                type="button"
+                                className="cf-btn-primary"
+                                onClick={() => {
+                                  if (newExamQuestions.length === 0) {
+                                    alert("Please configure at least 1 question for the practice test.");
+                                    return;
+                                  }
+                                  setCreatorStep(3);
+                                }}
+                              >
+                                Next: Review Configuration
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Step 3: Review & Publish */}
+                    {creatorStep === 3 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        <div style={{ border: '1px solid #cbd5e1', padding: '18px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                          <h4 style={{ color: '#002147', fontWeight: 'bold', margin: '0 0 15px 0' }}>Review Test Configuration</h4>
+                          
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', fontSize: '9.5pt', marginBottom: '20px' }}>
+                            <div>
+                              <span style={{ color: '#64748b' }}>Test Title:</span> <strong style={{ color: '#002147' }}>{newExamTitle}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: '#64748b' }}>Scheduled Duration:</span> <strong>{newExamDuration} mins</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: '#64748b' }}>Configured Marks cap:</span> <strong>{newExamMarks} Marks</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: '#64748b' }}>Access Window:</span> <span style={{ fontSize: '8.5pt' }}>{new Date(newExamStart).toLocaleString()} - {new Date(newExamEnd).toLocaleString()}</span>
+                            </div>
+                          </div>
+
+                          <h5 style={{ fontSize: '9pt', fontWeight: 'bold', color: '#1e293b', marginBottom: '8px' }}>Questions List ({newExamQuestions.length} items):</h5>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                            {newExamQuestions.map((q, idx) => (
+                              <div key={idx} style={{ fontSize: '9pt', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '4px', backgroundColor: '#fff', display: 'flex', justifyContent: 'space-between' }}>
+                                <span>
+                                  Q{idx + 1}: <strong>{q.title}</strong> ({q.type.toUpperCase()})
+                                </span>
+                                <strong>{q.points} points</strong>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      )}
 
-                    </div>
-
-                    <button type="submit" className="cf-btn-primary" style={{ marginTop: '10px' }}>Save Test Configuration</button>
-                  </form>
+                        <form onSubmit={handleCreateTest} style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
+                          <button type="button" className="cf-btn-secondary" onClick={() => setCreatorStep(2)}>Back: Configure Questions</button>
+                          <button type="submit" className="cf-btn-primary">Save &amp; Publish Test</button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
               {/* ADMIN - CANDIDATE SUBMISSIONS EVALUATION CONSOLE */}
               <div className="cf-card" id="admin-submissions-section">
-                <div className="cf-card-title">
-                  <span>📝 Exam Submissions Evaluation Console</span>
+                <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <GraduationCap size={18} style={{ color: '#10b981' }} />
+                  <span>Exam Submissions Evaluation Console</span>
                   {adminExamSubmissions.length > 0 && (
                     <button
                       type="button"
@@ -4346,9 +4891,14 @@ export default function App() {
                         <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedExamSubmission(null)}>✕</button>
                       </div>
 
-                      <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-                        <span>📋 Title: <strong>{selectedExamSubmission.testTitle}</strong></span>
-                        <span>⚠️ Fullscreen Exits: <strong>{selectedExamSubmission.proctoringLog?.fullscreenExits || 0}</strong> • Tab Switches: <strong>{selectedExamSubmission.proctoringLog?.tabSwitches || 0}</strong></span>
+                      <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px', alignItems: 'center' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <strong>Title:</strong> {selectedExamSubmission.testTitle}
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <AlertTriangle size={15} style={{ color: '#d97706' }} />
+                          <span>Fullscreen Exits: <strong>{selectedExamSubmission.proctoringLog?.fullscreenExits || 0}</strong> • Tab Switches: <strong>{selectedExamSubmission.proctoringLog?.tabSwitches || 0}</strong></span>
+                        </span>
                       </div>
 
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
@@ -4406,15 +4956,15 @@ export default function App() {
                                     if (isCorrectKey) {
                                       borderStyle = '2px solid #10b981';
                                       bgStyle = '#ecfdf5';
-                                      badgeText = '✅ Correct Answer';
+                                      badgeText = 'Correct Answer';
                                     } else if (isCandidateSelect) {
                                       borderStyle = '2px solid #ef4444';
                                       bgStyle = '#fef2f2';
-                                      badgeText = '❌ Candidate Choice (Incorrect)';
+                                      badgeText = 'Candidate Choice (Incorrect)';
                                     }
 
                                     if (isCorrectKey && isCandidateSelect) {
-                                      badgeText = '✅ Candidate Choice (Correct)';
+                                      badgeText = 'Candidate Choice (Correct)';
                                     }
 
                                     return (
@@ -4463,6 +5013,80 @@ export default function App() {
                                   }}>
                                     {ans.submittedCode || '// No code submitted'}
                                   </pre>
+
+                                  {/* Code Run/Compilation Verification Results */}
+                                  <div style={{ marginTop: '10px', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#f1f5f9' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                      <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Autograder Verification Status:</span>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '8pt', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                                        onClick={() => runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig?.testCases)}
+                                        disabled={codingEvaluationResults[ans.questionId]?.isRunning}
+                                      >
+                                        {codingEvaluationResults[ans.questionId]?.isRunning ? (
+                                          <>
+                                            <Loader2 className="spinner" size={10} style={{ width: '10px', height: '10px' }} /> Re-running...
+                                          </>
+                                        ) : (
+                                          'Run Compiler Test Cases'
+                                        )}
+                                      </button>
+                                    </div>
+
+                                    {codingEvaluationResults[ans.questionId]?.isRunning && (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '8.5pt', color: '#64748b', padding: '5px 0' }}>
+                                        <Loader2 className="spinner" size={14} style={{ color: '#3b5998', width: '14px', height: '14px' }} />
+                                        <span>Compiling source code and executing test cases on host server...</span>
+                                      </div>
+                                    )}
+
+                                    {!codingEvaluationResults[ans.questionId]?.isRunning && codingEvaluationResults[ans.questionId]?.compileError && (
+                                      <div style={{ borderLeft: '4px solid #ef4444', backgroundColor: '#fef2f2', padding: '10px', borderRadius: '2px', fontSize: '8.5pt', fontFamily: 'monospace', color: '#b91c1c', overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+                                        <strong>Compilation Error:</strong><br />
+                                        {codingEvaluationResults[ans.questionId].compileError}
+                                      </div>
+                                    )}
+
+                                    {!codingEvaluationResults[ans.questionId]?.isRunning && codingEvaluationResults[ans.questionId]?.results && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        {codingEvaluationResults[ans.questionId].results.map((res, rIdx) => {
+                                          const isPassed = res.status === 'Accepted';
+                                          return (
+                                            <div key={rIdx} style={{ fontSize: '8.5pt', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                              <div style={{
+                                                padding: '6px 10px',
+                                                backgroundColor: isPassed ? '#f0fdf4' : '#fef2f2',
+                                                borderBottom: '1px solid #cbd5e1',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                fontWeight: 'bold'
+                                              }}>
+                                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
+                                                  {isPassed ? <Check size={14} /> : <X size={14} />}
+                                                  <span>Test Case #{rIdx + 1} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
+                                                </span>
+                                                <span style={{ fontSize: '8pt', color: '#64748b' }}>Points: {questionConfig?.testCases?.[rIdx]?.points || 0}</span>
+                                              </div>
+                                              <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '8pt', color: '#475569', fontFamily: 'monospace' }}>
+                                                <div><strong>Input:</strong> <code>{res.input || '(empty)'}</code></div>
+                                                <div><strong>Expected Output:</strong> <code>{res.expectedOutput || '(empty)'}</code></div>
+                                                <div><strong>Candidate Output:</strong> <code style={{ color: isPassed ? '#166534' : '#991b1b' }}>{res.actualOutput || '(empty)'}</code></div>
+                                                {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code>{res.stderr}</code></div>}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {!codingEvaluationResults[ans.questionId] && (
+                                      <span style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>Autograder is ready. Click run or wait for background verification.</span>
+                                    )}
+                                  </div>
+
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
                                     <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Score:</span>
                                     <input
@@ -4476,6 +5100,115 @@ export default function App() {
                                       }}
                                     />
                                     <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {questionConfig?.points || 0} points</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Web Workspace Submitted Answers */}
+                              {ans.type === 'web' && (
+                                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                  <span className="cf-label" style={{ display: 'block', fontWeight: 'bold', fontSize: '9pt' }}>
+                                    Candidate Submitted Web Page (HTML/CSS/JS):
+                                  </span>
+                                  
+                                  {/* Tab Switchers */}
+                                  <div style={{ display: 'flex', gap: '5px', marginBottom: '5px' }}>
+                                    {['html', 'css', 'js', 'preview'].map(tab => (
+                                      <button
+                                        key={tab}
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{
+                                          padding: '3px 10px',
+                                          fontSize: '8pt',
+                                          margin: 0,
+                                          backgroundColor: (adminActiveWebTabs[ans.questionId] || 'preview') === tab ? '#e2e8f0' : '#ffffff',
+                                          fontWeight: (adminActiveWebTabs[ans.questionId] || 'preview') === tab ? 'bold' : 'normal'
+                                        }}
+                                        onClick={() => setAdminActiveWebTabs(prev => ({ ...prev, [ans.questionId]: tab }))}
+                                      >
+                                        {tab.toUpperCase()}
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  {/* Tab Contents */}
+                                  {(adminActiveWebTabs[ans.questionId] || 'preview') === 'html' && (
+                                    <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                      {ans.submittedHtml || '<!-- No HTML submitted -->'}
+                                    </pre>
+                                  )}
+                                  {(adminActiveWebTabs[ans.questionId] || 'preview') === 'css' && (
+                                    <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                      {ans.submittedCss || '/* No CSS submitted */'}
+                                    </pre>
+                                  )}
+                                  {(adminActiveWebTabs[ans.questionId] || 'preview') === 'js' && (
+                                    <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                                      {ans.submittedJs || '// No JS submitted'}
+                                    </pre>
+                                  )}
+                                  {(adminActiveWebTabs[ans.questionId] || 'preview') === 'preview' && (
+                                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                      <iframe
+                                        title="Web Sandbox Grading Preview"
+                                        srcDoc={`
+                                          <!DOCTYPE html>
+                                          <html>
+                                            <head>
+                                              <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+                                              <base href="https://invalid-sandbox-origin.invalid/">
+                                              <style>
+                                                html, body {
+                                                  margin: 0;
+                                                  padding: 10px;
+                                                  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                                                  word-wrap: break-word;
+                                                  word-break: break-word;
+                                                  overflow-x: hidden;
+                                                  box-sizing: border-box;
+                                                }
+                                                *, *:before, *:after {
+                                                  box-sizing: inherit;
+                                                }
+                                                img, video, iframe, canvas {
+                                                  max-width: 100%;
+                                                  height: auto;
+                                                  display: block;
+                                                }
+                                                pre, code {
+                                                  white-space: pre-wrap;
+                                                  word-break: break-all;
+                                                }
+                                              </style>
+                                              <style>${ans.submittedCss || ''}</style>
+                                            </head>
+                                            <body>
+                                              ${ans.submittedHtml || ''}
+                                              <script>${ans.submittedJs || ''}</script>
+                                            </body>
+                                          </html>
+                                        `}
+                                        sandbox="allow-scripts"
+                                        style={{ width: '100%', height: '310px', border: 'none', backgroundColor: '#ffffff' }}
+                                      />
+                                    </div>
+                                  )}
+
+                                  {/* Points input */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px' }}>
+                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Score:</span>
+                                    <input
+                                      type="number"
+                                      className="cf-input"
+                                      style={{ width: '80px', padding: '4px 8px' }}
+                                      value={adminGradingAnswers[ans.questionId] ?? 0}
+                                      onChange={(e) => {
+                                        const val = Number(e.target.value || 0);
+                                        setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
+                                      }}
+                                    />
+                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {questionConfig?.points || 0} points (Manual Grade)</span>
                                   </div>
                                 </div>
                               )}
@@ -4870,7 +5603,7 @@ export default function App() {
                       return testStudents.map(sub => {
                         const subId = sub.id || sub._id;
                         const isActive = sub.status === 'started';
-                        const prefix = isActive ? '🟢 [Active] ' : '⚪ [Completed] ';
+                        const prefix = isActive ? '[Active] ' : '[Completed] ';
                         return (
                           <option key={subId} value={subId}>
                             {prefix} {sub.candidateName} ({sub.studentId})
@@ -5208,7 +5941,10 @@ export default function App() {
 
               <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '25px' }}>
                 <div style={{ flex: '1 1 300px' }}>
-                  <div className="cf-form-section">👤 Core Personal Information</div>
+                  <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <User size={14} />
+                    <span>Core Personal Information</span>
+                  </div>
                   {selectedCandidate.registrationSubmitted ? (
                     <div className="profile-info-grid" style={{ gridTemplateColumns: '120px 1fr' }}>
                       <span className="profile-info-label">Full Name:</span>
@@ -5231,7 +5967,10 @@ export default function App() {
 
                 {selectedCandidate.registrationSubmitted && (
                   <div style={{ flex: '1 1 250px' }}>
-                    <div className="cf-form-section">🖼️ Uploaded Attachments</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Image size={14} />
+                      <span>Uploaded Attachments</span>
+                    </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       <div>
                         <span className="cf-label" style={{ display: 'block', marginBottom: '2px' }}>Profile Photo</span>
@@ -5243,7 +5982,7 @@ export default function App() {
                       </div>
                       <div>
                         <a href={selectedCandidate.registrationData?.undertakingUrl} target="_blank" rel="noreferrer" className="cf-btn-secondary" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '8.5pt' }}>
-                          📄 View Undertaking Document
+                          <FileText size={12} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> View Undertaking Document
                         </a>
                       </div>
                     </div>
@@ -5252,7 +5991,10 @@ export default function App() {
               </div>
 
               {/* FEEDBACK RESPONSES SECTION */}
-              <div className="cf-form-section">📝 Submitted Feedbacks &amp; Exit Forms</div>
+              <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileEdit size={14} />
+                <span>Submitted Feedbacks &amp; Exit Forms</span>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
                 
                 {/* Mid Sem Feedback */}
@@ -5498,13 +6240,18 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
               setLogs(match.proctoringLog.events || []);
             }
             if (match.status) {
-              setStatus(match.status);
-              if (match.status !== 'started' && pcRef.current) {
-                if (pcRef.current.pollInterval) {
-                  clearInterval(pcRef.current.pollInterval);
+              if (match.status !== status) {
+                setStatus(match.status);
+                fetchLiveSubmissions();
+              }
+              if (match.status !== 'started') {
+                if (pcRef.current) {
+                  if (pcRef.current.pollInterval) {
+                    clearInterval(pcRef.current.pollInterval);
+                  }
+                  pcRef.current.close();
+                  pcRef.current = null;
                 }
-                pcRef.current.close();
-                pcRef.current = null;
                 setConnectionStatus('Offline (Session Completed)');
               }
             }
@@ -5691,47 +6438,72 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
             </div>
           ) : (
             <div style={{
-              backgroundColor: '#000',
+              backgroundColor: '#0f172a',
               borderRadius: '4px',
               overflow: 'hidden',
               aspectRatio: '4/3',
               width: '100%',
               position: 'relative',
               display: 'flex',
+              flexDirection: 'column',
               justifyContent: 'center',
               alignItems: 'center',
-              border: '1px solid var(--cf-border)'
+              border: '1px solid var(--cf-border)',
+              color: '#94a3b8',
+              padding: '40px 20px',
+              textAlign: 'center'
             }}>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted={isMuted}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
-              />
-              <button
-                onClick={() => setIsMuted(!isMuted)}
-                style={{
-                  position: 'absolute',
-                  bottom: '12px',
-                  right: '12px',
-                  backgroundColor: isMuted ? '#ef4444' : '#10b981',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '6px 12px',
-                  fontSize: '8.5pt',
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                  zIndex: 10,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                {isMuted ? 'Muted' : 'Audible'}
-              </button>
+              <style>{`
+                @keyframes cf-spin {
+                  0% { transform: rotate(0deg); }
+                  100% { transform: rotate(360deg); }
+                }
+                .cf-spinner {
+                  animation: cf-spin 1s linear infinite;
+                }
+              `}</style>
+              {connectionStatus !== 'Connected' ? (
+                <>
+                  <Loader2 className="cf-spinner" size={32} style={{ color: '#38bdf8', marginBottom: '15px' }} />
+                  <strong style={{ fontSize: '10.5pt', color: '#f1f5f9', marginBottom: '4px' }}>Waiting for Candidate Stream...</strong>
+                  <span style={{ fontSize: '8pt', color: '#64748b', maxWidth: '280px' }}>
+                    Establishing secure WebRTC channel. Ensure the candidate has started the test lobby and allowed media access.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted={isMuted}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
+                  />
+                  <button
+                    onClick={() => setIsMuted(!isMuted)}
+                    style={{
+                      position: 'absolute',
+                      bottom: '12px',
+                      right: '12px',
+                      backgroundColor: isMuted ? '#ef4444' : '#10b981',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '6px 12px',
+                      fontSize: '8.5pt',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      zIndex: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                    {isMuted ? 'Muted' : 'Audible'}
+                  </button>
+                </>
+              )}
             </div>
           )}
 
@@ -5766,15 +6538,21 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
                 No compliance events recorded.
               </div>
             ) : (
-              logs.map((log, idx) => (
-                <div key={idx} style={{ borderBottom: '1px dotted #e2e8f0', paddingBottom: '6px', marginBottom: '6px', color: log.type?.includes('ALERT') || log.type?.includes('EXIT') ? '#dc2626' : '#1e293b' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '7.5pt', marginBottom: '2px' }}>
-                    <span>{log.type}</span>
-                    <span style={{ color: '#64748b' }}>{new Date(log.timestamp).toLocaleTimeString()}</span>
+              logs.map((log, idx) => {
+                const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED');
+                const isCode = log.type?.includes('CODE_RUN') || log.type?.includes('CODE_SAVED');
+                const isMcq = log.type?.includes('OPTION_MARKED');
+                const logColor = isWarning ? '#dc2626' : (isCode ? '#2563eb' : (isMcq ? '#059669' : '#1e293b'));
+                return (
+                  <div key={idx} style={{ borderBottom: '1px dotted #e2e8f0', paddingBottom: '6px', marginBottom: '6px', color: logColor }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '7.5pt', marginBottom: '2px' }}>
+                      <span>{log.type}</span>
+                      <span style={{ color: '#64748b' }}>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div style={{ fontSize: '8pt' }}>{log.details}</div>
                   </div>
-                  <div style={{ fontSize: '8pt' }}>{log.details}</div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

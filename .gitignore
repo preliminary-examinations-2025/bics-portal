@@ -32,3 +32,4 @@ yarn-error.log*
 
 # Local uploads
 backend/public/uploads/
+backend/temp_runs/

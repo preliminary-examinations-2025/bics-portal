@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
+const { exec } = require('child_process');
 require('dotenv').config();
 
 const app = express();
@@ -122,7 +123,8 @@ const initialDB = {
                     initialTemplate: "#include <iostream>\nusing namespace std;\n\nint main() {\n    int a = 5;\n    int b = 10;\n    // Write your code below to compute and print sum of a and b\n    \n    return 0;\n}",
                     language: "cpp",
                     testCases: [
-                        { input: "5, 10", output: "15" }
+                        { input: "5 10", output: "15", isSample: true, points: 10 },
+                        { input: "20 30", output: "50", isSample: true, points: 10 }
                     ]
                 }
             ]
@@ -228,7 +230,7 @@ const CourseMaterialModel = mongoose.model('CourseMaterial', CourseMaterialSchem
 
 const QuestionSchema = new mongoose.Schema({
     id: String,
-    type: String, // 'mcq' or 'coding'
+    type: String, // 'mcq', 'coding', or 'web'
     title: String,
     points: Number,
     // MCQ
@@ -239,7 +241,11 @@ const QuestionSchema = new mongoose.Schema({
     description: String,
     initialTemplate: String,
     language: String,
-    testCases: [{ input: String, output: String }],
+    testCases: [{ input: String, output: String, isSample: { type: Boolean, default: false }, points: { type: Number, default: 10 } }],
+    // Web Coding (HTML/CSS/JS)
+    initialHtml: String,
+    initialCss: String,
+    initialJs: String,
     imageUrl: String
 }, { _id: false });
 
@@ -258,10 +264,13 @@ const TestConfigModel = mongoose.model('TestConfigV2', TestConfigSchema, 'testco
 
 const AnswerSchema = new mongoose.Schema({
     questionId: String,
-    type: String, // 'mcq' or 'coding'
+    type: String, // 'mcq', 'coding', or 'web'
     selectedOptionIndex: Number, // for MCQ
-    submittedCode: String, // for Coding
+    submittedCode: String, // for Coding (C++)
     selectedLanguage: String, // Selected programming language (c, cpp, python, java)
+    submittedHtml: String, // for Web Coding (HTML)
+    submittedCss: String, // for Web Coding (CSS)
+    submittedJs: String, // for Web Coding (JS)
     score: { type: Number, default: 0 } // Scored marks for this question
 }, { _id: false });
 
@@ -324,6 +333,43 @@ function recalculateMCQScore(submission, test) {
     });
     submission.evaluation = submission.evaluation || {};
     submission.evaluation.mcqScore = mcqPoints;
+}
+
+async function recalculateCodingScore(submission, test) {
+    if (!test || !submission) return;
+    let totalCodingScore = 0;
+    submission.answers = submission.answers || [];
+    for (let i = 0; i < submission.answers.length; i++) {
+        const ans = submission.answers[i];
+        const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
+        if (quest && quest.type === 'coding') {
+            if (!ans.submittedCode || ans.submittedCode.trim() === '') {
+                ans.score = 0;
+                continue;
+            }
+            try {
+                const runRes = await executeCode(ans.submittedCode, quest.testCases || []);
+                let codingPoints = 0;
+                if (runRes && runRes.success && runRes.results) {
+                    runRes.results.forEach((res, resIdx) => {
+                        const tc = quest.testCases[resIdx];
+                        if (res.status === 'Accepted' && tc) {
+                            codingPoints += Number(tc.points || 0);
+                        }
+                    });
+                }
+                ans.score = codingPoints;
+                totalCodingScore += codingPoints;
+            } catch (err) {
+                console.error("Autograding failed for question", quest.id, err);
+                ans.score = 0;
+            }
+        } else if (quest && quest.type === 'web') {
+            if (ans.score === undefined) ans.score = 0;
+        }
+    }
+    submission.evaluation = submission.evaluation || {};
+    submission.evaluation.codingScore = totalCodingScore;
 }
 
 const SystemLogSchema = new mongoose.Schema({
@@ -1107,10 +1153,12 @@ app.get('/api/tests/active', async (req, res) => {
             let submissionStatus = null;
             if (candidateId) {
                 if (useMongo) {
-                    const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
-                    const queryTestId = mongoose.Types.ObjectId.isValid(testId.toString()) ? new mongoose.Types.ObjectId(testId.toString()) : testId;
-                    const sub = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId });
-                    if (sub) submissionStatus = sub.status;
+                    if (mongoose.Types.ObjectId.isValid(candidateId)) {
+                        const queryCandidateId = new mongoose.Types.ObjectId(candidateId);
+                        const queryTestId = mongoose.Types.ObjectId.isValid(testId.toString()) ? new mongoose.Types.ObjectId(testId.toString()) : testId;
+                        const sub = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId }).sort({ startedAt: -1 });
+                        if (sub) submissionStatus = sub.status;
+                    }
                 } else {
                     const db = getJSONData();
                     db.testSubmissions = db.testSubmissions || [];
@@ -1491,11 +1539,16 @@ app.post('/api/tests/submit', async (req, res) => {
                 submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
             }
             submission.status = status || 'submitted';
-            submission.submittedAt = new Date();
+            if (status !== 'started') {
+                submission.submittedAt = new Date();
+            }
 
             const test = await TestConfigModel.findById(submission.testId);
             if (test) {
                 recalculateMCQScore(submission, test);
+                if (status !== 'started') {
+                    await recalculateCodingScore(submission, test);
+                }
             } else {
                 submission.evaluation = {
                     mcqScore: 0,
@@ -1520,12 +1573,17 @@ app.post('/api/tests/submit', async (req, res) => {
                 submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
             }
             submission.status = status || 'submitted';
-            submission.submittedAt = new Date();
+            if (status !== 'started') {
+                submission.submittedAt = new Date();
+            }
 
             db.tests = db.tests || [];
             const test = db.tests.find(t => t.id === submission.testId || t._id === submission.testId);
             if (test) {
                 recalculateMCQScore(submission, test);
+                if (status !== 'started') {
+                    await recalculateCodingScore(submission, test);
+                }
             } else {
                 submission.evaluation = {
                     mcqScore: 0,
@@ -1538,13 +1596,20 @@ app.post('/api/tests/submit', async (req, res) => {
             saveJSONData(db);
         }
 
-        await logSystemAction(submission?.candidateName || 'Candidate', status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', `Candidate submitted examination answers for "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'}) with status ${status || 'submitted'}`, 'info');
+        if (status !== 'started') {
+            await logSystemAction(submission?.candidateName || 'Candidate', status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', `Candidate submitted examination answers for "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'}) with status ${status || 'submitted'}`, 'info');
+        }
         return res.json({ success: true, submission });
     } catch (e) {
         console.error("DEBUG ERROR: POST /api/tests/submit failed:", e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to process exam submission for candidate submission ID ${submissionId}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
+});
+
+// Healthcheck ping endpoint
+app.get('/api/health', (req, res) => {
+    return res.json({ status: "ok" });
 });
 
 // 5. Get all configured tests (Admin view with complete correct keys)
@@ -1758,6 +1823,11 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
                 submission.reevaluation.resolutionFeedback = resolutionFeedback || '';
             }
 
+            submission.markModified('answers');
+            submission.markModified('evaluation');
+            if (submission.reevaluation) {
+                submission.markModified('reevaluation');
+            }
             await submission.save();
         } else {
             const db = getJSONData();
@@ -1979,6 +2049,226 @@ app.get('/api/tests/proctoring/signal/:submissionId', async (req, res) => {
     } catch (e) {
         console.error(e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to read WebRTC signals for submission ${submissionId}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// C++ Execution Engine Helpers
+let gppChecked = null;
+const isGppAvailable = async () => {
+    if (gppChecked !== null) return gppChecked;
+    return new Promise((resolve) => {
+        exec('g++ --version', (err) => {
+            gppChecked = !err;
+            resolve(gppChecked);
+        });
+    });
+};
+
+const runLocalGpp = async (sourceCode, testCases, timeLimitMs = 2000) => {
+    return new Promise((resolve) => {
+        const dir = path.join(__dirname, 'temp_runs');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+
+        const fileId = Math.random().toString(36).substring(7);
+        const codeFile = path.join(dir, `${fileId}.cpp`);
+        const isWin = process.platform === 'win32';
+        const execFile = path.join(dir, isWin ? `${fileId}.exe` : `${fileId}.out`);
+
+        fs.writeFileSync(codeFile, sourceCode);
+
+        exec(`g++ -O3 "${codeFile}" -o "${execFile}"`, async (compileErr, stdout, stderr) => {
+            if (compileErr || stderr) {
+                try {
+                    if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
+                } catch (unlinkErr) {
+                    console.warn("Temporary code file cleanup warning (compile phase):", unlinkErr.message);
+                }
+                return resolve({
+                    success: false,
+                    status: 'Compilation Error',
+                    compileError: stderr || compileErr.message,
+                    results: []
+                });
+            }
+
+            const results = [];
+            try {
+                for (let i = 0; i < testCases.length; i++) {
+                    const tc = testCases[i];
+                    const res = await new Promise((runResolve) => {
+                        const child = exec(`"${execFile}"`, { timeout: timeLimitMs }, (runErr, runStdout, runStderr) => {
+                            if (runErr && runErr.killed) {
+                                return runResolve({ status: 'Time Limit Exceeded (TLE)', stdout: '', stderr: 'Time limit exceeded.' });
+                            }
+                            if (runErr || runStderr) {
+                                return runResolve({ status: 'Runtime Error', stdout: '', stderr: runStderr || runErr.message });
+                            }
+                            const cleanExpected = (tc.output || tc.expectedOutput || '').trim().replace(/\r\n/g, '\n');
+                            const cleanActual = (runStdout || '').trim().replace(/\r\n/g, '\n');
+                            const isCorrect = cleanActual === cleanExpected;
+
+                            runResolve({
+                                status: isCorrect ? 'Accepted' : 'Wrong Answer',
+                                stdout: runStdout,
+                                stderr: ''
+                            });
+                        });
+
+                        if (tc.input) {
+                            child.stdin.write(tc.input);
+                            child.stdin.end();
+                        } else {
+                            child.stdin.end();
+                        }
+                    });
+                    results.push({
+                        input: tc.input,
+                        expectedOutput: tc.output || tc.expectedOutput,
+                        actualOutput: res.stdout,
+                        status: res.status,
+                        stderr: res.stderr
+                    });
+                }
+            } catch (runLoopErr) {
+                console.error("Local runner loop crashed:", runLoopErr);
+            } finally {
+                try {
+                    if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
+                } catch (unlinkErr) {
+                    console.warn("Temporary code file cleanup warning:", unlinkErr.message);
+                }
+                try {
+                    if (fs.existsSync(execFile)) fs.unlinkSync(execFile);
+                } catch (unlinkErr) {
+                    console.warn("Temporary executable cleanup warning:", unlinkErr.message);
+                }
+            }
+
+            resolve({
+                success: true,
+                status: 'Success',
+                results
+            });
+        });
+    });
+};
+
+const JUDGE0_URL = process.env.JUDGE0_API_URL || "https://demo.judge0.com/submissions?wait=true";
+const JUDGE0_KEY = process.env.JUDGE0_API_KEY;
+
+const runOnJudge0 = async (sourceCode, testCases) => {
+    try {
+        const promises = testCases.map(async (tc) => {
+            const body = {
+                source_code: sourceCode,
+                language_id: 54, // C++
+                stdin: tc.input || ""
+            };
+            const headers = { "Content-Type": "application/json" };
+            if (JUDGE0_KEY) {
+                if (JUDGE0_URL.includes('rapidapi')) {
+                    headers['x-rapidapi-key'] = JUDGE0_KEY;
+                    headers['x-rapidapi-host'] = new URL(JUDGE0_URL).hostname;
+                } else {
+                    headers['X-Auth-Token'] = JUDGE0_KEY;
+                }
+            }
+            const res = await fetch(JUDGE0_URL, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body)
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const statusDesc = data.status?.description || "Runtime Error";
+                const expected = (tc.output || tc.expectedOutput || '');
+                const cleanExpected = expected.trim().replace(/\r\n/g, '\n');
+                const cleanActual = (data.stdout || '').trim().replace(/\r\n/g, '\n');
+                const isCorrect = cleanActual === cleanExpected;
+                
+                return {
+                    input: tc.input,
+                    expectedOutput: expected,
+                    actualOutput: data.stdout || "",
+                    status: isCorrect ? "Accepted" : (statusDesc === "Accepted" ? "Wrong Answer" : statusDesc),
+                    stderr: (data.stderr || data.compile_output) ? (data.stderr || data.compile_output) : ""
+                };
+            }
+            return {
+                input: tc.input,
+                expectedOutput: tc.output || tc.expectedOutput,
+                actualOutput: "",
+                status: "Error",
+                stderr: "Cloud compiler unreachable."
+            };
+        });
+
+        const results = await Promise.all(promises);
+        const hasCompileError = results.some(r => r.status.includes("Compilation Error"));
+        return {
+            success: !hasCompileError,
+            status: hasCompileError ? 'Compilation Error' : 'Success',
+            compileError: hasCompileError ? results.find(r => r.status.includes("Compilation Error")).stderr : '',
+            results
+        };
+    } catch (e) {
+        console.error("Judge0 parallel execution failed:", e);
+        return {
+            success: false,
+            status: 'Error',
+            compileError: 'Cloud compiler failed or is offline.',
+            results: []
+        };
+    }
+};
+
+const isSafeCode = (sourceCode) => {
+    const unsafePatterns = [
+        /system\s*\(/,
+        /popen\s*\(/,
+        /fork\s*\(/,
+        /exec\s*\(/,
+        /fstream/,
+        /ofstream/,
+        /ifstream/,
+        /#include\s*<filesystem>/,
+        /#include\s*<fstream>/,
+        /std::filesystem/
+    ];
+    return !unsafePatterns.some(pattern => pattern.test(sourceCode));
+};
+
+const executeCode = async (sourceCode, testCases) => {
+    if (!isSafeCode(sourceCode)) {
+        return {
+            success: false,
+            status: 'Compilation Error',
+            compileError: 'Security violation: Unsafe file operations or process commands detected in code. Run blocked.',
+            results: []
+        };
+    }
+    const localCompiler = await isGppAvailable();
+    if (localCompiler) {
+        console.log(`--> Compiling & executing locally using g++`);
+        return await runLocalGpp(sourceCode, testCases);
+    } else {
+        console.log(`--> Local compiler unavailable. Offloading to Judge0 Cloud Compiler`);
+        return await runOnJudge0(sourceCode, testCases);
+    }
+};
+
+// Compile and run code endpoint
+app.post('/api/tests/run', async (req, res) => {
+    const { sourceCode, testCases } = req.body;
+    if (!sourceCode || !testCases || !Array.isArray(testCases)) {
+        return res.status(400).json({ error: "sourceCode and testCases list are required." });
+    }
+    try {
+        const result = await executeCode(sourceCode, testCases);
+        return res.json(result);
+    } catch (e) {
+        console.error(e);
         return res.status(500).json({ error: e.message });
     }
 });

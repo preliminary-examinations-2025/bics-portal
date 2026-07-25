@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight
+  ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
+  Check, X, Lock, Eye, Clock
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -51,10 +52,19 @@ export default function App() {
   const [draftMCQ, setDraftMCQ] = useState(null);
   const [draftCode, setDraftCode] = useState('');
   const [draftLanguage, setDraftLanguage] = useState('cpp');
+  const [draftHtml, setDraftHtml] = useState('');
+  const [draftCss, setDraftCss] = useState('');
+  const [draftJs, setDraftJs] = useState('');
+  const [webActiveTab, setWebActiveTab] = useState('html'); // 'html' | 'css' | 'js'
+  const [webConsoleLogs, setWebConsoleLogs] = useState([]); // Console output array
   const [examTimeLeft, setExamTimeLeft] = useState(0);
   const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0 });
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [submittingExam, setSubmittingExam] = useState(false);
+  const [isRunningCode, setIsRunningCode] = useState(false);
+  const [runResults, setRunResults] = useState(null);
+  const [compileError, setCompileError] = useState(null);
+  const [consoleTab, setConsoleTab] = useState('testcase'); // 'testcase' or 'result'
 
   // Custom Modal dialog system (replaces browser alert/confirm to prevent fullscreen loss)
   const [customModal, setCustomModal] = useState({
@@ -79,6 +89,20 @@ export default function App() {
 
   // Computed setup condition
   const setupReady = webcamGranted && micGranted && isFullscreen && isFocused;
+
+  // Heartbeat ping loop to keep Render backend awake
+  useEffect(() => {
+    const pingBackend = async () => {
+      try {
+        await fetch(`${API_BASE}/health`);
+      } catch (err) {
+        console.warn("Backend heartbeat ping failed:", err);
+      }
+    };
+    pingBackend();
+    const interval = setInterval(pingBackend, 300000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Helper trigger methods for custom modal system
   const triggerCustomAlert = (title, message) => {
@@ -261,6 +285,43 @@ export default function App() {
     }
   };
 
+  // Refs to track logged warnings and prevent duplicate logs or duplicate auto-submits
+  const lastLoggedWarnings = useRef({ fullscreenExits: 0, tabSwitches: 0 });
+  const isAutoSubmittedRef = useRef(false);
+
+  // Handle warnings changes (Alerts, logs syncing, and auto-submit)
+  useEffect(() => {
+    if (flow !== 'active_exam') return;
+    
+    const { fullscreenExits, tabSwitches } = proctoringWarnings;
+    const total = fullscreenExits + tabSwitches;
+    if (total === 0) return;
+
+    // Check if we need to auto-submit
+    if (total >= 3) {
+      if (!isAutoSubmittedRef.current) {
+        isAutoSubmittedRef.current = true;
+        autoSubmitExam(proctoringWarnings);
+      }
+      return;
+    }
+
+    // Check if we have new warnings to log
+    const newFS = fullscreenExits > lastLoggedWarnings.current.fullscreenExits;
+    const newTab = tabSwitches > lastLoggedWarnings.current.tabSwitches;
+
+    if (newFS || newTab) {
+      setShowWarningModal(true);
+      if (newFS) {
+        lastLoggedWarnings.current.fullscreenExits = fullscreenExits;
+        syncProctoringLogs(proctoringWarnings, 'FULLSCREEN_EXIT', `Candidate exited fullscreen mode. Total warnings: ${total} / 3`);
+      } else if (newTab) {
+        lastLoggedWarnings.current.tabSwitches = tabSwitches;
+        syncProctoringLogs(proctoringWarnings, 'TAB_SWITCH', `Candidate switched tab or lost focus. Total warnings: ${total} / 3`);
+      }
+    }
+  }, [proctoringWarnings, flow]);
+
   // Check Fullscreen state
   useEffect(() => {
     const onFSChange = () => {
@@ -268,16 +329,7 @@ export default function App() {
       setIsFullscreen(fs);
       
       if (flow === 'active_exam' && !fs) {
-        setProctoringWarnings(prev => {
-          const val = { ...prev, fullscreenExits: prev.fullscreenExits + 1 };
-          if (val.fullscreenExits + val.tabSwitches >= 3) {
-            autoSubmitExam(val);
-          } else {
-            setShowWarningModal(true);
-            syncProctoringLogs(val, 'FULLSCREEN_EXIT', `Candidate exited fullscreen mode. Total warnings: ${val.fullscreenExits + val.tabSwitches} / 3`);
-          }
-          return val;
-        });
+        setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
       }
     };
 
@@ -289,18 +341,17 @@ export default function App() {
   useEffect(() => {
     const onBlur = () => {
       setIsFocused(false);
-      if (flow === 'active_exam') {
-        setProctoringWarnings(prev => {
-          const val = { ...prev, tabSwitches: prev.tabSwitches + 1 };
-          if (val.fullscreenExits + val.tabSwitches >= 3) {
-            autoSubmitExam(val);
-          } else {
-            setShowWarningModal(true);
-            syncProctoringLogs(val, 'TAB_SWITCH', `Candidate switched tab or lost focus. Total warnings: ${val.fullscreenExits + val.tabSwitches} / 3`);
-          }
-          return val;
-        });
-      }
+      // Wait a fraction of a second to check if the new focused element is the preview iframe!
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (active && (active.id === 'web-sandbox-preview' || active.tagName === 'IFRAME')) {
+          // The user clicked inside the visual preview sandbox iframe, this is normal behavior!
+          return;
+        }
+        if (flow === 'active_exam') {
+          setProctoringWarnings(prev => ({ ...prev, tabSwitches: prev.tabSwitches + 1 }));
+        }
+      }, 100);
     };
     
     const onFocus = () => {
@@ -510,11 +561,30 @@ export default function App() {
   useEffect(() => {
     if (test && test.questions?.[selectedQuestionIndex]) {
       const activeAns = examAnswers[selectedQuestionIndex];
+      const activeQuest = test.questions[selectedQuestionIndex];
       setDraftMCQ(activeAns?.selectedOptionIndex ?? null);
       setDraftCode(activeAns?.submittedCode ?? '');
       setDraftLanguage(activeAns?.selectedLanguage ?? 'cpp');
+      setDraftHtml(activeAns?.submittedHtml ?? (activeQuest.initialHtml || ''));
+      setDraftCss(activeAns?.submittedCss ?? (activeQuest.initialCss || ''));
+      setDraftJs(activeAns?.submittedJs ?? (activeQuest.initialJs || ''));
+      setWebActiveTab('html');
+      setWebConsoleLogs([]);
+      setRunResults(null);
+      setCompileError(null);
     }
   }, [selectedQuestionIndex, test, examAnswers]);
+
+  // Listen for iframe log and error events from HTML/CSS/JS preview
+  useEffect(() => {
+    const handleMessage = (e) => {
+      if (e.data && e.data.type === 'IFRAME_CONSOLE_LOG') {
+        setWebConsoleLogs(prev => [...prev, { level: e.data.level, text: e.data.text }]);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   // Sync draft buffers into global answers list
   const handleSaveAndNext = () => {
@@ -523,7 +593,10 @@ export default function App() {
       ...updated[selectedQuestionIndex],
       selectedOptionIndex: draftMCQ,
       submittedCode: draftCode,
-      selectedLanguage: draftLanguage
+      selectedLanguage: draftLanguage,
+      submittedHtml: draftHtml,
+      submittedCss: draftCss,
+      submittedJs: draftJs
     };
     setExamAnswers(updated);
 
@@ -533,8 +606,8 @@ export default function App() {
       if (activeQuestion.type === 'mcq' && draftMCQ !== null) {
         const optionLetter = String.fromCharCode(65 + draftMCQ);
         logProctoringEvent(submission, 'OPTION_MARKED', `Marked option ${optionLetter} for Q${qNum}.`);
-      } else if (activeQuestion.type === 'code') {
-        logProctoringEvent(submission, 'CODE_UPDATED', `Updated code implementation for Q${qNum}.`);
+      } else if (activeQuestion.type === 'coding') {
+        logProctoringEvent(submission, 'CODE_SAVED', `Saved C++ code for Q${qNum}.`);
       }
     }
     
@@ -603,6 +676,48 @@ export default function App() {
       });
     } catch (e) {
       console.error("Failed to log proctoring event:", e);
+    }
+  };
+
+  const handleRunCode = async () => {
+    const activeQuestion = test?.questions?.[selectedQuestionIndex];
+    if (!activeQuestion) return;
+    const allCases = activeQuestion.testCases || [];
+    if (allCases.length === 0) {
+      triggerCustomAlert("No Test Cases", "This coding question does not have any test cases configured by the administrator.");
+      return;
+    }
+
+    setIsRunningCode(true);
+    setConsoleTab('result');
+    setRunResults(null);
+    setCompileError(null);
+    logProctoringEvent(submission, 'CODE_RUN', `Ran C++ compilation for Q${selectedQuestionIndex + 1}.`);
+
+    try {
+      const res = await fetch(`${API_BASE}/tests/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceCode: draftCode,
+          testCases: allCases
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.status === 'Compilation Error') {
+          setCompileError(data.compileError || "Failed to compile C++ code.");
+        } else {
+          setRunResults(data.results || []);
+        }
+      } else {
+        setCompileError(data.error || "Execution failed. Server error.");
+      }
+    } catch (err) {
+      console.error(err);
+      setCompileError("Network error. Failed to communicate with compiler.");
+    } finally {
+      setIsRunningCode(false);
     }
   };
 
@@ -1007,7 +1122,7 @@ export default function App() {
   // VIEW: Active Proctoring Examination Workspace (Image 3 style)
   if (flow === 'active_exam') {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '20px', gap: '20px' }}>
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '20px', gap: '20px', overflow: 'hidden', boxSizing: 'border-box' }}>
         
         {/* Hidden video tracker */}
         <div style={{ display: 'none' }}>
@@ -1037,7 +1152,8 @@ export default function App() {
             alignItems: 'center',
             gap: '6px'
           }}>
-            ⏱️ {formatTimer(examTimeLeft)} remaining
+            <Clock size={16} style={{ color: '#ef4444' }} />
+            <span>{formatTimer(examTimeLeft)} remaining</span>
           </div>
 
           <div>
@@ -1048,10 +1164,10 @@ export default function App() {
         </div>
 
         {/* Split Screen Workspace */}
-        <div style={{ display: 'flex', gap: '20px', flexGrow: 1, minHeight: 'calc(100vh - 180px)' }}>
+        <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           
           {/* Left Pane: Question Description */}
-          <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px' }}>
               <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
                 Question {selectedQuestionIndex + 1} of {test.questions.length}
@@ -1156,7 +1272,28 @@ export default function App() {
           </div>
 
           {/* Right Pane: Workspace / Monaco Editor / MCQ Options Display */}
-          <div className="cf-card" style={{ flex: '1 1 60%', margin: 0, display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          {/* Right Pane: Workspace / Monaco Editor / MCQ Options Display */}
+          <div className="cf-card" style={{
+            flex: '1 1 60%',
+            margin: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            minHeight: 0,
+            maxHeight: '100%',
+            overflow: 'hidden',
+            padding: '15px'
+          }}>
+            <style>{`
+              @keyframes cf-spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+              .cf-spinner {
+                animation: cf-spin 1s linear infinite;
+              }
+            `}</style>
+
             <div style={{ borderBottom: '2px solid #3b5998', paddingBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
                 {test.questions[selectedQuestionIndex].type === 'mcq' ? 'Select Option' : 'Workspace Editor'}
@@ -1164,7 +1301,7 @@ export default function App() {
             </div>
 
             {test.questions[selectedQuestionIndex].type === 'mcq' ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px', overflowY: 'auto', minHeight: 0 }}>
                 {test.questions[selectedQuestionIndex].options?.map((opt, oIdx) => {
                   const isSelected = draftMCQ === oIdx;
                   return (
@@ -1199,43 +1336,79 @@ export default function App() {
                 })}
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
                 
                 {/* Professional Language Selection Tabs & Reset Button */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #cbd5e1', paddingBottom: '0', marginBottom: '15px' }}>
-                  <div style={{ display: 'flex', gap: '5px' }}>
-                    {[
-                      { id: 'c', label: 'C' },
-                      { id: 'cpp', label: 'C++' },
-                      { id: 'python', label: 'Python' },
-                      { id: 'java', label: 'Java' }
-                    ].map(lang => {
-                      const isActive = draftLanguage === lang.id;
-                      return (
-                        <button
-                          key={lang.id}
-                          type="button"
-                          onClick={() => handleLanguageChange(lang.id)}
-                          style={{
-                            padding: '6px 16px',
-                            fontSize: '9pt',
-                            fontWeight: 'bold',
-                            borderRadius: '4px 4px 0 0',
-                            border: '1px solid #cbd5e1',
-                            borderBottom: isActive ? '1px solid #ffffff' : '1px solid #cbd5e1',
-                            backgroundColor: isActive ? '#ffffff' : '#f8fafc',
-                            color: isActive ? '#002147' : '#64748b',
-                            cursor: 'pointer',
-                            marginBottom: '-1px',
-                            zIndex: isActive ? 2 : 1,
-                            transition: 'all 0.15s ease-in-out'
-                          }}
-                        >
-                          {lang.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #cbd5e1', paddingBottom: '0', marginBottom: '10px', height: '40px' }}>
+                  {test.questions[selectedQuestionIndex].type === 'coding' ? (
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                      {[
+                        { id: 'c', label: 'C' },
+                        { id: 'cpp', label: 'C++' },
+                        { id: 'python', label: 'Python' },
+                        { id: 'java', label: 'Java' }
+                      ].map(lang => {
+                        const isActive = draftLanguage === lang.id;
+                        return (
+                          <button
+                            key={lang.id}
+                            type="button"
+                            onClick={() => handleLanguageChange(lang.id)}
+                            style={{
+                              padding: '6px 16px',
+                              fontSize: '9pt',
+                              fontWeight: 'bold',
+                              borderRadius: '4px 4px 0 0',
+                              border: '1px solid #cbd5e1',
+                              borderBottom: isActive ? '1px solid #ffffff' : '1px solid #cbd5e1',
+                              backgroundColor: isActive ? '#ffffff' : '#f8fafc',
+                              color: isActive ? '#002147' : '#64748b',
+                              cursor: 'pointer',
+                              marginBottom: '-1px',
+                              zIndex: isActive ? 2 : 1,
+                              transition: 'all 0.15s ease-in-out'
+                            }}
+                          >
+                            {lang.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                      {[
+                        { id: 'html', label: 'index.html' },
+                        { id: 'css', label: 'style.css' },
+                        { id: 'js', label: 'script.js' }
+                      ].map(tab => {
+                        const isActive = webActiveTab === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setWebActiveTab(tab.id)}
+                            style={{
+                              padding: '6px 16px',
+                              fontSize: '9pt',
+                              fontWeight: 'bold',
+                              borderRadius: '4px 4px 0 0',
+                              border: '1px solid #cbd5e1',
+                              borderBottom: isActive ? '1px solid #ffffff' : '1px solid #cbd5e1',
+                              backgroundColor: isActive ? '#ffffff' : '#f8fafc',
+                              color: isActive ? '#002147' : '#64748b',
+                              cursor: 'pointer',
+                              marginBottom: '-1px',
+                              zIndex: isActive ? 2 : 1,
+                              transition: 'all 0.15s ease-in-out'
+                            }}
+                          >
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <div style={{ paddingBottom: '4px' }}>
                     <button
                       className="cf-btn-secondary"
@@ -1245,7 +1418,14 @@ export default function App() {
                           "Reset Code Template?",
                           "Are you sure you want to reset the editor content? This will overwrite your current progress for this question.",
                           () => {
-                            setDraftCode(test.questions[selectedQuestionIndex].initialTemplate || DEFAULT_TEMPLATES[draftLanguage]);
+                            if (test.questions[selectedQuestionIndex].type === 'coding') {
+                              setDraftCode(test.questions[selectedQuestionIndex].initialTemplate || DEFAULT_TEMPLATES[draftLanguage]);
+                            } else {
+                              const activeQuest = test.questions[selectedQuestionIndex];
+                              if (webActiveTab === 'html') setDraftHtml(activeQuest.initialHtml || '');
+                              if (webActiveTab === 'css') setDraftCss(activeQuest.initialCss || '');
+                              if (webActiveTab === 'js') setDraftJs(activeQuest.initialJs || '');
+                            }
                           }
                         );
                       }}
@@ -1256,46 +1436,439 @@ export default function App() {
                 </div>
 
                 {/* Professional Monaco Editor workspace */}
-                <div style={{ flex: 1, border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', minHeight: '380px', backgroundColor: '#ffffff' }}>
-                  <Editor
-                    height="100%"
-                    language={draftLanguage}
-                    theme="vs-light"
-                    value={draftCode}
-                    onChange={(value) => setDraftCode(value || '')}
-                    loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco IDE Engine...</div>}
-                    options={{
-                      fontSize: 13,
-                      fontFamily: 'Consolas, Courier New, monospace',
-                      minimap: { enabled: false },
-                      wordWrap: 'on',
-                      lineNumbers: 'on',
-                      automaticLayout: true,
-                      tabSize: 4,
-                      cursorBlinking: 'blink',
-                      padding: { top: 10, bottom: 10 },
-                      suggestOnTriggerCharacters: true,
-                      acceptSuggestionOnEnter: 'on',
-                      snippetSuggestions: 'inline',
-                      scrollbar: {
-                        vertical: 'auto',
-                        horizontal: 'auto'
-                      }
-                    }}
-                  />
+                <div style={{ flex: 1, minHeight: '150px', border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', backgroundColor: '#ffffff' }}>
+                  {test.questions[selectedQuestionIndex].type === 'coding' ? (
+                    <Editor
+                      height="100%"
+                      language={draftLanguage}
+                      theme="vs-light"
+                      value={draftCode}
+                      onChange={(value) => setDraftCode(value || '')}
+                      loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco IDE Engine...</div>}
+                      options={{
+                        fontSize: 13,
+                        fontFamily: 'Consolas, Courier New, monospace',
+                        minimap: { enabled: false },
+                        wordWrap: 'on',
+                        lineNumbers: 'on',
+                        automaticLayout: true,
+                        tabSize: 4,
+                        cursorBlinking: 'blink',
+                        padding: { top: 10, bottom: 10 },
+                        scrollbar: { vertical: 'auto', horizontal: 'auto' }
+                      }}
+                    />
+                  ) : (
+                    <Editor
+                      height="100%"
+                      language={webActiveTab === 'js' ? 'javascript' : webActiveTab}
+                      theme="vs-light"
+                      value={webActiveTab === 'html' ? draftHtml : (webActiveTab === 'css' ? draftCss : draftJs)}
+                      onChange={(value) => {
+                        if (webActiveTab === 'html') setDraftHtml(value || '');
+                        if (webActiveTab === 'css') setDraftCss(value || '');
+                        if (webActiveTab === 'js') setDraftJs(value || '');
+                      }}
+                      loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco Web Editor...</div>}
+                      options={{
+                        fontSize: 13,
+                        fontFamily: 'Consolas, Courier New, monospace',
+                        minimap: { enabled: false },
+                        wordWrap: 'on',
+                        lineNumbers: 'on',
+                        automaticLayout: true,
+                        tabSize: 4,
+                        cursorBlinking: 'blink',
+                        padding: { top: 10, bottom: 10 },
+                        scrollbar: { vertical: 'auto', horizontal: 'auto' }
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* LeetCode-Style Split Console Panel */}
+                <div style={{
+                  marginTop: '12px',
+                  borderTop: '1px solid #cbd5e1',
+                  paddingTop: '8px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flex: test.questions[selectedQuestionIndex].type === 'web' ? '1.2 1 0%' : '1 1 0%',
+                  minHeight: '180px',
+                  overflow: 'hidden'
+                }}>
+                  {/* Console Tabs */}
+                  <div style={{ display: 'flex', gap: '5px', marginBottom: '8px', borderBottom: '1px solid #cbd5e1' }}>
+                    {test.questions[selectedQuestionIndex].type === 'coding' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setConsoleTab('testcase')}
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '8.5pt',
+                            fontWeight: 'bold',
+                            borderRadius: '4px 4px 0 0',
+                            border: '1px solid #cbd5e1',
+                            borderBottom: consoleTab === 'testcase' ? '1px solid #f8fafc' : '1px solid #cbd5e1',
+                            backgroundColor: consoleTab === 'testcase' ? '#f8fafc' : '#ffffff',
+                            color: consoleTab === 'testcase' ? '#002147' : '#64748b',
+                            cursor: 'pointer',
+                            marginBottom: '-1px',
+                            zIndex: consoleTab === 'testcase' ? 2 : 1
+                          }}
+                        >
+                          Testcase
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConsoleTab('result')}
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '8.5pt',
+                            fontWeight: 'bold',
+                            borderRadius: '4px 4px 0 0',
+                            border: '1px solid #cbd5e1',
+                            borderBottom: consoleTab === 'result' ? '1px solid #f8fafc' : '1px solid #cbd5e1',
+                            backgroundColor: consoleTab === 'result' ? '#f8fafc' : '#ffffff',
+                            color: consoleTab === 'result' ? '#002147' : '#64748b',
+                            cursor: 'pointer',
+                            marginBottom: '-1px',
+                            zIndex: consoleTab === 'result' ? 2 : 1
+                          }}
+                        >
+                          &gt;_ Test Result
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setConsoleTab('testcase')} // Map to Live Preview
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '8.5pt',
+                            fontWeight: 'bold',
+                            borderRadius: '4px 4px 0 0',
+                            border: '1px solid #cbd5e1',
+                            borderBottom: (consoleTab === 'testcase' || consoleTab === 'preview') ? '1px solid #f8fafc' : '1px solid #cbd5e1',
+                            backgroundColor: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#f8fafc' : '#ffffff',
+                            color: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#002147' : '#64748b',
+                            cursor: 'pointer',
+                            marginBottom: '-1px',
+                            zIndex: 2
+                          }}
+                        >
+                          Live Preview
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConsoleTab('result')} // Map to Console Logs
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '8.5pt',
+                            fontWeight: 'bold',
+                            borderRadius: '4px 4px 0 0',
+                            border: '1px solid #cbd5e1',
+                            borderBottom: consoleTab === 'result' ? '1px solid #f8fafc' : '1px solid #cbd5e1',
+                            backgroundColor: consoleTab === 'result' ? '#f8fafc' : '#ffffff',
+                            color: consoleTab === 'result' ? '#002147' : '#64748b',
+                            cursor: 'pointer',
+                            marginBottom: '-1px',
+                            zIndex: 2
+                          }}
+                        >
+                          &gt;_ Console Logs
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Console Body Area */}
+                  <div style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '4px',
+                    padding: '10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 0
+                  }}>
+                    {test.questions[selectedQuestionIndex].type === 'coding' ? (
+                      /* C++ Coding Console contents */
+                      consoleTab === 'testcase' ? (
+                        <div>
+                          {(() => {
+                            const activeQuestion = test?.questions?.[selectedQuestionIndex];
+                            const sampleCases = (activeQuestion?.testCases || []).filter(tc => tc.isSample);
+                            if (sampleCases.length === 0) {
+                              return <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>No sample test cases configured for this question.</div>;
+                            }
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {sampleCases.map((tc, tcIdx) => (
+                                  <div key={tcIdx} style={{ fontSize: '8.5pt', borderBottom: '1px dashed #cbd5e1', paddingBottom: '6px' }}>
+                                    <div style={{ fontWeight: 'bold', color: '#475569', marginBottom: '2px' }}>Case #{tcIdx + 1}:</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                      <div>
+                                        <span style={{ color: '#64748b' }}>Input: </span>
+                                        <code style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: '3px', fontFamily: 'monospace' }}>{tc.input || '(empty)'}</code>
+                                      </div>
+                                      <div>
+                                        <span style={{ color: '#64748b' }}>Expected: </span>
+                                        <code style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: '3px', fontFamily: 'monospace' }}>{tc.output || '(empty)'}</code>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <div>
+                          {isRunningCode ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '120px', gap: '8px' }}>
+                              <Loader2 className="cf-spinner" size={24} style={{ color: '#3b5998' }} />
+                              <span style={{ fontSize: '9pt', color: '#475569', fontFamily: 'monospace' }}>Compiling &amp; Running Code...</span>
+                            </div>
+                          ) : (!runResults && !compileError) ? (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '120px', fontSize: '9.5pt', color: '#94a3b8', fontStyle: 'italic' }}>
+                              You must run your C++ code first
+                            </div>
+                          ) : (
+                            <div>
+                              {/* Compile Error */}
+                              {compileError && (
+                                <div style={{
+                                  backgroundColor: '#fef2f2',
+                                  border: '1px solid #fee2e2',
+                                  borderRadius: '4px',
+                                  padding: '10px',
+                                  color: '#991b1b',
+                                  fontFamily: 'monospace',
+                                  fontSize: '8.5pt',
+                                  whiteSpace: 'pre-wrap'
+                                }}>
+                                  <strong>Compilation Error:</strong>
+                                  <div style={{ marginTop: '5px' }}>{compileError}</div>
+                                </div>
+                              )}
+
+                              {/* Run Results */}
+                              {runResults && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                  {runResults.map((res, rIdx) => {
+                                    const isPassed = res.status === 'Accepted';
+                                    const activeQuest = test?.questions?.[selectedQuestionIndex];
+                                    const isSample = activeQuest?.testCases?.[rIdx]?.isSample;
+                                    return (
+                                      <div key={rIdx} style={{
+                                        border: '1px solid #cbd5e1',
+                                        borderRadius: '4px',
+                                        backgroundColor: '#ffffff',
+                                        overflow: 'hidden'
+                                      }}>
+                                        <div style={{
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center',
+                                          padding: '5px 10px',
+                                          borderBottom: isSample ? '1px solid #cbd5e1' : 'none',
+                                          backgroundColor: isPassed ? '#f0fdf4' : '#fef2f2'
+                                        }}>
+                                          <span style={{
+                                            fontSize: '8.5pt',
+                                            fontWeight: 'bold',
+                                            color: isPassed ? '#15803d' : '#b91c1c',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px'
+                                          }}>
+                                            {isPassed ? (
+                                              <Check size={14} style={{ color: '#15803d' }} />
+                                            ) : (
+                                              <X size={14} style={{ color: '#b91c1c' }} />
+                                            )}
+                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - {isSample ? `Test Case #${rIdx + 1}` : `Hidden Test Case #${rIdx + 1}`}</span>
+                                          </span>
+                                        </div>
+                                        {isSample && (
+                                          <div style={{ padding: '6px 10px', fontSize: '8pt', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                            <div>
+                                              <strong>Input:</strong> <code style={{ fontFamily: 'monospace' }}>{res.input || '(empty)'}</code>
+                                            </div>
+                                            <div>
+                                              <strong>Expected:</strong> <code style={{ color: '#15803d', fontFamily: 'monospace' }}>{res.expectedOutput || '(empty)'}</code>
+                                            </div>
+                                            <div>
+                                              <strong>Your Output:</strong> <code style={{ color: isPassed ? '#15803d' : '#b91c1c', fontFamily: 'monospace' }}>{res.actualOutput || '(empty)'}</code>
+                                            </div>
+                                            {res.stderr && (
+                                              <div style={{ color: '#b91c1c', marginTop: '2px' }}>
+                                                <strong>Error:</strong> <pre style={{ display: 'inline', fontFamily: 'monospace', margin: 0 }}>{res.stderr}</pre>
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      /* HTML/CSS/JS Web Console contents */
+                      (consoleTab === 'testcase' || consoleTab === 'preview') ? (
+                        <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
+                          <iframe
+                            id="web-sandbox-preview"
+                            title="Web Sandbox Preview"
+                            srcDoc={`
+                              <!DOCTYPE html>
+                              <html>
+                                <head>
+                                  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+                                  <base href="https://invalid-sandbox-origin.invalid/">
+                                  <style>
+                                    html, body {
+                                      margin: 0;
+                                      padding: 10px;
+                                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                                      word-wrap: break-word;
+                                      word-break: break-word;
+                                      overflow-x: hidden;
+                                      box-sizing: border-box;
+                                    }
+                                    *, *:before, *:after {
+                                      box-sizing: inherit;
+                                    }
+                                    img, video, iframe, canvas {
+                                      max-width: 100%;
+                                      height: auto;
+                                      display: block;
+                                    }
+                                    pre, code {
+                                      white-space: pre-wrap;
+                                      word-break: break-all;
+                                    }
+                                  </style>
+                                  <style>${draftCss}</style>
+                                  <script>
+                                    window.onerror = function(message, source, lineno, colno, error) {
+                                      window.parent.postMessage({
+                                        type: 'IFRAME_CONSOLE_LOG',
+                                        level: 'error',
+                                        text: message + ' (line ' + lineno + ')'
+                                      }, '*');
+                                      return true;
+                                    };
+                                    const _log = console.log;
+                                    const _error = console.error;
+                                    console.log = function(...args) {
+                                      _log.apply(console, args);
+                                      window.parent.postMessage({
+                                        type: 'IFRAME_CONSOLE_LOG',
+                                        level: 'log',
+                                        text: args.join(' ')
+                                      }, '*');
+                                    };
+                                    console.error = function(...args) {
+                                      _error.apply(console, args);
+                                      window.parent.postMessage({
+                                        type: 'IFRAME_CONSOLE_LOG',
+                                        level: 'error',
+                                        text: args.join(' ')
+                                      }, '*');
+                                    };
+                                  </script>
+                                </head>
+                                <body>
+                                  ${draftHtml}
+                                  <script>${draftJs}</script>
+                                </body>
+                              </html>
+                            `}
+                            sandbox="allow-scripts"
+                            style={{ width: '100%', height: '100%', border: 'none' }}
+                          />
+                        </div>
+                      ) : (
+                        <div style={{
+                          backgroundColor: '#1e1e1e',
+                          color: '#f8fafc',
+                          fontFamily: 'monospace',
+                          fontSize: '8.5pt',
+                          padding: '10px',
+                          borderRadius: '4px',
+                          flex: 1,
+                          minHeight: 0,
+                          overflowY: 'auto',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px'
+                        }}>
+                          {webConsoleLogs.length === 0 ? (
+                            <span style={{ color: '#64748b', fontStyle: 'italic' }}>Console is clean. No logs captured.</span>
+                          ) : (
+                            webConsoleLogs.map((log, lIdx) => (
+                              <div key={lIdx} style={{ display: 'flex', gap: '6px' }}>
+                                <span style={{ color: log.level === 'error' ? '#f87171' : '#64748b', fontWeight: 'bold' }}>
+                                  {log.level === 'error' ? '[error]' : '[log]'}
+                                </span>
+                                <span style={{ color: log.level === 'error' ? '#fca5a5' : '#e2e8f0' }}>{log.text}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Save & Next button at the bottom right */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', height: '50px' }}>
+              {test.questions[selectedQuestionIndex].type === 'coding' ? (
+                <button
+                  type="button"
+                  className="cf-btn-secondary"
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '9pt',
+                    fontWeight: 'bold',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '4px',
+                    cursor: isRunningCode ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    margin: 0
+                  }}
+                  onClick={handleRunCode}
+                  disabled={isRunningCode}
+                >
+                  {isRunningCode ? <Loader2 className="cf-spinner" size={14} /> : <Play size={14} />}
+                  {isRunningCode ? 'Running...' : 'Run Code'}
+                </button>
+              ) : (
+                <div></div>
+              )}
               <button
                 type="button"
                 className="cf-btn-primary"
-                style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', padding: '8px 16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #10b981', borderRadius: '4px', cursor: 'pointer' }}
+                style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', padding: '8px 16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #10b981', borderRadius: '4px', cursor: 'pointer', margin: 0 }}
                 onClick={handleSaveAndNext}
               >
-                💾 Save &amp; {selectedQuestionIndex === test.questions.length - 1 ? 'Finish Question' : 'Next Question'}
+                <CheckSquare size={14} />
+                <span>Save &amp; {selectedQuestionIndex === test.questions.length - 1 ? 'Finish Question' : 'Next Question'}</span>
               </button>
             </div>
           </div>
