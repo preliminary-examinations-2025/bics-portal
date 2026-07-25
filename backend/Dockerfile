@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
 # Install g++ and make for C++ compilation support
-RUN apk add --no-cache g++ gcc build-base
+RUN apk add --no-cache g++ gcc build-base ca-certificates
 
 WORKDIR /usr/src/app
 
