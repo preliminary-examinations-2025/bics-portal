@@ -432,6 +432,7 @@ export default function App() {
     let pc = null;
     const subId = submission.id || submission._id;
     let processedEventIds = new Set();
+    let pendingIceCandidates = [];
 
     const checkAdminSignals = async () => {
       try {
@@ -483,11 +484,23 @@ export default function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ sender: 'candidate', type: 'sdp', data: JSON.stringify(answer) })
               });
+
+              // Process any pending ICE candidates received before remote description was set
+              for (let cand of pendingIceCandidates) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                } catch (e) {
+                  console.warn("WebRTC: Error adding queued ICE candidate:", e);
+                }
+              }
+              pendingIceCandidates = [];
             } else if (sig.type === 'ice') {
               // Add Admin ICE candidate
               const candidate = JSON.parse(sig.data);
-              if (pc) {
+              if (pc && pc.remoteDescription && pc.remoteDescription.type) {
                 await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              } else {
+                pendingIceCandidates.push(candidate);
               }
             }
           }

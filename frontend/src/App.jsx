@@ -6308,6 +6308,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
       });
 
       let processedEventIds = new Set();
+      let pendingIceCandidates = [];
       const pollAnswer = setInterval(async () => {
         try {
           const res = await fetch(`${API_BASE}/tests/proctoring/signal/${subId}?sender=candidate`);
@@ -6322,9 +6323,21 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
               if (sig.type === 'sdp') {
                 const answer = JSON.parse(sig.data);
                 await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                for (let cand of pendingIceCandidates) {
+                  try {
+                    await pc.addIceCandidate(new RTCIceCandidate(cand));
+                  } catch (e) {
+                    console.warn("WebRTC: Error adding queued candidate:", e);
+                  }
+                }
+                pendingIceCandidates = [];
               } else if (sig.type === 'ice') {
                 const candidate = JSON.parse(sig.data);
-                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                if (pc.remoteDescription && pc.remoteDescription.type) {
+                  await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                } else {
+                  pendingIceCandidates.push(candidate);
+                }
               }
             }
           }
