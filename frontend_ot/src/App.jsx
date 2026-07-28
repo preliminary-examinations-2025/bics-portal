@@ -1243,7 +1243,7 @@ export default function App() {
             )}
 
             {/* Left Pane bottom footer question grid switcher */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <button
                 className="cf-btn-secondary"
                 disabled={selectedQuestionIndex === 0}
@@ -1253,7 +1253,7 @@ export default function App() {
                 ← Previous
               </button>
               
-              <div style={{ display: 'flex', gap: '5px' }}>
+              <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 {test.questions.map((_, qIdx) => (
                   <button
                     key={qIdx}

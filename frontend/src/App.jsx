@@ -5,8 +5,9 @@ import {
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
   Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy,
-  Check, Plus
+  Check, Plus, Code
 } from 'lucide-react';
+import Editor from '@monaco-editor/react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || (() => {
   const isLocal = window.location.hostname === 'localhost' || 
@@ -494,6 +495,265 @@ export default function App() {
   const [adminGradingCodingScore, setAdminGradingCodingScore] = useState(0);
   const [adminGradingFeedback, setAdminGradingFeedback] = useState('');
   const [codingEvaluationResults, setCodingEvaluationResults] = useState({});
+
+  // Interactive Practice Playground States
+  const [playgroundMode, setPlaygroundMode] = useState('cpp'); // 'cpp' or 'web'
+  const [playgroundCppCode, setPlaygroundCppCode] = useState(
+`#include <iostream>
+using namespace std;
+
+int main() {
+    cout << "Welcome to BICS C++ Playground!" << endl;
+    int x;
+    if (cin >> x) {
+        cout << "Your input multiplied by 2 is: " << (x * 2) << endl;
+    } else {
+        cout << "Please provide a number in the Stdin input box." << endl;
+    }
+    return 0;
+}
+`
+  );
+  const [terminalLines, setTerminalLines] = useState([
+    'Welcome to BICS Terminal Console.',
+    'Type your inputs at the prompt below and press Enter to buffer them.',
+    'Click "Run C++ Code" to execute.'
+  ]);
+  const [terminalInput, setTerminalInput] = useState('');
+  const [bufferedStdin, setBufferedStdin] = useState([]);
+  const [previousOutputText, setPreviousOutputText] = useState('');
+  const [initialOutputText, setInitialOutputText] = useState('');
+  const [isTerminalWaiting, setIsTerminalWaiting] = useState(false);
+  const [isPlayinggroundRunning, setIsPlaygroundRunning] = useState(false);
+  const terminalEndRef = React.useRef(null);
+
+  // Web Playground States
+  const [playgroundWebTab, setPlaygroundWebTab] = useState('html'); // 'html', 'css', 'js'
+  const [playgroundWebHtml, setPlaygroundWebHtml] = useState('<h1>Welcome to BICS Web Playground!</h1>\n<p>Edit HTML, CSS, or JS and see it update live below.</p>\n<button id="btn" class="pg-btn">Click Me!</button>');
+  const [playgroundWebCss, setPlaygroundWebCss] = useState('body {\n  font-family: sans-serif;\n  padding: 20px;\n  text-align: center;\n  background: #f8fafc;\n}\nh1 {\n  color: #3b5998;\n}\n.pg-btn {\n  padding: 8px 16px;\n  background: #3b5998;\n  color: white;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  transition: background 0.2s;\n}\n.pg-btn:hover {\n  background: #2d4373;\n}');
+  const [playgroundWebJs, setPlaygroundWebJs] = useState('document.getElementById("btn").addEventListener("click", () => {\n  alert("Hello from JS!");\n});');
+
+  useEffect(() => {
+    if (terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [terminalLines]);
+
+  const getCleanInitialLines = (rawOutput) => {
+    return rawOutput.split('\n').filter(l => {
+      const lower = l.toLowerCase();
+      return !lower.includes('stdin input box') && !lower.includes('provide a number') && l.trim() !== '';
+    });
+  };
+
+  const getRemainingLines = (initialLines, newOutput) => {
+    const currentLines = newOutput.split('\n').filter(l => l.trim() !== '');
+    let matchIdx = 0;
+    while (matchIdx < initialLines.length && matchIdx < currentLines.length) {
+      if (initialLines[matchIdx].trim() === currentLines[matchIdx].trim()) {
+        matchIdx++;
+      } else {
+        break;
+      }
+    }
+    return currentLines.slice(matchIdx);
+  };
+
+  const truncateLinesIfNeeded = (lines, maxLines = 1000) => {
+    if (lines.length <= maxLines) return lines;
+    const truncated = lines.slice(0, maxLines);
+    truncated.push(`[Console Output truncated... showing first ${maxLines} lines. Total lines generated: ${lines.length}]`);
+    return truncated;
+  };
+
+  const handleTerminalSubmit = async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const currentInput = terminalInput;
+      
+      const newStdinList = [...bufferedStdin, currentInput];
+      setBufferedStdin(newStdinList);
+      setTerminalInput('');
+      setIsTerminalWaiting(false);
+
+      const stdin = newStdinList.join('\n');
+
+      try {
+        const res = await fetch(`${API_BASE}/tests/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceCode: playgroundCppCode,
+            testCases: [{
+              input: stdin,
+              output: '',
+              isSample: true
+            }]
+          })
+        });
+        const data = await res.json();
+        
+        if (res.ok && data.results && data.results[0]) {
+          const runRes = data.results[0];
+          const newOutput = runRes.actualOutput || '';
+          
+          const initialLines = getCleanInitialLines(initialOutputText);
+          const remaining = getRemainingLines(initialLines, newOutput);
+          
+          let reconstructed = ['$ ./main', ...initialLines];
+          newStdinList.forEach((inputVal) => {
+            reconstructed.push(`$ ${inputVal}`);
+          });
+          reconstructed.push(...remaining);
+
+          const cinCount = (playgroundCppCode.match(/cin\s*>>/g) || []).length;
+          const getlineCount = (playgroundCppCode.match(/getline\s*\(\s*cin/g) || []).length;
+          const scanfCount = (playgroundCppCode.match(/scanf\s*\(/g) || []).length;
+          const totalExpected = cinCount + getlineCount + scanfCount;
+
+          if (newStdinList.length >= totalExpected || newOutput.trim() === previousOutputText.trim()) {
+            reconstructed.push('', 'Program exited with status code 0.');
+            setTerminalLines(truncateLinesIfNeeded(reconstructed));
+            setIsPlaygroundRunning(false);
+            setIsTerminalWaiting(false);
+          } else {
+            setPreviousOutputText(newOutput);
+            setTerminalLines(truncateLinesIfNeeded(reconstructed));
+            setIsTerminalWaiting(true);
+          }
+        } else {
+          setTerminalLines(prev => [...prev, 'Error: Failed to process input stream.']);
+          setIsPlaygroundRunning(false);
+          setIsTerminalWaiting(false);
+        }
+      } catch (err) {
+        console.error(err);
+        setTerminalLines(prev => [...prev, 'Error: Failed to reach compilation server.']);
+        setIsPlaygroundRunning(false);
+        setIsTerminalWaiting(false);
+      }
+    }
+  };
+
+  const handleRunPlaygroundCpp = async () => {
+    setIsPlaygroundRunning(true);
+    setIsTerminalWaiting(false);
+    setBufferedStdin([]);
+    setPreviousOutputText('');
+    setInitialOutputText('');
+    
+    setTerminalLines(['$ ./main', '[Compiling and executing...]']);
+
+    try {
+      const res = await fetch(`${API_BASE}/tests/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceCode: playgroundCppCode,
+          testCases: [{
+            input: '',
+            output: '',
+            isSample: true
+          }]
+        })
+      });
+      const data = await res.json();
+      
+      setTerminalLines(prev => {
+        const history = prev.filter(l => l !== '[Compiling and executing...]');
+        
+        if (res.ok) {
+          if (data.status === 'Compilation Error') {
+            setIsPlaygroundRunning(false);
+            return [
+              ...history,
+              `Compilation Error:`,
+              ...(data.compileError || 'Compilation failed.').split('\n')
+            ];
+          } else if (data.results && data.results[0]) {
+            const runRes = data.results[0];
+            if (runRes.status === 'Runtime Error' || runRes.stderr) {
+              setIsPlaygroundRunning(false);
+              return [
+                ...history,
+                `Runtime Error:`,
+                ...(runRes.stderr || 'Runtime error occurred.').split('\n')
+              ];
+            } else {
+              const stdout = runRes.actualOutput || '';
+              setPreviousOutputText(stdout);
+              setInitialOutputText(stdout);
+              
+              const initialLines = getCleanInitialLines(stdout);
+              
+              const cinCount = (playgroundCppCode.match(/cin\s*>>/g) || []).length;
+              const getlineCount = (playgroundCppCode.match(/getline\s*\(\s*cin/g) || []).length;
+              const scanfCount = (playgroundCppCode.match(/scanf\s*\(/g) || []).length;
+              const totalExpected = cinCount + getlineCount + scanfCount;
+
+              if (totalExpected > 0) {
+                setIsTerminalWaiting(true);
+                return truncateLinesIfNeeded([
+                  ...history,
+                  ...initialLines
+                ]);
+              } else {
+                setIsPlaygroundRunning(false);
+                return truncateLinesIfNeeded([
+                  ...history,
+                  ...initialLines,
+                  '',
+                  'Program exited with status code 0.'
+                ]);
+              }
+            }
+          } else {
+            setIsPlaygroundRunning(false);
+            return [
+              ...history,
+              `Error: ${data.error || 'Execution returned empty response.'}`
+            ];
+          }
+        } else {
+          setIsPlaygroundRunning(false);
+          return [
+            ...history,
+            `Error: ${data.error || 'Failed to run code.'}`
+          ];
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      setIsPlaygroundRunning(false);
+      setTerminalLines(prev => {
+        const history = prev.filter(l => l !== '[Compiling and executing...]');
+        return [
+          ...history,
+          'Error: Failed to connect to compilation server.'
+        ];
+      });
+    }
+  };
+
+  const handlePlaygroundKeyDown = (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const { selectionStart, selectionEnd, value } = e.target;
+      const newValue = value.substring(0, selectionStart) + '  ' + value.substring(selectionEnd);
+      
+      if (playgroundMode === 'cpp') {
+        setPlaygroundCppCode(newValue);
+      } else {
+        if (playgroundWebTab === 'html') setPlaygroundWebHtml(newValue);
+        else if (playgroundWebTab === 'css') setPlaygroundWebCss(newValue);
+        else if (playgroundWebTab === 'js') setPlaygroundWebJs(newValue);
+      }
+      
+      setTimeout(() => {
+        e.target.selectionStart = e.target.selectionEnd = selectionStart + 2;
+      }, 0);
+    }
+  };
 
   const fetchVideoLectures = async () => {
     try {
@@ -2287,6 +2547,313 @@ export default function App() {
                         <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', display: 'inline-block', marginTop: '5px' }}>
                           📁 {selectedLecture.section}
                         </span>
+
+                        {/* Interactive Practice Playground (Light Mode) */}
+                        <div style={{
+                          marginTop: '30px',
+                          padding: '24px',
+                          backgroundColor: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '8px',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px', marginBottom: '20px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Code size={18} style={{ color: '#3b5998' }} />
+                              <h4 style={{ margin: 0, color: '#002147', fontSize: '12pt', fontWeight: 'bold' }}>
+                                BICS Interactive Practice Playground
+                              </h4>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                onClick={() => setPlaygroundMode('cpp')}
+                                className="cf-btn-secondary"
+                                style={{
+                                  padding: '4px 12px',
+                                  fontSize: '8.5pt',
+                                  backgroundColor: playgroundMode === 'cpp' ? '#3b5998' : '#fff',
+                                  color: playgroundMode === 'cpp' ? '#fff' : '#475569',
+                                  border: '1px solid #cbd5e1'
+                                }}
+                              >
+                                C++ Compiler
+                              </button>
+                              <button
+                                onClick={() => setPlaygroundMode('web')}
+                                className="cf-btn-secondary"
+                                style={{
+                                  padding: '4px 12px',
+                                  fontSize: '8.5pt',
+                                  backgroundColor: playgroundMode === 'web' ? '#3b5998' : '#fff',
+                                  color: playgroundMode === 'web' ? '#fff' : '#475569',
+                                  border: '1px solid #cbd5e1'
+                                }}
+                              >
+                                Web Canvas (HTML/CSS/JS)
+                              </button>
+                            </div>
+                          </div>
+
+                          {playgroundMode === 'cpp' ? (
+                            <div>
+                              {/* C++ Practice mode */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                {/* Editor Header */}
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  backgroundColor: '#e2e8f0',
+                                  padding: '6px 12px',
+                                  borderTopLeftRadius: '6px',
+                                  borderTopRightRadius: '6px',
+                                  border: '1px solid #cbd5e1',
+                                  borderBottom: 'none'
+                                }}>
+                                  <span style={{ fontSize: '8pt', fontFamily: 'monospace', color: '#334155', fontWeight: 'bold' }}>
+                                    main.cpp (BICS C++ Editor)
+                                  </span>
+                                </div>
+                                {/* Monaco Editor Wrapper */}
+                                <div style={{ border: '1px solid #cbd5e1', borderBottomLeftRadius: '6px', borderBottomRightRadius: '6px', overflow: 'hidden' }}>
+                                  <Editor
+                                    height="400px"
+                                    language="cpp"
+                                    theme="vs"
+                                    value={playgroundCppCode}
+                                    onChange={(val) => setPlaygroundCppCode(val || '')}
+                                    options={{
+                                      minimap: { enabled: false },
+                                      fontSize: 13,
+                                      lineHeight: 20,
+                                      scrollBeyondLastLine: false,
+                                      automaticLayout: true,
+                                      fontFamily: 'Consolas, Monaco, monospace'
+                                    }}
+                                  />
+                                </div>
+
+                                {/* Controls & Unified Terminal Panel */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                  
+                                  {/* Terminal Header & Actions */}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                                    <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', margin: 0 }}>
+                                      BICS Interactive Console Terminal
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button
+                                        onClick={() => {
+                                          setTerminalLines([]);
+                                          setBufferedStdin([]);
+                                          setTerminalInput('');
+                                        }}
+                                        style={{
+                                          padding: '8px 16px',
+                                          fontSize: '9pt',
+                                          fontWeight: 'bold',
+                                          backgroundColor: '#fff',
+                                          color: '#475569',
+                                          border: '1px solid #cbd5e1',
+                                          borderRadius: '4px',
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        Clear
+                                      </button>
+                                      <button
+                                        onClick={handleRunPlaygroundCpp}
+                                        disabled={isPlayinggroundRunning}
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          padding: '8px 20px',
+                                          fontSize: '9.5pt',
+                                          fontWeight: 'bold',
+                                          backgroundColor: '#3b5998',
+                                          color: '#ffffff',
+                                          border: 'none',
+                                          borderRadius: '4px',
+                                          cursor: isPlayinggroundRunning ? 'not-allowed' : 'pointer',
+                                          boxShadow: '0 2px 4px rgba(59, 89, 152, 0.15)',
+                                          transition: 'background-color 0.2s'
+                                        }}
+                                      >
+                                        {isPlayinggroundRunning && (
+                                          <Loader2 size={14} className="spinner" style={{ marginRight: '8px' }} />
+                                        )}
+                                        {isPlayinggroundRunning ? 'Running...' : 'Run C++ Code'}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Console Box (Light Color Scheme) */}
+                                  <div style={{
+                                    backgroundColor: '#f8fafc',
+                                    color: '#0f172a',
+                                    fontFamily: 'Consolas, Monaco, Courier, monospace',
+                                    fontSize: '9.5pt',
+                                    padding: '16px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #cbd5e1',
+                                    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.05)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px'
+                                  }}>
+                                    
+                                    {/* Terminal Lines Container */}
+                                    <div style={{
+                                      maxHeight: '240px',
+                                      overflowY: 'auto',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '4px'
+                                    }}>
+                                      {terminalLines.map((line, idx) => {
+                                        let lineStyle = { margin: 0, whiteSpace: 'pre-wrap' };
+                                        if (line.startsWith('$')) {
+                                          lineStyle.color = '#16a34a'; // Green for shell commands and inputs
+                                          lineStyle.fontWeight = 'bold';
+                                        } else if (line.startsWith('Compilation Error') || line.startsWith('Runtime Error') || line.startsWith('Error:')) {
+                                          lineStyle.color = '#dc2626'; // Red for errors
+                                        }
+                                        return (
+                                          <p key={idx} style={lineStyle}>{line}</p>
+                                        );
+                                      })}
+                                      <div ref={terminalEndRef} />
+                                    </div>
+
+                                    {/* Input Prompt Row - Active when waiting for input */}
+                                    {isTerminalWaiting && (
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        borderTop: '1px solid #e2e8f0',
+                                        paddingTop: '8px',
+                                        marginTop: '4px'
+                                      }}>
+                                        <span style={{ color: '#16a34a', fontWeight: 'bold', marginRight: '8px', userSelect: 'none' }}>$</span>
+                                        <input
+                                          type="text"
+                                          value={terminalInput}
+                                          onChange={(e) => setTerminalInput(e.target.value)}
+                                          onKeyDown={handleTerminalSubmit}
+                                          disabled={isPlayinggroundRunning && !isTerminalWaiting}
+                                          placeholder="Type standard input and press Enter..."
+                                          autoFocus
+                                          style={{
+                                            flex: 1,
+                                            background: 'transparent',
+                                            color: '#0f172a',
+                                            border: 'none',
+                                            outline: 'none',
+                                            fontFamily: 'Consolas, Monaco, Courier, monospace',
+                                            fontSize: '9.5pt',
+                                            caretColor: '#0f172a'
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                {/* File tabs */}
+                                <div style={{ display: 'flex', borderBottom: '1px solid #cbd5e1' }}>
+                                  {['html', 'css', 'js'].map((t) => (
+                                    <button
+                                      key={t}
+                                      onClick={() => setPlaygroundWebTab(t)}
+                                      style={{
+                                        padding: '6px 16px',
+                                        fontSize: '8.5pt',
+                                        fontWeight: 'bold',
+                                        backgroundColor: playgroundWebTab === t ? '#fff' : 'transparent',
+                                        color: playgroundWebTab === t ? '#3b5998' : '#64748b',
+                                        border: '1px solid transparent',
+                                        borderBottomColor: playgroundWebTab === t ? '#fff' : 'transparent',
+                                        borderTopLeftRadius: '4px',
+                                        borderTopRightRadius: '4px',
+                                        marginBottom: '-1px',
+                                        zIndex: playgroundWebTab === t ? 1 : 0
+                                      }}
+                                    >
+                                      index.{t.toUpperCase()}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {/* Web Editor Area */}
+                                <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                  <Editor
+                                    height="400px"
+                                    language={playgroundWebTab === 'js' ? 'javascript' : playgroundWebTab}
+                                    theme="vs"
+                                    value={playgroundWebTab === 'html' ? playgroundWebHtml : playgroundWebTab === 'css' ? playgroundWebCss : playgroundWebJs}
+                                    onChange={(val) => {
+                                      if (playgroundWebTab === 'html') setPlaygroundWebHtml(val || '');
+                                      else if (playgroundWebTab === 'css') setPlaygroundWebCss(val || '');
+                                      else if (playgroundWebTab === 'js') setPlaygroundWebJs(val || '');
+                                    }}
+                                    options={{
+                                      minimap: { enabled: false },
+                                      fontSize: 13,
+                                      lineHeight: 20,
+                                      scrollBeyondLastLine: false,
+                                      automaticLayout: true,
+                                      fontFamily: 'Consolas, Monaco, monospace'
+                                    }}
+                                  />
+                                </div>
+
+                                {/* Sandbox Live Preview Iframe */}
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '9pt', fontWeight: 'bold', color: '#334155', marginBottom: '5px' }}>
+                                    Live Sandbox Canvas Visual Preview:
+                                  </label>
+                                  <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', backgroundColor: '#fff' }}>
+                                    <iframe
+                                      title="BICS Playground Sandbox Preview"
+                                      srcDoc={`
+                                        <!DOCTYPE html>
+                                        <html>
+                                          <head>
+                                            <meta charset="utf-8">
+                                            <base href="https://invalid-sandbox-origin.invalid/">
+                                            <style>${playgroundWebCss}</style>
+                                          </head>
+                                          <body>
+                                            ${playgroundWebHtml}
+                                            <script>
+                                              try {
+                                                ${playgroundWebJs}
+                                              } catch (err) {
+                                                console.error(err);
+                                              }
+                                            </script>
+                                          </body>
+                                        </html>
+                                      `}
+                                      style={{
+                                        width: '100%',
+                                        height: '240px',
+                                        border: 'none',
+                                        backgroundColor: '#fff'
+                                      }}
+                                      sandbox="allow-scripts"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="cf-alert cf-alert-info">Select a lecture from the side list to begin playing.</div>
@@ -3267,7 +3834,7 @@ export default function App() {
                     >
                       {isSubmittingContact ? (
                         <>
-                          <Loader2 size={16} className="animate-spin" /> Submitting Request...
+                          <Loader2 size={16} className="spinner" /> Submitting Request...
                         </>
                       ) : (
                         contactCategory === 'technical_problem' ? "Open Support Ticket" : "Submit Request"
@@ -5900,20 +6467,23 @@ export default function App() {
           alignItems: 'center',
           zIndex: 1000
         }}>
-          <div className="cf-card" style={{ width: '350px', padding: '15px', margin: 0, border: '1px solid #b9c9fe', boxWith: 'none' }}>
-            <div className="cf-card-title" style={{ marginTop: '-15px', marginLeft: '-15px', marginRight: '-15px', marginBottom: '15px' }}>
+          <div className="cf-card" style={{ width: '350px', padding: '20px', margin: 0, border: '1px solid #cbd5e1' }}>
+            <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', padding: '12px 20px' }}>
               Confirm Exit
             </div>
-            <p style={{ fontSize: '9.5pt', marginBottom: '20px', color: '#333' }}>
-              Are you sure you want to sign out from the BICS Portal?
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button className="cf-btn-secondary" style={{ flexGrow: 1 }} onClick={() => setShowLogoutModal(false)}>
-                Cancel
-              </button>
-              <button className="cf-btn-primary" style={{ flexGrow: 1, color: '#e11d48', borderColor: '#e11d48' }} onClick={handleLogout}>
-                Sign Out
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <img src="/logo.png" alt="BICS Logo" style={{ height: '70px', objectFit: 'contain', marginBottom: '20px' }} />
+              <p style={{ fontSize: '10pt', marginBottom: '20px', color: '#475569', textAlign: 'center', lineHeight: '1.4' }}>
+                Are you sure you want to sign out from the BICS Portal?
+              </p>
+              <div style={{ display: 'flex', width: '100%', gap: '10px' }}>
+                <button className="cf-btn-secondary" style={{ flexGrow: 1 }} onClick={() => setShowLogoutModal(false)}>
+                  Cancel
+                </button>
+                <button className="cf-btn-primary" style={{ flexGrow: 1, color: '#e11d48', borderColor: '#e11d48' }} onClick={handleLogout}>
+                  Sign Out
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -6223,9 +6793,15 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   const [isMuted, setIsMuted] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
   const [status, setStatus] = useState(sub.status || 'started');
-  const videoRef = React.useRef(null);
+  const [remoteStream, setRemoteStream] = useState(null);
   const pcRef = React.useRef(null);
   const subId = sub.id || sub._id;
+
+  const setVideoRef = React.useCallback((node) => {
+    if (node && remoteStream) {
+      node.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   useEffect(() => {
     let active = true;
@@ -6276,9 +6852,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
       pcRef.current = pc;
 
       pc.ontrack = (event) => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = event.streams[0];
-        }
+        setRemoteStream(event.streams[0]);
         setConnectionStatus('Connected');
       };
 
@@ -6321,6 +6895,9 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
               processedEventIds.add(sigId);
 
               if (sig.type === 'sdp') {
+                if (pc.signalingState === 'stable' || pc.remoteDescription) {
+                  continue;
+                }
                 const answer = JSON.parse(sig.data);
                 await pc.setRemoteDescription(new RTCSessionDescription(answer));
                 for (let cand of pendingIceCandidates) {
@@ -6463,7 +7040,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
               alignItems: 'center',
               border: '1px solid var(--cf-border)',
               color: '#94a3b8',
-              padding: '40px 20px',
+              padding: connectionStatus === 'Connected' ? '0' : '40px 20px',
               textAlign: 'center'
             }}>
               <style>{`
@@ -6486,7 +7063,7 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
               ) : (
                 <>
                   <video
-                    ref={videoRef}
+                    ref={setVideoRef}
                     autoPlay
                     playsInline
                     muted={isMuted}

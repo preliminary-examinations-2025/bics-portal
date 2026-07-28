@@ -217,7 +217,13 @@ const VideoLectureSchema = new mongoose.Schema({
     section: String,
     title: String,
     youtubeUrl: String,
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    hasPlayground: { type: Boolean, default: false },
+    playgroundLanguage: { type: String, default: 'cpp' }, // 'cpp' or 'web'
+    codeTemplate: { type: String, default: '' },
+    webHtmlTemplate: { type: String, default: '' },
+    webCssTemplate: { type: String, default: '' },
+    webJsTemplate: { type: String, default: '' }
 });
 const VideoLectureModel = mongoose.model('VideoLecture', VideoLectureSchema);
 
@@ -935,14 +941,24 @@ app.get('/api/video-lectures', async (req, res) => {
 });
 
 app.post('/api/admin/video-lectures', async (req, res) => {
-    const { section, title, youtubeUrl } = req.body;
+    const { section, title, youtubeUrl, hasPlayground, playgroundLanguage, codeTemplate, webHtmlTemplate, webCssTemplate, webJsTemplate } = req.body;
     if (!section || !title || !youtubeUrl) {
         return res.status(400).json({ error: "Section, Title, and YouTube Link are required" });
     }
 
     if (useMongo) {
         try {
-            const lect = new VideoLectureModel({ section, title, youtubeUrl });
+            const lect = new VideoLectureModel({
+                section,
+                title,
+                youtubeUrl,
+                hasPlayground: !!hasPlayground,
+                playgroundLanguage: playgroundLanguage || 'cpp',
+                codeTemplate: codeTemplate || '',
+                webHtmlTemplate: webHtmlTemplate || '',
+                webCssTemplate: webCssTemplate || '',
+                webJsTemplate: webJsTemplate || ''
+            });
             await lect.save();
             return res.json({ success: true, lecture: lect });
         } catch (e) {
@@ -956,6 +972,12 @@ app.post('/api/admin/video-lectures', async (req, res) => {
             section,
             title,
             youtubeUrl,
+            hasPlayground: !!hasPlayground,
+            playgroundLanguage: playgroundLanguage || 'cpp',
+            codeTemplate: codeTemplate || '',
+            webHtmlTemplate: webHtmlTemplate || '',
+            webCssTemplate: webCssTemplate || '',
+            webJsTemplate: webJsTemplate || '',
             createdAt: new Date()
         };
         db.videoLectures.push(newLect);
