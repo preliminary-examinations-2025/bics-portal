@@ -601,19 +601,32 @@ app.post('/api/admin/config', async (req, res) => {
 
     if (useMongo) {
         try {
-            const conf = await ConfigModel.findOne();
+            let conf = await ConfigModel.findOne();
+            if (!conf) {
+                conf = new ConfigModel(initialDB.config);
+            }
             if (courseRegistrationActive !== undefined) conf.courseRegistrationActive = courseRegistrationActive;
             if (onlineExamActive !== undefined) conf.onlineExamActive = onlineExamActive;
             if (midSemFeedbackActive !== undefined) conf.midSemFeedbackActive = midSemFeedbackActive;
             if (endSemFeedbackActive !== undefined) conf.endSemFeedbackActive = endSemFeedbackActive;
             if (exitFormActive !== undefined) conf.exitFormActive = exitFormActive;
             if (hallTicketDownloadActive !== undefined) conf.hallTicketDownloadActive = hallTicketDownloadActive;
-            if (timetable !== undefined) conf.timetable = timetable;
             if (timetableNotice !== undefined) conf.timetableNotice = timetableNotice;
-            if (announcements !== undefined) conf.announcements = announcements;
             if (hallTicketUrl !== undefined) conf.hallTicketUrl = hallTicketUrl;
             if (examType !== undefined) conf.examType = examType;
-            if (classTests !== undefined) conf.classTests = classTests;
+            
+            if (timetable !== undefined) {
+                conf.timetable = timetable;
+                conf.markModified('timetable');
+            }
+            if (announcements !== undefined) {
+                conf.announcements = announcements;
+                conf.markModified('announcements');
+            }
+            if (classTests !== undefined) {
+                conf.classTests = classTests;
+                conf.markModified('classTests');
+            }
             await conf.save();
             return res.json({ success: true, config: conf });
         } catch (e) {
