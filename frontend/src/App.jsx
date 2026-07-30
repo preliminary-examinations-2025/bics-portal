@@ -5,7 +5,7 @@ import {
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
   Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy,
-  Check, Plus, Code
+  Check, Plus, Code, Home, Phone
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -303,12 +303,14 @@ export default function App() {
 
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [adminTimetableNotice, setAdminTimetableNotice] = useState('');
+  const [adminExamType, setAdminExamType] = useState('midsem');
   const [adminTimetable, setAdminTimetable] = useState([
-    { course: "Introduction to Computer Science", date: '', time: '' },
-    { course: "Programming Fundamentals with C++", date: '', time: '' },
-    { course: "Basics of Web Development", date: '', time: '' },
-    { course: "Mathematical Thinking (Discrete Structures)", date: '', time: '' }
+    { code: "CS-101", course: "Introduction to Computer Science", date: '', time: '', marks: 50 },
+    { code: "CS-102", course: "Programming Fundamentals with C++", date: '', time: '', marks: 50 },
+    { code: "CS-103", course: "Basics of Web Development", date: '', time: '', marks: 50 },
+    { code: "CS-104", course: "Mathematical Thinking (Discrete Structures)", date: '', time: '', marks: 50 }
   ]);
+  const [adminClassTests, setAdminClassTests] = useState([]);
 
   // CourseWork states
   const [videoLectures, setVideoLectures] = useState([]);
@@ -1444,6 +1446,12 @@ int main() {
       if (systemConfig.timetable && systemConfig.timetable.length > 0) {
         setAdminTimetable(systemConfig.timetable);
       }
+      if (systemConfig.classTests) {
+        setAdminClassTests(systemConfig.classTests);
+      }
+      if (systemConfig.examType) {
+        setAdminExamType(systemConfig.examType);
+      }
     }
   }, [systemConfig]);
 
@@ -1780,21 +1788,46 @@ int main() {
     }
   };
 
-  const handleUpdateTimetableDates = async (e) => {
-    e.preventDefault();
+  const handleSaveExamTimetable = async (e) => {
+    if (e) e.preventDefault();
     try {
       const res = await fetch(`${API_BASE}/admin/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timetable: adminTimetable })
+        body: JSON.stringify({
+          examType: adminExamType,
+          timetable: adminTimetable
+        })
       });
       const data = await res.json();
       if (data.success) {
         setSystemConfig(data.config);
-        setAdminMessage("Course timetable dates updated successfully.");
+        setAdminMessage("Examination schedule and type saved successfully.");
       }
     } catch (e) {
       console.error(e);
+      setAdminMessage("Failed to save exam schedule.");
+    }
+  };
+
+  const handleSaveClassTests = async (e) => {
+    if (e) e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/admin/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          classTests: adminClassTests
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSystemConfig(data.config);
+        setAdminMessage("Class tests schedule saved successfully.");
+      }
+    } catch (e) {
+      console.error(e);
+      setAdminMessage("Failed to save class tests.");
     }
   };
 
@@ -1802,6 +1835,36 @@ int main() {
     const list = [...adminTimetable];
     list[index][field] = value;
     setAdminTimetable(list);
+  };
+
+  const handleAddTimetableRow = () => {
+    setAdminTimetable([
+      ...adminTimetable,
+      { code: "CS-10X", course: "Custom Course Name", date: "", time: "", marks: 50 }
+    ]);
+  };
+
+  const handleRemoveTimetableRow = (index) => {
+    const list = adminTimetable.filter((_, idx) => idx !== index);
+    setAdminTimetable(list);
+  };
+
+  const handleAddClassTestRow = () => {
+    setAdminClassTests([
+      ...adminClassTests,
+      { id: "ct-" + Date.now(), courseName: "Introduction to Computer Science", date: "", time: "", topic: "Standard Topic Details", marks: 20 }
+    ]);
+  };
+
+  const handleRemoveClassTestRow = (index) => {
+    const list = adminClassTests.filter((_, idx) => idx !== index);
+    setAdminClassTests(list);
+  };
+
+  const handleClassTestCellChange = (index, field, value) => {
+    const list = [...adminClassTests];
+    list[index][field] = value;
+    setAdminClassTests(list);
   };
 
   const handleChangePassword = async (e) => {
@@ -1981,7 +2044,7 @@ int main() {
     }
     
     if (user.role === 'student') {
-      return ['announcements', 'register', 'info', 'conduct', 'timetable', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests'].includes(view);
+      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests'].includes(view);
     }
     
     return false;
@@ -2118,8 +2181,8 @@ int main() {
                   </button>
                   {dropdowns.exam && (
                     <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'timetable' ? 'active' : ''}`} onClick={() => { setView('timetable'); setIsMobileSidebarOpen(false); }}>
-                        <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Time-table
+                      <button className={`dropdown-item ${view === 'schedule' ? 'active' : ''}`} onClick={() => { setView('schedule'); setIsMobileSidebarOpen(false); }}>
+                        <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Schedule
                       </button>
                       <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess(''); }}>
                         <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket
@@ -2325,7 +2388,7 @@ int main() {
                       </div>
                     </div>
 
-                    <div className="cf-form-section">🏠 2. Address &amp; Contact Information</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Home size={14} /> 2. Address &amp; Contact Information</div>
                     <div className="cf-form-grid" style={{ gridTemplateColumns: '1fr' }}>
                       <div className="cf-input-group">
                         <label className="cf-label">Permanent Address</label>
@@ -2341,7 +2404,7 @@ int main() {
                       </div>
                     </div>
 
-                    <div className="cf-form-section">📞 Emergency Contact Information</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Phone size={14} /> Emergency Contact Information</div>
                     <div className="cf-form-grid">
                       <div className="cf-input-group">
                         <label className="cf-label">Emergency Name</label>
@@ -2361,7 +2424,7 @@ int main() {
                       </div>
                     </div>
 
-                    <div className="cf-form-section">📧 Contact Methods</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Mail size={14} /> Contact Methods</div>
                     <div className="cf-form-grid">
                       <div className="cf-input-group">
                         <label className="cf-label">Personal Phone Number</label>
@@ -2377,7 +2440,7 @@ int main() {
                       </div>
                     </div>
 
-                    <div className="cf-form-section">📚 3. List of Courses (All Required for BICS)</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><BookOpen size={14} /> 3. List of Courses (All Required for BICS)</div>
                     <div style={{ padding: '5px 12px' }}>
                       {COURSES_LIST.map((course, idx) => (
                         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
@@ -2387,7 +2450,7 @@ int main() {
                       ))}
                     </div>
 
-                    <div className="cf-form-section">📤 4. Upload Documents</div>
+                    <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Upload size={14} /> 4. Upload Documents</div>
                     <div className="cf-form-grid">
                       <div className="cf-input-group">
                         <label className="cf-label">Profile Photo (JPEG/PNG)</label>
@@ -2455,7 +2518,7 @@ int main() {
                     <span className="profile-info-value">{studentProfile.registrationData.dob}</span>
                   </div>
 
-                  <div className="cf-form-section">🏠 Address &amp; Contact Information</div>
+                  <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Home size={14} /> Address &amp; Contact Information</div>
                   <div className="profile-info-grid">
                     <span className="profile-info-label">Permanent:</span>
                     <span className="profile-info-value">{studentProfile.registrationData.permanentAddress}</span>
@@ -2471,7 +2534,7 @@ int main() {
                     <span className="profile-info-value">{studentProfile.registrationData.emergencyContact?.address}</span>
                   </div>
 
-                  <div className="cf-form-section">📧 Contact Methods</div>
+                  <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Mail size={14} /> Contact Methods</div>
                   <div className="profile-info-grid">
                     <span className="profile-info-label">Personal Phone:</span>
                     <span className="profile-info-value">{studentProfile.registrationData.personalPhone}</span>
@@ -2481,7 +2544,7 @@ int main() {
                     <span className="profile-info-value">{studentProfile.registrationData.collegeEmail}</span>
                   </div>
 
-                  <div className="cf-form-section">🖋️ Uploaded Signatures &amp; Documents</div>
+                  <div className="cf-form-section" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Upload size={14} /> Uploaded Signatures &amp; Documents</div>
                   <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginTop: '10px' }}>
                     <div>
                       <span className="cf-label" style={{ display: 'block', marginBottom: '5px' }}>Signature Preview</span>
@@ -2501,17 +2564,105 @@ int main() {
             </div>
           )}
 
-          {/* EXAMINATION TIMETABLE */}
-          {view === 'timetable' && systemConfig && (
+          {/* CLASS TESTS SCHEDULE */}
+          {view === 'schedule' && systemConfig && (
             <div className="cf-card">
-              <div className="cf-card-title">Examination Timetable</div>
-              
-              {systemConfig.timetableNotice && (
-                <div className="cf-alert cf-alert-info" style={{ fontWeight: 'bold', margin: 0, borderLeft: '4px solid #3b5998', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Bell size={16} style={{ color: '#3b5998' }} />
-                  <span>{systemConfig.timetableNotice}</span>
-                </div>
-              )}
+              <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Calendar size={18} style={{ color: '#3b5998' }} />
+                <span>Class Tests Schedule</span>
+              </div>
+
+              {/* Upcoming Weekend Class Tests Card */}
+              {(() => {
+                const classTestsList = systemConfig.classTests || [];
+                // Get Saturday-Sunday tests for current week
+                const today = new Date();
+                const currentDay = today.getDay();
+                const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+                const monday = new Date(today);
+                monday.setDate(today.getDate() + diffToMonday);
+                monday.setHours(0, 0, 0, 0);
+                
+                const saturday = new Date(monday);
+                saturday.setDate(monday.getDate() + 5);
+                saturday.setHours(0, 0, 0, 0);
+
+                const sunday = new Date(monday);
+                sunday.setDate(monday.getDate() + 6);
+                sunday.setHours(23, 59, 59, 999);
+
+                const weekendTests = classTestsList.filter(t => {
+                  if (!t.date) return false;
+                  const tDate = new Date(t.date);
+                  return tDate >= saturday && tDate <= sunday;
+                });
+
+                return (
+                  <div style={{ marginBottom: '25px' }}>
+                    <h3 style={{ fontSize: '11pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
+                      This Weekend's Upcoming Class Tests
+                    </h3>
+                    {weekendTests.length === 0 ? (
+                      <div className="cf-alert cf-alert-info" style={{ margin: 0 }}>
+                        No class tests scheduled for this upcoming weekend (Saturday-Sunday).
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '15px' }}>
+                        {weekendTests.map(test => (
+                          <div key={test.id} style={{ border: '1px solid #b9c9fe', borderRadius: '4px', padding: '15px', backgroundColor: '#f0f4ff', position: 'relative' }}>
+                            <span style={{ position: 'absolute', top: '15px', right: '15px', backgroundColor: '#3b5998', color: '#fff', fontSize: '7.5pt', fontWeight: 'bold', padding: '3px 8px', borderRadius: '3px' }}>
+                              {test.marks} Marks
+                            </span>
+                            <h4 style={{ fontSize: '10.5pt', color: '#002147', fontWeight: 'bold', width: '80%', marginBottom: '8px' }}>
+                              {test.courseName}
+                            </h4>
+                            <div style={{ fontSize: '9pt', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <span><strong>Topic:</strong> {test.topic}</span>
+                              <span><strong>Date:</strong> {test.date} (Weekend)</span>
+                              <span><strong>Time:</strong> {test.time}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* All Class Tests History / List */}
+              <div>
+                <h3 style={{ fontSize: '11pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
+                  Comprehensive Class Test Roster
+                </h3>
+                {(!systemConfig.classTests || systemConfig.classTests.length === 0) ? (
+                  <div className="cf-alert cf-alert-info">No class tests scheduled.</div>
+                ) : (
+                  <div className="cf-table-container">
+                    <table className="cf-table">
+                      <thead>
+                        <tr>
+                          <th>Course Name</th>
+                          <th>Topic / Module Details</th>
+                          <th>Scheduled Date</th>
+                          <th>Time Slot</th>
+                          <th>Total Marks</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {systemConfig.classTests.map(test => (
+                          <tr key={test.id}>
+                            <td style={{ fontWeight: 'bold', fontSize: '9pt', color: '#002147' }}>{test.courseName}</td>
+                            <td>{test.topic}</td>
+                            <td>{test.date}</td>
+                            <td>{test.time}</td>
+                            <td style={{ fontWeight: 'bold', color: '#3b5998' }}>{test.marks} Marks</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -2545,7 +2696,7 @@ int main() {
                           {selectedLecture.title}
                         </h3>
                         <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', display: 'inline-block', marginTop: '5px' }}>
-                          📁 {selectedLecture.section}
+                          {selectedLecture.section}
                         </span>
 
                         {/* Interactive Practice Playground (Light Mode) */}
@@ -2868,7 +3019,7 @@ int main() {
                     {Array.from(new Set(videoLectures.map(l => l.section))).map((section, sIdx) => (
                       <div key={sIdx} style={{ marginBottom: '20px' }}>
                         <h5 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', marginBottom: '8px', textTransform: 'uppercase' }}>
-                          📚 {section}
+                          {section}
                         </h5>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                           {videoLectures.filter(l => l.section === section).map((lect, lIdx) => (
@@ -2908,7 +3059,7 @@ int main() {
           {/* COURSEWORK - MATERIALS */}
           {view === 'materials' && (
             <div className="cf-card">
-              <div className="cf-card-title">📚 Course Study Materials</div>
+              <div className="cf-card-title">Course Study Materials</div>
               {courseMaterials.length === 0 ? (
                 <div className="cf-alert cf-alert-info">No study materials uploaded yet.</div>
               ) : (
@@ -2933,7 +3084,7 @@ int main() {
                       return (
                         <div key={sIdx} style={{ marginBottom: '30px' }}>
                           <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '10px', paddingBottom: '5px', borderBottom: '2px solid #3b5998', display: 'inline-block' }}>
-                            📁 {section}
+                            {section}
                           </h4>
                           <table className="cf-table" style={{ width: '100%' }}>
                             <thead>
@@ -3110,13 +3261,282 @@ int main() {
                 </div>
               ) : studentProfile.signedConsent ? (
                 <div>
-                  <div className="cf-alert cf-alert-success">
-                    Declaration Signed. Your Hall Ticket is unlocked.
+                  <style>{`
+                    @media print {
+                      @page {
+                        size: A4;
+                        margin: 8mm 12mm;
+                      }
+                      body * {
+                        visibility: hidden;
+                      }
+                      .printable-hall-ticket, .printable-hall-ticket * {
+                        visibility: visible;
+                      }
+                      .printable-hall-ticket {
+                        position: absolute;
+                        left: 0;
+                        top: 0;
+                        width: 100%;
+                        box-shadow: none !important;
+                        border: 2px solid #002147 !important;
+                        border-radius: 6px !important;
+                        margin: 0 !important;
+                        padding: 16px 20px !important;
+                        background: #fff !important;
+                      }
+                      /* Print-only overrides to prevent page splitting */
+                      .printable-hall-ticket h3, .printable-hall-ticket h4, .printable-hall-ticket strong {
+                        margin-top: 2px !important;
+                        margin-bottom: 4px !important;
+                      }
+                      .candidate-grid {
+                        margin-bottom: 10px !important;
+                        padding-bottom: 10px !important;
+                        gap: 12px !important;
+                      }
+                      .candidate-details {
+                        gap: 4px !important;
+                        font-size: 8.5pt !important;
+                      }
+                      .candidate-details div {
+                        font-size: 8.5pt !important;
+                      }
+                      .photo-box div, .sig-box div {
+                        width: 80px !important;
+                        height: 90px !important;
+                      }
+                      .photo-box img, .sig-box img {
+                        width: 80px !important;
+                        height: 90px !important;
+                      }
+                      .schedule-container {
+                        margin-bottom: 10px !important;
+                      }
+                      .schedule-container table th, .schedule-container table td {
+                        padding: 4px 6px !important;
+                        font-size: 8pt !important;
+                      }
+                      .conduct-box {
+                        padding: 6px 12px !important;
+                        margin-bottom: 10px !important;
+                        font-size: 7.5pt !important;
+                      }
+                      .conduct-box ul {
+                        padding-left: 10px !important;
+                        gap: 1px !important;
+                      }
+                      .conduct-box strong {
+                        margin-bottom: 2px !important;
+                      }
+                      .undertaking-box {
+                        margin-bottom: 10px !important;
+                        padding: 6px 12px !important;
+                        font-size: 7.5pt !important;
+                        line-height: 1.2 !important;
+                      }
+                      .footer-block {
+                        margin-top: 5px !important;
+                      }
+                      .candidate-sign-container, .registrar-sign-container {
+                        width: 160px !important;
+                      }
+                      .candidate-sign-container div, .registrar-sign-container div {
+                        height: 25px !important;
+                      }
+                      .candidate-sign-container span, .registrar-sign-container span {
+                        font-size: 7.5pt !important;
+                      }
+                      .stamp-container {
+                        width: 80px !important;
+                        height: 80px !important;
+                        margin: -10px 0 !important;
+                      }
+                      .no-print {
+                        display: none !important;
+                      }
+                    }
+                  `}</style>
+
+                  <div className="cf-alert cf-alert-success no-print" style={{ marginBottom: '20px' }}>
+                    Malpractice Undertaking Signed. Your digital Hall Ticket has been generated successfully.
                   </div>
-                  <div style={{ display: 'flex', gap: '15px', marginTop: '20px' }}>
-                    <a href={systemConfig.hallTicketUrl} target="_blank" rel="noreferrer" className="cf-btn-primary" style={{ textDecoration: 'none' }}>
-                      Download Official Hall Ticket
-                    </a>
+
+                  <div className="no-print" style={{ marginBottom: '20px', display: 'flex', gap: '10px' }}>
+                    <button className="cf-btn-primary" onClick={() => window.print()}>
+                      Print Hall Ticket (PDF)
+                    </button>
+                    <button className="cf-btn-secondary" onClick={() => setView('announcements')}>
+                      Back to Announcements
+                    </button>
+                  </div>
+
+                  {/* PRINTABLE SHEET */}
+                  <div className="printable-hall-ticket" style={{ border: '2px solid #002147', borderRadius: '6px', padding: '30px', backgroundColor: '#fff', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
+                    {/* Exam Board Header */}
+                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '3px double #002147', paddingBottom: '15px', marginBottom: '20px' }}>
+                      <img src="/logo.png" alt="PE Board Logo" style={{ height: '64px', marginRight: '20px', objectFit: 'contain' }} onError={(e) => { e.target.src = "https://via.placeholder.com/64?text=PE+Logo" }} />
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '18pt', fontWeight: '850', color: '#002147', letterSpacing: '-0.5px', textTransform: 'uppercase' }}>
+                          Preliminary Examinations 2026
+                        </span>
+                        <span style={{ fontSize: '9pt', color: '#475569', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                          Basic Introductory Computer Science (BICS) Course
+                        </span>
+                        <span style={{ fontSize: '12pt', fontWeight: 'bold', color: '#b91c1c', marginTop: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          {systemConfig.examType === 'midsem' ? 'MID SEMESTER EXAMINATION' : 'END SEMESTER EXAMINATION'} HALL TICKET
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Candidate Grid */}
+                    <div className="candidate-grid" style={{ display: 'grid', gridTemplateColumns: '3fr 1.2fr 1.2fr', gap: '20px', marginBottom: '15px', borderBottom: '1px solid #cbd5e1', paddingBottom: '15px' }}>
+                      <div className="candidate-details" style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '9.5pt' }}>
+                        <div><strong style={{ color: '#475569' }}>Examinee Name:</strong> <span style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147' }}>{studentProfile.name}</span></div>
+                        <div><strong style={{ color: '#475569' }}>Student Registration ID:</strong> <span style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{studentProfile.studentId}</span></div>
+                        <div><strong style={{ color: '#475569' }}>Examination Division:</strong> Kalyan Division, PE-2026</div>
+                        <div><strong style={{ color: '#475569' }}>Testing Medium:</strong> Blended Online / Offline Written Center</div>
+                        <div>
+                          <strong style={{ color: '#475569' }}>Permanent Address:</strong><br />
+                          <span style={{ fontSize: '9pt', color: '#334155' }}>
+                            {studentProfile.registrationData?.permanentAddress || 'Address details registered in candidate records.'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Photo box */}
+                      <div className="photo-box" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'bold', marginBottom: '4px' }}>CANDIDATE PHOTO</span>
+                        <div style={{ width: '100px', height: '110px', border: '1px solid #94a3b8', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
+                          {studentProfile.registrationData?.photoUrl ? (
+                            <img src={studentProfile.registrationData.photoUrl} alt="Candidate Pic" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            <span style={{ fontSize: '8pt', color: '#94a3b8' }}>No Photo</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Signature box */}
+                      <div className="sig-box" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'bold', marginBottom: '4px' }}>SIGNATURE SEAL</span>
+                        <div style={{ width: '100px', height: '110px', border: '1px solid #94a3b8', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
+                          {studentProfile.registrationData?.signatureUrl ? (
+                            <img src={studentProfile.registrationData.signatureUrl} alt="Candidate Sig" style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#fff' }} />
+                          ) : (
+                            <span style={{ fontSize: '8pt', color: '#94a3b8' }}>No Signature</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Examination Schedule */}
+                    <div className="schedule-container" style={{ marginBottom: '15px' }}>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '10pt', color: '#002147', marginBottom: '8px' }}>
+                        <Calendar size={16} /> SCHEDULE OF COURSE MODULE EXAMINATIONS
+                      </strong>
+                      <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', backgroundColor: '#f1f5f9' }}>
+                            <th style={{ padding: '8px' }}>Code</th>
+                            <th style={{ padding: '8px' }}>Course Module Title</th>
+                            <th style={{ padding: '8px' }}>Exam Date</th>
+                            <th style={{ padding: '8px' }}>Time Slot</th>
+                            <th style={{ padding: '8px' }}>Total Marks</th>
+                            <th style={{ padding: '8px', textAlign: 'center' }}>Invigilator Verification</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(!systemConfig.timetable || systemConfig.timetable.length === 0) ? (
+                            <tr>
+                              <td colSpan="6" style={{ textAlign: 'center', padding: '15px', color: '#64748b' }}>No course examinations configured.</td>
+                            </tr>
+                          ) : (
+                            systemConfig.timetable.map((t, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                <td style={{ padding: '8px', fontWeight: 'bold', fontFamily: 'monospace' }}>{t.code || `CS-10${idx+1}`}</td>
+                                <td style={{ padding: '8px' }}>{t.course}</td>
+                                <td style={{ padding: '8px' }}>{t.date || 'TBA'}</td>
+                                <td style={{ padding: '8px' }}>{t.time || 'TBA'}</td>
+                                <td style={{ padding: '8px', fontWeight: '600' }}>{t.marks !== undefined ? t.marks : 50}</td>
+                                <td style={{ padding: '8px', textAlign: 'center', verticalAlign: 'bottom' }}>
+                                  <div style={{ width: '80%', height: '1px', borderBottom: '1px dotted #94a3b8', margin: '15px auto 0 auto' }}></div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Conduct Violations Instruction Box */}
+                    <div className="conduct-box" style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '10px 15px', backgroundColor: '#f8fafc', fontSize: '8.5pt', marginBottom: '15px' }}>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9.5pt', color: '#002147', marginBottom: '8px', borderBottom: '1px solid #cbd5e1', paddingBottom: '4px' }}>
+                        <ShieldAlert size={16} /> MANDATORY EXAM CONDUCT CODES (ONLINE &amp; OFFLINE VIOLATIONS)
+                      </strong>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                        <div>
+                          <strong style={{ color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}><Video size={14} /> Online Proctored Exam Rules:</strong>
+                          <ul style={{ paddingLeft: '15px', margin: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <li>Max 3 window/tab focus switch alerts are allowed. Exceeding this triggers automatic test lockout.</li>
+                            <li>Continuous real-time webcam and microphone feeds are logged and matched against candidate reference files.</li>
+                            <li>Active screen-sharing capture and system clipboard tracking are mandatory.</li>
+                            <li>Closing fullscreen mode or launching background terminals constitutes immediate disqualification.</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <strong style={{ color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}><Home size={14} /> Offline Center Hall Rules:</strong>
+                          <ul style={{ paddingLeft: '15px', margin: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <li>Candidates must report 30 minutes prior; late entries beyond 15 minutes are strictly disallowed.</li>
+                            <li>Mobile phones, smartwatches, digital trackers, or programmable calculators are forbidden inside the hall.</li>
+                            <li>This printed Hall Ticket along with an official government physical ID is mandatory.</li>
+                            <li>Rough sheets must be submitted to the invigilator prior to exiting the examination hall.</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Malpractice Undertaking Agreement Declaration */}
+                    <div className="undertaking-box" style={{ fontSize: '8pt', color: '#475569', lineHeight: '1.4', marginBottom: '15px', padding: '10px 15px', borderLeft: '3px solid #002147', backgroundColor: '#f1f5f9' }}>
+                      <strong>Malpractice violation consent undertaker declaration:</strong><br />
+                      I hereby confirm that I have consented to the malpractice undertaking electronically. I accept that failing to comply with online proctoring parameters or offline test center regulations will terminate my test immediately and annul all marks for BICS 2026.
+                    </div>
+
+                    {/* Stamp and Signature block */}
+                    <div className="footer-block" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      {/* Left: Candidate Sign */}
+                      <div className="candidate-sign-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '200px' }}>
+                        <div style={{ height: '40px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                          {studentProfile.registrationData?.signatureUrl && (
+                            <img src={studentProfile.registrationData.signatureUrl} alt="Candidate Signature" style={{ maxHeight: '35px', objectFit: 'contain' }} />
+                          )}
+                        </div>
+                        <div style={{ width: '100%', borderTop: '1px solid #002147', marginTop: '5px' }}></div>
+                        <span style={{ fontSize: '8pt', color: '#475569', marginTop: '3px', fontWeight: 'bold' }}>Candidate Signature (Verification)</span>
+                      </div>
+
+                      {/* Center: Stamp Seal */}
+                      <div className="stamp-container" style={{
+                        width: '120px',
+                        height: '120px',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        transform: 'rotate(-10deg)',
+                        userSelect: 'none',
+                        margin: '-15px 0'
+                      }}>
+                        <img src="/stamp.jpg" alt="Official Stamp" style={{ width: '100%', height: '100%', objectFit: 'contain', mixBlendMode: 'multiply' }} />
+                      </div>
+
+                      {/* Right: Board Seal / Registrar Sign */}
+                      <div className="registrar-sign-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '220px' }}>
+                        <div style={{ height: '40px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', fontSize: '9pt', fontFamily: 'monospace', color: '#002147', fontWeight: 'bold' }}>
+                          E-VERIFIED SEAL
+                        </div>
+                        <div style={{ width: '100%', borderTop: '1px solid #002147', marginTop: '5px' }}></div>
+                        <span style={{ fontSize: '8pt', color: '#475569', marginTop: '3px', fontWeight: 'bold' }}>Chief Registrar (PE Board Exams)</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -3280,7 +3700,7 @@ int main() {
                                 {sub.reevaluation.status !== 'pending' && (
                                   <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
                                     <div style={{ fontWeight: 'bold', color: sub.reevaluation.status === 'resolved' ? '#065f46' : '#b91c1c', marginBottom: '4px' }}>
-                                      {sub.reevaluation.status === 'resolved' ? '✓ Resolution Comments:' : '✗ Rejection Comments:'}
+                                      {sub.reevaluation.status === 'resolved' ? 'Resolution Comments:' : 'Rejection Comments:'}
                                     </div>
                                     <div style={{ backgroundColor: sub.reevaluation.status === 'resolved' ? '#f0fdf4' : '#fef2f2', border: `1px solid ${sub.reevaluation.status === 'resolved' ? '#bbf7d0' : '#fecaca'}`, padding: '10px', borderRadius: '4px', color: '#333', whiteSpace: 'pre-wrap' }}>
                                       {sub.reevaluation.resolutionFeedback || 'No evaluator resolution comments provided.'}
@@ -3431,7 +3851,7 @@ int main() {
                                                 justifyContent: 'center'
                                               }}
                                             >
-                                              ✕
+                                              
                                             </button>
                                           </div>
                                         ))}
@@ -3933,7 +4353,7 @@ int main() {
                   <form onSubmit={handleFeedbackSubmit}>
                     {COURSES_LIST.map((course, cIdx) => (
                       <div key={cIdx} style={{ borderBottom: '1px solid #cbd5e1', paddingBottom: '20px', marginBottom: '25px' }}>
-                        <h4 style={{ color: '#002147', fontWeight: 'bold', marginBottom: '15px' }}>📚 {course}</h4>
+                        <h4 style={{ color: '#002147', fontWeight: 'bold', marginBottom: '15px' }}>{course}</h4>
                         
                         <div className="cf-input-group" style={{ marginBottom: '12px' }}>
                           <label className="cf-label">1. Rate the quality of the textbook (1-5)</label>
@@ -3997,7 +4417,7 @@ int main() {
                 All candidates enrolled in the Basic Introductory Computer Science (BICS) Course under the Preliminary Examinations 2026 academic cycle are strictly required to adhere to the following code of academic and professional conduct. By accessing the BICS portal, you consent to these parameters:
               </p>
               
-              <div className="cf-form-section">⚖️ Section 1: Academic Integrity &amp; Originality</div>
+              <div className="cf-form-section">Section 1: Academic Integrity &amp; Originality</div>
               <ul style={{ paddingLeft: '20px', marginBottom: '20px', fontSize: '9pt', lineHeight: '1.8', color: '#444' }}>
                 <li>Candidates must submit only their own independent work for all assignments, practical projects, and exam papers.</li>
                 <li>Any form of plagiarism, copying, sharing source code, or copying solutions from peers is strictly prohibited and will result in immediate cancellation of eligibility.</li>
@@ -4013,28 +4433,28 @@ int main() {
                 <li>All course registrations, feedback surveys, and exit forms must be completed honestly within active time windows.</li>
               </ul>
 
-              <div className="cf-form-section">🎓 Section 3: Professional Communication</div>
+              <div className="cf-form-section">Section 3: Professional Communication</div>
               <ul style={{ paddingLeft: '20px', marginBottom: '20px', fontSize: '9pt', lineHeight: '1.8', color: '#444' }}>
                 <li>All interactions on the BICS portal (including course feedback and contact enquiries) must remain constructive, professional, and respectful.</li>
                 <li>Harassment, vulgar language, or inappropriate content submission will lead to immediate account suspension and a report to the discipline board.</li>
                 <li>Public posting of solutions, leaks, or defamatory comments is strictly forbidden.</li>
               </ul>
 
-              <div className="cf-form-section">🛡️ Section 4: Examination Ethics &amp; Declaration</div>
+              <div className="cf-form-section">Section 4: Examination Ethics &amp; Declaration</div>
               <ul style={{ paddingLeft: '20px', marginBottom: '20px', fontSize: '9pt', lineHeight: '1.8', color: '#444' }}>
                 <li>Downloading the official Hall Ticket requires completing the Malpractice Consent form, certifying compliance with exam rules.</li>
                 <li>Any candidate found using unauthorized resources, devices, or communication during the exam will face legal and academic penalties under the Preliminary Examinations 2026 Charter.</li>
                 <li>Impersonation or falsifying identification documents during examination validation is classified as a critical offense.</li>
               </ul>
 
-              <div className="cf-form-section">📜 Section 5: Academic Misconduct Procedures</div>
+              <div className="cf-form-section">Section 5: Academic Misconduct Procedures</div>
               <ul style={{ paddingLeft: '20px', marginBottom: '20px', fontSize: '9pt', lineHeight: '1.8', color: '#444' }}>
                 <li>Upon reporting a potential breach of code, the administrator will review portal log footprints, uploaded signatures, and source codes.</li>
                 <li>A formal warning or suspension notice will be issued. Candidates have 5 working days to present a defense.</li>
                 <li>The decision of the Preliminary Examinations 2026 Academic Integrity Board is final and binding for all candidates.</li>
               </ul>
 
-              <div className="cf-form-section">💬 Section 6: User Representation &amp; Documentation</div>
+              <div className="cf-form-section">Section 6: User Representation &amp; Documentation</div>
               <ul style={{ paddingLeft: '20px', marginBottom: '20px', fontSize: '9pt', lineHeight: '1.8', color: '#444' }}>
                 <li>All profile uploads (photographs, signature scripts, and signed undertakings) must represent the true legal identity of the candidate.</li>
                 <li>Providing false, outdated, or dummy details during registration will trigger an automatic eligibility block.</li>
@@ -4175,11 +4595,25 @@ int main() {
 
               {/* Manage Timetable */}
               <div className="cf-card">
-                <div className="cf-card-title">Manage Examination Timetable</div>
-                
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                  <div className="cf-card-title" style={{ margin: 0 }}>Manage Examination Schedule (Mid-Sem / End-Sem)</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569' }}>Exam Type Selector:</label>
+                    <select
+                      className="cf-input"
+                      style={{ width: '160px', height: '34px', fontSize: '9pt', padding: '5px' }}
+                      value={adminExamType}
+                      onChange={e => setAdminExamType(e.target.value)}
+                    >
+                      <option value="midsem">Mid Semester</option>
+                      <option value="endsem">End Semester</option>
+                    </select>
+                  </div>
+                </div>
+
                 {/* 1. Timetable Notice */}
-                <form onSubmit={handleUpdateTimetableNotice} style={{ marginBottom: '25px' }}>
-                  <div className="cf-input-group">
+                <form onSubmit={handleUpdateTimetableNotice} style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#f8fafc', borderRadius: '4px', border: '1px solid var(--cf-border)' }}>
+                  <div className="cf-input-group" style={{ margin: 0 }}>
                     <label className="cf-label">General Timetable Notice (Display Announcement)</label>
                     <div style={{ display: 'flex', gap: '15px' }}>
                       <input type="text" className="cf-input" style={{ flexGrow: 1 }} required value={adminTimetableNotice} onChange={e => setAdminTimetableNotice(e.target.value)} />
@@ -4188,33 +4622,122 @@ int main() {
                   </div>
                 </form>
 
-                {/* 2. Course Timetable Slots */}
-                <form onSubmit={handleUpdateTimetableDates}>
+                {/* 2. Custom Timetable Creator */}
+                <form onSubmit={handleSaveExamTimetable} style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '4px', border: '1px solid var(--cf-border)', marginBottom: '30px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h3 style={{ fontSize: '10.5pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>Course Examination Schedule Slots</h3>
+                    <button type="button" className="cf-btn-secondary" onClick={handleAddTimetableRow} style={{ padding: '6px 12px', fontSize: '8.5pt' }}>
+                      + Add Course Exam Slot
+                    </button>
+                  </div>
+                  
+                  <div className="cf-table-container" style={{ marginBottom: '15px' }}>
+                    <table className="cf-table">
+                      <thead>
+                        <tr>
+                          <th>Course Code</th>
+                          <th>Course Name</th>
+                          <th>Exam Date</th>
+                          <th>Time Duration Slot</th>
+                          <th>Total Marks</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminTimetable.length === 0 ? (
+                          <tr>
+                            <td colSpan="6" style={{ textAlign: 'center', color: '#64748b' }}>No exam slots added yet. Click Add Course Slot to start.</td>
+                          </tr>
+                        ) : (
+                          adminTimetable.map((t, idx) => (
+                            <tr key={idx}>
+                              <td>
+                                <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.code || ''} onChange={e => handleTimetableCellChange(idx, 'code', e.target.value)} placeholder="e.g. CS-101" />
+                              </td>
+                              <td>
+                                <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.course} onChange={e => handleTimetableCellChange(idx, 'course', e.target.value)} placeholder="e.g. C++ Programming" />
+                              </td>
+                              <td>
+                                <input type="date" className="cf-input" style={{ width: '100%' }} required value={t.date} onChange={e => handleTimetableCellChange(idx, 'date', e.target.value)} />
+                              </td>
+                              <td>
+                                <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.time} onChange={e => handleTimetableCellChange(idx, 'time', e.target.value)} placeholder="e.g. 10:00 AM - 01:00 PM" />
+                              </td>
+                              <td>
+                                <input type="number" className="cf-input" style={{ width: '100%' }} required value={t.marks !== undefined ? t.marks : 50} onChange={e => handleTimetableCellChange(idx, 'marks', parseInt(e.target.value) || 0)} />
+                              </td>
+                              <td>
+                                <button type="button" className="cf-btn-primary" style={{ color: '#ef4444', borderColor: '#ef4444', backgroundColor: '#fff', padding: '4px 10px', fontSize: '8.5pt', margin: 0 }} onClick={() => handleRemoveTimetableRow(idx)}>
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button type="submit" className="cf-btn-primary">Save Course Timetable Dates</button>
+                </form>
+              </div>
+
+              {/* Manage Class Tests Scheduler */}
+              <div className="cf-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                  <div className="cf-card-title" style={{ margin: 0 }}>Manage Class Tests Schedule</div>
+                  <button type="button" className="cf-btn-secondary" onClick={handleAddClassTestRow} style={{ padding: '6px 12px', fontSize: '8.5pt' }}>
+                    + Schedule New Class Test
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveClassTests} style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '4px', border: '1px solid var(--cf-border)' }}>
                   <div className="cf-table-container" style={{ marginBottom: '15px' }}>
                     <table className="cf-table">
                       <thead>
                         <tr>
                           <th>Course Name</th>
-                          <th>Exam Date</th>
-                          <th>Time Duration Slot</th>
+                          <th>Topic / Module Details</th>
+                          <th>Scheduled Date</th>
+                          <th>Time Slot</th>
+                          <th>Marks</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {adminTimetable.map((t, idx) => (
-                          <tr key={idx}>
-                            <td style={{ fontWeight: '600', fontSize: '9pt' }}>{t.course}</td>
-                            <td>
-                              <input type="date" className="cf-input" style={{ width: '100%' }} required value={t.date} onChange={e => handleTimetableCellChange(idx, 'date', e.target.value)} />
-                            </td>
-                            <td>
-                              <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.time} onChange={e => handleTimetableCellChange(idx, 'time', e.target.value)} placeholder="e.g. 10:00 AM - 01:00 PM" />
-                            </td>
+                        {adminClassTests.length === 0 ? (
+                          <tr>
+                            <td colSpan="6" style={{ textAlign: 'center', color: '#64748b' }}>No class tests scheduled yet. Click Schedule Class Test to start.</td>
                           </tr>
-                        ))}
+                        ) : (
+                          adminClassTests.map((t, idx) => (
+                            <tr key={idx}>
+                              <td>
+                                <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.courseName} onChange={e => handleClassTestCellChange(idx, 'courseName', e.target.value)} placeholder="Course Name" />
+                              </td>
+                              <td>
+                                <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.topic} onChange={e => handleClassTestCellChange(idx, 'topic', e.target.value)} placeholder="Topic e.g. Recursion" />
+                              </td>
+                              <td>
+                                <input type="date" className="cf-input" style={{ width: '100%' }} required value={t.date} onChange={e => handleClassTestCellChange(idx, 'date', e.target.value)} />
+                              </td>
+                              <td>
+                                <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.time} onChange={e => handleClassTestCellChange(idx, 'time', e.target.value)} placeholder="e.g. 09:00 AM - 10:00 AM" />
+                              </td>
+                              <td>
+                                <input type="number" className="cf-input" style={{ width: '100%' }} required value={t.marks} onChange={e => handleClassTestCellChange(idx, 'marks', parseInt(e.target.value) || 0)} />
+                              </td>
+                              <td>
+                                <button type="button" className="cf-btn-primary" style={{ color: '#ef4444', borderColor: '#ef4444', backgroundColor: '#fff', padding: '4px 10px', fontSize: '8.5pt', margin: 0 }} onClick={() => handleRemoveClassTestRow(idx)}>
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
-                  <button type="submit" className="cf-btn-primary">Save Course Timetable Dates</button>
+                  <button type="submit" className="cf-btn-primary">Save Class Tests Schedule</button>
                 </form>
               </div>
             </div>
@@ -4324,7 +4847,7 @@ int main() {
 
               {/* ADMIN - MANAGE COURSE VIDEO LECTURES */}
               <div className="cf-card">
-                <div className="cf-card-title">🎥 Course Video Lectures Manager</div>
+                <div className="cf-card-title">Course Video Lectures Manager</div>
                 {courseworkSuccess && <div className="cf-alert cf-alert-success">{courseworkSuccess}</div>}
                 {courseworkError && <div className="cf-alert cf-alert-error">{courseworkError}</div>}
                 
@@ -4412,7 +4935,7 @@ int main() {
 
               {/* ADMIN - MANAGE COURSE MATERIALS */}
               <div className="cf-card">
-                <div className="cf-card-title">📚 Course Study Materials Manager</div>
+                <div className="cf-card-title">Course Study Materials Manager</div>
                 
                 {/* Add Material Form */}
                 <form onSubmit={handleAddMaterial} className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginBottom: '25px', paddingBottom: '20px', borderBottom: '1px solid #cbd5e1' }}>
@@ -4584,7 +5107,7 @@ int main() {
                                     }
                                   }}
                                 >
-                                  {t.answersReleased ? '✓ Released' : 'Release Sheets'}
+                                  {t.answersReleased ? 'Released' : 'Release Sheets'}
                                 </button>
                                 <button
                                   className="cf-btn-primary"
@@ -5362,7 +5885,7 @@ int main() {
                         }
                       }}
                     >
-                      🔄 Refresh Submissions
+                      Refresh Submissions
                     </button>
                   )}
                 </div>
@@ -5455,7 +5978,7 @@ int main() {
                     <div className="cf-card" style={{ width: '85%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', padding: '20px', border: '1px solid #b9c9fe', backgroundColor: '#fff' }}>
                       <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Grade Exam Sheet: {selectedExamSubmission.candidateName} ({selectedExamSubmission.studentId})</span>
-                        <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedExamSubmission(null)}>✕</button>
+                        <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedExamSubmission(null)}></button>
                       </div>
 
                       <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px', alignItems: 'center' }}>
@@ -6361,7 +6884,7 @@ int main() {
                   <div className="cf-card" style={{ width: '90%', maxWidth: '600px', padding: '20px', border: '1px solid #b9c9fe', boxShadow: 'none', backgroundColor: '#fff', maxHeight: '90vh', overflowY: 'auto' }}>
                     <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>Ticket Details & Resolution</span>
-                      <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedAdminTicket(null)}>✕</button>
+                      <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedAdminTicket(null)}></button>
                     </div>
 
                     <div style={{ borderBottom: '1px solid var(--cf-border)', paddingBottom: '15px', marginBottom: '15px' }}>
@@ -6506,7 +7029,7 @@ int main() {
             <div className="cf-card" style={{ width: '80%', maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto', padding: '20px', border: '1px solid #b9c9fe', boxShadow: 'none', backgroundColor: '#fff' }}>
               <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Candidate File: {selectedCandidate.name} ({selectedCandidate.studentId})</span>
-                <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedCandidate(null)}>✕</button>
+                <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedCandidate(null)}></button>
               </div>
 
               <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '25px' }}>

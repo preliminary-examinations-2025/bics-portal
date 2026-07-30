@@ -142,11 +142,16 @@ const initialDB = {
         hallTicketDownloadActive: true,
         hallTicketUrl: '/public/textbooks/CS_Introduction_Textbook.pdf',
         timetableNotice: 'Mid semester test for BICS 2026 will be held in mid-August',
+        examType: 'midsem',
         timetable: [
-            { course: "Introduction to Computer Science", date: "2026-08-10", time: "10:00 AM - 01:00 PM" },
-            { course: "Programming Fundamentals with C++", date: "2026-08-12", time: "10:00 AM - 01:00 PM" },
-            { course: "Basics of Web Development", date: "2026-08-14", time: "10:00 AM - 01:00 PM" },
-            { course: "Mathematical Thinking (Discrete Structures)", date: "2026-08-17", time: "10:00 AM - 01:00 PM" }
+            { code: "CS-101", course: "Introduction to Computer Science", date: "2026-08-10", time: "10:00 AM - 01:00 PM", marks: 50 },
+            { code: "CS-102", course: "Programming Fundamentals with C++", date: "2026-08-12", time: "10:00 AM - 01:00 PM", marks: 50 },
+            { code: "CS-103", course: "Basics of Web Development", date: "2026-08-14", time: "10:00 AM - 01:00 PM", marks: 50 },
+            { code: "CS-104", course: "Mathematical Thinking (Discrete Structures)", date: "2026-08-17", time: "10:00 AM - 01:00 PM", marks: 50 }
+        ],
+        classTests: [
+            { id: "ct-1", courseName: "Introduction to Computer Science", date: "2026-08-01", time: "09:00 AM - 10:00 AM", topic: "Variables & Memory Structure", marks: 20 },
+            { id: "ct-2", courseName: "Programming Fundamentals with C++", date: "2026-08-02", time: "11:00 AM - 12:00 PM", topic: "Conditional Statements & Loops", marks: 20 }
         ],
         announcements: [
             { id: 1, date: "2026-07-18", text: "Welcome to the BICS Portal. Ensure you complete your course registration before the deadline." }
@@ -208,7 +213,9 @@ const ConfigSchema = new mongoose.Schema({
     hallTicketDownloadActive: { type: Boolean, default: true },
     hallTicketUrl: { type: String, default: '/public/textbooks/CS_Introduction_Textbook.pdf' },
     timetableNotice: { type: String, default: 'Mid semester test for BICS 2026 will be held in mid-August' },
-    timetable: [{ course: String, date: String, time: String }],
+    examType: { type: String, default: 'midsem' }, // 'midsem' or 'endsem'
+    timetable: [{ code: String, course: String, date: String, time: String, marks: Number }],
+    classTests: [{ id: String, courseName: String, date: String, time: String, topic: String, marks: Number }],
     announcements: [{ id: Number, date: String, text: String }]
 });
 const ConfigModel = mongoose.model('Config', ConfigSchema);
@@ -590,7 +597,7 @@ app.get('/api/config', async (req, res) => {
 
 // 3. Update System Configuration (Admin Only)
 app.post('/api/admin/config', async (req, res) => {
-    const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, timetable, timetableNotice, announcements, hallTicketUrl } = req.body;
+    const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, timetable, timetableNotice, announcements, hallTicketUrl, examType, classTests } = req.body;
 
     if (useMongo) {
         try {
@@ -605,6 +612,8 @@ app.post('/api/admin/config', async (req, res) => {
             if (timetableNotice !== undefined) conf.timetableNotice = timetableNotice;
             if (announcements !== undefined) conf.announcements = announcements;
             if (hallTicketUrl !== undefined) conf.hallTicketUrl = hallTicketUrl;
+            if (examType !== undefined) conf.examType = examType;
+            if (classTests !== undefined) conf.classTests = classTests;
             await conf.save();
             return res.json({ success: true, config: conf });
         } catch (e) {
@@ -622,6 +631,8 @@ app.post('/api/admin/config', async (req, res) => {
         if (timetableNotice !== undefined) db.config.timetableNotice = timetableNotice;
         if (announcements !== undefined) db.config.announcements = announcements;
         if (hallTicketUrl !== undefined) db.config.hallTicketUrl = hallTicketUrl;
+        if (examType !== undefined) db.config.examType = examType;
+        if (classTests !== undefined) db.config.classTests = classTests;
         saveJSONData(db);
         return res.json({ success: true, config: db.config });
     }

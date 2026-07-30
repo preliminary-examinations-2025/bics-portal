@@ -1043,9 +1043,9 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
                   <span style={{ color: '#555' }}>1. Focus (No other tabs/apps):</span>
                   {isFocused ? (
-                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ Verified</span>
+                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>Verified</span>
                   ) : (
-                    <span style={{ color: '#ef4444', fontWeight: 'bold' }}>✗ Focus Lost!</span>
+                    <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Focus Lost!</span>
                   )}
                 </div>
 
@@ -1053,7 +1053,7 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
                   <span style={{ color: '#555' }}>2. Camera Proctored:</span>
                   {webcamGranted ? (
-                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ Active</span>
+                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>Active</span>
                   ) : (
                     <span style={{ color: '#f59e0b', fontWeight: 'bold' }}>Awaiting Access</span>
                   )}
@@ -1063,7 +1063,7 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
                   <span style={{ color: '#555' }}>3. Microphone Proctored:</span>
                   {micGranted ? (
-                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ Active</span>
+                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>Active</span>
                   ) : (
                     <span style={{ color: '#f59e0b', fontWeight: 'bold' }}>Awaiting Access</span>
                   )}
@@ -1073,9 +1073,9 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
                   <span style={{ color: '#555' }}>4. Fullscreen Mode:</span>
                   {isFullscreen ? (
-                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ Locked</span>
+                    <span style={{ color: '#10b981', fontWeight: 'bold' }}>Locked</span>
                   ) : (
-                    <span style={{ color: '#ef4444', fontWeight: 'bold' }}>✗ Not Fullscreen</span>
+                    <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Not Fullscreen</span>
                   )}
                 </div>
               </div>
