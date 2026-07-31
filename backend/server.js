@@ -204,6 +204,29 @@ const CandidateSchema = new mongoose.Schema({
 });
 const CandidateModel = mongoose.model('Candidate', CandidateSchema);
 
+const TimetableSubSchema = new mongoose.Schema({
+    code: String,
+    course: String,
+    date: String,
+    time: String,
+    marks: Number
+}, { _id: false, id: false });
+
+const ClassTestSubSchema = new mongoose.Schema({
+    id: String,
+    courseName: String,
+    date: String,
+    time: String,
+    topic: String,
+    marks: Number
+}, { _id: false, id: false });
+
+const AnnouncementSubSchema = new mongoose.Schema({
+    id: Number,
+    date: String,
+    text: String
+}, { _id: false, id: false });
+
 const ConfigSchema = new mongoose.Schema({
     courseRegistrationActive: { type: Boolean, default: true },
     onlineExamActive: { type: Boolean, default: true },
@@ -214,9 +237,9 @@ const ConfigSchema = new mongoose.Schema({
     hallTicketUrl: { type: String, default: '/public/textbooks/CS_Introduction_Textbook.pdf' },
     timetableNotice: { type: String, default: 'Mid semester test for BICS 2026 will be held in mid-August' },
     examType: { type: String, default: 'midsem' }, // 'midsem' or 'endsem'
-    timetable: [{ code: String, course: String, date: String, time: String, marks: Number }],
-    classTests: [{ id: String, courseName: String, date: String, time: String, topic: String, marks: Number }],
-    announcements: [{ id: Number, date: String, text: String }]
+    timetable: [TimetableSubSchema],
+    classTests: [ClassTestSubSchema],
+    announcements: [AnnouncementSubSchema]
 });
 const ConfigModel = mongoose.model('Config', ConfigSchema);
 
