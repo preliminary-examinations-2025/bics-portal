@@ -358,6 +358,7 @@ export default function App() {
   };
 
   const fetchAdminTickets = async () => {
+    setLoadingMessage("Synchronizing helpdesk tickets...");
     try {
       const res = await fetch(`${API_BASE}/admin/tickets`);
       if (res.ok) {
@@ -366,10 +367,13 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error fetching admin tickets:", e);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
   const fetchSystemLogs = async () => {
+    setLoadingMessage("Loading system audit logs...");
     try {
       const res = await fetch(`${API_BASE}/admin/system-logs`);
       if (res.ok) {
@@ -378,10 +382,13 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error fetching system logs:", e);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
   const fetchLiveSubmissions = async () => {
+    setLoadingMessage("Loading live exam streams...");
     try {
       let allSubs = [];
       for (let test of adminTests) {
@@ -395,10 +402,13 @@ export default function App() {
       setLiveSubmissions(allSubs);
     } catch (e) {
       console.error("Error fetching live submissions:", e);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
   const fetchStudentSubmissions = async (studentId) => {
+    setLoadingMessage("Synchronizing Classroom Submissions...");
     try {
       const res = await fetch(`${API_BASE}/student/submissions/${studentId}`);
       if (res.ok) {
@@ -408,10 +418,13 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error fetching student submissions:", e);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
   const fetchAdminSubmissions = async () => {
+    setLoadingMessage("Loading Classroom Submissions Ledger...");
     try {
       const res = await fetch(`${API_BASE}/admin/submissions`);
       if (res.ok) {
@@ -420,10 +433,13 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error fetching admin submissions:", e);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
   const saveAdminSubmission = async (sub) => {
+    setLoadingMessage("Saving submission details...");
     try {
       const res = await fetch(`${API_BASE}/admin/submissions/save`, {
         method: 'POST',
@@ -448,10 +464,13 @@ export default function App() {
     } catch (e) {
       console.error("Error saving submission:", e);
       setSubmissionError("Network error: Could not contact server.");
+    } finally {
+      setLoadingMessage('');
     }
   };
 
   const deleteAdminSubmission = async (id) => {
+    setLoadingMessage("Deleting submission record...");
     try {
       const res = await fetch(`${API_BASE}/admin/submissions/${id}`, {
         method: 'DELETE'
@@ -463,6 +482,8 @@ export default function App() {
       }
     } catch (e) {
       console.error("Error deleting submission:", e);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
@@ -1357,12 +1378,15 @@ int main() {
   };
 
   const fetchExamSubmissions = async (testId) => {
+    setLoadingMessage("Fetching exam submission details...");
     try {
       const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
       const data = await res.json();
       setAdminExamSubmissions(data || []);
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoadingMessage('');
     }
   };
 
@@ -7535,6 +7559,7 @@ int main() {
                     disabled={isSubmittingWebhook}
                     onClick={async () => {
                       setIsSubmittingWebhook(true);
+                      setLoadingMessage("Simulating Classroom Sync Trigger...");
                       setSubmissionError('');
                       setSubmissionSuccess('');
                       try {
@@ -7558,6 +7583,7 @@ int main() {
                         setSubmissionError("Network error sending mock payload.");
                       } finally {
                         setIsSubmittingWebhook(false);
+                        setLoadingMessage('');
                       }
                     }}
                   >
