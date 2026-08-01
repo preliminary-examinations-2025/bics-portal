@@ -133,6 +133,92 @@ const initialDB = {
     ],
     testSubmissions: [],
     tickets: [],
+    classroomSubmissions: [
+        {
+            studentId: "STU1001",
+            studentName: "Siyam Bubere",
+            courseCode: "R526CS01T",
+            courseName: "Introduction to Computer Science",
+            title: "Assignment 1: Number Systems & Logic Gates",
+            type: "assignment",
+            submissionDate: "2026-07-20T14:30:00.000Z",
+            dueDate: "2026-07-21T23:59:59.000Z",
+            status: "on_time",
+            score: 18,
+            maxScore: 20,
+            classroomLink: "https://classroom.google.com/c/R526CS01T"
+        },
+        {
+            studentId: "STU1001",
+            studentName: "Siyam Bubere",
+            courseCode: "R526CS02T",
+            courseName: "Programming Fundamental with C++",
+            title: "Class Test 1: Loops and Conditionals",
+            type: "class_test",
+            submissionDate: "2026-07-25T10:15:00.000Z",
+            dueDate: "2026-07-25T11:00:00.000Z",
+            status: "on_time",
+            score: 15,
+            maxScore: 15,
+            classroomLink: "https://classroom.google.com/c/R526CS02T"
+        },
+        {
+            studentId: "STU1001",
+            studentName: "Siyam Bubere",
+            courseCode: "R526CS03T",
+            courseName: "Basics of Web Development",
+            title: "Assignment 2: Flexbox and Grid Layouts",
+            type: "assignment",
+            submissionDate: "2026-07-28T02:00:00.000Z",
+            dueDate: "2026-07-27T23:59:59.000Z",
+            status: "late",
+            score: 16,
+            maxScore: 20,
+            classroomLink: "https://classroom.google.com/c/R526CS03T"
+        },
+        {
+            studentId: "STU1001",
+            studentName: "Siyam Bubere",
+            courseCode: "R526CS04T",
+            courseName: "Mathematical Thinking",
+            title: "Class Test 2: Set Theory and Relations",
+            type: "class_test",
+            submissionDate: null,
+            dueDate: "2026-08-05T23:59:59.000Z",
+            status: "pending",
+            score: 0,
+            maxScore: 20,
+            classroomLink: "https://classroom.google.com/c/R526CS04T"
+        },
+        {
+            studentId: "STU1001",
+            studentName: "Siyam Bubere",
+            courseCode: "R526CS02L",
+            courseName: "Programming Fundamental with C++ Lab",
+            title: "Practical 1: Pointer Declarations and Dereferencing",
+            type: "practical",
+            submissionDate: "2026-07-24T16:00:00.000Z",
+            dueDate: "2026-07-24T18:00:00.000Z",
+            status: "on_time",
+            score: 25,
+            maxScore: 25,
+            classroomLink: "https://classroom.google.com/c/R526CS02L"
+        },
+        {
+            studentId: "STU1001",
+            studentName: "Siyam Bubere",
+            courseCode: "R526CS03L",
+            courseName: "Basics of Web Development Lab",
+            title: "Practical 2: Single-Page Portfolio Site",
+            type: "practical",
+            submissionDate: "2026-07-30T10:00:00.000Z",
+            dueDate: "2026-07-29T23:59:59.000Z",
+            status: "excused",
+            score: 22,
+            maxScore: 25,
+            classroomLink: "https://classroom.google.com/c/R526CS03L"
+        }
+    ],
     config: {
         courseRegistrationActive: true,
         onlineExamActive: true,
@@ -472,6 +558,26 @@ const TestTokenSchema = new mongoose.Schema({
 });
 const TestTokenModel = mongoose.model('TestToken', TestTokenSchema, 'testtokens');
 
+// --- Google Classroom Digital Submissions Schema & Model ---
+const ClassroomSubmissionSchema = new mongoose.Schema({
+    studentId: { type: String, required: true },
+    studentName: String,
+    courseCode: { type: String, required: true },
+    courseName: String,
+    title: { type: String, required: true },
+    type: { type: String, enum: ['assignment', 'practical', 'class_test'], required: true },
+    submissionDate: { type: Date },
+    dueDate: { type: Date },
+    status: { type: String, enum: ['on_time', 'late', 'pending', 'excused'], default: 'pending' },
+    score: { type: Number, default: 0 },
+    maxScore: { type: Number, default: 0 },
+    classroomLink: String
+}, { versionKey: false });
+const ClassroomSubmissionModel = mongoose.model('ClassroomSubmission', ClassroomSubmissionSchema, 'classroom_submissions');
+
+const GOOGLE_CLASSROOM_WEBHOOK_KEY = process.env.GOOGLE_CLASSROOM_WEBHOOK_KEY || "bics_classroom_secret_key_2026";
+
+
 // Connect to MongoDB (Serverless-compatible middleware approach)
 let isConnected = false;
 const connectDB = async () => {
@@ -509,6 +615,13 @@ const connectDB = async () => {
                 const defaultTest = new TestConfigModel(initialDB.tests[0]);
                 await defaultTest.save();
                 console.log("--> Default practice examination seeded in MongoDB.");
+            }
+
+            // Seed default classroom submissions if empty
+            const submissionCount = await ClassroomSubmissionModel.countDocuments();
+            if (submissionCount === 0) {
+                await ClassroomSubmissionModel.insertMany(initialDB.classroomSubmissions);
+                console.log("--> Default classroom submissions seeded in MongoDB.");
             }
         }
     } catch (err) {
@@ -2495,6 +2608,305 @@ app.post('/api/admin/tickets/resolve/:ticketId', async (req, res) => {
     } catch (e) {
         console.error(e);
         await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to resolve ticket: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// --- Google Classroom Webhook & Submissions Endpoints ---
+
+// 1. Webhook receiver
+app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
+    const apiKey = req.headers['x-api-key'] || req.query.key;
+    if (!apiKey || apiKey !== GOOGLE_CLASSROOM_WEBHOOK_KEY) {
+        return res.status(401).json({ error: "Unauthorized: Invalid API Key." });
+    }
+
+    const { email, studentId, courseCode, courseName, title, type, submissionDate, dueDate, score, maxScore, classroomLink } = req.body;
+
+    if (!courseCode || !title || !type) {
+        return res.status(400).json({ error: "Required fields (courseCode, title, type) missing." });
+    }
+
+    try {
+        let resolvedStudentId = studentId || "STU1001";
+        let resolvedStudentName = "Siyam Bubere";
+
+        // Attempt to resolve student by email or username if not explicitly STU1001
+        if (email) {
+            if (useMongo) {
+                const cand = await CandidateModel.findOne({
+                    $or: [
+                        { 'registrationData.personalEmail': email },
+                        { 'registrationData.collegeEmail': email },
+                        { username: email.split('@')[0] }
+                    ]
+                });
+                if (cand) {
+                    resolvedStudentId = cand.studentId || "STU1001";
+                    resolvedStudentName = cand.name || "Siyam Bubere";
+                }
+            } else {
+                const db = getJSONData();
+                const cand = (db.candidates || []).find(c => 
+                    c.registrationData?.personalEmail === email || 
+                    c.registrationData?.collegeEmail === email || 
+                    c.username === email.split('@')[0]
+                );
+                if (cand) {
+                    resolvedStudentId = cand.studentId || "STU1001";
+                    resolvedStudentName = cand.name || "Siyam Bubere";
+                }
+            }
+        }
+
+        // Calculate late vs on-time tag
+        let computedStatus = 'on_time';
+        if (submissionDate && dueDate) {
+            const subTime = new Date(submissionDate).getTime();
+            const dueTime = new Date(dueDate).getTime();
+            if (subTime > dueTime) {
+                computedStatus = 'late';
+            }
+        } else if (!submissionDate) {
+            computedStatus = 'pending';
+        }
+
+        let submission;
+        if (useMongo) {
+            // Find existing submission to update or create new
+            submission = await ClassroomSubmissionModel.findOne({
+                studentId: resolvedStudentId,
+                courseCode,
+                title
+            });
+
+            if (!submission) {
+                submission = new ClassroomSubmissionModel({
+                    studentId: resolvedStudentId,
+                    studentName: resolvedStudentName,
+                    courseCode,
+                    title,
+                    type
+                });
+            }
+
+            submission.courseName = courseName || submission.courseName || courseCode;
+            submission.submissionDate = submissionDate ? new Date(submissionDate) : null;
+            submission.dueDate = dueDate ? new Date(dueDate) : null;
+            submission.status = computedStatus;
+            submission.score = Number(score || 0);
+            submission.maxScore = Number(maxScore || 0);
+            submission.classroomLink = classroomLink || '';
+
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.classroomSubmissions = db.classroomSubmissions || [];
+            let idx = db.classroomSubmissions.findIndex(s => 
+                s.studentId === resolvedStudentId && 
+                s.courseCode === courseCode && 
+                s.title === title
+            );
+
+            submission = {
+                studentId: resolvedStudentId,
+                studentName: resolvedStudentName,
+                courseCode,
+                courseName: courseName || courseCode,
+                title,
+                type,
+                submissionDate: submissionDate || null,
+                dueDate: dueDate || null,
+                status: computedStatus,
+                score: Number(score || 0),
+                maxScore: Number(maxScore || 0),
+                classroomLink: classroomLink || ''
+            };
+
+            if (idx !== -1) {
+                db.classroomSubmissions[idx] = submission;
+            } else {
+                db.classroomSubmissions.push(submission);
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            'system',
+            'CLASSROOM_SUBMISSION_TRIGGERED',
+            `Received Google Classroom submission for ${resolvedStudentName} (${courseCode}): "${title}". Auto-tagged as: ${computedStatus}`,
+            'info'
+        );
+
+        return res.json({ success: true, submission });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 2. Fetch submissions for student
+app.get('/api/student/submissions/:studentId', async (req, res) => {
+    const { studentId } = req.params;
+    try {
+        if (useMongo) {
+            const list = await ClassroomSubmissionModel.find({ studentId });
+            return res.json(list);
+        } else {
+            const db = getJSONData();
+            db.classroomSubmissions = db.classroomSubmissions || [];
+            const list = db.classroomSubmissions.filter(s => s.studentId === studentId);
+            return res.json(list);
+        }
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 3. List all submissions (Admin Only)
+app.get('/api/admin/submissions', async (req, res) => {
+    try {
+        if (useMongo) {
+            const list = await ClassroomSubmissionModel.find({});
+            return res.json(list);
+        } else {
+            const db = getJSONData();
+            db.classroomSubmissions = db.classroomSubmissions || [];
+            return res.json(db.classroomSubmissions);
+        }
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Save/Update submission manually (Admin Only)
+app.post('/api/admin/submissions/save', async (req, res) => {
+    const { _id, studentId, studentName, courseCode, courseName, title, type, submissionDate, dueDate, status, score, maxScore, classroomLink } = req.body;
+    if (!studentId || !courseCode || !title || !type) {
+        return res.status(400).json({ error: "Required fields missing." });
+    }
+
+    try {
+        let submission;
+        // Determine status: if not explicitly 'excused' or manual override, compute it
+        let finalStatus = status || 'on_time';
+        if (status !== 'excused' && status !== 'pending') {
+            if (submissionDate && dueDate) {
+                const subTime = new Date(submissionDate).getTime();
+                const dueTime = new Date(dueDate).getTime();
+                finalStatus = subTime > dueTime ? 'late' : 'on_time';
+            } else if (!submissionDate) {
+                finalStatus = 'pending';
+            }
+        }
+
+        if (useMongo) {
+            if (_id) {
+                submission = await ClassroomSubmissionModel.findById(_id);
+            }
+            if (!submission && studentId && courseCode && title) {
+                submission = await ClassroomSubmissionModel.findOne({ studentId, courseCode, title });
+            }
+            if (!submission) {
+                submission = new ClassroomSubmissionModel({});
+            }
+
+            submission.studentId = studentId;
+            submission.studentName = studentName || "Siyam Bubere";
+            submission.courseCode = courseCode;
+            submission.courseName = courseName || courseCode;
+            submission.title = title;
+            submission.type = type;
+            submission.submissionDate = submissionDate ? new Date(submissionDate) : null;
+            submission.dueDate = dueDate ? new Date(dueDate) : null;
+            submission.status = finalStatus;
+            submission.score = Number(score || 0);
+            submission.maxScore = Number(maxScore || 0);
+            submission.classroomLink = classroomLink || '';
+
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.classroomSubmissions = db.classroomSubmissions || [];
+            
+            submission = {
+                studentId,
+                studentName: studentName || "Siyam Bubere",
+                courseCode,
+                courseName: courseName || courseCode,
+                title,
+                type,
+                submissionDate: submissionDate || null,
+                dueDate: dueDate || null,
+                status: finalStatus,
+                score: Number(score || 0),
+                maxScore: Number(maxScore || 0),
+                classroomLink: classroomLink || ''
+            };
+
+            // Using title/studentId matching for local ID replacement
+            let idx = -1;
+            if (_id) {
+                // If it's local db.json mock _id, or index
+                idx = db.classroomSubmissions.findIndex(s => s.studentId === studentId && s.courseCode === courseCode && s.title === title);
+            }
+            
+            if (idx === -1) {
+                idx = db.classroomSubmissions.findIndex(s => s.studentId === studentId && s.courseCode === courseCode && s.title === title);
+            }
+
+            if (idx !== -1) {
+                db.classroomSubmissions[idx] = submission;
+            } else {
+                db.classroomSubmissions.push(submission);
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            'admin',
+            'SUBMISSION_MANUALLY_SAVED',
+            `Admin manually updated classroom submission for ${studentId} (${courseCode}): "${title}"`,
+            'info'
+        );
+
+        return res.json({ success: true, submission });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 5. Delete submission (Admin Only)
+app.delete('/api/admin/submissions/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        if (useMongo) {
+            // Find by MongoDB ID first, if not found try custom string key or title search
+            let deleted = await ClassroomSubmissionModel.findByIdAndDelete(id);
+            if (!deleted) {
+                // Try treating id as a title / courseCode lookup
+                deleted = await ClassroomSubmissionModel.findOneAndDelete({ title: id });
+            }
+        } else {
+            const db = getJSONData();
+            db.classroomSubmissions = db.classroomSubmissions || [];
+            db.classroomSubmissions = db.classroomSubmissions.filter(s => s.title !== id && String(s._id) !== id);
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            'admin',
+            'SUBMISSION_MANUALLY_DELETED',
+            `Admin deleted classroom submission ID/Title: "${id}"`,
+            'info'
+        );
+
+        return res.json({ success: true });
+    } catch (e) {
+        console.error(e);
         return res.status(500).json({ error: e.message });
     }
 });

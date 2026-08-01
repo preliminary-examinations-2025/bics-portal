@@ -5,7 +5,7 @@ import {
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
   Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy,
-  Check, Plus, Code, Home, Phone
+  Check, Plus, Code, Home, Phone, Layers, Printer, ExternalLink
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -36,6 +36,7 @@ export default function App() {
   const [dropdowns, setDropdowns] = useState({
     student: true,
     coursework: true,
+    submissions: true,
     exam: true,
     feedback: true
   });
@@ -397,6 +398,73 @@ export default function App() {
     }
   };
 
+  const fetchStudentSubmissions = async (studentId) => {
+    try {
+      const res = await fetch(`${API_BASE}/student/submissions/${studentId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStudentSubmissions(data || []);
+      }
+    } catch (e) {
+      console.error("Error fetching student submissions:", e);
+    }
+  };
+
+  const fetchAdminSubmissions = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/submissions`);
+      if (res.ok) {
+        const data = await res.json();
+        setAdminSubmissions(data || []);
+      }
+    } catch (e) {
+      console.error("Error fetching admin submissions:", e);
+    }
+  };
+
+  const saveAdminSubmission = async (sub) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/submissions/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          fetchAdminSubmissions();
+          setSubmissionSuccess("Submission saved successfully.");
+          setShowSubmissionModal(false);
+          setEditingSubmission(null);
+          setTimeout(() => setSubmissionSuccess(''), 3000);
+        } else {
+          setSubmissionError(data.error || "Failed to save submission.");
+        }
+      } else {
+        const errData = await res.json();
+        setSubmissionError(errData.error || "Server error occurred.");
+      }
+    } catch (e) {
+      console.error("Error saving submission:", e);
+      setSubmissionError("Network error: Could not contact server.");
+    }
+  };
+
+  const deleteAdminSubmission = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/submissions/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchAdminSubmissions();
+        setSubmissionSuccess("Submission deleted successfully.");
+        setTimeout(() => setSubmissionSuccess(''), 3000);
+      }
+    } catch (e) {
+      console.error("Error deleting submission:", e);
+    }
+  };
+
   // Admin CourseWork creation states
   const [newLecture, setNewLecture] = useState({ section: '', title: '', youtubeUrl: '' });
   const [newMaterial, setNewMaterial] = useState({ section: '', title: '', fileUrl: '' });
@@ -452,6 +520,29 @@ export default function App() {
   const [studentActiveWebTabs, setStudentActiveWebTabs] = useState({});
 
   // Student exam workspace draft state variables
+  // Digital Submission Tracker States
+  const [studentSubmissions, setStudentSubmissions] = useState([]);
+  const [adminSubmissions, setAdminSubmissions] = useState([]);
+  const [activeSubmissionTab, setActiveSubmissionTab] = useState('all'); // all, assignment, practical, class_test
+  const [showSubmissionModal, setShowSubmissionModal] = useState(false);
+  const [editingSubmission, setEditingSubmission] = useState(null); // null = new, object = editing
+  const [submissionError, setSubmissionError] = useState('');
+  const [submissionSuccess, setSubmissionSuccess] = useState('');
+  const [isSubmittingWebhook, setIsSubmittingWebhook] = useState(false);
+  const [webhookSimPayload, setWebhookSimPayload] = useState({
+    email: 'siyam.bubere@school.edu',
+    studentId: 'STU1001',
+    courseCode: 'R526CS01T',
+    courseName: 'Introduction to Computer Science',
+    title: 'Assignment 1: Number Systems & Logic Gates',
+    type: 'assignment',
+    submissionDate: new Date().toISOString().substring(0, 16),
+    dueDate: new Date(Date.now() + 86400000).toISOString().substring(0, 16),
+    score: 18,
+    maxScore: 20,
+    classroomLink: 'https://classroom.google.com/c/R526CS01T'
+  });
+
   const [draftMCQ, setDraftMCQ] = useState(-1);
   const [draftCode, setDraftCode] = useState('');
 
@@ -1422,9 +1513,11 @@ int main() {
       if (user.role === 'admin') {
         fetchCandidates();
         fetchAdminTests();
+        fetchAdminSubmissions();
       } else {
         fetchStudentProfile();
         fetchStudentActiveTests();
+        fetchStudentSubmissions(user.studentId || user.username || "STU1001");
       }
     }
   }, [user, view]);
@@ -2040,11 +2133,11 @@ int main() {
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets'].includes(view);
+      return ['admin', 'admin_candidates', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions'].includes(view);
     }
     
     if (user.role === 'student') {
-      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests'].includes(view);
+      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(view);
     }
     
     return false;
@@ -2131,6 +2224,9 @@ int main() {
                   <button className={`sidebar-item ${view === 'admin_tickets' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tickets'); setIsMobileSidebarOpen(false); fetchAdminTickets(); }}>
                     <Ticket size={16} /> Tickets
                   </button>
+                  <button className={`sidebar-item ${view === 'admin_submissions' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_submissions'); setIsMobileSidebarOpen(false); fetchAdminSubmissions(); }}>
+                    <Layers size={16} /> Submissions Tracker
+                  </button>
                 </>
               ) : (
                 <>
@@ -2171,6 +2267,18 @@ int main() {
                       </button>
                       <button className={`dropdown-item ${view === 'tests' ? 'active' : ''}`} onClick={() => { setView('tests'); setIsMobileSidebarOpen(false); }}>
                         <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Online Tests
+                      </button>
+                    </div>
+                  )}
+ 
+                  <div className="sidebar-category">Submissions</div>
+                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, submissions: !dropdowns.submissions})}>
+                    Menu Links {dropdowns.submissions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  {dropdowns.submissions && (
+                    <div className="dropdown-container">
+                      <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); if (user) fetchStudentSubmissions(user.studentId || user.username || "STU1001"); }}>
+                        <Layers size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Classroom
                       </button>
                     </div>
                   )}
@@ -3235,6 +3343,313 @@ int main() {
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {view === 'submissions' && (
+            <div className="submissions-page-container">
+              <style dangerouslySetInnerHTML={{__html: `
+                @media print {
+                  .app-sidebar, .app-header, .app-footer, .print-hide, .latency-notice {
+                    display: none !important;
+                  }
+                  body, .app-main, .main-content {
+                    background: #fff !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                  }
+                  .cf-card {
+                    border: none !important;
+                    box-shadow: none !important;
+                    padding: 0 !important;
+                    margin-bottom: 25px !important;
+                  }
+                  .cf-table {
+                    border: 1px solid #cbd5e1 !important;
+                    width: 100% !important;
+                  }
+                  .cf-table th, .cf-table td {
+                    border: 1px solid #cbd5e1 !important;
+                    color: #000 !important;
+                    padding: 8px !important;
+                  }
+                }
+              `}} />
+
+              {/* Title Header */}
+              <div className="print-hide" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <div>
+                  <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Coursework Submissions Ledger</h2>
+                  <p style={{ fontSize: '9pt', color: '#64748b', margin: '4px 0 0 0' }}>Real-time synchronization with Google Classroom</p>
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button 
+                    className="cf-btn-secondary" 
+                    onClick={() => {
+                      if (user) fetchStudentSubmissions(user.studentId || user.username || "STU1001");
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <RefreshCw size={14} /> Refresh Ledger
+                  </button>
+                  <button 
+                    className="cf-btn-primary" 
+                    onClick={() => window.print()}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Printer size={14} /> Print Ledger
+                  </button>
+                </div>
+              </div>
+
+              {/* A4 Printable Header Card */}
+              <div style={{ display: 'none' }} className="print-show-block">
+                <div style={{ borderBottom: '2px solid #002147', paddingBottom: '15px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h1 style={{ fontSize: '20pt', color: '#002147', margin: 0 }}>BICS COURSEWORK LEDGER</h1>
+                    <p style={{ fontSize: '9pt', color: '#475569', margin: '4px 0 0 0' }}>Official Student Submission Record Card</p>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '11pt' }}>{studentProfile?.name || user?.name || 'Siyam Bubere'}</div>
+                    <div style={{ fontSize: '9.5pt', color: '#475569' }}>Student ID: {studentProfile?.studentId || user?.studentId || 'STU1001'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Filter Tabs Container */}
+              <div className="print-hide" style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                {[
+                  { id: 'all', label: 'All Submissions' },
+                  { id: 'assignment', label: 'Assignments' },
+                  { id: 'practical', label: 'Practicals' },
+                  { id: 'class_test', label: 'Class Tests' }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    className={`cf-btn-${activeSubmissionTab === tab.id ? 'primary' : 'secondary'}`}
+                    style={{ padding: '8px 16px', borderRadius: '20px', fontSize: '9pt', fontWeight: 'bold' }}
+                    onClick={() => setActiveSubmissionTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Dynamic Overall Statistics Segment */}
+              {(() => {
+                const filteredList = studentSubmissions.filter(sub => {
+                  if (activeSubmissionTab === 'all') return true;
+                  return sub.type === activeSubmissionTab;
+                });
+
+                const total = filteredList.length;
+                const onTimeCount = filteredList.filter(s => s.status === 'on_time').length;
+                const lateCount = filteredList.filter(s => s.status === 'late').length;
+                const excusedCount = filteredList.filter(s => s.status === 'excused').length;
+                
+                const onTimeRate = total > 0 ? Math.round(((onTimeCount + excusedCount) / total) * 100) : 0;
+                
+                let totalScoreSum = 0;
+                let maxScoreSum = 0;
+                filteredList.forEach(s => {
+                  if (s.maxScore > 0) {
+                    totalScoreSum += s.score || 0;
+                    maxScoreSum += s.maxScore;
+                  }
+                });
+                const avgScorePct = maxScoreSum > 0 ? Math.round((totalScoreSum / maxScoreSum) * 100) : 0;
+
+                return (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '25px' }}>
+                      <div className="cf-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '110px' }}>
+                        <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>Total Records</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <span style={{ fontSize: '24pt', fontWeight: 'bold', color: '#0f172a' }}>{total}</span>
+                          <span style={{ fontSize: '9pt', color: '#64748b' }}>Tasks Tracked</span>
+                        </div>
+                      </div>
+
+                      <div className="cf-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '110px' }}>
+                        <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>On-Time Rate</div>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                            <span style={{ fontSize: '24pt', fontWeight: 'bold', color: onTimeRate >= 80 ? '#10b981' : '#f59e0b' }}>{onTimeRate}%</span>
+                          </div>
+                          <div style={{ height: '6px', width: '100%', backgroundColor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${onTimeRate}%`, backgroundColor: onTimeRate >= 80 ? '#10b981' : '#f59e0b', borderRadius: '3px', transition: 'width 0.5s ease-in-out' }} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="cf-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '110px' }}>
+                        <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>Late Submissions</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <span style={{ fontSize: '24pt', fontWeight: 'bold', color: lateCount > 0 ? '#ef4444' : '#10b981' }}>{lateCount}</span>
+                          <span style={{ fontSize: '9.5pt', color: lateCount > 0 ? '#ef4444' : '#10b981', fontWeight: '500' }}>
+                            {lateCount > 0 ? 'Requires attention' : 'All clear'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="cf-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '110px' }}>
+                        <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>Average Performance</div>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                            <span style={{ fontSize: '24pt', fontWeight: 'bold', color: '#3b82f6' }}>{avgScorePct}%</span>
+                          </div>
+                          <div style={{ height: '6px', width: '100%', backgroundColor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${avgScorePct}%`, backgroundColor: '#3b82f6', borderRadius: '3px', transition: 'width 0.5s ease-in-out' }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Course-wise Tabular Grids */}
+                    {(() => {
+                      const courses = [
+                        { code: 'R526CS01T', name: 'Introduction to Computer Science', category: 'Theory' },
+                        { code: 'R526CS02T', name: 'Programming Fundamental with C++', category: 'Theory' },
+                        { code: 'R526CS03T', name: 'Basics of Web Development', category: 'Theory' },
+                        { code: 'R526CS04T', name: 'Mathematical Thinking', category: 'Theory' },
+                        { code: 'R526CS02L', name: 'Programming Fundamental with C++ Lab', category: 'Lab' },
+                        { code: 'R526CS03L', name: 'Basics of Web Development Lab', category: 'Lab' }
+                      ];
+
+                      let filteredCourses = courses;
+                      if (activeSubmissionTab === 'assignment' || activeSubmissionTab === 'class_test') {
+                        filteredCourses = courses.filter(c => c.category === 'Theory');
+                      } else if (activeSubmissionTab === 'practical') {
+                        filteredCourses = courses.filter(c => c.category === 'Lab');
+                      }
+
+                      return filteredCourses.map(course => {
+                        const courseSubmissions = filteredList.filter(s => s.courseCode === course.code);
+
+                        if (courseSubmissions.length === 0) return null;
+
+                        return (
+                          <div key={course.code} className="cf-card" style={{ marginBottom: '25px', pageBreakInside: 'avoid' }}>
+                            <div style={{ borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <h3 style={{ fontSize: '11.5pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>
+                                {course.name} <span style={{ fontSize: '9pt', color: '#64748b', fontWeight: 'normal', marginLeft: '6px' }}>({course.code})</span>
+                              </h3>
+                              <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', fontWeight: 'bold', fontSize: '8pt' }}>
+                                {course.category}
+                              </span>
+                            </div>
+
+                            <div className="table-responsive" style={{ border: '1px solid var(--cf-border)', borderRadius: '4px', overflow: 'hidden' }}>
+                              <table className="cf-table">
+                                <thead>
+                                  <tr>
+                                    <th>Task Title / Google Classroom Link</th>
+                                    <th>Due Date</th>
+                                    <th>Submission Date</th>
+                                    <th style={{ width: '130px' }}>Status</th>
+                                    <th style={{ width: '120px', textAlign: 'right' }}>Score / Max</th>
+                                    <th style={{ width: '150px' }} className="print-hide">Support</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {courseSubmissions.map((sub, sIdx) => {
+                                    let badgeBg = '#f1f5f9';
+                                    let badgeColor = '#475569';
+                                    if (sub.status === 'on_time') {
+                                      badgeBg = '#ecfdf5';
+                                      badgeColor = '#047857';
+                                    } else if (sub.status === 'late') {
+                                      badgeBg = '#fef2f2';
+                                      badgeColor = '#b91c1c';
+                                    } else if (sub.status === 'pending') {
+                                      badgeBg = '#eff6ff';
+                                      badgeColor = '#1d4ed8';
+                                    } else if (sub.status === 'excused') {
+                                      badgeBg = '#fffbeb';
+                                      badgeColor = '#b45309';
+                                    }
+
+                                    return (
+                                      <tr key={sIdx}>
+                                        <td style={{ fontWeight: '500', fontSize: '9.5pt' }}>
+                                          {sub.classroomLink ? (
+                                            <a 
+                                              href={sub.classroomLink} 
+                                              target="_blank" 
+                                              rel="noopener noreferrer" 
+                                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: '#2563eb', textDecoration: 'none' }}
+                                              className="task-title-link"
+                                            >
+                                              {sub.title} <ExternalLink size={12} />
+                                            </a>
+                                          ) : (
+                                            sub.title
+                                          )}
+                                        </td>
+                                        <td style={{ fontSize: '9pt', color: '#475569' }}>
+                                          {sub.dueDate ? new Date(sub.dueDate).toLocaleString() : 'N/A'}
+                                        </td>
+                                        <td style={{ fontSize: '9pt', color: '#475569' }}>
+                                          {sub.submissionDate ? new Date(sub.submissionDate).toLocaleString() : 'Pending'}
+                                        </td>
+                                        <td>
+                                          <span className="status-badge" style={{ backgroundColor: badgeBg, color: badgeColor, fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                            {sub.status?.replace('_', ' ')}
+                                          </span>
+                                        </td>
+                                        <td style={{ fontWeight: 'bold', fontSize: '10pt', textAlign: 'right', color: '#0f172a' }}>
+                                          {sub.score} / {sub.maxScore}
+                                        </td>
+                                        <td className="print-hide">
+                                          <button
+                                            className="cf-btn-secondary"
+                                            style={{ margin: 0, padding: '4px 10px', fontSize: '8pt', borderColor: '#cbd5e1' }}
+                                            onClick={() => {
+                                              setContactSubject(`Google Classroom Submission Inquiry - ${sub.courseCode} - ${sub.title}`);
+                                              setContactMessage(`Dear Support,\n\nI am raising an inquiry regarding my submission for "${sub.title}" under course code: ${sub.courseCode} (${sub.courseName}).\n\nSubmission Details:\n- Status: ${sub.status?.toUpperCase()}\n- Score Resolved: ${sub.score}/${sub.maxScore}\n- Due Date: ${sub.dueDate ? new Date(sub.dueDate).toLocaleString() : 'N/A'}\n- Submission Date: ${sub.submissionDate ? new Date(sub.submissionDate).toLocaleString() : 'N/A'}\n\nPlease check if this matches Google Classroom records.\n\nThank you.`);
+                                              setContactSuccess('');
+                                              setContactError('');
+                                              setContactSubView('form');
+                                              setView('contact');
+                                            }}
+                                          >
+                                            Raise Ticket
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+
+                    {/* Footnote latency notice */}
+                    <div className="latency-notice" style={{ marginTop: '35px', padding: '15px', borderTop: '1px dashed #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontStyle: 'italic', fontSize: '9pt', color: '#475569' }}>
+                        Submissions will be reflected in a few hours. Please raise a ticket if they are still not reflected after 24 hours.
+                      </span>
+                      <button
+                        className="cf-btn-secondary print-hide"
+                        style={{ margin: 0, padding: '6px 12px', fontSize: '8.5pt', fontWeight: 'bold' }}
+                        onClick={() => {
+                          setContactSubject(`Submission reflecting issue`);
+                          setContactMessage(`Dear Support,\n\nMy Google Classroom submissions have not been reflected on my portal ledger. It has been more than 24 hours since my submission.\n\nPlease check my records.\n\nThank you.`);
+                          setContactSuccess('');
+                          setContactError('');
+                          setContactSubView('form');
+                          setView('contact');
+                        }}
+                      >
+                        Raise Ticket Shortcut
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -6956,6 +7371,530 @@ int main() {
                         </button>
                         <button type="submit" className="cf-btn-primary">
                           Save Resolution
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {view === 'admin_submissions' && (
+            <div>
+              {/* Webhook Simulator Section */}
+              <div className="cf-card" style={{ marginBottom: '25px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                  <h2 style={{ fontSize: '14pt', color: '#002147', margin: 0 }}>Google Classroom Webhook Simulator</h2>
+                  <span className="status-badge" style={{ backgroundColor: '#eff6ff', color: '#1e40af', padding: '2px 8px', fontWeight: 'bold' }}>SIMULATOR MODE</span>
+                </div>
+                
+                <p style={{ fontSize: '9pt', color: '#475569', marginBottom: '15px', lineHeight: '1.4' }}>
+                  This console simulates Google Classroom sync triggers. Select a candidate to populate the email and ID, adjust parameters, and click <strong>Simulate Sync</strong> to post a webhook payload to the backend webhook endpoint.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Select Student for Mock</label>
+                    <select
+                      className="cf-input"
+                      value={webhookSimPayload.studentId}
+                      onChange={e => {
+                        const cand = candidatesList.find(c => c.studentId === e.target.value);
+                        if (cand) {
+                          setWebhookSimPayload({
+                            ...webhookSimPayload,
+                            studentId: cand.studentId,
+                            email: cand.registrationData?.collegeEmail || cand.registrationData?.personalEmail || `${cand.username}@school.edu`,
+                            studentName: cand.name
+                          });
+                        }
+                      }}
+                    >
+                      <option value="STU1001">Siyam Bubere (STU1001)</option>
+                      {candidatesList.filter(c => c.studentId !== 'STU1001').map(c => (
+                        <option key={c.studentId} value={c.studentId}>{c.name} ({c.studentId})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="cf-input-group">
+                    <label className="cf-label">Course Code & Name</label>
+                    <select
+                      className="cf-input"
+                      value={webhookSimPayload.courseCode}
+                      onChange={e => {
+                        const code = e.target.value;
+                        let name = '';
+                        if (code === 'R526CS01T') name = 'Introduction to Computer Science';
+                        else if (code === 'R526CS02T') name = 'Programming Fundamentals with C++';
+                        else if (code === 'R526CS03T') name = 'Basics of Web Development';
+                        else if (code === 'R526CS04T') name = 'Mathematical Thinking';
+                        else if (code === 'R526CS02L') name = 'Programming Fundamentals with C++ Lab';
+                        else if (code === 'R526CS03L') name = 'Basics of Web Development Lab';
+                        setWebhookSimPayload({ ...webhookSimPayload, courseCode: code, courseName: name });
+                      }}
+                    >
+                      <option value="R526CS01T">R526CS01T - Introduction to Computer Science</option>
+                      <option value="R526CS02T">R526CS02T - Programming Fundamental with C++</option>
+                      <option value="R526CS03T">R526CS03T - Basics of Web Development</option>
+                      <option value="R526CS04T">R526CS04T - Mathematical Thinking</option>
+                      <option value="R526CS02L">R526CS02L - Programming Fundamental with C++ Lab</option>
+                      <option value="R526CS03L">R526CS03L - Basics of Web Development Lab</option>
+                    </select>
+                  </div>
+
+                  <div className="cf-input-group">
+                    <label className="cf-label">Submission Type</label>
+                    <select
+                      className="cf-input"
+                      value={webhookSimPayload.type}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, type: e.target.value })}
+                    >
+                      <option value="assignment">Assignment (Theory)</option>
+                      <option value="practical">Practical (Lab)</option>
+                      <option value="class_test">Class Test (Theory)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Task Title</label>
+                    <input
+                      type="text"
+                      className="cf-input"
+                      value={webhookSimPayload.title}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, title: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="cf-input-group">
+                    <label className="cf-label">Score</label>
+                    <input
+                      type="number"
+                      className="cf-input"
+                      value={webhookSimPayload.score}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, score: Number(e.target.value) })}
+                    />
+                  </div>
+
+                  <div className="cf-input-group">
+                    <label className="cf-label">Max Score</label>
+                    <input
+                      type="number"
+                      className="cf-input"
+                      value={webhookSimPayload.maxScore}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, maxScore: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '15px', marginBottom: '20px' }}>
+                  <div className="cf-input-group">
+                    <label className="cf-label">Due Date & Time</label>
+                    <input
+                      type="datetime-local"
+                      className="cf-input"
+                      value={webhookSimPayload.dueDate}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, dueDate: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="cf-input-group">
+                    <label className="cf-label">Submission Date & Time</label>
+                    <input
+                      type="datetime-local"
+                      className="cf-input"
+                      value={webhookSimPayload.submissionDate}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, submissionDate: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="cf-input-group">
+                    <label className="cf-label">Google Classroom URL</label>
+                    <input
+                      type="url"
+                      className="cf-input"
+                      value={webhookSimPayload.classroomLink}
+                      onChange={e => setWebhookSimPayload({ ...webhookSimPayload, classroomLink: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    className="cf-btn-primary"
+                    disabled={isSubmittingWebhook}
+                    onClick={async () => {
+                      setIsSubmittingWebhook(true);
+                      setSubmissionError('');
+                      setSubmissionSuccess('');
+                      try {
+                        const res = await fetch(`${API_BASE}/webhooks/google-classroom/submission`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': 'bics_classroom_secret_key_2026'
+                          },
+                          body: JSON.stringify(webhookSimPayload)
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                          setSubmissionSuccess(`Webhook posted successfully. Resolved student ID: ${data.submission.studentId}, tag: ${data.submission.status}`);
+                          fetchAdminSubmissions();
+                          setTimeout(() => setSubmissionSuccess(''), 5000);
+                        } else {
+                          setSubmissionError(data.error || "Mock sync failed.");
+                        }
+                      } catch (err) {
+                        setSubmissionError("Network error sending mock payload.");
+                      } finally {
+                        setIsSubmittingWebhook(false);
+                      }
+                    }}
+                  >
+                    {isSubmittingWebhook ? "Triggering Sync..." : "Simulate Sync / Post Webhook"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Submissions List Section */}
+              <div className="cf-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+                  <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Digital Submissions Ledger</h2>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button className="cf-btn-secondary" onClick={fetchAdminSubmissions}>
+                      <RefreshCw size={14} style={{ marginRight: '6px' }} /> Refresh
+                    </button>
+                    <button
+                      className="cf-btn-primary"
+                      onClick={() => {
+                        setEditingSubmission({
+                          studentId: 'STU1001',
+                          studentName: 'Siyam Bubere',
+                          courseCode: 'R526CS01T',
+                          courseName: 'Introduction to Computer Science',
+                          title: '',
+                          type: 'assignment',
+                          submissionDate: '',
+                          dueDate: '',
+                          status: 'on_time',
+                          score: 0,
+                          maxScore: 20,
+                          classroomLink: ''
+                        });
+                        setSubmissionError('');
+                        setShowSubmissionModal(true);
+                      }}
+                    >
+                      <Plus size={14} style={{ marginRight: '6px' }} /> Add Submission
+                    </button>
+                  </div>
+                </div>
+
+                {submissionSuccess && (
+                  <div className="cf-alert cf-alert-success" style={{ marginBottom: '15px' }}>
+                    {submissionSuccess}
+                  </div>
+                )}
+                {submissionError && (
+                  <div className="cf-alert cf-alert-danger" style={{ marginBottom: '15px' }}>
+                    {submissionError}
+                  </div>
+                )}
+
+                <div className="table-responsive" style={{ border: '1px solid var(--cf-border)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <table className="cf-table">
+                    <thead>
+                      <tr>
+                        <th>Student</th>
+                        <th>Course</th>
+                        <th>Task Details</th>
+                        <th>Type</th>
+                        <th>Dates</th>
+                        <th>Status</th>
+                        <th>Score</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminSubmissions.length === 0 ? (
+                        <tr>
+                          <td colSpan="8" style={{ fontStyle: 'italic', textAlign: 'center', padding: '20px', color: '#64748b' }}>No submissions found in ledger. Use the simulator or manual add.</td>
+                        </tr>
+                      ) : (
+                        adminSubmissions.map((sub, idx) => {
+                          let badgeBg = '#f1f5f9';
+                          let badgeColor = '#475569';
+                          if (sub.status === 'on_time') {
+                            badgeBg = '#d1fae5';
+                            badgeColor = '#065f46';
+                          } else if (sub.status === 'late') {
+                            badgeBg = '#fee2e2';
+                            badgeColor = '#991b1b';
+                          } else if (sub.status === 'pending') {
+                            badgeBg = '#dbeafe';
+                            badgeColor = '#1e40af';
+                          } else if (sub.status === 'excused') {
+                            badgeBg = '#fef3c7';
+                            badgeColor = '#92400e';
+                          }
+
+                          return (
+                            <tr key={idx}>
+                              <td>
+                                <div style={{ fontWeight: 'bold', fontSize: '9pt' }}>{sub.studentName}</div>
+                                <div style={{ fontSize: '7.5pt', color: '#64748b' }}>{sub.studentId}</div>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: '500', fontSize: '8.5pt' }}>{sub.courseCode}</div>
+                                <div style={{ fontSize: '7.5pt', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }}>{sub.courseName}</div>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: '500', fontSize: '9pt', color: '#1e293b' }}>
+                                  {sub.classroomLink ? (
+                                    <a href={sub.classroomLink} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#2563eb', textDecoration: 'none' }}>
+                                      {sub.title} <ExternalLink size={12} />
+                                    </a>
+                                  ) : sub.title}
+                                </div>
+                              </td>
+                              <td style={{ textTransform: 'capitalize', fontSize: '8.5pt' }}>{sub.type?.replace('_', ' ')}</td>
+                              <td style={{ fontSize: '8pt', color: '#475569' }}>
+                                <div>Due: {sub.dueDate ? new Date(sub.dueDate).toLocaleString() : 'N/A'}</div>
+                                <div>Sub: {sub.submissionDate ? new Date(sub.submissionDate).toLocaleString() : 'Pending'}</div>
+                              </td>
+                              <td>
+                                <span className="status-badge" style={{ backgroundColor: badgeBg, color: badgeColor, textTransform: 'uppercase', fontWeight: 'bold' }}>
+                                  {sub.status?.replace('_', ' ')}
+                                </span>
+                              </td>
+                              <td style={{ fontWeight: 'bold', fontSize: '9.5pt' }}>
+                                {sub.score} / {sub.maxScore}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  <button
+                                    className="cf-btn-secondary"
+                                    style={{ padding: '2px 8px', fontSize: '8.5pt', margin: 0 }}
+                                    onClick={() => {
+                                      setEditingSubmission({
+                                        ...sub,
+                                        submissionDate: sub.submissionDate ? new Date(sub.submissionDate).toISOString().substring(0, 16) : '',
+                                        dueDate: sub.dueDate ? new Date(sub.dueDate).toISOString().substring(0, 16) : ''
+                                      });
+                                      setSubmissionError('');
+                                      setShowSubmissionModal(true);
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    className="cf-btn-secondary"
+                                    style={{ padding: '2px 8px', fontSize: '8.5pt', margin: 0, color: '#b91c1c', borderColor: '#fee2e2' }}
+                                    onClick={() => {
+                                      if (confirm(`Are you sure you want to delete submission for "${sub.title}"?`)) {
+                                        deleteAdminSubmission(sub.title || sub._id);
+                                      }
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* MANUAL ADD/EDIT MODAL */}
+              {showSubmissionModal && editingSubmission && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                  display: 'flex', justifyContent: 'center', alignItems: 'center',
+                  zIndex: 1000
+                }}>
+                  <div className="cf-card" style={{ width: '90%', maxWidth: '650px', padding: '20px', backgroundColor: '#fff', maxHeight: '90vh', overflowY: 'auto' }}>
+                    <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{editingSubmission._id ? "Edit Submission Details" : "Record New Submission"}</span>
+                      <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => { setShowSubmissionModal(false); setEditingSubmission(null); }}>X</button>
+                    </div>
+
+                    <form onSubmit={(e) => {
+                      e.preventDefault();
+                      saveAdminSubmission(editingSubmission);
+                    }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Student ID *</label>
+                          <input
+                            type="text"
+                            className="cf-input"
+                            required
+                            value={editingSubmission.studentId}
+                            onChange={e => {
+                              const cand = candidatesList.find(c => c.studentId === e.target.value);
+                              setEditingSubmission({
+                                ...editingSubmission,
+                                studentId: e.target.value,
+                                studentName: cand ? cand.name : editingSubmission.studentName
+                              });
+                            }}
+                          />
+                        </div>
+
+                        <div className="cf-input-group">
+                          <label className="cf-label">Student Name *</label>
+                          <input
+                            type="text"
+                            className="cf-input"
+                            required
+                            value={editingSubmission.studentName}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, studentName: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Course Code *</label>
+                          <select
+                            className="cf-input"
+                            required
+                            value={editingSubmission.courseCode}
+                            onChange={e => {
+                              const code = e.target.value;
+                              let name = '';
+                              if (code === 'R526CS01T') name = 'Introduction to Computer Science';
+                              else if (code === 'R526CS02T') name = 'Programming Fundamentals with C++';
+                              else if (code === 'R526CS03T') name = 'Basics of Web Development';
+                              else if (code === 'R526CS04T') name = 'Mathematical Thinking';
+                              else if (code === 'R526CS02L') name = 'Programming Fundamentals with C++ Lab';
+                              else if (code === 'R526CS03L') name = 'Basics of Web Development Lab';
+                              setEditingSubmission({ ...editingSubmission, courseCode: code, courseName: name });
+                            }}
+                          >
+                            <option value="R526CS01T">R526CS01T - Introduction to Computer Science</option>
+                            <option value="R526CS02T">R526CS02T - Programming Fundamental with C++</option>
+                            <option value="R526CS03T">R526CS03T - Basics of Web Development</option>
+                            <option value="R526CS04T">R526CS04T - Mathematical Thinking</option>
+                            <option value="R526CS02L">R526CS02L - Programming Fundamental with C++ Lab</option>
+                            <option value="R526CS03L">R526CS03L - Basics of Web Development Lab</option>
+                          </select>
+                        </div>
+
+                        <div className="cf-input-group">
+                          <label className="cf-label">Submission Type *</label>
+                          <select
+                            className="cf-input"
+                            required
+                            value={editingSubmission.type}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, type: e.target.value })}
+                          >
+                            <option value="assignment">Assignment</option>
+                            <option value="practical">Practical (Lab)</option>
+                            <option value="class_test">Class Test</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="cf-input-group" style={{ marginBottom: '15px' }}>
+                        <label className="cf-label">Task Title *</label>
+                        <input
+                          type="text"
+                          className="cf-input"
+                          required
+                          value={editingSubmission.title}
+                          onChange={e => setEditingSubmission({ ...editingSubmission, title: e.target.value })}
+                        />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Score *</label>
+                          <input
+                            type="number"
+                            className="cf-input"
+                            required
+                            value={editingSubmission.score}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, score: Number(e.target.value) })}
+                          />
+                        </div>
+
+                        <div className="cf-input-group">
+                          <label className="cf-label">Max Score *</label>
+                          <input
+                            type="number"
+                            className="cf-input"
+                            required
+                            value={editingSubmission.maxScore}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, maxScore: Number(e.target.value) })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Due Date</label>
+                          <input
+                            type="datetime-local"
+                            className="cf-input"
+                            value={editingSubmission.dueDate}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, dueDate: e.target.value })}
+                          />
+                        </div>
+
+                        <div className="cf-input-group">
+                          <label className="cf-label">Submission Date</label>
+                          <input
+                            type="datetime-local"
+                            className="cf-input"
+                            value={editingSubmission.submissionDate}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, submissionDate: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
+                        <div className="cf-input-group">
+                          <label className="cf-label">Override Status (Optional)</label>
+                          <select
+                            className="cf-input"
+                            value={editingSubmission.status}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, status: e.target.value })}
+                          >
+                            <option value="">Auto-tag by Dates</option>
+                            <option value="on_time">On-Time</option>
+                            <option value="late">Late</option>
+                            <option value="pending">Pending</option>
+                            <option value="excused">Excused</option>
+                          </select>
+                        </div>
+
+                        <div className="cf-input-group">
+                          <label className="cf-label">Classroom URL</label>
+                          <input
+                            type="url"
+                            className="cf-input"
+                            value={editingSubmission.classroomLink}
+                            onChange={e => setEditingSubmission({ ...editingSubmission, classroomLink: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                        <button type="button" className="cf-btn-secondary" onClick={() => { setShowSubmissionModal(false); setEditingSubmission(null); }}>
+                          Cancel
+                        </button>
+                        <button type="submit" className="cf-btn-primary">
+                          Save Submission Record
                         </button>
                       </div>
                     </form>
