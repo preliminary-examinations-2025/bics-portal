@@ -2621,11 +2621,12 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
         return res.status(401).json({ error: "Unauthorized: Invalid API Key." });
     }
 
-    const { email, studentId, courseCode, courseName, title, type, submissionDate, dueDate, score, maxScore, classroomLink } = req.body;
+    let { email, studentId, courseCode, courseName, title, type, submissionDate, dueDate, score, maxScore, classroomLink } = req.body;
 
     if (!courseCode || !title || !type) {
         return res.status(400).json({ error: "Required fields (courseCode, title, type) missing." });
     }
+    courseCode = courseCode.trim().toUpperCase();
 
     try {
         let resolvedStudentId = (studentId || "STU1001").trim().toUpperCase();
@@ -2791,6 +2792,7 @@ app.post('/api/admin/submissions/save', async (req, res) => {
         return res.status(400).json({ error: "Required fields missing." });
     }
     studentId = studentId.trim().toUpperCase();
+    courseCode = courseCode.trim().toUpperCase();
 
     try {
         let submission;

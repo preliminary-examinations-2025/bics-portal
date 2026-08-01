@@ -3527,7 +3527,9 @@ int main() {
                       }
 
                       return filteredCourses.map(course => {
-                        const courseSubmissions = filteredList.filter(s => s.courseCode === course.code);
+                        const courseSubmissions = filteredList.filter(s => 
+                          s.courseCode && s.courseCode.trim().toUpperCase() === course.code.trim().toUpperCase()
+                        );
 
                         if (courseSubmissions.length === 0) return null;
 
