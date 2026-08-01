@@ -2209,7 +2209,7 @@ int main() {
                 {isMobileSidebarOpen ? <X size={24} /> : <Menu size={24} />}
               </button>
             )}
-            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '32px', width: '32px', objectFit: 'contain' }} />
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '42px', width: '42px', objectFit: 'contain' }} />
             <span className="pixel-logo">BICS Portal</span>
           </div>
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
