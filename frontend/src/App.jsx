@@ -2307,15 +2307,16 @@ int main() {
                   {dropdowns.submissions && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001"); }}>
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block' }}>
-                          <rect x="2" y="3" width="20" height="15" rx="2" fill="#137333" stroke="#e0e0e0" strokeWidth="1.5" />
-                          <rect x="1" y="2" width="22" height="17" rx="3" fill="none" stroke="#f9ab00" strokeWidth="1.5" />
-                          <circle cx="9" cy="9" r="1.5" fill="#fff" />
-                          <path d="M6 13.5c0-1.5 1.5-2 3-2s3 .5 3 2" stroke="#fff" strokeWidth="1" fill="none" />
-                          <circle cx="15" cy="9" r="1.5" fill="#fff" />
-                          <path d="M12 13.5c0-1.5 1.5-2 3-2s3 .5 3 2" stroke="#fff" strokeWidth="1" fill="none" />
-                          <circle cx="12" cy="7.5" r="1.8" fill="#fff" />
-                          <path d="M8.5 12.5c0-2 2-2.5 3.5-2.5s3.5.5 3.5 2.5" stroke="#fff" strokeWidth="1.2" fill="none" />
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block' }}>
+                          <rect x="2" y="3" width="20" height="18" rx="2" />
+                          <rect x="4" y="5" width="16" height="14" rx="1" />
+                          <circle cx="12" cy="10" r="2" />
+                          <path d="M9.5 16.5a2.5 2.5 0 0 1 5 0" />
+                          <circle cx="8" cy="11.5" r="1.5" />
+                          <path d="M6 16.5a2 2 0 0 1 3-1.5" />
+                          <circle cx="16" cy="11.5" r="1.5" />
+                          <path d="M15 15a2 2 0 0 1 3 1.5" />
+                          <rect x="14.5" y="16.5" width="3" height="1" rx="0.5" />
                         </svg> Classroom
                       </button>
                     </div>
