@@ -2628,7 +2628,7 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
     }
 
     try {
-        let resolvedStudentId = studentId || "STU1001";
+        let resolvedStudentId = (studentId || "STU1001").trim().toUpperCase();
         let resolvedStudentName = "Siyam Bubere";
 
         // Attempt to resolve student by email or username if not explicitly STU1001
@@ -2642,7 +2642,7 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
                     ]
                 });
                 if (cand) {
-                    resolvedStudentId = cand.studentId || "STU1001";
+                    resolvedStudentId = (cand.studentId || "STU1001").trim().toUpperCase();
                     resolvedStudentName = cand.name || "Siyam Bubere";
                 }
             } else {
@@ -2653,7 +2653,7 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
                     c.username === email.split('@')[0]
                 );
                 if (cand) {
-                    resolvedStudentId = cand.studentId || "STU1001";
+                    resolvedStudentId = (cand.studentId || "STU1001").trim().toUpperCase();
                     resolvedStudentName = cand.name || "Siyam Bubere";
                 }
             }
@@ -2747,7 +2747,10 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
 
 // 2. Fetch submissions for student
 app.get('/api/student/submissions/:studentId', async (req, res) => {
-    const { studentId } = req.params;
+    let { studentId } = req.params;
+    if (studentId) {
+        studentId = studentId.trim().toUpperCase();
+    }
     try {
         if (useMongo) {
             const list = await ClassroomSubmissionModel.find({ studentId });
@@ -2755,7 +2758,7 @@ app.get('/api/student/submissions/:studentId', async (req, res) => {
         } else {
             const db = getJSONData();
             db.classroomSubmissions = db.classroomSubmissions || [];
-            const list = db.classroomSubmissions.filter(s => s.studentId === studentId);
+            const list = db.classroomSubmissions.filter(s => s.studentId && s.studentId.trim().toUpperCase() === studentId);
             return res.json(list);
         }
     } catch (e) {
@@ -2783,10 +2786,11 @@ app.get('/api/admin/submissions', async (req, res) => {
 
 // 4. Save/Update submission manually (Admin Only)
 app.post('/api/admin/submissions/save', async (req, res) => {
-    const { _id, studentId, studentName, courseCode, courseName, title, type, submissionDate, dueDate, status, score, maxScore, classroomLink } = req.body;
+    let { _id, studentId, studentName, courseCode, courseName, title, type, submissionDate, dueDate, status, score, maxScore, classroomLink } = req.body;
     if (!studentId || !courseCode || !title || !type) {
         return res.status(400).json({ error: "Required fields missing." });
     }
+    studentId = studentId.trim().toUpperCase();
 
     try {
         let submission;
