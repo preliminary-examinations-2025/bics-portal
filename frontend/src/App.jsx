@@ -403,6 +403,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/student/submissions/${studentId}`);
       if (res.ok) {
         const data = await res.json();
+        console.log("DEBUG: Loaded Student Submissions:", data);
         setStudentSubmissions(data || []);
       }
     } catch (e) {
@@ -3444,6 +3445,7 @@ int main() {
                   if (activeSubmissionTab === 'all') return true;
                   return sub.type === activeSubmissionTab;
                 });
+                console.log("DEBUG: activeTab =", activeSubmissionTab, "filteredList =", filteredList);
 
                 const total = filteredList.length;
                 const onTimeCount = filteredList.filter(s => s.status === 'on_time').length;
