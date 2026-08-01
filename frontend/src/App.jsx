@@ -1517,7 +1517,7 @@ int main() {
       } else {
         fetchStudentProfile();
         fetchStudentActiveTests();
-        fetchStudentSubmissions(user.studentId || user.username || "STU1001");
+        fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
       }
     }
   }, [user, view]);
@@ -1657,6 +1657,9 @@ int main() {
       const res = await fetch(`${API_BASE}/candidate/profile/${user.id}`);
       const data = await res.json();
       setStudentProfile(data);
+      if (data.studentId) {
+        fetchStudentSubmissions(data.studentId);
+      }
       // Pre-fill student registration form if they have data
       if (data.registrationData && data.registrationSubmitted) {
         setRegForm({
@@ -2277,7 +2280,7 @@ int main() {
                   </button>
                   {dropdowns.submissions && (
                     <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); if (user) fetchStudentSubmissions(user.studentId || user.username || "STU1001"); }}>
+                      <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001"); }}>
                         <Layers size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Classroom
                       </button>
                     </div>
@@ -3386,7 +3389,7 @@ int main() {
                   <button 
                     className="cf-btn-secondary" 
                     onClick={() => {
-                      if (user) fetchStudentSubmissions(user.studentId || user.username || "STU1001");
+                      fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
                     }}
                     style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
                   >
