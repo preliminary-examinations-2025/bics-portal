@@ -2203,12 +2203,13 @@ int main() {
       {/* HEADER */}
       {!(view === 'onlinetest' || view === 'onlinetest_setup' || view === 'login') && (
         <header className="app-header">
-          <div className="header-left">
+          <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {user && (
               <button className="sidebar-toggle" onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}>
                 {isMobileSidebarOpen ? <X size={24} /> : <Menu size={24} />}
               </button>
             )}
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '32px', width: '32px', objectFit: 'contain' }} />
             <span className="pixel-logo">BICS Portal</span>
           </div>
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
@@ -2306,7 +2307,16 @@ int main() {
                   {dropdowns.submissions && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001"); }}>
-                        <Layers size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Classroom
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block' }}>
+                          <rect x="2" y="3" width="20" height="15" rx="2" fill="#137333" stroke="#e0e0e0" strokeWidth="1.5" />
+                          <rect x="1" y="2" width="22" height="17" rx="3" fill="none" stroke="#f9ab00" strokeWidth="1.5" />
+                          <circle cx="9" cy="9" r="1.5" fill="#fff" />
+                          <path d="M6 13.5c0-1.5 1.5-2 3-2s3 .5 3 2" stroke="#fff" strokeWidth="1" fill="none" />
+                          <circle cx="15" cy="9" r="1.5" fill="#fff" />
+                          <path d="M12 13.5c0-1.5 1.5-2 3-2s3 .5 3 2" stroke="#fff" strokeWidth="1" fill="none" />
+                          <circle cx="12" cy="7.5" r="1.8" fill="#fff" />
+                          <path d="M8.5 12.5c0-2 2-2.5 3.5-2.5s3.5.5 3.5 2.5" stroke="#fff" strokeWidth="1.2" fill="none" />
+                        </svg> Classroom
                       </button>
                     </div>
                   )}

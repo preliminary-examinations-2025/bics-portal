@@ -2634,12 +2634,15 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
 
         // Attempt to resolve student by email or username if not explicitly STU1001
         if (email) {
+            const lowercaseEmail = email.toLowerCase().trim();
+            const usernamePart = email.split('@')[0].toLowerCase().trim();
             if (useMongo) {
                 const cand = await CandidateModel.findOne({
                     $or: [
-                        { 'registrationData.personalEmail': email },
-                        { 'registrationData.collegeEmail': email },
-                        { username: email.split('@')[0] }
+                        { 'registrationData.personalEmail': { $regex: new RegExp(`^${lowercaseEmail}$`, 'i') } },
+                        { 'registrationData.collegeEmail': { $regex: new RegExp(`^${lowercaseEmail}$`, 'i') } },
+                        { email: { $regex: new RegExp(`^${lowercaseEmail}$`, 'i') } },
+                        { username: { $regex: new RegExp(`^${usernamePart}$`, 'i') } }
                     ]
                 });
                 if (cand) {
@@ -2649,9 +2652,10 @@ app.post('/api/webhooks/google-classroom/submission', async (req, res) => {
             } else {
                 const db = getJSONData();
                 const cand = (db.candidates || []).find(c => 
-                    c.registrationData?.personalEmail === email || 
-                    c.registrationData?.collegeEmail === email || 
-                    c.username === email.split('@')[0]
+                    (c.registrationData?.personalEmail || '').toLowerCase().trim() === lowercaseEmail || 
+                    (c.registrationData?.collegeEmail || '').toLowerCase().trim() === lowercaseEmail || 
+                    (c.email || '').toLowerCase().trim() === lowercaseEmail || 
+                    (c.username || '').toLowerCase().trim() === usernamePart
                 );
                 if (cand) {
                     resolvedStudentId = (cand.studentId || "STU1001").trim().toUpperCase();
