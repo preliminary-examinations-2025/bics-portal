@@ -2884,10 +2884,13 @@ app.delete('/api/admin/submissions/:id', async (req, res) => {
     const { id } = req.params;
     try {
         if (useMongo) {
-            // Find by MongoDB ID first, if not found try custom string key or title search
-            let deleted = await ClassroomSubmissionModel.findByIdAndDelete(id);
+            let deleted = null;
+            // Avoid throwing CastError on invalid ObjectId strings (like titles)
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                deleted = await ClassroomSubmissionModel.findByIdAndDelete(id);
+            }
             if (!deleted) {
-                // Try treating id as a title / courseCode lookup
+                // Try treating id as a title lookup
                 deleted = await ClassroomSubmissionModel.findOneAndDelete({ title: id });
             }
         } else {
