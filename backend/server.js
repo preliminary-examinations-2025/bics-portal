@@ -664,9 +664,9 @@ const saveJSONData = (data) => {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
 
-    const adminUser = process.env.ADMIN_USER || 'admin';
-    const adminPass = process.env.ADMIN_PASS || 'admin123';
-    if (username === adminUser && password === adminPass) {
+    const adminUser = process.env.ADMIN_USER;
+    const adminPass = process.env.ADMIN_PASS;
+    if (adminUser && adminPass && username === adminUser && password === adminPass) {
         await logSystemAction('admin', 'USER_SIGN_IN', 'Admin logged into portal', 'info');
         return res.json({ success: true, role: 'admin', name: 'System Administrator' });
     }
