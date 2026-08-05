@@ -449,11 +449,21 @@ export default function App() {
 
   const saveAdminSubmission = async (sub) => {
     setLoadingMessage("Saving submission details...");
+    const toUtcString = (val) => {
+      if (!val) return null;
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    };
+    const payload = {
+      ...sub,
+      submissionDate: toUtcString(sub.submissionDate),
+      dueDate: toUtcString(sub.dueDate)
+    };
     try {
       const res = await fetch(`${API_BASE}/admin/submissions/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sub)
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         const data = await res.json();
@@ -7598,13 +7608,23 @@ int main() {
                       setSubmissionError('');
                       setSubmissionSuccess('');
                       try {
+                        const toUtcString = (val) => {
+                          if (!val) return null;
+                          const d = new Date(val);
+                          return isNaN(d.getTime()) ? null : d.toISOString();
+                        };
+                        const payload = {
+                          ...webhookSimPayload,
+                          submissionDate: toUtcString(webhookSimPayload.submissionDate),
+                          dueDate: toUtcString(webhookSimPayload.dueDate)
+                        };
                         const res = await fetch(`${API_BASE}/webhooks/google-classroom/submission`, {
                           method: 'POST',
                           headers: {
                             'Content-Type': 'application/json',
                             'x-api-key': 'bics_classroom_secret_key_2026'
                           },
-                          body: JSON.stringify(webhookSimPayload)
+                          body: JSON.stringify(payload)
                         });
                         const data = await res.json();
                         if (res.ok && data.success) {
