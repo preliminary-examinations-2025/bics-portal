@@ -2304,7 +2304,7 @@ int main() {
                   <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, submissions: !dropdowns.submissions})}>
                     Menu Links {dropdowns.submissions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </button>
-                  {dropdowns.submissions && (
+                   {dropdowns.submissions && (
                     <div className="dropdown-container">
                       <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001"); }}>
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block' }}>
@@ -2318,6 +2318,9 @@ int main() {
                           <path d="M15 15a2 2 0 0 1 3 1.5" />
                           <rect x="14.5" y="16.5" width="3" height="1" rx="0.5" />
                         </svg> Classroom
+                      </button>
+                      <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user) fetchSubmittedTestsList(user.id || user._id); }}>
+                        <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
                       </button>
                     </div>
                   )}
@@ -2333,9 +2336,6 @@ int main() {
                       </button>
                       <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess(''); }}>
                         <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket
-                      </button>
-                      <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user) fetchSubmittedTestsList(user.id || user._id); }}>
-                        <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
                       </button>
                     </div>
                   )}
@@ -3715,6 +3715,21 @@ int main() {
                     <strong>Exam Eligibility Notice:</strong><br />
                     You are not eligible to take this examination. Please contact the administrator.
                   </div>
+                </div>
+              ) : ((systemConfig.examType === 'midsem' && (!studentProfile.midSemFeedback || Object.keys(studentProfile.midSemFeedback).length === 0)) || (systemConfig.examType === 'endsem' && (!studentProfile.endSemFeedback || Object.keys(studentProfile.endSemFeedback).length === 0))) ? (
+                <div className="cf-alert cf-alert-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <FileText size={28} style={{ color: '#d97706' }} />
+                    <div>
+                      <strong style={{ fontSize: '11pt', color: '#d97706' }}>Course Feedback Survey Required:</strong><br />
+                      <span style={{ fontSize: '9.5pt', color: '#475569' }}>
+                        You must complete and submit your {systemConfig.examType === 'midsem' ? 'Mid-Semester' : 'End-Semester'} Course Feedback Survey to unlock your Hall Ticket.
+                      </span>
+                    </div>
+                  </div>
+                  <button className="cf-btn-primary" style={{ alignSelf: 'flex-start', marginTop: '8px' }} onClick={() => setView(systemConfig.examType === 'midsem' ? 'midsem' : 'endsem')}>
+                    Go to {systemConfig.examType === 'midsem' ? 'Mid Sem' : 'End Sem'} Feedback Form
+                  </button>
                 </div>
               ) : studentProfile.signedConsent ? (
                 <div>
