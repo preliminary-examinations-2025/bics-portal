@@ -26,6 +26,15 @@ const COURSES_LIST = [
 ];
 
 export default function App() {
+  const toLocalISOString = (dateOrStr) => {
+    if (!dateOrStr) return '';
+    const date = new Date(dateOrStr);
+    if (isNaN(date.getTime())) return '';
+    const offset = date.getTimezoneOffset();
+    const localDate = new Date(date.getTime() - (offset * 60 * 1000));
+    return localDate.toISOString().substring(0, 16);
+  };
+
   const [user, setUser] = useState(null); // { id, role, name }
   const [studentProfile, setStudentProfile] = useState(null); // Full candidate details
   const [systemConfig, setSystemConfig] = useState(null);
@@ -558,8 +567,8 @@ export default function App() {
     courseName: 'Introduction to Computer Science',
     title: 'Assignment 1: Number Systems & Logic Gates',
     type: 'assignment',
-    submissionDate: new Date().toISOString().substring(0, 16),
-    dueDate: new Date(Date.now() + 86400000).toISOString().substring(0, 16),
+    submissionDate: toLocalISOString(new Date()),
+    dueDate: toLocalISOString(new Date(Date.now() + 86400000)),
     score: 18,
     maxScore: 20,
     classroomLink: 'https://classroom.google.com/c/R526CS01T'
@@ -7740,8 +7749,8 @@ int main() {
                                     onClick={() => {
                                       setEditingSubmission({
                                         ...sub,
-                                        submissionDate: sub.submissionDate ? new Date(sub.submissionDate).toISOString().substring(0, 16) : '',
-                                        dueDate: sub.dueDate ? new Date(sub.dueDate).toISOString().substring(0, 16) : ''
+                                        submissionDate: toLocalISOString(sub.submissionDate),
+                                        dueDate: toLocalISOString(sub.dueDate)
                                       });
                                       setSubmissionError('');
                                       setShowSubmissionModal(true);
