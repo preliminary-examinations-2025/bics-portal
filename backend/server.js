@@ -2343,6 +2343,10 @@ const runLocalGpp = async (sourceCode, testCases, timeLimitMs = 2000) => {
                             });
                         });
 
+                        child.stdin.on('error', (stdinErr) => {
+                            console.warn("Local runner stdin write error (process probably exited early):", stdinErr.message);
+                        });
+
                         if (tc.input) {
                             child.stdin.write(tc.input);
                             child.stdin.end();
