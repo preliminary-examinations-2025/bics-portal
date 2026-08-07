@@ -1320,17 +1320,25 @@ app.get('/api/tests/active', async (req, res) => {
 
         if (useMongo) {
             activeTests = await TestConfigModel.find({
-                $or: [{ isPublished: true }, { isPublished: { $exists: false } }],
-                endDate: { $gte: now }
+                $or: [{ isPublished: true }, { isPublished: { $exists: false } }]
             }).lean();
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            activeTests = db.tests.filter(t => {
-                const end = new Date(t.endDate);
-                return t.isPublished !== false && end >= now;
-            });
+            activeTests = db.tests.filter(t => t.isPublished !== false);
         }
+
+        // Sort activeTests so that the newest tests appear first (descending creation/start order)
+        activeTests.sort((a, b) => {
+            const idA = a._id ? a._id.toString() : '';
+            const idB = b._id ? b._id.toString() : '';
+            if (idA && idB && idA.length === 24 && idB.length === 24) {
+                return idB.localeCompare(idA); // Descending by creation timestamp
+            }
+            const dateA = new Date(a.startDate || 0);
+            const dateB = new Date(b.startDate || 0);
+            return dateB - dateA; // Fallback to descending by start date
+        });
 
         const sanitizedTests = await Promise.all(activeTests.map(async (t) => {
             const tObj = { ...t };
@@ -1685,6 +1693,7 @@ app.post('/api/tests/verify-token', async (req, res) => {
                 id: student._id || student.id,
                 name: student.name,
                 studentId: student.studentId,
+                email: student.registrationData?.collegeEmail || student.registrationData?.personalEmail || student.username || "candidate@college.edu",
                 photoUrl: student.registrationData?.photoUrl || "/public/uploads/default-photo.png"
             },
             test: {
@@ -1880,9 +1889,9 @@ app.post('/api/admin/tests/toggle-publish/:id', async (req, res) => {
     }
 });
 
-// 6. Create/configure a new test (Admin only)
+// 6. Create/configure a test (Admin only)
 app.post('/api/admin/tests', async (req, res) => {
-    const { title, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
+    const { _id, id, title, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
     console.log("DEBUG: POST /api/admin/tests req.body =", JSON.stringify(req.body, null, 2));
     if (!title || !duration || !startDate || !endDate) {
         return res.status(400).json({ error: "Title, Duration, Start Date, and End Date are required" });
@@ -1890,33 +1899,67 @@ app.post('/api/admin/tests', async (req, res) => {
 
     try {
         let savedTest = null;
+        const testId = _id || id;
         if (useMongo) {
-            const test = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions, isPublished: isPublished || false });
-            await test.save();
-            savedTest = test;
+            if (testId) {
+                savedTest = await TestConfigModel.findById(testId);
+            }
+            if (savedTest) {
+                savedTest.title = title;
+                savedTest.marks = Number(marks || 0);
+                savedTest.instructions = instructions || '';
+                savedTest.duration = Number(duration || 60);
+                savedTest.startDate = new Date(startDate);
+                savedTest.endDate = new Date(endDate);
+                savedTest.questions = questions || [];
+                if (isPublished !== undefined) savedTest.isPublished = isPublished;
+                await savedTest.save();
+            } else {
+                savedTest = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions, isPublished: isPublished || false });
+                await savedTest.save();
+            }
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            savedTest = {
-                id: Date.now().toString(),
-                _id: Date.now().toString(),
-                title,
-                marks,
-                instructions,
-                duration: Number(duration),
-                startDate,
-                endDate,
-                questions: questions || [],
-                answersReleased: false,
-                isPublished: isPublished || false
-            };
-            db.tests.push(savedTest);
+            if (testId) {
+                const idx = db.tests.findIndex(t => t.id === testId || t._id === testId);
+                if (idx !== -1) {
+                    db.tests[idx] = {
+                        ...db.tests[idx],
+                        title,
+                        marks: Number(marks || 0),
+                        instructions: instructions || '',
+                        duration: Number(duration || 60),
+                        startDate,
+                        endDate,
+                        questions: questions || []
+                    };
+                    if (isPublished !== undefined) db.tests[idx].isPublished = isPublished;
+                    savedTest = db.tests[idx];
+                }
+            }
+            if (!savedTest) {
+                savedTest = {
+                    id: Date.now().toString(),
+                    _id: Date.now().toString(),
+                    title,
+                    marks: Number(marks || 0),
+                    instructions,
+                    duration: Number(duration || 60),
+                    startDate,
+                    endDate,
+                    questions: questions || [],
+                    answersReleased: false,
+                    isPublished: isPublished || false
+                };
+                db.tests.push(savedTest);
+            }
             saveJSONData(db);
         }
-        await logSystemAction('admin', 'TEST_CREATED', `Created new test config: "${title}" (${marks} marks, Duration: ${duration} mins)`, 'info');
+        await logSystemAction('admin', 'TEST_SAVED', `Saved test config: "${title}" (${marks} marks, Duration: ${duration} mins)`, 'info');
         return res.json({ success: true, test: savedTest });
     } catch (e) {
-        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to create new test config: ${e.message || e}`, 'error');
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to save test config: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });

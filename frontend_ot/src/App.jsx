@@ -23,6 +23,108 @@ const DEFAULT_TEMPLATES = {
   java: ``
 };
 
+// Helper component to render KaTeX math expressions + basic bold/italics/code markdown
+function RichText({ text, style, className }) {
+  const containerRef = useRef(null);
+
+  const formatText = (raw) => {
+    if (!raw) return '';
+    
+    // Escape HTML tags to prevent XSS, but preserve formatting we insert
+    let escaped = raw
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    // Line breaks
+    escaped = escaped.replace(/\n/g, '<br />');
+
+    // Bold (**text** or __text__)
+    escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    escaped = escaped.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+    // Italic (*text* or _text_)
+    escaped = escaped.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    escaped = escaped.replace(/_(.*?)_/g, '<em>$1</em>');
+
+    // Inline code (`code`)
+    escaped = escaped.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
+
+    return escaped;
+  };
+
+  useEffect(() => {
+    if (containerRef.current && window.renderMathInElement) {
+      try {
+        window.renderMathInElement(containerRef.current, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true }
+          ],
+          throwOnError: false
+        });
+      } catch (err) {
+        console.error("KaTeX auto-render failed:", err);
+      }
+    }
+  }, [text]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={style}
+      className={className}
+      dangerouslySetInnerHTML={{ __html: formatText(text) }}
+    />
+  );
+}
+
+// Low-opacity, repeating, rotated candidate email watermark overlay
+function CandidateWatermark({ email }) {
+  if (!email) return null;
+  
+  // We can repeat the email in a grid pattern
+  const repeatedEmails = Array(12).fill(email);
+
+  return (
+    <div style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      pointerEvents: 'none',
+      userSelect: 'none',
+      overflow: 'hidden',
+      zIndex: 10,
+      opacity: 0.05,
+      display: 'grid',
+      gridTemplateColumns: 'repeat(3, 1fr)',
+      gridTemplateRows: 'repeat(4, 1fr)',
+      gap: '40px 20px',
+      padding: '20px',
+      boxSizing: 'border-box'
+    }}>
+      {repeatedEmails.map((text, idx) => (
+        <div key={idx} style={{
+          transform: 'rotate(-25deg)',
+          fontSize: '10pt',
+          fontWeight: 'bold',
+          color: '#000000',
+          fontFamily: 'monospace',
+          whiteSpace: 'nowrap',
+          textAlign: 'center',
+          alignSelf: 'center'
+        }}>
+          {text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1180,8 +1282,9 @@ export default function App() {
         <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           
           {/* Left Pane: Question Description */}
-          <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px' }}>
+          <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0, position: 'relative' }}>
+            <CandidateWatermark email={candidate?.email} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px', zIndex: 11 }}>
               <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
                 Question {selectedQuestionIndex + 1} of {test.questions.length}
               </h4>
@@ -1190,12 +1293,13 @@ export default function App() {
               </span>
             </div>
 
-            <div style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#333', lineHeight: '1.5' }}>
-              {test.questions[selectedQuestionIndex].title}
-            </div>
+            <RichText
+              text={test.questions[selectedQuestionIndex].title}
+              style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#333', lineHeight: '1.5', zIndex: 11 }}
+            />
 
             {test.questions[selectedQuestionIndex].imageUrl && (
-              <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center' }}>
+              <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center', zIndex: 11 }}>
                 <img
                   src={test.questions[selectedQuestionIndex].imageUrl}
                   alt="Question Diagram Context"
@@ -1204,43 +1308,44 @@ export default function App() {
               </div>
             )}
 
-            {/* If Coding Question, render description and example test cases */}
-            {test.questions[selectedQuestionIndex].type === 'coding' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ fontSize: '9.5pt', color: '#555', whiteSpace: 'pre-wrap', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
-                  {test.questions[selectedQuestionIndex].description}
-                </div>
+            {/* Render question description and examples for coding / web / mcq types */}
+            <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {test.questions[selectedQuestionIndex].type !== 'mcq' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <RichText
+                    text={test.questions[selectedQuestionIndex].description}
+                    style={{ fontSize: '9.5pt', color: '#555', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
+                  />
 
-                {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
-                  <div>
-                    <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
-                    <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
-                          <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Sample Input</th>
-                          <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Expected Output</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
-                          <tr key={tcIdx} style={{ borderBottom: '1px solid #cbd5e1' }}>
-                            <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.input}</td>
-                            <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.output}</td>
+                  {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
+                    <div>
+                      <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
+                      <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
+                            <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Sample Input</th>
+                            <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Expected Output</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* If MCQ, statement is on left and options on right - so left panel only shows statement details */}
-            {test.questions[selectedQuestionIndex].type === 'mcq' && (
-              <div style={{ fontSize: '9.5pt', color: '#555', whiteSpace: 'pre-wrap', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
-                {test.questions[selectedQuestionIndex].description || "Please select the correct option response to the question on the right workspace panel."}
-              </div>
-            )}
+                        </thead>
+                        <tbody>
+                          {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
+                            <tr key={tcIdx} style={{ borderBottom: '1px solid #cbd5e1' }}>
+                              <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.input}</td>
+                              <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.output}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <RichText
+                  text={test.questions[selectedQuestionIndex].description || "Please select the correct option response to the question on the right workspace panel."}
+                  style={{ fontSize: '9.5pt', color: '#555', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
+                />
+              )}
+            </div>
 
             {/* Left Pane bottom footer question grid switcher */}
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -1341,9 +1446,10 @@ export default function App() {
                         readOnly
                         style={{ cursor: 'pointer' }}
                       />
-                      <span style={{ fontSize: '9.5pt', fontWeight: isSelected ? 'bold' : 'normal', color: isSelected ? '#1e3a8a' : '#333' }}>
-                        {opt}
-                      </span>
+                      <RichText
+                        text={opt}
+                        style={{ fontSize: '9.5pt', fontWeight: isSelected ? 'bold' : 'normal', color: isSelected ? '#1e3a8a' : '#333' }}
+                      />
                     </div>
                   );
                 })}

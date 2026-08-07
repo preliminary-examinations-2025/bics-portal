@@ -548,6 +548,7 @@ export default function App() {
   const [showTestCreator, setShowTestCreator] = useState(false);
   const [creatorStep, setCreatorStep] = useState(1); // 1 = Details, 2 = Questions, 3 = Review
   const [editingQuestionIdx, setEditingQuestionIdx] = useState(null); // null = Question list view, index = specific question editor
+  const [editingTestConfigId, setEditingTestConfigId] = useState(null); // null = new, string = existing test ID
   const [newExamTitle, setNewExamTitle] = useState('');
   const [newExamMarks, setNewExamMarks] = useState(100);
   const [newExamInstructions, setNewExamInstructions] = useState('');
@@ -1337,6 +1338,7 @@ int main() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          _id: editingTestConfigId,
           title: newExamTitle,
           marks: Number(newExamMarks || 0),
           instructions: newExamInstructions,
@@ -1348,7 +1350,7 @@ int main() {
       });
       const data = await res.json();
       if (data.success) {
-        showModalAlert("Test Configured", "Online practice test has been configured and created successfully!");
+        showModalAlert("Test Configured", editingTestConfigId ? "Online practice test configuration has been updated successfully!" : "Online practice test has been configured and created successfully!");
         setNewExamTitle('');
         setNewExamMarks(100);
         setNewExamInstructions('');
@@ -1358,15 +1360,44 @@ int main() {
         setNewExamQuestions([]);
         setCreatorStep(1);
         setEditingQuestionIdx(null);
+        setEditingTestConfigId(null);
         setShowTestCreator(false);
         fetchAdminTests();
       } else {
-        showModalAlert("Configuration Error", data.error || "Failed to create test configuration.");
+        showModalAlert("Configuration Error", data.error || "Failed to save test configuration.");
       }
     } catch (err) {
       console.error(err);
-      showModalAlert("Connection Failure", "Error connecting to the server to create test configuration.");
+      showModalAlert("Connection Failure", "Error connecting to the server to save test configuration.");
     }
+  };
+
+  const handleEditTest = (test) => {
+    setEditingTestConfigId(test._id || test.id);
+    setNewExamTitle(test.title || '');
+    setNewExamMarks(test.marks || 100);
+    setNewExamInstructions(test.instructions || '');
+    setNewExamDuration(test.duration || 60);
+    
+    // Parse ISO dates to local format YYYY-MM-DDTHH:mm
+    const formatToInputLocal = (isoStr) => {
+      if (!isoStr) return '';
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    
+    setNewExamStart(formatToInputLocal(test.startDate));
+    setNewExamEnd(formatToInputLocal(test.endDate));
+    setNewExamQuestions(test.questions || []);
+    setCreatorStep(1);
+    setEditingQuestionIdx(null);
+    setShowTestCreator(true);
+    
+    setTimeout(() => {
+      document.getElementById('admin-test-creator-section')?.scrollIntoView({ behavior: 'smooth' });
+    }, 150);
   };
 
   const handleDeleteTest = async (id) => {
@@ -3328,7 +3359,9 @@ int main() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
                   {activeStudentTests.map((test, idx) => {
                     const startTime = new Date(test.startDate);
+                    const endTime = new Date(test.endDate);
                     const isFuture = startTime > currentTime;
+                    const isExpired = endTime < currentTime;
                     let countdownStr = '';
                     if (isFuture) {
                       const diffSecs = Math.max(0, Math.floor((startTime.getTime() - currentTime.getTime()) / 1000));
@@ -3351,6 +3384,11 @@ int main() {
                             {isFuture && (
                               <span style={{ fontSize: '8pt', backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                 <Clock size={10} /> Starts in: {countdownStr}
+                              </span>
+                            )}
+                            {isExpired && !test.submissionStatus && (
+                              <span style={{ fontSize: '8pt', backgroundColor: '#fee2e2', color: '#ef4444', border: '1px solid #fca5a5', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <AlertTriangle size={10} /> Expired
                               </span>
                             )}
                           </div>
@@ -3377,6 +3415,14 @@ int main() {
                               style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
                             >
                               Locked
+                            </button>
+                          ) : isExpired ? (
+                            <button
+                              className="cf-btn-secondary"
+                              disabled
+                              style={{ cursor: 'not-allowed', backgroundColor: '#fee2e2', color: '#ef4444', borderColor: '#fee2e2', opacity: 0.8 }}
+                            >
+                              Access Expired
                             </button>
                           ) : (
                             <button
@@ -5602,14 +5648,13 @@ int main() {
                                 </button>
                                 <button
                                   className="cf-btn-primary"
-                                  disabled={new Date(t.endDate) < currentTime}
                                   style={{ 
                                     padding: '3px 8px', 
                                     fontSize: '8pt', 
-                                    background: (new Date(t.endDate) < currentTime) ? '#cbd5e1' : (t.isPublished ? '#10b981' : '#64748b'), 
-                                    borderColor: (new Date(t.endDate) < currentTime) ? '#cbd5e1' : (t.isPublished ? '#10b981' : '#64748b'),
-                                    color: (new Date(t.endDate) < currentTime) ? '#64748b' : '#ffffff',
-                                    cursor: (new Date(t.endDate) < currentTime) ? 'not-allowed' : 'pointer'
+                                    background: t.isPublished ? '#10b981' : '#64748b', 
+                                    borderColor: t.isPublished ? '#10b981' : '#64748b',
+                                    color: '#ffffff',
+                                    cursor: 'pointer'
                                   }}
                                   onClick={async () => {
                                     try {
@@ -5633,6 +5678,13 @@ int main() {
                                 </button>
                                 <button
                                   className="cf-btn-secondary"
+                                  style={{ padding: '3px 8px', fontSize: '8pt' }}
+                                  onClick={() => handleEditTest(t)}
+                                >
+                                  Edit Config
+                                </button>
+                                <button
+                                  className="cf-btn-secondary"
                                   style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '3px 8px', fontSize: '8pt', border: '1px solid #fca5a5' }}
                                   onClick={() => handleDeleteTest(t.id || t._id)}
                                 >
@@ -5650,14 +5702,31 @@ int main() {
                 <button
                   type="button"
                   className="cf-btn-primary"
-                  onClick={() => setShowTestCreator(!showTestCreator)}
+                  onClick={() => {
+                    if (showTestCreator) {
+                      setEditingTestConfigId(null);
+                      setNewExamTitle('');
+                      setNewExamMarks(100);
+                      setNewExamInstructions('');
+                      setNewExamDuration(60);
+                      setNewExamStart('');
+                      setNewExamEnd('');
+                      setNewExamQuestions([]);
+                      setCreatorStep(1);
+                      setEditingQuestionIdx(null);
+                    }
+                    setShowTestCreator(!showTestCreator);
+                  }}
                   style={{ marginBottom: '15px' }}
                 >
-                  {showTestCreator ? 'Hide Exam Builder Form' : '+ Create New Online Test Configuration'}
+                  {showTestCreator 
+                    ? (editingTestConfigId ? 'Cancel Edit Mode' : 'Hide Exam Builder Form') 
+                    : (editingTestConfigId ? 'Edit Configuration Form' : '+ Create New Online Test Configuration')
+                  }
                 </button>
 
                 {showTestCreator && (
-                  <div style={{ borderTop: '1px solid #cbd5e1', paddingTop: '20px', marginTop: '20px' }}>
+                  <div id="admin-test-creator-section" style={{ borderTop: '1px solid #cbd5e1', paddingTop: '20px', marginTop: '20px' }}>
                     {/* Stepper Header */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', backgroundColor: '#f1f5f9', padding: '12px 20px', borderRadius: '6px' }}>
                       <div style={{ display: 'flex', gap: '30px', alignItems: 'center', width: '100%', justifyContent: 'space-around' }}>
@@ -5781,7 +5850,7 @@ int main() {
                               </button>
                             </div>
 
-                            <div className="cf-form-grid" style={{ gridTemplateColumns: '2fr 1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                             <div className="cf-form-grid" style={{ gridTemplateColumns: '2fr 2fr 1fr', gap: '15px', marginBottom: '15px' }}>
                               <div className="cf-input-group">
                                 <label className="cf-label">Question Title</label>
                                 <input
@@ -5798,35 +5867,54 @@ int main() {
                               </div>
                               <div className="cf-input-group">
                                 <label className="cf-label">Question Type</label>
-                                <select
-                                  className="cf-input"
-                                  value={newExamQuestions[editingQuestionIdx]?.type || 'mcq'}
-                                  onChange={e => {
-                                    const updated = [...newExamQuestions];
-                                    const nextType = e.target.value;
-                                    updated[editingQuestionIdx].type = nextType;
-                                    // Reset default properties
-                                    if (nextType === 'mcq') {
-                                      updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
-                                      updated[editingQuestionIdx].correctOptionIndex = 0;
-                                    } else if (nextType === 'coding') {
-                                      updated[editingQuestionIdx].description = 'Solve the problem.';
-                                      updated[editingQuestionIdx].initialTemplate = '#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}';
-                                      updated[editingQuestionIdx].language = 'cpp';
-                                      updated[editingQuestionIdx].testCases = [{ input: '', output: '', isSample: true, points: 10 }];
-                                    } else if (nextType === 'web') {
-                                      updated[editingQuestionIdx].description = 'Create a webpage.';
-                                      updated[editingQuestionIdx].initialHtml = '<h1>Hello World</h1>';
-                                      updated[editingQuestionIdx].initialCss = 'h1 {\n  color: red;\n}';
-                                      updated[editingQuestionIdx].initialJs = '// Write script here';
-                                    }
-                                    setNewExamQuestions(updated);
-                                  }}
-                                >
-                                  <option value="mcq">Multiple Choice (MCQ)</option>
-                                  <option value="coding">C++ Coding</option>
-                                  <option value="web">Web Workspace (HTML/CSS/JS)</option>
-                                </select>
+                                <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                                  {[
+                                    { value: 'mcq', label: 'MCQ' },
+                                    { value: 'coding', label: 'C++ Coding' },
+                                    { value: 'web', label: 'Web Coding' }
+                                  ].map((opt) => (
+                                    <button
+                                      key={opt.value}
+                                      type="button"
+                                      onClick={() => {
+                                        const updated = [...newExamQuestions];
+                                        const nextType = opt.value;
+                                        updated[editingQuestionIdx].type = nextType;
+                                        if (nextType === 'mcq') {
+                                          updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
+                                          updated[editingQuestionIdx].correctOptionIndex = 0;
+                                        } else if (nextType === 'coding') {
+                                          updated[editingQuestionIdx].description = 'Solve the problem.';
+                                          updated[editingQuestionIdx].initialTemplate = '#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}';
+                                          updated[editingQuestionIdx].language = 'cpp';
+                                          updated[editingQuestionIdx].testCases = [{ input: '', output: '', isSample: true, points: 10 }];
+                                        } else if (nextType === 'web') {
+                                          updated[editingQuestionIdx].description = 'Create a webpage.';
+                                          updated[editingQuestionIdx].initialHtml = '<h1>Hello World</h1>';
+                                          updated[editingQuestionIdx].initialCss = 'h1 {\n  color: red;\n}';
+                                          updated[editingQuestionIdx].initialJs = '// Write script here';
+                                        }
+                                        setNewExamQuestions(updated);
+                                      }}
+                                      style={{
+                                        flex: 1,
+                                        padding: '7px 10px',
+                                        fontSize: '8.5pt',
+                                        fontWeight: 'bold',
+                                        borderRadius: '4px',
+                                        border: '1px solid',
+                                        borderColor: newExamQuestions[editingQuestionIdx]?.type === opt.value ? '#3b5998' : '#cbd5e1',
+                                        backgroundColor: newExamQuestions[editingQuestionIdx]?.type === opt.value ? '#eff6ff' : '#ffffff',
+                                        color: newExamQuestions[editingQuestionIdx]?.type === opt.value ? '#3b5998' : '#64748b',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        textAlign: 'center'
+                                      }}
+                                    >
+                                      {opt.label}
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
                               <div className="cf-input-group">
                                 <label className="cf-label">Points Allocation</label>
@@ -5937,22 +6025,37 @@ int main() {
                                     </div>
                                   ))}
                                 </div>
-                                <div className="cf-input-group" style={{ marginTop: '15px', maxWidth: '250px' }}>
+                                <div className="cf-input-group" style={{ marginTop: '15px' }}>
                                   <label className="cf-label">Correct Option Index</label>
-                                  <select
-                                    className="cf-input"
-                                    value={newExamQuestions[editingQuestionIdx]?.correctOptionIndex}
-                                    onChange={e => {
-                                      const updated = [...newExamQuestions];
-                                      updated[editingQuestionIdx].correctOptionIndex = Number(e.target.value);
-                                      setNewExamQuestions(updated);
-                                    }}
-                                  >
-                                    <option value="0">Option 1</option>
-                                    <option value="1">Option 2</option>
-                                    <option value="2">Option 3</option>
-                                    <option value="3">Option 4</option>
-                                  </select>
+                                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px', maxWidth: '400px' }}>
+                                    {[0, 1, 2, 3].map((num) => (
+                                      <button
+                                        key={num}
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...newExamQuestions];
+                                          updated[editingQuestionIdx].correctOptionIndex = num;
+                                          setNewExamQuestions(updated);
+                                        }}
+                                        style={{
+                                          flex: 1,
+                                          padding: '6px 12px',
+                                          fontSize: '8.5pt',
+                                          fontWeight: 'bold',
+                                          borderRadius: '4px',
+                                          border: '1px solid',
+                                          borderColor: newExamQuestions[editingQuestionIdx]?.correctOptionIndex === num ? '#10b981' : '#cbd5e1',
+                                          backgroundColor: newExamQuestions[editingQuestionIdx]?.correctOptionIndex === num ? '#ecfdf5' : '#ffffff',
+                                          color: newExamQuestions[editingQuestionIdx]?.correctOptionIndex === num ? '#10b981' : '#64748b',
+                                          cursor: 'pointer',
+                                          transition: 'all 0.15s ease',
+                                          textAlign: 'center'
+                                        }}
+                                      >
+                                        Option {num + 1}
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
                             )}
