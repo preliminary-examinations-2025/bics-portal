@@ -1283,7 +1283,7 @@ export default function App() {
           
           {/* Left Pane: Question Description */}
           <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0, position: 'relative' }}>
-            <CandidateWatermark email={candidate?.email} />
+            <CandidateWatermark email={candidate?.email || candidate?.studentId || candidate?.name} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px', zIndex: 11 }}>
               <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
                 Question {selectedQuestionIndex + 1} of {test.questions.length}
