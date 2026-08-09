@@ -4564,6 +4564,52 @@ int main() {
                                         }}>
                                           {candAns?.submittedCode || '// No code response was saved.'}
                                         </pre>
+
+                                        {/* Test Case Execution Output for Candidates */}
+                                        {candAns?.testCaseResults && candAns.testCaseResults.length > 0 && (
+                                          <div style={{ marginTop: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
+                                            <h5 style={{ margin: '0 0 10px 0', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                              <CheckCircle size={14} style={{ color: '#10b981' }} />
+                                              <span>Automated Grading Test Cases:</span>
+                                            </h5>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                              {candAns.testCaseResults.map((tc, tcIdx) => {
+                                                const isPass = tc.status === 'Accepted';
+                                                return (
+                                                  <div key={tcIdx} style={{
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    padding: '6px 10px',
+                                                    backgroundColor: '#ffffff',
+                                                    border: '1px solid #e2e8f0',
+                                                    borderRadius: '4px',
+                                                    fontSize: '8.5pt'
+                                                  }}>
+                                                    <span style={{ fontWeight: '500', color: '#334155' }}>
+                                                      Test Case {tcIdx + 1}
+                                                    </span>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                      <span style={{
+                                                        padding: '2px 6px',
+                                                        borderRadius: '3px',
+                                                        fontSize: '7.5pt',
+                                                        fontWeight: 'bold',
+                                                        backgroundColor: isPass ? '#dcfce7' : '#fee2e2',
+                                                        color: isPass ? '#15803d' : '#b91c1c'
+                                                      }}>
+                                                        {tc.status}
+                                                      </span>
+                                                      <span style={{ fontWeight: 'bold', color: isPass ? '#166534' : '#991b1b' }}>
+                                                        {tc.scoredPoints} / {tc.points} Marks
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
                                     )}
 

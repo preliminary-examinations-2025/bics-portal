@@ -394,7 +394,12 @@ const AnswerSchema = new mongoose.Schema({
     submittedHtml: String, // for Web Coding (HTML)
     submittedCss: String, // for Web Coding (CSS)
     submittedJs: String, // for Web Coding (JS)
-    score: { type: Number, default: 0 } // Scored marks for this question
+    score: { type: Number, default: 0 }, // Scored marks for this question
+    testCaseResults: [{
+        status: String,
+        points: Number,
+        scoredPoints: Number
+    }]
 }, { _id: false });
 
 const TestSubmissionSchema = new mongoose.Schema({
@@ -466,8 +471,18 @@ async function recalculateCodingScore(submission, test) {
         const ans = submission.answers[i];
         const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
         if (quest && quest.type === 'coding') {
+            ans.testCaseResults = [];
             if (!ans.submittedCode || ans.submittedCode.trim() === '') {
                 ans.score = 0;
+                if (quest.testCases) {
+                    quest.testCases.forEach(tc => {
+                        ans.testCaseResults.push({
+                            status: 'No Submission',
+                            points: Number(tc.points || 0),
+                            scoredPoints: 0
+                        });
+                    });
+                }
                 continue;
             }
             try {
@@ -476,16 +491,54 @@ async function recalculateCodingScore(submission, test) {
                 if (runRes && runRes.success && runRes.results) {
                     runRes.results.forEach((res, resIdx) => {
                         const tc = quest.testCases[resIdx];
-                        if (res.status === 'Accepted' && tc) {
-                            codingPoints += Number(tc.points || 0);
+                        const tcStatus = res.status || 'Failed';
+                        const isAccepted = tcStatus === 'Accepted';
+                        const pts = tc ? Number(tc.points || 0) : 0;
+                        const scored = isAccepted ? pts : 0;
+                        if (isAccepted) {
+                            codingPoints += pts;
                         }
+                        ans.testCaseResults.push({
+                            status: tcStatus,
+                            points: pts,
+                            scoredPoints: scored
+                        });
                     });
+                } else if (runRes && runRes.status === 'Compilation Error') {
+                    if (quest.testCases) {
+                        quest.testCases.forEach(tc => {
+                            ans.testCaseResults.push({
+                                status: 'Compilation Error',
+                                points: Number(tc.points || 0),
+                                scoredPoints: 0
+                            });
+                        });
+                    }
+                } else {
+                    if (quest.testCases) {
+                        quest.testCases.forEach(tc => {
+                            ans.testCaseResults.push({
+                                status: 'Runtime Error',
+                                points: Number(tc.points || 0),
+                                scoredPoints: 0
+                            });
+                        });
+                    }
                 }
                 ans.score = codingPoints;
                 totalCodingScore += codingPoints;
             } catch (err) {
                 console.error("Autograding failed for question", quest.id, err);
                 ans.score = 0;
+                if (quest.testCases) {
+                    quest.testCases.forEach(tc => {
+                        ans.testCaseResults.push({
+                            status: 'Autograding Error',
+                            points: Number(tc.points || 0),
+                            scoredPoints: 0
+                        });
+                    });
+                }
             }
         } else if (quest && quest.type === 'web') {
             if (ans.score === undefined) ans.score = 0;
@@ -1712,6 +1765,9 @@ app.post('/api/tests/verify-token', async (req, res) => {
     }
 });
 
+// Global in-memory lock for active submissions being processed to prevent duplicate grading runs
+const activeSubmissionsProcessing = new Set();
+
 // 4. Submit candidate exam answers and auto-grade MCQ parts
 app.post('/api/tests/submit', async (req, res) => {
     const { submissionId, answers, proctoringLog, status } = req.body;
@@ -1719,11 +1775,27 @@ app.post('/api/tests/submit', async (req, res) => {
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
     console.log(`DEBUG: POST /api/tests/submit submissionId=${submissionId} answersLength=${answers?.length} status=${status}`);
 
+    const isFinalSubmission = status !== 'started';
+
+    if (isFinalSubmission) {
+        if (activeSubmissionsProcessing.has(submissionId)) {
+            console.log(`DEBUG: Ignoring duplicate final submission request for ID ${submissionId} (already processing)`);
+            return res.status(429).json({ error: "Submission is already being processed. Please wait." });
+        }
+        activeSubmissionsProcessing.add(submissionId);
+    }
+
     try {
         let submission = null;
         if (useMongo) {
             submission = await TestSubmissionModel.findById(submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+            // Duplicate submission guard: if already in final status, return immediately
+            if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
+                console.log(`DEBUG: Ignoring duplicate submission for ID ${submissionId} (already in status ${submission.status})`);
+                return res.json({ success: true, submission });
+            }
 
             submission.answers = answers;
             if (proctoringLog) {
@@ -1758,6 +1830,12 @@ app.post('/api/tests/submit', async (req, res) => {
             db.testSubmissions = db.testSubmissions || [];
             submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+            // Duplicate submission guard: if already in final status, return immediately
+            if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
+                console.log(`DEBUG: Ignoring duplicate submission for ID ${submissionId} (already in status ${submission.status})`);
+                return res.json({ success: true, submission });
+            }
 
             submission.answers = answers;
             if (proctoringLog) {
@@ -1798,6 +1876,10 @@ app.post('/api/tests/submit', async (req, res) => {
         console.error("DEBUG ERROR: POST /api/tests/submit failed:", e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to process exam submission for candidate submission ID ${submissionId}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
+    } finally {
+        if (isFinalSubmission) {
+            activeSubmissionsProcessing.delete(submissionId);
+        }
     }
 });
 

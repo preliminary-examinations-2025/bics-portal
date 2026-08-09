@@ -1272,7 +1272,20 @@ export default function App() {
           </div>
 
           <div>
-            <button className="cf-btn-primary" style={{ borderColor: '#ef4444', color: '#ef4444', fontWeight: 'bold', padding: '6px 12px', fontSize: '9pt' }} onClick={handleManualSubmitExam}>
+            <button
+              className="cf-btn-primary"
+              disabled={submittingExam}
+              style={{
+                borderColor: submittingExam ? '#cbd5e1' : '#ef4444',
+                color: submittingExam ? '#64748b' : '#ef4444',
+                background: submittingExam ? '#cbd5e1' : 'transparent',
+                fontWeight: 'bold',
+                padding: '6px 12px',
+                fontSize: '9pt',
+                cursor: submittingExam ? 'not-allowed' : 'pointer'
+              }}
+              onClick={handleManualSubmitExam}
+            >
               Finalize &amp; Submit Test
             </button>
           </div>
@@ -2111,6 +2124,41 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* SUBMITTING OVERLAY LOADER */}
+        {submittingExam && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.85)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 200000,
+            color: '#ffffff',
+            flexDirection: 'column',
+            gap: '15px'
+          }}>
+            <style>{`
+              @keyframes cf-spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+              .cf-spinner {
+                animation: cf-spin 1s linear infinite;
+              }
+            `}</style>
+            <Loader2 className="cf-spinner" size={48} style={{ color: '#38bdf8' }} />
+            <h3 style={{ fontSize: '14pt', fontWeight: 'bold', margin: 0 }}>Submitting Examination...</h3>
+            <p style={{ fontSize: '10pt', color: '#94a3b8', margin: 0, maxWidth: '320px', textAlign: 'center', lineHeight: '1.5' }}>
+              We are compiling and executing your coding solutions against all automated grading test cases. Please do not close or refresh this tab.
+            </p>
           </div>
         )}
       </div>
