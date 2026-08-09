@@ -465,8 +465,9 @@ function recalculateMCQScore(submission, test) {
 
 async function recalculateCodingScore(submission, test) {
     if (!test || !submission) return;
-    let totalCodingScore = 0;
     submission.answers = submission.answers || [];
+    const codingTasks = [];
+
     for (let i = 0; i < submission.answers.length; i++) {
         const ans = submission.answers[i];
         const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
@@ -485,65 +486,80 @@ async function recalculateCodingScore(submission, test) {
                 }
                 continue;
             }
-            try {
-                const runRes = await executeCode(ans.submittedCode, quest.testCases || []);
-                let codingPoints = 0;
-                if (runRes && runRes.success && runRes.results) {
-                    runRes.results.forEach((res, resIdx) => {
-                        const tc = quest.testCases[resIdx];
-                        const tcStatus = res.status || 'Failed';
-                        const isAccepted = tcStatus === 'Accepted';
-                        const pts = tc ? Number(tc.points || 0) : 0;
-                        const scored = isAccepted ? pts : 0;
-                        if (isAccepted) {
-                            codingPoints += pts;
+
+            codingTasks.push((async () => {
+                try {
+                    const runRes = await executeCode(ans.submittedCode, quest.testCases || []);
+                    let codingPoints = 0;
+                    if (runRes && runRes.success && runRes.results) {
+                        runRes.results.forEach((res, resIdx) => {
+                            const tc = quest.testCases[resIdx];
+                            const tcStatus = res.status || 'Failed';
+                            const isAccepted = tcStatus === 'Accepted';
+                            const pts = tc ? Number(tc.points || 0) : 0;
+                            const scored = isAccepted ? pts : 0;
+                            if (isAccepted) {
+                                codingPoints += pts;
+                            }
+                            ans.testCaseResults.push({
+                                status: tcStatus,
+                                points: pts,
+                                scoredPoints: scored
+                            });
+                        });
+                    } else if (runRes && runRes.status === 'Compilation Error') {
+                        if (quest.testCases) {
+                            quest.testCases.forEach(tc => {
+                                ans.testCaseResults.push({
+                                    status: 'Compilation Error',
+                                    points: Number(tc.points || 0),
+                                    scoredPoints: 0
+                                });
+                            });
                         }
-                        ans.testCaseResults.push({
-                            status: tcStatus,
-                            points: pts,
-                            scoredPoints: scored
-                        });
-                    });
-                } else if (runRes && runRes.status === 'Compilation Error') {
-                    if (quest.testCases) {
-                        quest.testCases.forEach(tc => {
-                            ans.testCaseResults.push({
-                                status: 'Compilation Error',
-                                points: Number(tc.points || 0),
-                                scoredPoints: 0
+                    } else {
+                        if (quest.testCases) {
+                            quest.testCases.forEach(tc => {
+                                ans.testCaseResults.push({
+                                    status: 'Runtime Error',
+                                    points: Number(tc.points || 0),
+                                    scoredPoints: 0
+                                });
                             });
-                        });
+                        }
                     }
-                } else {
+                    ans.score = codingPoints;
+                } catch (err) {
+                    console.error("Autograding failed for question", quest.id, err);
+                    ans.score = 0;
                     if (quest.testCases) {
                         quest.testCases.forEach(tc => {
                             ans.testCaseResults.push({
-                                status: 'Runtime Error',
+                                status: 'Autograding Error',
                                 points: Number(tc.points || 0),
                                 scoredPoints: 0
                             });
                         });
                     }
                 }
-                ans.score = codingPoints;
-                totalCodingScore += codingPoints;
-            } catch (err) {
-                console.error("Autograding failed for question", quest.id, err);
-                ans.score = 0;
-                if (quest.testCases) {
-                    quest.testCases.forEach(tc => {
-                        ans.testCaseResults.push({
-                            status: 'Autograding Error',
-                            points: Number(tc.points || 0),
-                            scoredPoints: 0
-                        });
-                    });
-                }
-            }
+            })());
         } else if (quest && quest.type === 'web') {
             if (ans.score === undefined) ans.score = 0;
         }
     }
+
+    if (codingTasks.length > 0) {
+        await Promise.all(codingTasks);
+    }
+
+    let totalCodingScore = 0;
+    submission.answers.forEach(ans => {
+        const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
+        if (quest && quest.type === 'coding') {
+            totalCodingScore += Number(ans.score || 0);
+        }
+    });
+
     submission.evaluation = submission.evaluation || {};
     submission.evaluation.codingScore = totalCodingScore;
 }
@@ -2387,7 +2403,7 @@ const runLocalGpp = async (sourceCode, testCases, timeLimitMs = 2000) => {
 
         fs.writeFileSync(codeFile, sourceCode);
 
-        exec(`g++ -O3 "${codeFile}" -o "${execFile}"`, async (compileErr, stdout, stderr) => {
+        exec(`g++ "${codeFile}" -o "${execFile}"`, async (compileErr, stdout, stderr) => {
             if (compileErr || stderr) {
                 try {
                     if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
