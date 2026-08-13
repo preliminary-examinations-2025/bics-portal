@@ -12,7 +12,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || (() => {
                   window.location.hostname.startsWith('10.') || 
                   window.location.hostname.startsWith('172.');
   return isLocal 
-    ? `http://${window.location.hostname}:5000/api` 
+    ? `http://127.0.0.1:5000/api` 
     : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`;
 })();
 
@@ -24,7 +24,7 @@ const DEFAULT_TEMPLATES = {
 };
 
 // Helper component to render KaTeX math expressions + basic bold/italics/code markdown
-function RichText({ text, style, className }) {
+const RichText = React.memo(function RichText({ text, style, className }) {
   const containerRef = useRef(null);
 
   const formatText = (raw) => {
@@ -37,14 +37,14 @@ function RichText({ text, style, className }) {
 
     // Temporarily extract double-dollar display math blocks
     formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
-      const placeholder = `__MATH_BLOCK_D_${placeholderIndex++}__`;
+      const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
       mathBlocks.push({ placeholder, content: match });
       return placeholder;
     });
 
     // Temporarily extract single-dollar inline math blocks
     formatted = formatted.replace(/\$(.*?)\$/g, (match) => {
-      const placeholder = `__MATH_BLOCK_I_${placeholderIndex++}__`;
+      const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
       mathBlocks.push({ placeholder, content: match });
       return placeholder;
     });
@@ -108,7 +108,19 @@ function RichText({ text, style, className }) {
       dangerouslySetInnerHTML={{ __html: formatText(text) }}
     />
   );
-}
+}, (prevProps, nextProps) => {
+  if (prevProps.text !== nextProps.text) return false;
+  if (prevProps.className !== nextProps.className) return false;
+  const s1 = prevProps.style || {};
+  const s2 = nextProps.style || {};
+  const keys1 = Object.keys(s1);
+  const keys2 = Object.keys(s2);
+  if (keys1.length !== keys2.length) return false;
+  for (let key of keys1) {
+    if (s1[key] !== s2[key]) return false;
+  }
+  return true;
+});
 
 // Low-opacity, repeating, rotated candidate email watermark overlay
 function CandidateWatermark({ email }) {
