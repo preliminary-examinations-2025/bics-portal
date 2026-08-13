@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Menu, X, Bell, User, Lock, LogOut, ChevronDown, ChevronRight, 
   Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert,
@@ -24,6 +24,93 @@ const COURSES_LIST = [
   "Basics of Web Development",
   "Mathematical Thinking (Discrete Structures)"
 ];
+
+// Helper component to render KaTeX math expressions + basic bold/italics/code markdown
+function RichText({ text, style, className }) {
+  const containerRef = useRef(null);
+
+  const formatText = (raw) => {
+    if (!raw) return '';
+
+    const mathBlocks = [];
+    let formatted = raw;
+
+    let placeholderIndex = 0;
+
+    // Temporarily extract double-dollar display math blocks
+    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
+      const placeholder = `__MATH_BLOCK_D_${placeholderIndex++}__`;
+      mathBlocks.push({ placeholder, content: match });
+      return placeholder;
+    });
+
+    // Temporarily extract single-dollar inline math blocks
+    formatted = formatted.replace(/\$(.*?)\$/g, (match) => {
+      const placeholder = `__MATH_BLOCK_I_${placeholderIndex++}__`;
+      mathBlocks.push({ placeholder, content: match });
+      return placeholder;
+    });
+
+    // Escape raw text sections for safety
+    formatted = formatted
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    // Markdown conversion rules
+    formatted = formatted.replace(/\n/g, '<br />');
+    formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/__(.*?)__/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
+    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
+
+    // Restore original LaTeX formulas back inside placeholders
+    mathBlocks.forEach(({ placeholder, content }) => {
+      formatted = formatted.replace(placeholder, content);
+    });
+
+    return formatted;
+  };
+
+  useEffect(() => {
+    let active = true;
+    const renderMath = () => {
+      if (!active) return;
+      if (containerRef.current && window.renderMathInElement) {
+        try {
+          window.renderMathInElement(containerRef.current, {
+            delimiters: [
+              { left: '$$', right: '$$', display: true },
+              { left: '$', right: '$', display: false },
+              { left: '\\(', right: '\\)', display: false },
+              { left: '\\[', right: '\\]', display: true }
+            ],
+            throwOnError: false
+          });
+        } catch (err) {
+          console.error("KaTeX auto-render failed:", err);
+        }
+      } else if (!window.renderMathInElement) {
+        setTimeout(renderMath, 100);
+      }
+    };
+
+    renderMath();
+    return () => {
+      active = false;
+    };
+  }, [text]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={style}
+      className={className}
+      dangerouslySetInnerHTML={{ __html: formatText(text) }}
+    />
+  );
+}
 
 export default function App() {
   const toLocalISOString = (dateOrStr) => {
@@ -4449,8 +4536,9 @@ int main() {
                                   
                                   {/* Header bar */}
                                   <div style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1', padding: '10px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147' }}>
-                                      Question {qIdx + 1}: {q.title}
+                                    <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <span>Question {qIdx + 1}:</span>
+                                      <RichText text={q.title} style={{ display: 'inline-block' }} />
                                     </span>
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                       {(() => {
@@ -4487,9 +4575,10 @@ int main() {
                                   <div style={{ padding: '15px', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '9pt', lineHeight: '1.5', color: '#333' }}>
                                     
                                     {q.description && (
-                                      <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '10px', borderRadius: '4px', whiteSpace: 'pre-wrap' }}>
-                                        {q.description}
-                                      </div>
+                                      <RichText
+                                        text={q.description}
+                                        style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '10px', borderRadius: '4px', lineHeight: '1.6' }}
+                                      />
                                     )}
 
                                     {/* MCQ Layout */}
@@ -6651,14 +6740,16 @@ int main() {
                               </div>
 
                               {/* Question Title & Description */}
-                              <div style={{ fontSize: '9.5pt', color: '#333', fontWeight: 'bold', marginBottom: '8px' }}>
-                                {questionConfig?.title || "No question title available"}
-                              </div>
+                              <RichText
+                                text={questionConfig?.title || "No question title available"}
+                                style={{ fontSize: '9.5pt', color: '#333', fontWeight: 'bold', marginBottom: '8px' }}
+                              />
 
                               {questionConfig?.description && (
-                                <div style={{ fontSize: '9pt', color: '#475569', backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '4px', marginBottom: '10px', whiteSpace: 'pre-wrap', fontFamily: 'sans-serif' }}>
-                                  {questionConfig.description}
-                                </div>
+                                <RichText
+                                  text={questionConfig.description}
+                                  style={{ fontSize: '9pt', color: '#475569', backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '4px', marginBottom: '10px', fontFamily: 'sans-serif', lineHeight: '1.5' }}
+                                />
                               )}
 
                               {/* Render image if present */}

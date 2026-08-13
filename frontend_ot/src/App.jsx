@@ -29,46 +29,75 @@ function RichText({ text, style, className }) {
 
   const formatText = (raw) => {
     if (!raw) return '';
-    
-    // Escape HTML tags to prevent XSS, but preserve formatting we insert
-    let escaped = raw
+
+    const mathBlocks = [];
+    let formatted = raw;
+
+    let placeholderIndex = 0;
+
+    // Temporarily extract double-dollar display math blocks
+    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
+      const placeholder = `__MATH_BLOCK_D_${placeholderIndex++}__`;
+      mathBlocks.push({ placeholder, content: match });
+      return placeholder;
+    });
+
+    // Temporarily extract single-dollar inline math blocks
+    formatted = formatted.replace(/\$(.*?)\$/g, (match) => {
+      const placeholder = `__MATH_BLOCK_I_${placeholderIndex++}__`;
+      mathBlocks.push({ placeholder, content: match });
+      return placeholder;
+    });
+
+    // Escape raw text sections for safety
+    formatted = formatted
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
-    // Line breaks
-    escaped = escaped.replace(/\n/g, '<br />');
+    // Markdown conversion rules
+    formatted = formatted.replace(/\n/g, '<br />');
+    formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/__(.*?)__/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
+    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
 
-    // Bold (**text** or __text__)
-    escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    escaped = escaped.replace(/__(.*?)__/g, '<strong>$1</strong>');
+    // Restore original LaTeX formulas back inside placeholders
+    mathBlocks.forEach(({ placeholder, content }) => {
+      formatted = formatted.replace(placeholder, content);
+    });
 
-    // Italic (*text* or _text_)
-    escaped = escaped.replace(/\*(.*?)\*/g, '<em>$1</em>');
-    escaped = escaped.replace(/_(.*?)_/g, '<em>$1</em>');
-
-    // Inline code (`code`)
-    escaped = escaped.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
-
-    return escaped;
+    return formatted;
   };
 
   useEffect(() => {
-    if (containerRef.current && window.renderMathInElement) {
-      try {
-        window.renderMathInElement(containerRef.current, {
-          delimiters: [
-            { left: '$$', right: '$$', display: true },
-            { left: '$', right: '$', display: false },
-            { left: '\\(', right: '\\)', display: false },
-            { left: '\\[', right: '\\]', display: true }
-          ],
-          throwOnError: false
-        });
-      } catch (err) {
-        console.error("KaTeX auto-render failed:", err);
+    let active = true;
+    const renderMath = () => {
+      if (!active) return;
+      if (containerRef.current && window.renderMathInElement) {
+        try {
+          window.renderMathInElement(containerRef.current, {
+            delimiters: [
+              { left: '$$', right: '$$', display: true },
+              { left: '$', right: '$', display: false },
+              { left: '\\(', right: '\\)', display: false },
+              { left: '\\[', right: '\\]', display: true }
+            ],
+            throwOnError: false
+          });
+        } catch (err) {
+          console.error("KaTeX auto-render failed:", err);
+        }
+      } else if (!window.renderMathInElement) {
+        setTimeout(renderMath, 100);
       }
-    }
+    };
+
+    renderMath();
+    return () => {
+      active = false;
+    };
   }, [text]);
 
   return (
