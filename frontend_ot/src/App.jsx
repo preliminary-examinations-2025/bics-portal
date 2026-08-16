@@ -989,7 +989,8 @@ export default function App() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f1f5f9' }}>
         <header className="app-header">
-          <div className="header-left">
+          <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
             <span className="pixel-logo">Online Test BICS Terminal</span>
           </div>
           <div className="header-right">
@@ -1063,7 +1064,8 @@ export default function App() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f8fafc' }}>
         <header className="app-header">
-          <div className="header-left">
+          <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
             <span className="pixel-logo">Online Test BICS Terminal</span>
           </div>
           <div className="header-right">
@@ -2211,7 +2213,8 @@ export default function App() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f8fafc' }}>
         <header className="app-header">
-          <div className="header-left">
+          <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
             <span className="pixel-logo">Online Test BICS Terminal</span>
           </div>
           <div className="header-right">
