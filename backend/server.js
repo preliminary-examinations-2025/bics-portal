@@ -74,6 +74,45 @@ if (transporter) {
 }
 
 const sendVerificationEmail = async (toEmail, name, code) => {
+    // 1. Try EmailJS (HTTPS API - Ideal for Render Free Tier)
+    const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
+    const ejsTemplateId = process.env.EMAILJS_TEMPLATE_ID;
+    const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const ejsPrivateKey = process.env.EMAILJS_PRIVATE_KEY; // Optional but recommended for server-side auth
+
+    if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
+        try {
+            const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    service_id: ejsServiceId,
+                    template_id: ejsTemplateId,
+                    user_id: ejsPublicKey,
+                    accessToken: ejsPrivateKey || undefined,
+                    template_params: {
+                        to_email: toEmail,
+                        to_name: name,
+                        code: code
+                    }
+                })
+            });
+            
+            if (response.ok) {
+                console.log(`[EMAIL_VERIFICATION]: Successfully sent code to ${toEmail} via EmailJS HTTPS API`);
+                return;
+            } else {
+                const text = await response.text();
+                console.error(`[EMAIL_VERIFICATION_ERROR]: EmailJS API returned status ${response.status}: ${text}`);
+            }
+        } catch (err) {
+            console.error(`[EMAIL_VERIFICATION_ERROR]: EmailJS request failed:`, err.message);
+        }
+    }
+
+    // 2. Fallback to Nodemailer SMTP
     if (transporter) {
         const mailOptions = {
             from: `"Preliminary Examinations" <${smtpUser}>`,
@@ -99,22 +138,19 @@ const sendVerificationEmail = async (toEmail, name, code) => {
         };
         try {
             await transporter.sendMail(mailOptions);
-            console.log(`[EMAIL_VERIFICATION]: Successfully sent code to ${toEmail}`);
+            console.log(`[EMAIL_VERIFICATION]: Successfully sent code to ${toEmail} via SMTP`);
+            return;
         } catch (emailErr) {
-            console.error(`[EMAIL_VERIFICATION_ERROR]: SMTP transport failed (network/firewall restriction). Error details:`, emailErr.message);
-            console.log(`\n==================================================`);
-            console.log(`[SMTP BLOCK FALLBACK - OTP LOGGED TO SERVER CONSOLE]`);
-            console.log(`Recipient: ${toEmail} (${name})`);
-            console.log(`Verification Code: ${code}`);
-            console.log(`==================================================\n`);
+            console.error(`[EMAIL_VERIFICATION_ERROR]: SMTP transport failed. Error details:`, emailErr.message);
         }
-    } else {
-        console.log(`\n==================================================`);
-        console.log(`[MOCK EMAIL VERIFICATION]`);
-        console.log(`Recipient: ${toEmail} (${name})`);
-        console.log(`Verification Code: ${code}`);
-        console.log(`==================================================\n`);
     }
+
+    // 3. Fallback to console log
+    console.log(`\n==================================================`);
+    console.log(`[SMTP BLOCK FALLBACK - OTP LOGGED TO SERVER CONSOLE]`);
+    console.log(`Recipient: ${toEmail} (${name})`);
+    console.log(`Verification Code: ${code}`);
+    console.log(`==================================================\n`);
 };
 
 // Database Fallback System (db.json)
