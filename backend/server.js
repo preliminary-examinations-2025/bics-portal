@@ -6,6 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
 const { exec } = require('child_process');
+const nodemailer = require('nodemailer');
+const PDFDocument = require('pdfkit');
 require('dotenv').config();
 
 const app = express();
@@ -48,6 +50,59 @@ const uploadToCloudinary = (fileBuffer, folder) => {
         );
         stream.end(fileBuffer);
     });
+};
+
+// Nodemailer SMTP Transporter setup (supporting Gmail App Password)
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+
+const transporter = (smtpUser && smtpPass) ? nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: smtpUser,
+        pass: smtpPass
+    }
+}) : null;
+
+if (transporter) {
+    console.log(`--> Nodemailer active: verification emails will be sent via ${smtpUser}.`);
+} else {
+    console.warn("--> SMTP credentials missing in .env. Falling back to logging verification codes in server console.");
+}
+
+const sendVerificationEmail = async (toEmail, name, code) => {
+    if (transporter) {
+        const mailOptions = {
+            from: `"Preliminary Examinations" <${smtpUser}>`,
+            to: toEmail,
+            subject: 'BICS Portal - Verification Code',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #ffffff;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #002147; border-bottom: 2px solid #002147; padding-bottom: 10px; display: inline-block;">BICS Verification Code</h2>
+                    </div>
+                    <p style="font-size: 11pt; color: #334155;">Dear <strong>${name}</strong>,</p>
+                    <p style="font-size: 11pt; color: #334155; line-height: 1.6;">You have requested a verification code to complete a secure action (downloading your Exam Hall Ticket or changing your account password) on the BICS Candidate Portal.</p>
+                    <div style="background-color: #f1f5f9; border: 1px dashed #cbd5e1; padding: 15px; margin: 25px 0; text-align: center; border-radius: 6px;">
+                        <span style="font-size: 24pt; font-weight: bold; letter-spacing: 5px; color: #002147; font-family: 'Courier New', monospace;">${code}</span>
+                    </div>
+                    <p style="font-size: 9.5pt; color: #64748b; line-height: 1.5;">This code is valid for <strong>10 minutes</strong>. For security reasons, please do not share this code with anyone.</p>
+                    <p style="font-size: 9.5pt; color: #64748b;">If you did not request this code, please secure your account credentials immediately.</p>
+                    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+                    <p style="font-size: 10pt; color: #002147; font-weight: bold; margin: 0;">Preliminary Examinations 2026</p>
+                    <p style="font-size: 8.5pt; color: #94a3b8; margin: 4px 0 0 0;">BICS Portal Administration System</p>
+                </div>
+            `
+        };
+        await transporter.sendMail(mailOptions);
+        console.log(`[EMAIL_VERIFICATION]: Successfully sent code to ${toEmail}`);
+    } else {
+        console.log(`\n==================================================`);
+        console.log(`[MOCK EMAIL VERIFICATION]`);
+        console.log(`Recipient: ${toEmail} (${name})`);
+        console.log(`Verification Code: ${code}`);
+        console.log(`==================================================\n`);
+    }
 };
 
 // Database Fallback System (db.json)
@@ -261,6 +316,8 @@ const CandidateSchema = new mongoose.Schema({
     password: { type: String },
     eligible: { type: Boolean, default: false },
     signedConsent: { type: Boolean, default: false },
+    midSemConsentSigned: { type: Boolean, default: false },
+    endSemConsentSigned: { type: Boolean, default: false },
     registrationSubmitted: { type: Boolean, default: false },
     registrationStatus: { type: String, default: 'Pending' }, // 'Pending', 'Approved', 'Rejected'
     registeredCourses: [String],
@@ -285,8 +342,14 @@ const CandidateSchema = new mongoose.Schema({
     },
     midSemFeedback: { type: Map, of: [String], default: {} },
     endSemFeedback: { type: Map, of: [String], default: {} },
+    midSemLedgerUrl: { type: String, default: '' },
+    endSemLedgerUrl: { type: String, default: '' },
     exitFormSubmitted: { type: Boolean, default: false },
-    exitAnswers: { type: Map, of: String, default: {} }
+    exitAnswers: { type: Map, of: String, default: {} },
+    verificationCode: { type: String, default: '' },
+    verificationCodeExpires: { type: Date },
+    midSemEmailVerified: { type: Boolean, default: false },
+    endSemEmailVerified: { type: Boolean, default: false }
 });
 const CandidateModel = mongoose.model('Candidate', CandidateSchema);
 
@@ -860,7 +923,7 @@ app.post('/api/admin/config', async (req, res) => {
 
 // Change Password Endpoint (Admin & Candidate)
 app.post('/api/change-password', async (req, res) => {
-    const { role, id, newPassword } = req.body;
+    const { role, id, newPassword, code } = req.body;
 
     if (!newPassword || newPassword.length < 4) {
         return res.status(400).json({ error: "Password must be at least 4 characters long" });
@@ -870,23 +933,54 @@ app.post('/api/change-password', async (req, res) => {
         return res.json({ success: true, message: "Admin password changed successfully (session mock update)." });
     }
 
-    if (useMongo) {
-        try {
-            const student = await CandidateModel.findById(id);
-            if (!student) return res.status(404).json({ error: "Candidate not found" });
-            student.password = newPassword;
-            await student.save();
-            return res.json({ success: true });
-        } catch (e) {
-            return res.status(500).json({ error: e.message });
+    // For student role, verify email code
+    if (!code) {
+        return res.status(400).json({ error: "Email verification code is required." });
+    }
+
+    try {
+        let student;
+        if (useMongo) {
+            student = await CandidateModel.findById(id);
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === id || c._id === id);
         }
-    } else {
-        const db = getJSONData();
-        const student = db.candidates.find(c => c._id === id || c.studentId === id);
+
         if (!student) return res.status(404).json({ error: "Candidate not found" });
-        student.password = newPassword;
-        saveJSONData(db);
+
+        // Verify code
+        if (!student.verificationCode || student.verificationCode !== code.trim()) {
+            return res.status(400).json({ error: "Invalid verification code." });
+        }
+
+        if (new Date() > new Date(student.verificationCodeExpires)) {
+            return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+        }
+
+        // Clear code and update password
+        if (useMongo) {
+            student.password = newPassword;
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            await student.save();
+        } else {
+            student.password = newPassword;
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            const db = getJSONData();
+            const candIdx = db.candidates.findIndex(c => c.id === id || c._id === id);
+            if (candIdx !== -1) {
+                db.candidates[candIdx] = student;
+                saveJSONData(db);
+            }
+        }
+
+        await logSystemAction(student.name || 'candidate', 'PASSWORD_CHANGED', `Student changed account password`, 'info');
         return res.json({ success: true });
+    } catch (e) {
+        console.error("Password change failed:", e);
+        return res.status(500).json({ error: "Server error updating password. Please try again." });
     }
 });
 
@@ -1076,21 +1170,47 @@ app.post('/api/candidate/complete-registration/:id', upload.fields([
 // 9. Sign Malpractice Consent
 app.post('/api/candidate/consent/:id', async (req, res) => {
     const { id } = req.params;
+    const { type } = req.body; // 'mid' or 'end'
 
     try {
+        let activeType = type;
+        if (!activeType) {
+            if (useMongo) {
+                const config = await ConfigModel.findOne();
+                activeType = config?.examType === 'midsem' ? 'mid' : 'end';
+            } else {
+                const db = getJSONData();
+                activeType = db.config?.examType === 'midsem' ? 'mid' : 'end';
+            }
+        }
+
         if (useMongo) {
             const cand = await CandidateModel.findById(id);
+            if (!cand) return res.status(404).json({ error: "Candidate not found." });
+            
             cand.signedConsent = true;
+            if (activeType === 'mid') {
+                cand.midSemConsentSigned = true;
+            } else {
+                cand.endSemConsentSigned = true;
+            }
             await cand.save();
-            await logSystemAction(cand.name || id, 'CONSENT_SIGNED', `Candidate signed malpractice & proctoring consent, unlocking Hall Ticket`, 'info');
-            return res.json({ success: true, signedConsent: true });
+            await logSystemAction(cand.name || id, 'CONSENT_SIGNED', `Candidate signed malpractice & proctoring consent for ${activeType} sem, unlocking Hall Ticket`, 'info');
+            return res.json({ success: true, signedConsent: true, student: cand });
         } else {
             const db = getJSONData();
-            const cand = db.candidates.find(c => c.id === id);
+            const cand = db.candidates.find(c => c.id === id || c._id === id);
+            if (!cand) return res.status(404).json({ error: "Candidate not found." });
+
             cand.signedConsent = true;
+            if (activeType === 'mid') {
+                cand.midSemConsentSigned = true;
+            } else {
+                cand.endSemConsentSigned = true;
+            }
             saveJSONData(db);
-            await logSystemAction(cand.name || id, 'CONSENT_SIGNED', `Candidate signed malpractice & proctoring consent, unlocking Hall Ticket`, 'info');
-            return res.json({ success: true, signedConsent: true });
+            await logSystemAction(cand.name || id, 'CONSENT_SIGNED', `Candidate signed malpractice & proctoring consent for ${activeType} sem, unlocking Hall Ticket`, 'info');
+            return res.json({ success: true, signedConsent: true, student: cand });
         }
     } catch (e) {
         console.error(e);
@@ -1107,9 +1227,17 @@ app.post('/api/candidate/feedback/:id', async (req, res) => {
     if (useMongo) {
         try {
             const cand = await CandidateModel.findById(id);
+            if (!cand) return res.status(404).json({ error: "Candidate not found." });
+
             if (type === 'mid') {
+                if (cand.midSemFeedback && cand.midSemFeedback.size > 0) {
+                    return res.status(400).json({ error: "Mid Semester Feedback has already been submitted." });
+                }
                 cand.midSemFeedback = feedback;
             } else {
+                if (cand.endSemFeedback && cand.endSemFeedback.size > 0) {
+                    return res.status(400).json({ error: "End Semester Feedback has already been submitted." });
+                }
                 cand.endSemFeedback = feedback;
             }
             await cand.save();
@@ -1120,13 +1248,454 @@ app.post('/api/candidate/feedback/:id', async (req, res) => {
     } else {
         const db = getJSONData();
         const cand = db.candidates.find(c => c.id === id);
+        if (!cand) return res.status(404).json({ error: "Candidate not found." });
+
         if (type === 'mid') {
+            if (cand.midSemFeedback && Object.keys(cand.midSemFeedback).length > 0) {
+                return res.status(400).json({ error: "Mid Semester Feedback has already been submitted." });
+            }
             cand.midSemFeedback = feedback;
         } else {
+            if (cand.endSemFeedback && Object.keys(cand.endSemFeedback).length > 0) {
+                return res.status(400).json({ error: "End Semester Feedback has already been submitted." });
+            }
             cand.endSemFeedback = feedback;
         }
         saveJSONData(db);
         return res.json({ success: true });
+    }
+});
+
+// 10b. Upload Signed Ledger (Coursework submission verification)
+app.post('/api/candidate/upload-ledger/:id', upload.single('ledgerFile'), async (req, res) => {
+    const { id } = req.params;
+    const { type } = req.body; // 'mid' or 'end'
+    
+    try {
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: "Ledger file is required." });
+        if (type !== 'mid' && type !== 'end') return res.status(400).json({ error: "Invalid feedback/ledger type specified." });
+
+        let fileUrl = '';
+        if (useCloudinary) {
+            fileUrl = await uploadToCloudinary(file.buffer, `BICS_2026/ledgers_${type}`);
+        } else {
+            if (process.env.VERCEL || process.env.RENDER) {
+                // Prevent ephemeral filesystem writes on production hosts (Vercel/Render) if Cloudinary keys not configured
+                fileUrl = 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg';
+            } else {
+                // Local fallback upload for local testing
+                const uploadsDir = path.join(__dirname, 'public', 'uploads');
+                if (!fs.existsSync(uploadsDir)) {
+                    fs.mkdirSync(uploadsDir, { recursive: true });
+                }
+                const fileName = `ledger-${type}-${id}-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
+                const filePath = path.join(uploadsDir, fileName);
+                fs.writeFileSync(filePath, file.buffer);
+                const host = `${req.protocol}://${req.get('host')}`;
+                fileUrl = `${host}/public/uploads/${fileName}`;
+            }
+        }
+
+        if (useMongo) {
+            const updateField = type === 'mid' ? { midSemLedgerUrl: fileUrl } : { endSemLedgerUrl: fileUrl };
+            const student = await CandidateModel.findByIdAndUpdate(id, updateField, { new: true });
+            if (!student) return res.status(404).json({ error: "Candidate not found." });
+            await logSystemAction(student.name || 'candidate', 'LEDGER_UPLOADED', `Uploaded signed ${type} semester ledger`, 'info');
+            return res.json({ success: true, student });
+        } else {
+            const db = getJSONData();
+            const student = db.candidates.find(c => c.id === id || c._id === id);
+            if (!student) return res.status(404).json({ error: "Candidate not found." });
+            
+            if (type === 'mid') {
+                student.midSemLedgerUrl = fileUrl;
+            } else {
+                student.endSemLedgerUrl = fileUrl;
+            }
+            saveJSONData(db);
+            await logSystemAction(student.name || 'candidate', 'LEDGER_UPLOADED', `Uploaded signed ${type} semester ledger`, 'info');
+            return res.json({ success: true, student });
+        }
+    } catch (err) {
+        console.error("Ledger upload failed:", err);
+        return res.status(500).json({ error: "Ledger upload failed." });
+    }
+});
+
+// 10c. Send Email Verification Code (Hall Ticket / Password Change)
+app.post('/api/candidate/send-verification-code/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        let student;
+        if (useMongo) {
+            student = await CandidateModel.findById(id);
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === id || c._id === id);
+        }
+
+        if (!student) return res.status(404).json({ error: "Candidate not found." });
+
+        const studentEmail = student.registrationData?.personalEmail || student.personalEmail;
+        if (!studentEmail) {
+            return res.status(400).json({ error: "No email registered for this candidate. Please contact support." });
+        }
+
+        // Generate 6-digit random code
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
+        if (useMongo) {
+            student.verificationCode = code;
+            student.verificationCodeExpires = expires;
+            await student.save();
+        } else {
+            student.verificationCode = code;
+            student.verificationCodeExpires = expires;
+            const db = getJSONData();
+            const candIdx = db.candidates.findIndex(c => c.id === id || c._id === id);
+            if (candIdx !== -1) {
+                db.candidates[candIdx] = student;
+                saveJSONData(db);
+            }
+        }
+
+        // Send email
+        await sendVerificationEmail(studentEmail, student.name || 'Candidate', code);
+
+        return res.json({ success: true, message: "Verification code sent to your email." });
+    } catch (err) {
+        console.error("Failed to send verification code:", err);
+        return res.status(500).json({ error: "Failed to send verification code. Please try again." });
+    }
+});
+
+// 10d. Verify Code (For Hall Ticket / Password Change verification)
+app.post('/api/candidate/verify-code/:id', async (req, res) => {
+    const { id } = req.params;
+    const { code, type } = req.body; // type is 'mid' or 'end' if verifying for exam
+
+    if (!code) return res.status(400).json({ error: "Verification code is required." });
+
+    try {
+        let student;
+        if (useMongo) {
+            student = await CandidateModel.findById(id);
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === id || c._id === id);
+        }
+
+        if (!student) return res.status(404).json({ error: "Candidate not found." });
+
+        if (!student.verificationCode || student.verificationCode !== code.trim()) {
+            return res.status(400).json({ error: "Invalid verification code." });
+        }
+
+        if (new Date() > new Date(student.verificationCodeExpires)) {
+            return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+        }
+
+        // Clear code on successful verification so it cannot be reused, and flag email as verified if verifying for exam
+        if (useMongo) {
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            if (type === 'mid') {
+                student.midSemEmailVerified = true;
+            } else if (type === 'end') {
+                student.endSemEmailVerified = true;
+            }
+            await student.save();
+        } else {
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            if (type === 'mid') {
+                student.midSemEmailVerified = true;
+            } else if (type === 'end') {
+                student.endSemEmailVerified = true;
+            }
+            const db = getJSONData();
+            const candIdx = db.candidates.findIndex(c => c.id === id || c._id === id);
+            if (candIdx !== -1) {
+                db.candidates[candIdx] = student;
+                saveJSONData(db);
+            }
+        }
+
+        await logSystemAction(student.name || 'candidate', 'EMAIL_VERIFIED', `Candidate verified email successfully for ${type || 'action'}`, 'info');
+        return res.json({ success: true, message: "Verification successful.", student });
+    } catch (err) {
+        console.error("Code verification failed:", err);
+        return res.status(500).json({ error: "Verification failed. Please try again." });
+    }
+});
+
+// 10e. Centralized PDF Hall Ticket Generator
+app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
+    const { id } = req.params;
+    const { type } = req.query; // 'mid' or 'end'
+
+    if (type !== 'mid' && type !== 'end') {
+        return res.status(400).send("<h3>Error</h3><p>Invalid exam type specified. Must be 'mid' or 'end'.</p>");
+    }
+
+    try {
+        let student;
+        let systemConfig;
+
+        if (useMongo) {
+            student = await CandidateModel.findById(id);
+            systemConfig = await ConfigModel.findOne();
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === id || c._id === id);
+            systemConfig = db.config;
+        }
+
+        if (!student) {
+            return res.status(404).send("<h3>Error</h3><p>Candidate profile not found.</p>");
+        }
+
+        // Verify eligibility checklist
+        if (!student.eligible) {
+            return res.status(403).send("<h3>Error</h3><p>You are not eligible to take this examination.</p>");
+        }
+
+        const isMid = type === 'mid';
+        const consentSigned = isMid ? student.midSemConsentSigned : student.endSemConsentSigned;
+        const feedback = isMid ? student.midSemFeedback : student.endSemFeedback;
+        const ledgerUrl = isMid ? student.midSemLedgerUrl : student.endSemLedgerUrl;
+        const emailVerified = isMid ? student.midSemEmailVerified : student.endSemEmailVerified;
+
+        if (!consentSigned) {
+            return res.status(403).send("<h3>Error</h3><p>Malpractice Undertaking Consent has not been signed for this semester.</p>");
+        }
+        if (!feedback || Object.keys(feedback).length === 0) {
+            return res.status(403).send("<h3>Error</h3><p>Course Feedback Survey has not been submitted for this semester.</p>");
+        }
+        if (!ledgerUrl) {
+            return res.status(403).send("<h3>Error</h3><p>Signed Coursework Ledger has not been uploaded for this semester.</p>");
+        }
+        if (!emailVerified) {
+            return res.status(403).send("<h3>Error</h3><p>Email verification is pending for this semester.</p>");
+        }
+
+        // Initialize PDF Document
+        const doc = new PDFDocument({ size: 'A4', margin: 30 });
+
+        // Set response headers to prompt inline preview or download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="hallticket-${type}sem-${student.studentId || id}.pdf"`);
+        doc.pipe(res);
+
+        // Header Section
+        const logoPath = path.join(__dirname, 'public', 'logo.png');
+        if (fs.existsSync(logoPath)) {
+            doc.image(logoPath, 30, 30, { width: 55 });
+        }
+
+        const bicsLogoPath = path.join(__dirname, 'public', 'bics_logo.png');
+        if (fs.existsSync(bicsLogoPath)) {
+            doc.image(bicsLogoPath, 510, 30, { width: 55 });
+        }
+
+        // Header Texts
+        doc.fillColor('#002147')
+           .font('Helvetica-Bold')
+           .fontSize(16)
+           .text("PRELIMINARY EXAMINATIONS 2026", 95, 33, { align: 'left' });
+
+        doc.fillColor('#475569')
+           .font('Helvetica-Bold')
+           .fontSize(8.5)
+           .text("BASIC INTRODUCTORY COMPUTER SCIENCE (BICS) COURSE", 95, 53, { align: 'left' });
+
+        const typeLabel = isMid ? "MID-SEMESTER TESTS 2026" : "END SEMESTER EXAMINATION 2026";
+        const typeColor = isMid ? '#b91c1c' : '#002147';
+        doc.fillColor(typeColor)
+           .font('Helvetica-Bold')
+           .fontSize(10.5)
+           .text(typeLabel, 95, 70, { align: 'left' });
+
+        // Horizontal Line
+        doc.strokeColor('#002147')
+           .lineWidth(1.5)
+           .moveTo(30, 95)
+           .lineTo(565, 95)
+           .stroke();
+
+        // Helper function to fetch remote/local image buffers
+        const fetchImageBuffer = async (url) => {
+            if (!url) return null;
+            if (url.includes('/public/uploads/')) {
+                const fileName = url.substring(url.indexOf('/public/uploads/') + 16);
+                const localPath = path.join(__dirname, 'public', 'uploads', fileName);
+                if (fs.existsSync(localPath)) {
+                    try { return fs.readFileSync(localPath); } catch (e) {}
+                }
+            }
+            try {
+                const response = await fetch(url);
+                if (response.ok) {
+                    return Buffer.from(await response.arrayBuffer());
+                }
+            } catch (e) {
+                console.error("HTTP fetch failed for URL:", url, e.message);
+            }
+            return null;
+        };
+
+        // Fetch Photo & Signature buffers asynchronously
+        const photoUrl = student.registrationData?.photoUrl;
+        const sigUrl = student.registrationData?.signatureUrl;
+        
+        const [photoBuffer, sigBuffer] = await Promise.all([
+            fetchImageBuffer(photoUrl),
+            fetchImageBuffer(sigUrl)
+        ]);
+
+        // Metadata Grid (X=30 to X=390, Photo at X=410, Signature at X=490)
+        let yOffset = 110;
+        doc.fontSize(8).fillColor('#64748b').font('Helvetica-Bold').text("CANDIDATE FULL NAME:", 30, yOffset);
+        doc.fontSize(10).fillColor('#002147').font('Helvetica-Bold').text(student.name || 'Candidate Name', 165, yOffset);
+
+        yOffset += 16;
+        doc.fontSize(8).fillColor('#64748b').font('Helvetica-Bold').text("STUDENT ID NUMBER:", 30, yOffset);
+        doc.fontSize(10).fillColor('#002147').font('Helvetica-Bold').text(student.studentId || 'ID Number', 165, yOffset);
+
+        yOffset += 16;
+        doc.fontSize(8).fillColor('#64748b').font('Helvetica-Bold').text("EMAIL ADDRESS:", 30, yOffset);
+        doc.fontSize(9.5).fillColor('#002147').font('Helvetica-Bold').text(student.registrationData?.personalEmail || student.personalEmail || 'Email', 165, yOffset);
+
+        yOffset += 16;
+        doc.fontSize(8).fillColor('#64748b').font('Helvetica-Bold').text("CANDIDATE ADDRESS:", 30, yOffset);
+        const candAddr = student.registrationData?.permanentAddress || student.permanentAddress || 'Address details registered in candidate records.';
+        doc.fontSize(8.5).fillColor('#334155').font('Helvetica').text(candAddr, 165, yOffset, { width: 230, align: 'left' });
+
+        // Embed Photo Box
+        doc.rect(410, 107, 70, 85).strokeColor('#cbd5e1').lineWidth(1).stroke();
+        if (photoBuffer) {
+            try { doc.image(photoBuffer, 411, 108, { width: 68, height: 83 }); } catch (e) { console.error("Error drawing photo:", e); }
+        }
+        doc.fontSize(6.5).fillColor('#64748b').font('Helvetica-Bold').text("PHOTOGRAPH", 410, 198, { width: 70, align: 'center' });
+
+        // Embed Signature Box
+        doc.rect(490, 107, 75, 85).strokeColor('#cbd5e1').lineWidth(1).stroke();
+        if (sigBuffer) {
+            try { doc.image(sigBuffer, 492, 120, { width: 71, height: 60 }); } catch (e) { console.error("Error drawing signature:", e); }
+        }
+        doc.fontSize(6.5).fillColor('#64748b').font('Helvetica-Bold').text("SIGNATURE", 490, 198, { width: 75, align: 'center' });
+
+        // Grid border separator
+        doc.strokeColor('#cbd5e1').lineWidth(0.5).moveTo(30, 212).lineTo(565, 212).stroke();
+
+        // Timetable Title
+        doc.fillColor('#002147').font('Helvetica-Bold').fontSize(10).text("EXAMS & TIMETABLE SCHEDULE:", 30, 222);
+
+        // Draw Timetable Header
+        let tableY = 238;
+        doc.rect(30, tableY, 535, 18).fill('#f1f5f9');
+        
+        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(8);
+        doc.text("Course Code", 35, tableY + 5);
+        doc.text("Course", 110, tableY + 5);
+        doc.text("Exam Date", 295, tableY + 5);
+        doc.text("Time", 370, tableY + 5);
+        doc.text("Marks", 450, tableY + 5);
+        doc.text("Invigilator Signature", 485, tableY + 5);
+
+        // Draw Timetable Rows
+        const timetable = systemConfig?.timetable || [];
+        doc.font('Helvetica').fontSize(8).fillColor('#334155');
+
+        timetable.forEach((t, idx) => {
+            tableY += 18;
+            // Row divider line
+            doc.strokeColor('#cbd5e1').lineWidth(0.5).moveTo(30, tableY).lineTo(565, tableY).stroke();
+
+            doc.font('Helvetica-Bold').fillColor('#002147').text(t.code || `CS-10${idx+1}`, 35, tableY + 5);
+            doc.font('Helvetica').fillColor('#334155').text(t.course || 'Course Name', 110, tableY + 5, { width: 175 });
+            doc.text(t.date || 'TBA', 295, tableY + 5);
+            doc.text(t.time || 'TBA', 370, tableY + 5);
+            doc.font('Helvetica-Bold').text(t.marks !== undefined ? String(t.marks) : '50', 450, tableY + 5);
+            
+            // Dotted signature verification line
+            doc.strokeColor('#cbd5e1').lineWidth(0.5).dash(1, { space: 1 }).moveTo(485, tableY + 13).lineTo(560, tableY + 13).stroke().undash();
+        });
+
+        // Bottom border of the table
+        tableY += 18;
+        doc.strokeColor('#cbd5e1').lineWidth(0.5).moveTo(30, tableY).lineTo(565, tableY).stroke();
+
+        // Conduct Violations instruction box
+        let conductY = tableY + 15;
+        doc.rect(30, conductY, 535, 110).fillAndStroke('#f8fafc', '#cbd5e1');
+        
+        doc.fillColor('#002147').font('Helvetica-Bold').fontSize(8.5).text("MANDATORY EXAM CONDUCT CODES (ONLINE & OFFLINE VIOLATIONS)", 38, conductY + 8);
+        
+        doc.strokeColor('#cbd5e1').lineWidth(0.5).moveTo(38, conductY + 22).lineTo(557, conductY + 22).stroke();
+
+        // Online Rules Column
+        doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(7.5).text("Online Proctored Exam Rules:", 38, conductY + 28);
+        doc.fillColor('#475569').font('Helvetica').fontSize(6.8);
+        let ruleY = conductY + 38;
+        const onlineRules = [
+            "- Max 3 window focus alerts allowed. Exceeding this triggers automatic test lockout.",
+            "- Continuous real-time webcam & mic feeds are matched against candidate reference files.",
+            "- Active screen sharing capture and clipboard tracking are mandatory.",
+            "- Closing fullscreen mode or launching background terminals constitutes disqualification."
+        ];
+        onlineRules.forEach(rule => {
+            doc.text(rule, 38, ruleY, { width: 250 });
+            ruleY += doc.heightOfString(rule, { width: 250 }) + 2;
+        });
+
+        // Offline Rules Column
+        doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(7.5).text("Offline Center Hall Rules:", 300, conductY + 28);
+        doc.fillColor('#475569').font('Helvetica').fontSize(6.8);
+        ruleY = conductY + 38;
+        const offlineRules = [
+            "- Candidates must report 30 mins prior; late entries beyond 15 mins strictly disallowed.",
+            "- Mobile phones, smartwatches, or programmable devices are strictly forbidden.",
+            "- This printed Hall Ticket along with an official physical ID is mandatory.",
+            "- Rough sheets must be submitted to the invigilator prior to exiting the hall."
+        ];
+        offlineRules.forEach(rule => {
+            doc.text(rule, 300, ruleY, { width: 250 });
+            ruleY += doc.heightOfString(rule, { width: 250 }) + 2;
+        });
+
+        // Malpractice Undertaking Agreement
+        let undertakerY = conductY + 120;
+        doc.rect(30, undertakerY, 535, 40).fillAndStroke('#f1f5f9', '#cbd5e1');
+        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7).text("Malpractice violation consent undertaker declaration:", 35, undertakerY + 6);
+        doc.font('Helvetica').fontSize(6.5).text(
+            "I hereby confirm that I have consented to the malpractice undertaking electronically. I accept that failing to comply with online proctoring parameters or offline test center regulations will terminate my test immediately and annul all marks for BICS 2026.",
+            35, undertakerY + 16, { width: 525, lineGap: 1 }
+        );
+
+        // Footer Signatures & Stamp block
+        let footerY = undertakerY + 50;
+
+        // Candidate Sign
+        if (sigBuffer) {
+            try { doc.image(sigBuffer, 50, footerY, { width: 70, height: 25 }); } catch(e) {}
+        }
+        doc.strokeColor('#002147').lineWidth(0.5).moveTo(30, footerY + 28).lineTo(140, footerY + 28).stroke();
+        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7.5).text("Candidate Signature (Verification)", 30, footerY + 32);
+
+        // Registrar Sign
+        doc.strokeColor('#002147').lineWidth(0.5).moveTo(440, footerY + 28).lineTo(565, footerY + 28).stroke();
+        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7.5).text("Chief Registrar (PE Board Exams)", 440, footerY + 32);
+
+        // Finalize document
+        doc.end();
+
+    } catch (err) {
+        console.error("Failed to generate PDF Hall Ticket:", err);
+        return res.status(500).send(`<h3>Technical Error</h3><p>Failed to generate PDF document: ${err.message}</p>`);
     }
 });
 
@@ -1308,15 +1877,21 @@ app.post('/api/admin/upload-image', upload.single('imageFile'), async (req, res)
         if (useCloudinary) {
             fileUrl = await uploadToCloudinary(file.buffer, 'BICS_2026/questions');
         } else {
-            // Local fallback upload to verify locally without configured keys
-            const uploadsDir = path.join(__dirname, 'public', 'uploads');
-            if (!fs.existsSync(uploadsDir)) {
-                fs.mkdirSync(uploadsDir, { recursive: true });
+            if (process.env.VERCEL || process.env.RENDER) {
+                // Prevent ephemeral filesystem writes on production hosts (Vercel/Render) if Cloudinary keys not configured
+                fileUrl = 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg';
+            } else {
+                // Local fallback upload to verify locally without configured keys
+                const uploadsDir = path.join(__dirname, 'public', 'uploads');
+                if (!fs.existsSync(uploadsDir)) {
+                    fs.mkdirSync(uploadsDir, { recursive: true });
+                }
+                const fileName = `question-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
+                const filePath = path.join(uploadsDir, fileName);
+                fs.writeFileSync(filePath, file.buffer);
+                const host = `${req.protocol}://${req.get('host')}`;
+                fileUrl = `${host}/public/uploads/${fileName}`;
             }
-            const fileName = `question-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
-            const filePath = path.join(uploadsDir, fileName);
-            fs.writeFileSync(filePath, file.buffer);
-            fileUrl = `/public/uploads/${fileName}`;
         }
 
         return res.json({ success: true, url: fileUrl });

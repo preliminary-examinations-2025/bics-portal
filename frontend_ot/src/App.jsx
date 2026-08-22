@@ -1415,23 +1415,67 @@ export default function App() {
               </button>
               
               <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {test.questions.map((_, qIdx) => (
-                  <button
-                    key={qIdx}
-                    onClick={() => setSelectedQuestionIndex(qIdx)}
-                    className={selectedQuestionIndex === qIdx ? 'cf-btn-primary' : 'cf-btn-secondary'}
-                    style={{
-                      minWidth: '32px',
-                      height: '32px',
-                      padding: '0',
-                      fontSize: '9pt',
-                      fontWeight: selectedQuestionIndex === qIdx ? 'bold' : 'normal',
-                      border: selectedQuestionIndex === qIdx ? '2px solid #3b5998' : '1px solid #cbd5e1'
-                    }}
-                  >
-                    {qIdx + 1}
-                  </button>
-                ))}
+                {test.questions.map((q, qIdx) => {
+                  const ans = examAnswers[qIdx];
+                  let isAnswered = false;
+                  if (ans) {
+                    if (q.type === 'mcq') {
+                      isAnswered = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined;
+                    } else if (q.type === 'coding') {
+                      const currentCode = ans.submittedCode || '';
+                      const initialCode = q.initialTemplate || DEFAULT_TEMPLATES.cpp || '';
+                      isAnswered = currentCode.trim() !== '' && currentCode.trim() !== initialCode.trim();
+                    } else if (q.type === 'web') {
+                      const currentHtml = ans.submittedHtml || '';
+                      const initialHtml = q.initialHtml || '';
+                      const currentCss = ans.submittedCss || '';
+                      const initialCss = q.initialCss || '';
+                      const currentJs = ans.submittedJs || '';
+                      const initialJs = q.initialJs || '';
+                      isAnswered = (currentHtml.trim() !== '' && currentHtml.trim() !== initialHtml.trim()) ||
+                                   (currentCss.trim() !== '' && currentCss.trim() !== initialCss.trim()) ||
+                                   (currentJs.trim() !== '' && currentJs.trim() !== initialJs.trim());
+                    }
+                  }
+
+                  const isActive = selectedQuestionIndex === qIdx;
+
+                  let bgColor = '#fff';
+                  let textColor = '#64748b';
+                  let borderColor = '#cbd5e1';
+
+                  if (isActive) {
+                    bgColor = isAnswered ? '#16a34a' : '#3b5998';
+                    textColor = '#fff';
+                    borderColor = isAnswered ? '#16a34a' : '#3b5998';
+                  } else if (isAnswered) {
+                    bgColor = '#dcfce7'; // light green
+                    textColor = '#15803d'; // green text
+                    borderColor = '#86efac'; // green border
+                  }
+
+                  return (
+                    <button
+                      key={qIdx}
+                      onClick={() => setSelectedQuestionIndex(qIdx)}
+                      style={{
+                        minWidth: '32px',
+                        height: '32px',
+                        padding: '0',
+                        fontSize: '9pt',
+                        fontWeight: isActive ? 'bold' : 'normal',
+                        backgroundColor: bgColor,
+                        color: textColor,
+                        border: isActive ? `2px solid ${borderColor}` : `1px solid ${borderColor}`,
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      {qIdx + 1}
+                    </button>
+                  );
+                })}
               </div>
 
               <button

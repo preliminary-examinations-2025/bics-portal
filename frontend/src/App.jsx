@@ -5,7 +5,7 @@ import {
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
   Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy,
-  Check, Plus, Code, Home, Phone, Layers, Printer, ExternalLink
+  Check, Plus, Code, Home, Phone, Layers, Printer, ExternalLink, Download
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -124,6 +124,148 @@ const RichText = React.memo(function RichText({ text, style, className }) {
   return true;
 });
 
+const LedgerUploadForm = ({ type, studentProfile, fetchStudentProfile, user, fetchStudentSubmissions, setView }) => {
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState('');
+
+  const handleFileChange = (e) => {
+    const selected = e.target.files[0];
+    if (selected) {
+      if (selected.size > 5 * 1024 * 1024) {
+        setUploadError("File size exceeds 5MB limit.");
+        setFile(null);
+        return;
+      }
+      setFile(selected);
+      setUploadError('');
+    }
+  };
+
+  const handleUploadSubmit = async (e) => {
+    e.preventDefault();
+    if (!file) {
+      setUploadError("Please select a file first.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadError('');
+    setUploadSuccess('');
+
+    const formData = new FormData();
+    formData.append('ledgerFile', file);
+    formData.append('type', type);
+
+    try {
+      const res = await fetch(`${API_BASE}/candidate/upload-ledger/${studentProfile.id || studentProfile._id}`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUploadSuccess("Signed ledger uploaded successfully!");
+        setFile(null);
+        fetchStudentProfile();
+      } else {
+        setUploadError(data.error || "Failed to upload file.");
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      setUploadError("Network connection error. Failed to reach server.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const currentLedgerUrl = type === 'mid' ? studentProfile?.midSemLedgerUrl : studentProfile?.endSemLedgerUrl;
+
+  return (
+    <div style={{ marginTop: '15px', backgroundColor: '#f8fafc', border: '1px dashed #cbd5e1', padding: '20px', borderRadius: '6px', textAlign: 'left' }}>
+      <h4 style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px' }}>
+        Upload Scanned Signed Coursework Ledger ({type === 'mid' ? 'Mid' : 'End'} Sem)
+      </h4>
+
+      {uploadError && <div className="cf-alert cf-alert-error" style={{ fontSize: '9pt', padding: '8px 12px', marginBottom: '15px' }}>{uploadError}</div>}
+      {uploadSuccess && <div className="cf-alert cf-alert-success" style={{ fontSize: '9pt', padding: '8px 12px', marginBottom: '15px' }}>{uploadSuccess}</div>}
+
+      {currentLedgerUrl ? (
+        <div style={{ marginBottom: '15px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#16a34a', fontSize: '9pt', fontWeight: 'bold', marginBottom: '10px' }}>
+            <CheckCircle size={16} /> Signed ledger is already uploaded.
+          </div>
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '15px' }}>
+            <a 
+              href={currentLedgerUrl} 
+              target="_blank" 
+              rel="noreferrer" 
+              className="cf-btn-secondary" 
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '8.5pt', textDecoration: 'none', color: '#002147', border: '1px solid #002147', padding: '6px 12px', borderRadius: '4px', fontWeight: 'bold', backgroundColor: '#fff' }}
+            >
+              <Eye size={14} /> View Uploaded Document
+            </a>
+            <span style={{ fontSize: '8.5pt', color: '#64748b' }}>Or upload a new copy below to overwrite it.</span>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginBottom: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <p style={{ fontSize: '9pt', color: '#475569', margin: 0, lineHeight: '1.5' }}>
+            Get your coursework submissions ledger printed and signed by your course instructor, then snap a photo or scan it and upload it here (PNG, JPG, or PDF under 5MB).
+          </p>
+          <div>
+            <button 
+              type="button" 
+              className="cf-btn-secondary" 
+              onClick={() => {
+                setView('submissions');
+                fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
+              }} 
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '8.5pt', color: '#3b5998', border: '1px solid #3b5998', padding: '6px 12px', borderRadius: '4px', fontWeight: 'bold', backgroundColor: '#fff', cursor: 'pointer' }}
+            >
+              <Printer size={14} /> &larr; Go to Ledger to Print
+            </button>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={handleUploadSubmit} style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+        <input 
+          type="file" 
+          onChange={handleFileChange} 
+          accept="image/*,.pdf" 
+          style={{ 
+            fontSize: '9pt', 
+            padding: '6px 10px', 
+            border: '1px solid #cbd5e1', 
+            borderRadius: '4px', 
+            backgroundColor: '#fff',
+            cursor: 'pointer',
+            maxWidth: '280px'
+          }} 
+          required
+          disabled={uploading}
+        />
+
+        <button 
+          type="submit" 
+          className="cf-btn-primary" 
+          disabled={!file || uploading}
+          style={{ fontSize: '9pt', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '4px', fontWeight: 'bold', cursor: !file || uploading ? 'not-allowed' : 'pointer' }}
+        >
+          {uploading ? (
+            <>
+              <Loader2 className="spinner" size={14} /> Uploading...
+            </>
+          ) : (
+            'Upload & Verify'
+          )}
+        </button>
+      </form>
+    </div>
+  );
+};
+
 export default function App() {
   const toLocalISOString = (dateOrStr) => {
     if (!dateOrStr) return '';
@@ -133,6 +275,8 @@ export default function App() {
     const localDate = new Date(date.getTime() - (offset * 60 * 1000));
     return localDate.toISOString().substring(0, 16);
   };
+
+
 
   const [user, setUser] = useState(null); // { id, role, name }
   const [studentProfile, setStudentProfile] = useState(null); // Full candidate details
@@ -233,6 +377,31 @@ export default function App() {
   const [rememberMe, setRememberMe] = useState(false);
   const [captchaCode, setCaptchaCode] = useState('');
   const [captchaInput, setCaptchaInput] = useState('');
+
+  // Email verification state variables
+  const [verificationEmailCode, setVerificationEmailCode] = useState('');
+  const [verificationError, setVerificationError] = useState('');
+  const [verificationSuccess, setVerificationSuccess] = useState('');
+  const [sendingVerificationCode, setSendingVerificationCode] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
+  const [verificationCodeSent, setVerificationCodeSent] = useState(false);
+
+  // Change Password Security state variables
+  const [changePasswordCaptchaCode, setChangePasswordCaptchaCode] = useState('');
+  const [changePasswordCaptchaInput, setChangePasswordCaptchaInput] = useState('');
+  const [changePasswordEmailCode, setChangePasswordEmailCode] = useState('');
+  const [changePasswordCodeSent, setChangePasswordCodeSent] = useState(false);
+  const [sendingChangePasswordCode, setSendingChangePasswordCode] = useState(false);
+
+  const generateChangePasswordCaptcha = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let result = '';
+    for (let i = 0; i < 5; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setChangePasswordCaptchaCode(result);
+    setChangePasswordCaptchaInput('');
+  };
 
   const generateCaptcha = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -2040,13 +2209,31 @@ int main() {
     }
   };
 
+  const handleUpdateExamType = async (newType) => {
+    setAdminExamType(newType);
+    try {
+      const res = await fetch(`${API_BASE}/admin/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ examType: newType })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSystemConfig(data.config);
+        setAdminMessage(`Active exam type switched to ${newType === 'midsem' ? 'Mid' : 'End'} Semester.`);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleUpdateTimetableNotice = async (e) => {
     e.preventDefault();
     try {
       const res = await fetch(`${API_BASE}/admin/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timetableNotice: adminTimetableNotice })
+        body: JSON.stringify({ examType: adminExamType, timetableNotice: adminTimetableNotice })
       });
       const data = await res.json();
       if (data.success) {
@@ -2141,10 +2328,25 @@ int main() {
     e.preventDefault();
     setPwdError('');
     setPwdMessage('');
+
+    // Captcha validation
+    if (changePasswordCaptchaInput.toUpperCase() !== changePasswordCaptchaCode) {
+      setPwdError("Captcha incorrect. Please try again.");
+      generateChangePasswordCaptcha();
+      return;
+    }
+
+    // Email verification validation for student
+    if (user.role === 'student' && !changePasswordEmailCode.trim()) {
+      setPwdError("Please request and enter your email verification code.");
+      return;
+    }
+
     if (pwdForm.newPassword !== pwdForm.confirmPassword) {
       setPwdError("Passwords do not match.");
       return;
     }
+
     try {
       const res = await fetch(`${API_BASE}/change-password`, {
         method: 'POST',
@@ -2152,18 +2354,106 @@ int main() {
         body: JSON.stringify({
           role: user.role,
           id: user.role === 'admin' ? 'admin' : user.id,
-          newPassword: pwdForm.newPassword
+          newPassword: pwdForm.newPassword,
+          code: user.role === 'student' ? changePasswordEmailCode : undefined
         })
       });
       const data = await res.json();
       if (res.ok) {
         setPwdMessage("Password updated successfully!");
         setPwdForm({ newPassword: '', confirmPassword: '' });
+        setChangePasswordEmailCode('');
+        setChangePasswordCodeSent(false);
+        generateChangePasswordCaptcha();
       } else {
         setPwdError(data.error || "Password update failed.");
+        generateChangePasswordCaptcha();
       }
     } catch (e) {
       setPwdError("Connection error to backend.");
+      generateChangePasswordCaptcha();
+    }
+  };
+
+  const handleSendVerificationCode = async () => {
+    setSendingVerificationCode(true);
+    setVerificationError('');
+    setVerificationSuccess('');
+    try {
+      const res = await fetch(`${API_BASE}/candidate/send-verification-code/${studentProfile.id || studentProfile._id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setVerificationCodeSent(true);
+        setVerificationSuccess("Verification code sent successfully! Please check your registered email inbox/spam folder.");
+      } else {
+        setVerificationError(data.error || "Failed to send verification code.");
+      }
+    } catch (err) {
+      console.error(err);
+      setVerificationError("Network error. Failed to reach verification server.");
+    } finally {
+      setSendingVerificationCode(false);
+    }
+  };
+
+  const handleVerifyCode = async (e) => {
+    e.preventDefault();
+    if (!verificationEmailCode.trim()) {
+      setVerificationError("Please enter the verification code.");
+      return;
+    }
+    setVerifyingCode(true);
+    setVerificationError('');
+    try {
+      const res = await fetch(`${API_BASE}/candidate/verify-code/${studentProfile.id || studentProfile._id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          code: verificationEmailCode, 
+          type: systemConfig.examType === 'midsem' ? 'mid' : 'end' 
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setVerificationSuccess("Email verified successfully! Unlocking your Hall Ticket...");
+        setVerificationEmailCode('');
+        setVerificationCodeSent(false);
+        fetchStudentProfile();
+      } else {
+        setVerificationError(data.error || "Verification failed. Invalid or expired code.");
+      }
+    } catch (err) {
+      console.error(err);
+      setVerificationError("Network error verifying code.");
+    } finally {
+      setVerifyingCode(false);
+    }
+  };
+
+  const handleSendChangePasswordCode = async () => {
+    setSendingChangePasswordCode(true);
+    setPwdError('');
+    setPwdMessage('');
+    try {
+      const res = await fetch(`${API_BASE}/candidate/send-verification-code/${user.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChangePasswordCodeSent(true);
+        setPwdMessage("Verification code sent to your registered email address.");
+      } else {
+        setPwdError(data.error || "Failed to send verification code.");
+      }
+    } catch (err) {
+      console.error(err);
+      setPwdError("Network error. Failed to reach verification server.");
+    } finally {
+      setSendingChangePasswordCode(false);
     }
   };
 
@@ -2232,7 +2522,11 @@ int main() {
   const handleSignConsent = async () => {
     if (!consentChecked) return;
     try {
-      const res = await fetch(`${API_BASE}/candidate/consent/${user.id}`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/candidate/consent/${user.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: systemConfig.examType === 'midsem' ? 'mid' : 'end' })
+      });
       const data = await res.json();
       if (data.success) {
         setConsentSuccess("Consent registered. Hall Ticket unlocked.");
@@ -2256,15 +2550,40 @@ int main() {
   const handleFeedbackSubmit = async (e) => {
     e.preventDefault();
     setFeedbackSuccess('');
+
+    // Validation check
+    let valid = true;
+    let missingInfo = '';
+
+    for (let i = 0; i < COURSES_LIST.length; i++) {
+      const course = COURSES_LIST[i];
+      const q1 = feedbackAnswers[course]?.[0];
+      const q2 = feedbackAnswers[course]?.[1];
+      const q3 = feedbackAnswers[course]?.[2];
+      const q4 = feedbackAnswers[course]?.[3];
+      const q5 = feedbackAnswers[course]?.[4];
+
+      if (!q1 || !q2 || !q3 || !q4 || !q5 || q5.trim() === '') {
+        valid = false;
+        missingInfo = `Please answer all rating questions and provide general comments for "${course}".`;
+        break;
+      }
+    }
+
+    if (!valid) {
+      alert(missingInfo);
+      return;
+    }
+
     // Format answers map
     const formatted = {};
     COURSES_LIST.forEach(course => {
       formatted[course] = [
-        feedbackAnswers[course]?.[0] || '3',
-        feedbackAnswers[course]?.[1] || '3',
-        feedbackAnswers[course]?.[2] || '3',
-        feedbackAnswers[course]?.[3] || 'Yes',
-        feedbackAnswers[course]?.[4] || ''
+        feedbackAnswers[course][0],
+        feedbackAnswers[course][1],
+        feedbackAnswers[course][2],
+        feedbackAnswers[course][3],
+        feedbackAnswers[course][4].trim()
       ];
     });
 
@@ -2275,12 +2594,15 @@ int main() {
         body: JSON.stringify({ type: feedbackType, feedback: formatted })
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         setFeedbackSuccess(`${feedbackType === 'mid' ? 'Mid Sem' : 'End Sem'} Feedback submitted successfully.`);
         fetchStudentProfile();
+      } else {
+        alert(data.error || "Failed to submit feedback.");
       }
     } catch (e) {
       console.error(e);
+      alert("Failed to submit feedback due to network connection issues.");
     }
   };
 
@@ -2517,7 +2839,7 @@ int main() {
                 </>
               )}
  
-              <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1', justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); }}>
+              <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1', justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); setPwdError(''); setPwdMessage(''); setChangePasswordCodeSent(false); setChangePasswordEmailCode(''); generateChangePasswordCaptcha(); }}>
                 <Key size={16} /> Change Password
               </button>
  
@@ -3858,11 +4180,12 @@ int main() {
               })()}
             </div>
           )}
-
           {/* EXAMINATION HALL TICKET & CONSENT FORM */}
           {view === 'hallticket' && studentProfile && systemConfig && (
             <div className="cf-card">
-              <div className="cf-card-title">Hall Ticket Dispatch</div>
+              <div className="cf-card-title" style={{ borderBottom: '1px solid #cbd5e1', paddingBottom: '12px', marginBottom: '20px' }}>
+                Official Hall Ticket Dispatch ({systemConfig.examType === 'midsem' ? 'Mid' : 'End'} Semester)
+              </div>
               
               {!systemConfig.hallTicketDownloadActive ? (
                 <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -3880,325 +4203,165 @@ int main() {
                     You are not eligible to take this examination. Please contact the administrator.
                   </div>
                 </div>
-              ) : ((systemConfig.examType === 'midsem' && (!studentProfile.midSemFeedback || Object.keys(studentProfile.midSemFeedback).length === 0)) || (systemConfig.examType === 'endsem' && (!studentProfile.endSemFeedback || Object.keys(studentProfile.endSemFeedback).length === 0))) ? (
-                <div className="cf-alert cf-alert-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '20px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <FileText size={28} style={{ color: '#d97706' }} />
-                    <div>
-                      <strong style={{ fontSize: '11pt', color: '#d97706' }}>Course Feedback Survey Required:</strong><br />
-                      <span style={{ fontSize: '9.5pt', color: '#475569' }}>
-                        You must complete and submit your {systemConfig.examType === 'midsem' ? 'Mid-Semester' : 'End-Semester'} Course Feedback Survey to unlock your Hall Ticket.
-                      </span>
-                    </div>
-                  </div>
-                  <button className="cf-btn-primary" style={{ alignSelf: 'flex-start', marginTop: '8px' }} onClick={() => setView(systemConfig.examType === 'midsem' ? 'midsem' : 'endsem')}>
-                    Go to {systemConfig.examType === 'midsem' ? 'Mid Sem' : 'End Sem'} Feedback Form
-                  </button>
-                </div>
-              ) : studentProfile.signedConsent ? (
-                <div>
-                  <style>{`
-                    @media print {
-                      @page {
-                        size: A4;
-                        margin: 8mm 12mm;
-                      }
-                      body * {
-                        visibility: hidden;
-                      }
-                      .printable-hall-ticket, .printable-hall-ticket * {
-                        visibility: visible;
-                      }
-                      .printable-hall-ticket {
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        width: 100%;
-                        box-shadow: none !important;
-                        border: 2px solid #002147 !important;
-                        border-radius: 6px !important;
-                        margin: 0 !important;
-                        padding: 16px 20px !important;
-                        background: #fff !important;
-                      }
-                      /* Print-only overrides to prevent page splitting */
-                      .printable-hall-ticket h3, .printable-hall-ticket h4, .printable-hall-ticket strong {
-                        margin-top: 2px !important;
-                        margin-bottom: 4px !important;
-                      }
-                      .candidate-grid {
-                        margin-bottom: 10px !important;
-                        padding-bottom: 10px !important;
-                        gap: 12px !important;
-                      }
-                      .candidate-details {
-                        gap: 4px !important;
-                        font-size: 8.5pt !important;
-                      }
-                      .candidate-details div {
-                        font-size: 8.5pt !important;
-                      }
-                      .photo-box div, .sig-box div {
-                        width: 80px !important;
-                        height: 90px !important;
-                      }
-                      .photo-box img, .sig-box img {
-                        width: 80px !important;
-                        height: 90px !important;
-                      }
-                      .schedule-container {
-                        margin-bottom: 10px !important;
-                      }
-                      .schedule-container table th, .schedule-container table td {
-                        padding: 4px 6px !important;
-                        font-size: 8pt !important;
-                      }
-                      .conduct-box {
-                        padding: 6px 12px !important;
-                        margin-bottom: 10px !important;
-                        font-size: 7.5pt !important;
-                      }
-                      .conduct-box ul {
-                        padding-left: 10px !important;
-                        gap: 1px !important;
-                      }
-                      .conduct-box strong {
-                        margin-bottom: 2px !important;
-                      }
-                      .undertaking-box {
-                        margin-bottom: 10px !important;
-                        padding: 6px 12px !important;
-                        font-size: 7.5pt !important;
-                        line-height: 1.2 !important;
-                      }
-                      .footer-block {
-                        margin-top: 5px !important;
-                      }
-                      .candidate-sign-container, .registrar-sign-container {
-                        width: 160px !important;
-                      }
-                      .candidate-sign-container div, .registrar-sign-container div {
-                        height: 25px !important;
-                      }
-                      .candidate-sign-container span, .registrar-sign-container span {
-                        font-size: 7.5pt !important;
-                      }
-                      .stamp-container {
-                        width: 80px !important;
-                        height: 80px !important;
-                        margin: -10px 0 !important;
-                      }
-                      .no-print {
-                        display: none !important;
-                      }
-                    }
-                  `}</style>
-
-                  <div className="cf-alert cf-alert-success no-print" style={{ marginBottom: '20px' }}>
-                    Malpractice Undertaking Signed. Your digital Hall Ticket has been generated successfully.
-                  </div>
-
-                  <div className="no-print" style={{ marginBottom: '20px', display: 'flex', gap: '10px' }}>
-                    <button className="cf-btn-primary" onClick={() => window.print()}>
-                      Print Hall Ticket (PDF)
-                    </button>
-                    <button className="cf-btn-secondary" onClick={() => setView('announcements')}>
-                      Back to Announcements
-                    </button>
-                  </div>
-
-                  {/* PRINTABLE SHEET */}
-                  <div className="printable-hall-ticket" style={{ border: '2px solid #002147', borderRadius: '6px', padding: '30px', backgroundColor: '#fff', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
-                    {/* Exam Board Header */}
-                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '3px double #002147', paddingBottom: '15px', marginBottom: '20px' }}>
-                      <img src="/logo.png" alt="PE Board Logo" style={{ height: '64px', marginRight: '20px', objectFit: 'contain' }} onError={(e) => { e.target.src = "https://via.placeholder.com/64?text=PE+Logo" }} />
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span style={{ fontSize: '18pt', fontWeight: '850', color: '#002147', letterSpacing: '-0.5px', textTransform: 'uppercase' }}>
-                          Preliminary Examinations 2026
-                        </span>
-                        <span style={{ fontSize: '9pt', color: '#475569', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                          Basic Introductory Computer Science (BICS) Course
-                        </span>
-                        <span style={{ fontSize: '12pt', fontWeight: 'bold', color: '#b91c1c', marginTop: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          {systemConfig.examType === 'midsem' ? 'MID SEMESTER EXAMINATION' : 'END SEMESTER EXAMINATION'} HALL TICKET
-                        </span>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  
+                  {/* STEP 1: MALPRACTICE CONSENT */}
+                  {((systemConfig.examType === 'midsem' && !studentProfile.midSemConsentSigned) || (systemConfig.examType === 'endsem' && !studentProfile.endSemConsentSigned)) ? (
+                    <div className="cf-card" style={{ padding: '20px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', margin: '0' }}>
+                      <h4 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                        <ShieldAlert size={18} style={{ color: '#b91c1c' }} />
+                        Step 1: Malpractice & Proctoring Consent Declaration
+                      </h4>
+                      {consentSuccess && <div className="cf-alert cf-alert-success">{consentSuccess}</div>}
+                      <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#334155', margin: '0 0 15px 0' }}>
+                        I hereby solemnly declare and promise that I will refrain from any kind of malpractice, cheating, copying, plagiarism, or unauthorized resource usage during the BICS Course Examination 2026. I understand that any violation of this code of conduct will lead to immediate disqualification and cancellation of my candidacy.
+                      </p>
+                      <div style={{ marginBottom: '15px' }}>
+                        <label className="checkbox-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '9.5pt' }}>
+                          <input type="checkbox" checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)} />
+                          I accept and agree to the declaration statement.
+                        </label>
                       </div>
+                      <button className="cf-btn-primary" disabled={!consentChecked} onClick={handleSignConsent}>
+                        Confirm & Sign Consent
+                      </button>
                     </div>
-
-                    {/* Candidate Grid */}
-                    <div className="candidate-grid" style={{ display: 'grid', gridTemplateColumns: '3fr 1.2fr 1.2fr', gap: '20px', marginBottom: '15px', borderBottom: '1px solid #cbd5e1', paddingBottom: '15px' }}>
-                      <div className="candidate-details" style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '9.5pt' }}>
-                        <div><strong style={{ color: '#475569' }}>Examinee Name:</strong> <span style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147' }}>{studentProfile.name}</span></div>
-                        <div><strong style={{ color: '#475569' }}>Student Registration ID:</strong> <span style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{studentProfile.studentId}</span></div>
-                        <div><strong style={{ color: '#475569' }}>Examination Division:</strong> Kalyan Division, PE-2026</div>
-                        <div><strong style={{ color: '#475569' }}>Testing Medium:</strong> Blended Online / Offline Written Center</div>
+                  ) : ((systemConfig.examType === 'midsem' && (!studentProfile.midSemFeedback || Object.keys(studentProfile.midSemFeedback).length === 0)) || (systemConfig.examType === 'endsem' && (!studentProfile.endSemFeedback || Object.keys(studentProfile.endSemFeedback).length === 0))) ? (
+                    
+                    /* STEP 2: COURSE FEEDBACK SURVEY */
+                    <div className="cf-alert cf-alert-warning" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '20px', border: '1px solid #d97706', margin: '0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <FileText size={28} style={{ color: '#d97706' }} />
                         <div>
-                          <strong style={{ color: '#475569' }}>Permanent Address:</strong><br />
-                          <span style={{ fontSize: '9pt', color: '#334155' }}>
-                            {studentProfile.registrationData?.permanentAddress || 'Address details registered in candidate records.'}
+                          <strong style={{ fontSize: '11pt', color: '#b45309' }}>Step 2: Course Feedback Survey Required</strong><br />
+                          <span style={{ fontSize: '9.5pt', color: '#475569' }}>
+                            You must complete and submit your {systemConfig.examType === 'midsem' ? 'Mid-Semester' : 'End-Semester'} Course Feedback Questionnaire to unlock the Hall Ticket download.
+                          </span>
+                        </div>
+                      </div>
+                      <button className="cf-btn-primary" style={{ alignSelf: 'flex-start', marginTop: '8px' }} onClick={() => setView(systemConfig.examType === 'midsem' ? 'midsem' : 'endsem')}>
+                        Go to Feedback Form &rarr;
+                      </button>
+                    </div>
+                  ) : ((systemConfig.examType === 'midsem' && !studentProfile.midSemLedgerUrl) || (systemConfig.examType === 'endsem' && !studentProfile.endSemLedgerUrl)) ? (
+                    
+                    /* STEP 3: SIGNED COURSEWORK LEDGER */
+                    <div className="cf-card" style={{ padding: '25px', border: '1px solid #cbd5e1', backgroundColor: '#fff', margin: '0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '15px' }}>
+                        <Upload size={28} style={{ color: '#002147', flexShrink: 0 }} />
+                        <div>
+                          <strong style={{ fontSize: '11pt', color: '#002147' }}>Step 3: Upload Scanned Signed Coursework Ledger</strong><br />
+                          <span style={{ fontSize: '9.5pt', color: '#475569' }}>
+                            Print your coursework submissions ledger, obtain your course instructor's physical signature, and upload a digital copy below to unlock the download.
+                          </span>
+                        </div>
+                      </div>
+                      <LedgerUploadForm type={systemConfig.examType === 'midsem' ? 'mid' : 'end'} studentProfile={studentProfile} fetchStudentProfile={fetchStudentProfile} user={user} fetchStudentSubmissions={fetchStudentSubmissions} setView={setView} />
+                    </div>
+                  ) : ((systemConfig.examType === 'midsem' && !studentProfile.midSemEmailVerified) || (systemConfig.examType === 'endsem' && !studentProfile.endSemEmailVerified)) ? (
+                    
+                    /* STEP 4: EMAIL CODE VERIFICATION */
+                    <div className="cf-card" style={{ padding: '25px', border: '1px solid #3b5998', backgroundColor: '#f8fafc', margin: '0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '15px' }}>
+                        <ShieldAlert size={28} style={{ color: '#3b5998', flexShrink: 0 }} />
+                        <div>
+                          <strong style={{ fontSize: '11pt', color: '#002147' }}>Step 4: Secure Email Verification</strong><br />
+                          <span style={{ fontSize: '9.5pt', color: '#475569' }}>
+                            We must verify your identity. Send a 6-digit secure code to your registered email (<strong>{studentProfile.registrationData?.personalEmail || studentProfile.personalEmail}</strong>) and verify it below.
                           </span>
                         </div>
                       </div>
 
-                      {/* Photo box */}
-                      <div className="photo-box" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'bold', marginBottom: '4px' }}>CANDIDATE PHOTO</span>
-                        <div style={{ width: '100px', height: '110px', border: '1px solid #94a3b8', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
-                          {studentProfile.registrationData?.photoUrl ? (
-                            <img src={studentProfile.registrationData.photoUrl} alt="Candidate Pic" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : (
-                            <span style={{ fontSize: '8pt', color: '#94a3b8' }}>No Photo</span>
-                          )}
-                        </div>
-                      </div>
+                      {verificationSuccess && <div className="cf-alert cf-alert-success" style={{ fontSize: '9pt', padding: '8px 12px', marginBottom: '15px' }}>{verificationSuccess}</div>}
+                      {verificationError && <div className="cf-alert cf-alert-error" style={{ fontSize: '9pt', padding: '8px 12px', marginBottom: '15px' }}>{verificationError}</div>}
 
-                      {/* Signature box */}
-                      <div className="sig-box" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'bold', marginBottom: '4px' }}>SIGNATURE SEAL</span>
-                        <div style={{ width: '100px', height: '110px', border: '1px solid #94a3b8', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
-                          {studentProfile.registrationData?.signatureUrl ? (
-                            <img src={studentProfile.registrationData.signatureUrl} alt="Candidate Sig" style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#fff' }} />
-                          ) : (
-                            <span style={{ fontSize: '8pt', color: '#94a3b8' }}>No Signature</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Examination Schedule */}
-                    <div className="schedule-container" style={{ marginBottom: '15px' }}>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '10pt', color: '#002147', marginBottom: '8px' }}>
-                        <Calendar size={16} /> SCHEDULE OF COURSE MODULE EXAMINATIONS
-                      </strong>
-                      <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
-                        <thead>
-                          <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', backgroundColor: '#f1f5f9' }}>
-                            <th style={{ padding: '8px' }}>Code</th>
-                            <th style={{ padding: '8px' }}>Course Module Title</th>
-                            <th style={{ padding: '8px' }}>Exam Date</th>
-                            <th style={{ padding: '8px' }}>Time Slot</th>
-                            <th style={{ padding: '8px' }}>Total Marks</th>
-                            <th style={{ padding: '8px', textAlign: 'center' }}>Invigilator Verification</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(!systemConfig.timetable || systemConfig.timetable.length === 0) ? (
-                            <tr>
-                              <td colSpan="6" style={{ textAlign: 'center', padding: '15px', color: '#64748b' }}>No course examinations configured.</td>
-                            </tr>
-                          ) : (
-                            systemConfig.timetable.map((t, idx) => (
-                              <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                <td style={{ padding: '8px', fontWeight: 'bold', fontFamily: 'monospace' }}>{t.code || `CS-10${idx+1}`}</td>
-                                <td style={{ padding: '8px' }}>{t.course}</td>
-                                <td style={{ padding: '8px' }}>{t.date || 'TBA'}</td>
-                                <td style={{ padding: '8px' }}>{t.time || 'TBA'}</td>
-                                <td style={{ padding: '8px', fontWeight: '600' }}>{t.marks !== undefined ? t.marks : 50}</td>
-                                <td style={{ padding: '8px', textAlign: 'center', verticalAlign: 'bottom' }}>
-                                  <div style={{ width: '80%', height: '1px', borderBottom: '1px dotted #94a3b8', margin: '15px auto 0 auto' }}></div>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Conduct Violations Instruction Box */}
-                    <div className="conduct-box" style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '10px 15px', backgroundColor: '#f8fafc', fontSize: '8.5pt', marginBottom: '15px' }}>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9.5pt', color: '#002147', marginBottom: '8px', borderBottom: '1px solid #cbd5e1', paddingBottom: '4px' }}>
-                        <ShieldAlert size={16} /> MANDATORY EXAM CONDUCT CODES (ONLINE &amp; OFFLINE VIOLATIONS)
-                      </strong>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                        <div>
-                          <strong style={{ color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}><Video size={14} /> Online Proctored Exam Rules:</strong>
-                          <ul style={{ paddingLeft: '15px', margin: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            <li>Max 3 window/tab focus switch alerts are allowed. Exceeding this triggers automatic test lockout.</li>
-                            <li>Continuous real-time webcam and microphone feeds are logged and matched against candidate reference files.</li>
-                            <li>Active screen-sharing capture and system clipboard tracking are mandatory.</li>
-                            <li>Closing fullscreen mode or launching background terminals constitutes immediate disqualification.</li>
-                          </ul>
-                        </div>
-                        <div>
-                          <strong style={{ color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}><Home size={14} /> Offline Center Hall Rules:</strong>
-                          <ul style={{ paddingLeft: '15px', margin: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            <li>Candidates must report 30 minutes prior; late entries beyond 15 minutes are strictly disallowed.</li>
-                            <li>Mobile phones, smartwatches, digital trackers, or programmable calculators are forbidden inside the hall.</li>
-                            <li>This printed Hall Ticket along with an official government physical ID is mandatory.</li>
-                            <li>Rough sheets must be submitted to the invigilator prior to exiting the examination hall.</li>
-                          </ul>
-                        </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxWidth: '350px' }}>
+                        {!verificationCodeSent ? (
+                          <button 
+                            type="button" 
+                            className="cf-btn-primary" 
+                            disabled={sendingVerificationCode}
+                            onClick={handleSendVerificationCode}
+                            style={{ padding: '8px 16px', fontSize: '9.5pt', fontWeight: 'bold' }}
+                          >
+                            {sendingVerificationCode ? "Sending Code..." : "Send Verification Code"}
+                          </button>
+                        ) : (
+                          <form onSubmit={handleVerifyCode} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div className="cf-input-group">
+                              <label className="cf-label" style={{ fontWeight: 'bold' }}>Enter 6-Digit Code</label>
+                              <input 
+                                type="text" 
+                                className="cf-input" 
+                                maxLength={6} 
+                                placeholder="e.g. 123456" 
+                                required 
+                                value={verificationEmailCode} 
+                                onChange={e => setVerificationEmailCode(e.target.value.replace(/\D/g, ''))}
+                                style={{ letterSpacing: '4px', textAlign: 'center', fontSize: '12pt', fontWeight: 'bold' }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                              <button 
+                                type="submit" 
+                                className="cf-btn-primary" 
+                                disabled={verifyingCode} 
+                                style={{ flex: '2', padding: '8px', fontWeight: 'bold' }}
+                              >
+                                Verify & Unlock
+                              </button>
+                              <button 
+                                type="button" 
+                                className="cf-btn-secondary" 
+                                disabled={sendingVerificationCode} 
+                                onClick={handleSendVerificationCode}
+                                style={{ flex: '1', padding: '8px', fontSize: '8.5pt' }}
+                              >
+                                Resend
+                              </button>
+                            </div>
+                          </form>
+                        )}
                       </div>
                     </div>
-
-                    {/* Malpractice Undertaking Agreement Declaration */}
-                    <div className="undertaking-box" style={{ fontSize: '8pt', color: '#475569', lineHeight: '1.4', marginBottom: '15px', padding: '10px 15px', borderLeft: '3px solid #002147', backgroundColor: '#f1f5f9' }}>
-                      <strong>Malpractice violation consent undertaker declaration:</strong><br />
-                      I hereby confirm that I have consented to the malpractice undertaking electronically. I accept that failing to comply with online proctoring parameters or offline test center regulations will terminate my test immediately and annul all marks for BICS 2026.
-                    </div>
-
-                    {/* Stamp and Signature block */}
-                    <div className="footer-block" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      {/* Left: Candidate Sign */}
-                      <div className="candidate-sign-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '200px' }}>
-                        <div style={{ height: '40px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-                          {studentProfile.registrationData?.signatureUrl && (
-                            <img src={studentProfile.registrationData.signatureUrl} alt="Candidate Signature" style={{ maxHeight: '35px', objectFit: 'contain' }} />
-                          )}
-                        </div>
-                        <div style={{ width: '100%', borderTop: '1px solid #002147', marginTop: '5px' }}></div>
-                        <span style={{ fontSize: '8pt', color: '#475569', marginTop: '3px', fontWeight: 'bold' }}>Candidate Signature (Verification)</span>
+                  ) : (
+                    
+                    /* STEP 5: SUCCESS & DOWNLOAD TICKET */
+                    <div style={{ textAlign: 'center', padding: '40px 20px', border: '1px solid #16a34a', backgroundColor: '#f0fdf4', borderRadius: '6px' }}>
+                      <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#dcfce7', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '0 auto 20px auto' }}>
+                        <CheckCircle size={36} style={{ color: '#16a34a' }} />
                       </div>
-
-                      {/* Center: Stamp Seal */}
-                      <div className="stamp-container" style={{
-                        width: '120px',
-                        height: '120px',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        transform: 'rotate(-10deg)',
-                        userSelect: 'none',
-                        margin: '-15px 0'
-                      }}>
-                        <img src="/stamp.jpg" alt="Official Stamp" style={{ width: '100%', height: '100%', objectFit: 'contain', mixBlendMode: 'multiply' }} />
-                      </div>
-
-                      {/* Right: Board Seal / Registrar Sign */}
-                      <div className="registrar-sign-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '220px' }}>
-                        <div style={{ height: '40px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', fontSize: '9pt', fontFamily: 'monospace', color: '#002147', fontWeight: 'bold' }}>
-                          E-VERIFIED SEAL
-                        </div>
-                        <div style={{ width: '100%', borderTop: '1px solid #002147', marginTop: '5px' }}></div>
-                        <span style={{ fontSize: '8pt', color: '#475569', marginTop: '3px', fontWeight: 'bold' }}>Chief Registrar (PE Board Exams)</span>
+                      <h3 style={{ fontSize: '14pt', fontWeight: 'bold', color: '#14532d', marginBottom: '10px' }}>
+                        All Verification Prerequisites Completed!
+                      </h3>
+                      <p style={{ fontSize: '10pt', color: '#166534', maxWidth: '500px', margin: '0 auto 25px auto', lineHeight: '1.6' }}>
+                        Your identity, malpractice undertaking, coursework submissions, and feedback surveys have been verified. Click the button below to retrieve your official dynamic A4 PDF Examination Hall Ticket.
+                      </p>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
+                        <button 
+                          className="cf-btn-primary" 
+                          onClick={() => window.open(`${API_BASE}/candidate/generate-hallticket/${studentProfile.id || studentProfile._id}?type=${systemConfig.examType === 'midsem' ? 'mid' : 'end'}`, '_blank')}
+                          style={{ padding: '12px 24px', fontSize: '10.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                        >
+                          <Download size={18} /> Download Official Hall Ticket (PDF)
+                        </button>
+                        <button 
+                          className="cf-btn-secondary" 
+                          onClick={() => setView('announcements')}
+                          style={{ padding: '12px 24px', fontSize: '10.5pt', fontWeight: 'bold' }}
+                        >
+                          Back to Dashboard
+                        </button>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  {consentSuccess && <div className="cf-alert cf-alert-success">{consentSuccess}</div>}
-                  <div className="consent-panel">
-                    <div className="consent-title">Consent declaration to refrain from malpractices</div>
-                    <p style={{ fontSize: '9.5pt', lineHeight: '1.6', color: '#555' }}>
-                      I hereby solemnly declare and promise that I will refrain from any kind of malpractice, cheating, copying, plagiarism, or unauthorized resource usage during the BICS Course Examination 2026. I understand that any violation of this code of conduct will lead to immediate disqualification and cancellation of my candidacy.
-                    </p>
-                    <div style={{ marginTop: '15px' }}>
-                      <label className="checkbox-label" style={{ display: 'flex', gap: '10px', cursor: 'pointer', fontWeight: 'bold' }}>
-                        <input type="checkbox" checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)} />
-                        I accept and agree to the declaration statement.
-                      </label>
-                    </div>
-                  </div>
-                  <button className="cf-btn-primary" disabled={!consentChecked} onClick={handleSignConsent}>
-                    Confirm Declaration
-                  </button>
+                  )}
+
                 </div>
               )}
             </div>
           )}
-
-          {/* ANSWERS COPY VERIFICATION VIEW */}
           {view === 'verification' && (
             <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -5023,75 +5186,249 @@ int main() {
           )}
 
           {/* FEEDBACK (MID / END SEMESTER) */}
-          {(view === 'midsem' || view === 'endsem') && studentProfile && systemConfig && (
-            <div className="cf-card">
-              <div className="cf-card-title">Course Feedback Form - {feedbackType === 'mid' ? 'Mid' : 'End'} Semester</div>
-              
-              {((feedbackType === 'mid' && !systemConfig.midSemFeedbackActive) || (feedbackType === 'end' && !systemConfig.endSemFeedbackActive)) ? (
-                <div className="cf-alert cf-alert-info">
-                  {feedbackType === 'mid' ? 'Mid' : 'End'} Semester Course Feedback is currently closed by the administrator.
+          {(view === 'midsem' || view === 'endsem') && studentProfile && systemConfig && (() => {
+            const isFeedbackSubmitted = feedbackType === 'mid' ? 
+              (studentProfile.midSemFeedback && Object.keys(studentProfile.midSemFeedback).length > 0) : 
+              (studentProfile.endSemFeedback && Object.keys(studentProfile.endSemFeedback).length > 0);
+
+            const isLedgerUploaded = feedbackType === 'mid' ? 
+              !!studentProfile.midSemLedgerUrl : 
+              !!studentProfile.endSemLedgerUrl;
+
+            return (
+              <div className="cf-card" style={{ padding: '25px' }}>
+                <div className="cf-card-title" style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                  <span>Course Feedback Survey - {feedbackType === 'mid' ? 'Mid' : 'End'} Semester</span>
                 </div>
-              ) : (
-                <div>
-                  {feedbackSuccess && <div className="cf-alert cf-alert-success">{feedbackSuccess}</div>}
-                  <form onSubmit={handleFeedbackSubmit}>
-                    {COURSES_LIST.map((course, cIdx) => (
-                      <div key={cIdx} style={{ borderBottom: '1px solid #cbd5e1', paddingBottom: '20px', marginBottom: '25px' }}>
-                        <h4 style={{ color: '#002147', fontWeight: 'bold', marginBottom: '15px' }}>{course}</h4>
-                        
-                        <div className="cf-input-group" style={{ marginBottom: '12px' }}>
-                          <label className="cf-label">1. Rate the quality of the textbook (1-5)</label>
-                          <select className="cf-input" style={{ maxWidth: '100px' }} value={feedbackAnswers[course]?.[0] || '3'} onChange={e => handleFeedbackValueChange(course, 0, e.target.value)}>
-                            <option value="5">5 - Excellent</option>
-                            <option value="4">4 - Good</option>
-                            <option value="3">3 - Satisfactory</option>
-                            <option value="2">2 - Needs Improvement</option>
-                            <option value="1">1 - Poor</option>
-                          </select>
-                        </div>
 
-                        <div className="cf-input-group" style={{ marginBottom: '12px' }}>
-                          <label className="cf-label">2. Rate the usefulness of video lectures (1-5)</label>
-                          <select className="cf-input" style={{ maxWidth: '100px' }} value={feedbackAnswers[course]?.[1] || '3'} onChange={e => handleFeedbackValueChange(course, 1, e.target.value)}>
-                            <option value="5">5 - Excellent</option>
-                            <option value="4">4 - Good</option>
-                            <option value="3">3 - Satisfactory</option>
-                            <option value="2">2 - Needs Improvement</option>
-                            <option value="1">1 - Poor</option>
-                          </select>
-                        </div>
+                {((feedbackType === 'mid' && !systemConfig.midSemFeedbackActive) || (feedbackType === 'end' && !systemConfig.endSemFeedbackActive)) ? (
+                  <div className="cf-alert cf-alert-info" style={{ margin: '0' }}>
+                    {feedbackType === 'mid' ? 'Mid' : 'End'} Semester Course Feedback is currently closed by the administrator.
+                  </div>
+                ) : isFeedbackSubmitted ? (
+                  /* Completed State: Success Message, No Form */
+                  <div style={{ textAlign: 'center', padding: '30px 10px' }}>
+                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#dcfce7', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '0 auto 20px auto' }}>
+                      <CheckCircle size={36} style={{ color: '#16a34a' }} />
+                    </div>
+                    
+                    <h2 style={{ fontSize: '15pt', fontWeight: 'bold', color: '#14532d', marginBottom: '10px' }}>
+                      Feedback Survey Completed
+                    </h2>
+                    <p style={{ fontSize: '10pt', color: '#166534', maxWidth: '500px', margin: '0 auto 25px auto', lineHeight: '1.6' }}>
+                      You have already successfully completed and submitted your Course Feedback Survey for the {feedbackType === 'mid' ? 'Mid-Semester' : 'End-Semester'} exams. Thank you for your response!
+                    </p>
 
-                        <div className="cf-input-group" style={{ marginBottom: '12px' }}>
-                          <label className="cf-label">3. Rate the layout and difficulty of Assignments (1-5)</label>
-                          <select className="cf-input" style={{ maxWidth: '100px' }} value={feedbackAnswers[course]?.[2] || '3'} onChange={e => handleFeedbackValueChange(course, 2, e.target.value)}>
-                            <option value="5">5 - Excellent</option>
-                            <option value="4">4 - Good</option>
-                            <option value="3">3 - Satisfactory</option>
-                            <option value="2">2 - Needs Improvement</option>
-                            <option value="1">1 - Poor</option>
-                          </select>
-                        </div>
+                    <div style={{ display: 'flex', gap: '15px', justifyContent: 'center' }}>
+                      <button 
+                        className="cf-btn-primary" 
+                        onClick={() => setView('hallticket')}
+                        style={{ padding: '10px 24px', fontSize: '10pt', fontWeight: 'bold' }}
+                      >
+                        Proceed to Hall Ticket &rarr;
+                      </button>
+                      <button 
+                        className="cf-btn-secondary" 
+                        onClick={() => setView('announcements')}
+                        style={{ padding: '10px 20px', fontSize: '10pt' }}
+                      >
+                        Back to Dashboard
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Survey Form */
+                  <div>
+                    <div style={{ marginBottom: '20px', backgroundColor: '#eff6ff', padding: '15px', borderRadius: '6px', borderLeft: '4px solid #3b5998' }}>
+                      <p style={{ fontSize: '9.5pt', color: '#1e40af', margin: 0, lineHeight: '1.5' }}>
+                        <strong>Feedback Survey Notice:</strong> Please rate your experience across all enrolled course modules. Your honest feedback helps us improve textbook quality, lecture resources, and assignment layout parameters.
+                      </p>
+                    </div>
 
-                        <div className="cf-input-group" style={{ marginBottom: '12px' }}>
-                          <label className="cf-label">4. Did the course curriculum meet your expectations?</label>
-                          <select className="cf-input" style={{ maxWidth: '100px' }} value={feedbackAnswers[course]?.[3] || 'Yes'} onChange={e => handleFeedbackValueChange(course, 3, e.target.value)}>
-                            <option value="Yes">Yes</option>
-                            <option value="No">No</option>
-                          </select>
-                        </div>
+                    {feedbackSuccess && <div className="cf-alert cf-alert-success">{feedbackSuccess}</div>}
 
-                        <div className="cf-input-group">
-                          <label className="cf-label">5. General Comments / Suggestions</label>
-                          <input type="text" className="cf-input" placeholder="Feedback remarks" value={feedbackAnswers[course]?.[4] || ''} onChange={e => handleFeedbackValueChange(course, 4, e.target.value)} />
+                    <form onSubmit={handleFeedbackSubmit}>
+                      {COURSES_LIST.map((course, cIdx) => (
+                        <div key={cIdx} style={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '20px', marginBottom: '25px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                          <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '15px', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                            📖 {course}
+                          </h4>
+                          
+                          {/* Q1 */}
+                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
+                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>1. Rate the quality of the textbook</label>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', maxWidth: '300px' }}>
+                              {[1, 2, 3, 4, 5].map(num => {
+                                const isSelected = feedbackAnswers[course]?.[0] === num.toString();
+                                let activeColor = '#64748b';
+                                if (isSelected) {
+                                  if (num === 5) activeColor = '#16a34a';
+                                  else if (num === 4) activeColor = '#22c55e';
+                                  else if (num === 3) activeColor = '#d97706';
+                                  else if (num === 2) activeColor = '#ea580c';
+                                  else activeColor = '#dc2626';
+                                }
+                                return (
+                                  <button
+                                    key={num}
+                                    type="button"
+                                    onClick={() => handleFeedbackValueChange(course, 0, num.toString())}
+                                    style={{
+                                      flex: '1',
+                                      padding: '8px 0',
+                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
+                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
+                                      color: isSelected ? activeColor : '#64748b',
+                                      fontWeight: 'bold',
+                                      fontSize: '10pt',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s'
+                                    }}
+                                  >
+                                    {num}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Q2 */}
+                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
+                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>2. Rate the usefulness of video lectures</label>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', maxWidth: '300px' }}>
+                              {[1, 2, 3, 4, 5].map(num => {
+                                const isSelected = feedbackAnswers[course]?.[1] === num.toString();
+                                let activeColor = '#64748b';
+                                if (isSelected) {
+                                  if (num === 5) activeColor = '#16a34a';
+                                  else if (num === 4) activeColor = '#22c55e';
+                                  else if (num === 3) activeColor = '#d97706';
+                                  else if (num === 2) activeColor = '#ea580c';
+                                  else activeColor = '#dc2626';
+                                }
+                                return (
+                                  <button
+                                    key={num}
+                                    type="button"
+                                    onClick={() => handleFeedbackValueChange(course, 1, num.toString())}
+                                    style={{
+                                      flex: '1',
+                                      padding: '8px 0',
+                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
+                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
+                                      color: isSelected ? activeColor : '#64748b',
+                                      fontWeight: 'bold',
+                                      fontSize: '10pt',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s'
+                                    }}
+                                  >
+                                    {num}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Q3 */}
+                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
+                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>3. Rate the layout and difficulty of Assignments</label>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', maxWidth: '300px' }}>
+                              {[1, 2, 3, 4, 5].map(num => {
+                                const isSelected = feedbackAnswers[course]?.[2] === num.toString();
+                                let activeColor = '#64748b';
+                                if (isSelected) {
+                                  if (num === 5) activeColor = '#16a34a';
+                                  else if (num === 4) activeColor = '#22c55e';
+                                  else if (num === 3) activeColor = '#d97706';
+                                  else if (num === 2) activeColor = '#ea580c';
+                                  else activeColor = '#dc2626';
+                                }
+                                return (
+                                  <button
+                                    key={num}
+                                    type="button"
+                                    onClick={() => handleFeedbackValueChange(course, 2, num.toString())}
+                                    style={{
+                                      flex: '1',
+                                      padding: '8px 0',
+                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
+                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
+                                      color: isSelected ? activeColor : '#64748b',
+                                      fontWeight: 'bold',
+                                      fontSize: '10pt',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s'
+                                    }}
+                                  >
+                                    {num}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Q4 */}
+                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
+                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>4. Did the course curriculum meet your expectations?</label>
+                            <div style={{ display: 'flex', gap: '10px', marginTop: '6px', maxWidth: '180px' }}>
+                              {['Yes', 'No'].map(opt => {
+                                const isSelected = feedbackAnswers[course]?.[3] === opt;
+                                const activeColor = opt === 'Yes' ? '#16a34a' : '#dc2626';
+                                return (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    onClick={() => handleFeedbackValueChange(course, 3, opt)}
+                                    style={{
+                                      flex: '1',
+                                      padding: '8px 0',
+                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
+                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
+                                      color: isSelected ? activeColor : '#64748b',
+                                      fontWeight: 'bold',
+                                      fontSize: '10pt',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s'
+                                    }}
+                                  >
+                                    {opt}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Q5 */}
+                          <div className="cf-input-group" style={{ textAlign: 'left' }}>
+                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>5. General Comments / Suggestions</label>
+                            <textarea 
+                              className="cf-input" 
+                              rows="3"
+                              placeholder="Type your feedback remarks here..." 
+                              value={feedbackAnswers[course]?.[4] || ''} 
+                              onChange={e => handleFeedbackValueChange(course, 4, e.target.value)} 
+                              style={{ width: '100%', marginTop: '6px', padding: '10px', fontSize: '9.5pt', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                            />
+                          </div>
                         </div>
+                      ))}
+                      
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '20px', textAlign: 'right' }}>
+                        <button type="submit" className="cf-btn-primary" style={{ padding: '10px 24px', fontSize: '10pt', fontWeight: 'bold' }}>
+                          Submit Course Feedback Survey &rarr;
+                        </button>
                       </div>
-                    ))}
-                    <button type="submit" className="cf-btn-primary">Submit Feedback</button>
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
+                    </form>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* CODE OF CONDUCT PAGE */}
           {view === 'conduct' && (
@@ -5192,15 +5529,88 @@ int main() {
               {pwdMessage && <div className="cf-alert cf-alert-success">{pwdMessage}</div>}
               {pwdError && <div className="cf-alert cf-alert-error">{pwdError}</div>}
               <form onSubmit={handleChangePassword}>
+                {user.role === 'student' && (
+                  <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '9pt', color: '#475569', marginBottom: '8px' }}>
+                      To change your password, you must verify your identity.
+                    </div>
+                    <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px' }}>
+                      Email: {studentProfile?.registrationData?.personalEmail || studentProfile?.personalEmail || 'Registered Email'}
+                    </div>
+                    {!changePasswordCodeSent ? (
+                      <button
+                        type="button"
+                        className="cf-btn-secondary"
+                        disabled={sendingChangePasswordCode}
+                        onClick={handleSendChangePasswordCode}
+                        style={{ fontSize: '8.5pt', padding: '6px 12px' }}
+                      >
+                        {sendingChangePasswordCode ? "Sending Code..." : "Send Verification Code"}
+                      </button>
+                    ) : (
+                      <div className="cf-input-group" style={{ margin: 0 }}>
+                        <label className="cf-label" style={{ fontWeight: 'bold' }}>Enter 6-Digit Email Code</label>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <input
+                            type="text"
+                            className="cf-input"
+                            maxLength={6}
+                            required
+                            placeholder="e.g. 123456"
+                            value={changePasswordEmailCode}
+                            onChange={e => setChangePasswordEmailCode(e.target.value.replace(/\D/g, ''))}
+                            style={{ flex: '2', letterSpacing: '2px', textAlign: 'center', fontWeight: 'bold' }}
+                          />
+                          <button
+                            type="button"
+                            className="cf-btn-secondary"
+                            disabled={sendingChangePasswordCode}
+                            onClick={handleSendChangePasswordCode}
+                            style={{ flex: '1', fontSize: '8pt', padding: '6px' }}
+                          >
+                            Resend
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="cf-input-group" style={{ marginBottom: '15px' }}>
                   <label className="cf-label">New Password</label>
                   <input type="password" className="cf-input" required value={pwdForm.newPassword} onChange={e => setPwdForm({...pwdForm, newPassword: e.target.value})} placeholder="At least 4 characters" />
                 </div>
-                <div className="cf-input-group" style={{ marginBottom: '20px' }}>
+                <div className="cf-input-group" style={{ marginBottom: '15px' }}>
                   <label className="cf-label">Confirm New Password</label>
                   <input type="password" className="cf-input" required value={pwdForm.confirmPassword} onChange={e => setPwdForm({...pwdForm, confirmPassword: e.target.value})} />
                 </div>
-                <button type="submit" className="cf-btn-primary">Update Password</button>
+
+                {/* CAPTCHA Challenge */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '10px', marginTop: '15px' }}>
+                  <div style={{
+                    letterSpacing: '5px',
+                    fontWeight: 'bold',
+                    fontSize: '14pt',
+                    color: '#3b5998',
+                    backgroundColor: '#e8eff7',
+                    padding: '6px 12px',
+                    border: '1px solid #b9c9fe',
+                    fontFamily: 'Courier New, monospace',
+                    textDecoration: 'line-through',
+                    userSelect: 'none'
+                  }}>
+                    {changePasswordCaptchaCode}
+                  </div>
+                  <button type="button" className="cf-btn-secondary" onClick={generateChangePasswordCaptcha} style={{ padding: '3px 8px', fontSize: '8.5pt' }}>
+                    Refresh
+                  </button>
+                </div>
+                <div className="cf-input-group" style={{ marginBottom: '20px' }}>
+                  <label className="cf-label">Enter Captcha Code</label>
+                  <input type="text" className="cf-input" required value={changePasswordCaptchaInput} onChange={e => setChangePasswordCaptchaInput(e.target.value)} placeholder="Case-insensitive" />
+                </div>
+
+                <button type="submit" className="cf-btn-primary" style={{ width: '100%' }}>Update Password</button>
               </form>
             </div>
           )}
@@ -5287,7 +5697,7 @@ int main() {
                       className="cf-input"
                       style={{ width: '160px', height: '34px', fontSize: '9pt', padding: '5px' }}
                       value={adminExamType}
-                      onChange={e => setAdminExamType(e.target.value)}
+                      onChange={e => handleUpdateExamType(e.target.value)}
                     >
                       <option value="midsem">Mid Semester</option>
                       <option value="endsem">End Semester</option>
@@ -5502,7 +5912,10 @@ int main() {
                               <span style={{ fontSize: '8pt', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '4px', color: '#b91c1c' }}>Pending Form</span>
                             )}
                           </td>
-                          <td>{c.signedConsent ? "Accepted" : "Pending"}</td>
+                          <td style={{ fontSize: '8pt', lineHeight: '1.3' }}>
+                            <div>Mid: <span style={{ fontWeight: 'bold', color: c.midSemConsentSigned ? '#16a34a' : '#ef4444' }}>{c.midSemConsentSigned ? "Yes" : "No"}</span></div>
+                            <div>End: <span style={{ fontWeight: 'bold', color: c.endSemConsentSigned ? '#16a34a' : '#ef4444' }}>{c.endSemConsentSigned ? "Yes" : "No"}</span></div>
+                          </td>
                           <td>
                             <button className={`cf-btn-secondary ${c.eligible ? 'status-eligible' : 'status-ineligible'}`} style={{ border: 'none', padding: '4px 8px', fontSize: '8pt' }} onClick={() => handleToggleEligibility(c.id || c._id, c.eligible)}>
                               {c.eligible ? "Eligible" : "Ineligible"}
