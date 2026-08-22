@@ -61,7 +61,10 @@ const transporter = (smtpUser && smtpPass) ? nodemailer.createTransport({
     auth: {
         user: smtpUser,
         pass: smtpPass
-    }
+    },
+    connectionTimeout: 5000, // 5 seconds connection timeout
+    greetingTimeout: 4000,    // 4 seconds greeting timeout
+    socketTimeout: 5000       // 5 seconds socket inactivity timeout
 }) : null;
 
 if (transporter) {
@@ -94,8 +97,17 @@ const sendVerificationEmail = async (toEmail, name, code) => {
                 </div>
             `
         };
-        await transporter.sendMail(mailOptions);
-        console.log(`[EMAIL_VERIFICATION]: Successfully sent code to ${toEmail}`);
+        try {
+            await transporter.sendMail(mailOptions);
+            console.log(`[EMAIL_VERIFICATION]: Successfully sent code to ${toEmail}`);
+        } catch (emailErr) {
+            console.error(`[EMAIL_VERIFICATION_ERROR]: SMTP transport failed (network/firewall restriction). Error details:`, emailErr.message);
+            console.log(`\n==================================================`);
+            console.log(`[SMTP BLOCK FALLBACK - OTP LOGGED TO SERVER CONSOLE]`);
+            console.log(`Recipient: ${toEmail} (${name})`);
+            console.log(`Verification Code: ${code}`);
+            console.log(`==================================================\n`);
+        }
     } else {
         console.log(`\n==================================================`);
         console.log(`[MOCK EMAIL VERIFICATION]`);
