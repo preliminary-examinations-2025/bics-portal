@@ -94,7 +94,9 @@ const sendVerificationEmail = async (toEmail, name, code) => {
                     accessToken: ejsPrivateKey || undefined,
                     template_params: {
                         to_email: toEmail,
+                        email: toEmail,
                         to_name: name,
+                        name: name,
                         code: code
                     }
                 })
