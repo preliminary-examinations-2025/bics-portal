@@ -1316,7 +1316,63 @@ app.post('/api/candidate/feedback/:id', async (req, res) => {
     }
 });
 
-// 10b. Upload Signed Ledger (Coursework submission verification)
+// 10a-2. Generate Ledger QR Verification Data
+app.get('/api/candidate/ledger-qr-data/:id', async (req, res) => {
+    const { id } = req.params;
+    const { type } = req.query; // 'mid' or 'end'
+    
+    if (type !== 'mid' && type !== 'end') {
+        return res.status(400).json({ error: "Invalid type. Must be 'mid' or 'end'." });
+    }
+    
+    try {
+        let student;
+        if (useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                student = await CandidateModel.findById(id);
+            }
+            if (!student) {
+                student = await CandidateModel.findOne({ studentId: id });
+            }
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === id || c._id === id || c.studentId === id);
+        }
+        
+        if (!student) return res.status(404).json({ error: "Candidate not found." });
+        
+        const studentId = student.studentId;
+        
+        // Count classroom submissions
+        let submissions = [];
+        if (useMongo) {
+            submissions = await ClassroomSubmissionModel.find({ studentId: studentId });
+        } else {
+            const db = getJSONData();
+            submissions = (db.classroomSubmissions || []).filter(s => s.studentId && s.studentId.trim().toUpperCase() === studentId.trim().toUpperCase());
+        }
+        const gradesCount = submissions.length;
+        
+        // Generate secure signature
+        const crypto = require('crypto');
+        const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
+        const payloadText = studentId + '_' + type + '_' + gradesCount;
+        const hash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 16);
+        
+        return res.json({
+            success: true,
+            studentId,
+            type,
+            gradesCount,
+            hash
+        });
+    } catch (err) {
+        console.error("Failed to generate QR data:", err);
+        return res.status(500).json({ error: "Failed to generate QR signature." });
+    }
+});
+
+// 10b. Upload Signed Ledger (Coursework submission verification with Automated QR validation)
 app.post('/api/candidate/upload-ledger/:id', upload.single('ledgerFile'), async (req, res) => {
     const { id } = req.params;
     const { type } = req.body; // 'mid' or 'end'
@@ -1325,6 +1381,69 @@ app.post('/api/candidate/upload-ledger/:id', upload.single('ledgerFile'), async 
         const file = req.file;
         if (!file) return res.status(400).json({ error: "Ledger file is required." });
         if (type !== 'mid' && type !== 'end') return res.status(400).json({ error: "Invalid feedback/ledger type specified." });
+
+        // Fetch candidate details
+        let student;
+        if (useMongo) {
+            student = await CandidateModel.findById(id);
+        } else {
+            const db = getJSONData();
+            student = db.candidates.find(c => c.id === id || c._id === id);
+        }
+        if (!student) return res.status(404).json({ error: "Candidate profile not found." });
+
+        // --- SECURE AUTOMATED QR VALIDATION ---
+        let qrValid = false;
+        let qrScanError = "No security QR code detected. Please ensure you print the official ledger from the portal, scan/photograph it clearly without blur, and re-upload.";
+        
+        try {
+            const jsQR = require('jsqr');
+            const { Jimp } = require('jimp');
+            
+            let imgBuffer = null;
+            if (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf')) {
+                const { pdf } = await import('pdf-to-img');
+                const document = await pdf(file.buffer, { scale: 3.0 });
+                for await (const pageImg of document) {
+                    imgBuffer = pageImg;
+                    break;
+                }
+            } else if (file.mimetype.startsWith('image/') || /\.(png|jpe?g)$/i.test(file.originalname)) {
+                imgBuffer = file.buffer;
+            }
+            
+            if (imgBuffer) {
+                const image = await Jimp.read(imgBuffer);
+                const { width, height } = image.bitmap;
+                const rgbaBuffer = image.bitmap.data;
+                const code = jsQR(new Uint8ClampedArray(rgbaBuffer), width, height);
+                
+                if (code && code.data) {
+                    try {
+                        const qrData = JSON.parse(code.data);
+                        const crypto = require('crypto');
+                        const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
+                        const payloadText = qrData.studentId + '_' + qrData.type + '_' + qrData.gradesCount;
+                        const expectedHash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 16);
+                        
+                        if (qrData.studentId === student.studentId && qrData.type === type && qrData.hash === expectedHash) {
+                            qrValid = true;
+                        } else {
+                            qrScanError = "Tamper Detection Alert: Coursework Ledger QR signature mismatch. Please print the unmodified document.";
+                        }
+                    } catch (parseErr) {
+                        qrScanError = "Decryption Error: QR code does not contain a valid BICS security payload.";
+                    }
+                }
+            }
+        } catch (qrErr) {
+            console.error("[QR_VALIDATION_SYSTEM_ERROR]:", qrErr);
+            qrScanError = "Verification Error: Failed to process document. Error: " + qrErr.message;
+        }
+        
+        if (!qrValid) {
+            return res.status(400).json({ error: qrScanError });
+        }
 
         let fileUrl = '';
         if (useCloudinary) {

@@ -280,6 +280,7 @@ export default function App() {
 
   const [user, setUser] = useState(null); // { id, role, name }
   const [studentProfile, setStudentProfile] = useState(null); // Full candidate details
+  const [ledgerQrData, setLedgerQrData] = useState(null);
   const [systemConfig, setSystemConfig] = useState(null);
   
   // Navigation states
@@ -692,6 +693,15 @@ export default function App() {
         const data = await res.json();
         console.log("DEBUG: Loaded Student Submissions:", data);
         setStudentSubmissions(data || []);
+      }
+      
+      // Fetch corresponding QR verification code details
+      const lookupId = studentProfile?.studentId || user?.studentId || studentId;
+      const semType = systemConfig?.examType === 'endsem' ? 'end' : 'mid';
+      const qrRes = await fetch(`${API_BASE}/candidate/ledger-qr-data/${lookupId}?type=${semType}`);
+      if (qrRes.ok) {
+        const qrData = await qrRes.json();
+        setLedgerQrData(qrData);
       }
     } catch (e) {
       console.error("Error fetching student submissions:", e);
@@ -3898,6 +3908,9 @@ int main() {
                     color: #000 !important;
                     padding: 8px !important;
                   }
+                  .print-show-block {
+                    display: block !important;
+                  }
                 }
               `}} />
 
@@ -3907,33 +3920,77 @@ int main() {
                   <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Coursework Submissions Ledger</h2>
                   <p style={{ fontSize: '9pt', color: '#64748b', margin: '4px 0 0 0' }}>Real-time synchronization with Google Classroom</p>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button 
-                    className="cf-btn-secondary" 
-                    onClick={() => {
-                      fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
-                    }}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <RefreshCw size={14} /> Refresh Ledger
-                  </button>
-                  <button 
-                    className="cf-btn-primary" 
-                    onClick={() => window.print()}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <Printer size={14} /> Print Ledger
-                  </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                  {ledgerQrData && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                      {(() => {
+                        const { success, ...cleanQr } = ledgerQrData;
+                        return (
+                          <img 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify(cleanQr))}`} 
+                            alt="Security QR" 
+                            style={{ width: '40px', height: '40px', display: 'block' }} 
+                          />
+                        );
+                      })()}
+                      <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+                        <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#0f172a' }}>Verification Seal</span>
+                        <span style={{ fontSize: '6.5pt', color: '#64748b', fontFamily: 'monospace' }}>SECURE HMAC QR</span>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button 
+                      className="cf-btn-secondary" 
+                      onClick={() => {
+                        fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <RefreshCw size={14} /> Refresh Ledger
+                    </button>
+                    <button 
+                      className="cf-btn-primary" 
+                      onClick={() => window.print()}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Printer size={14} /> Print Ledger
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* A4 Printable Header Card */}
               <div style={{ display: 'none' }} className="print-show-block">
                 <div style={{ borderBottom: '2px solid #002147', paddingBottom: '15px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <h1 style={{ fontSize: '20pt', color: '#002147', margin: 0 }}>BICS COURSEWORK LEDGER</h1>
-                    <p style={{ fontSize: '9pt', color: '#475569', margin: '4px 0 0 0' }}>Official Student Submission Record Card</p>
+                    <h1 style={{ fontSize: '15pt', color: '#002147', margin: 0 }}>
+                      BICS COURSEWORK LEDGER
+                      {activeSubmissionTab !== 'all' && (
+                        <span style={{ fontSize: '10pt', fontWeight: 'normal', color: '#475569', marginLeft: '6px' }}>
+                          ({activeSubmissionTab.replace('_', ' ').toUpperCase()}S)
+                        </span>
+                      )}
+                    </h1>
+                    <p style={{ fontSize: '8.5pt', color: '#475569', margin: '2px 0 0 0' }}>Official Student Submission Record Card</p>
                   </div>
+                  
+                  {/* Secure Cryptographic QR Verification Code */}
+                  {ledgerQrData && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', marginRight: '20px' }}>
+                      {(() => {
+                        const { success, ...cleanQr } = ledgerQrData;
+                        return (
+                          <img 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify(cleanQr))}`} 
+                            alt="Security QR Code" 
+                            style={{ width: '80px', height: '80px', border: '1px solid #cbd5e1', padding: '2px', display: 'block' }} 
+                          />
+                        );
+                      })()}
+                      <span style={{ fontSize: '6pt', fontFamily: 'monospace', color: '#64748b' }}>SECURITY QR</span>
+                    </div>
+                  )}
+
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontWeight: 'bold', fontSize: '11pt' }}>{studentProfile?.name || user?.name || 'Siyam Bubere'}</div>
                     <div style={{ fontSize: '9.5pt', color: '#475569' }}>Student ID: {studentProfile?.studentId || user?.studentId || 'STU1001'}</div>
