@@ -6,20 +6,6 @@ if (typeof global.DOMMatrix === 'undefined') {
         }
     };
 }
-if (typeof global.ImageData === 'undefined') {
-    global.ImageData = class ImageData {
-        constructor(width, height) {
-            this.width = width;
-            this.height = height;
-            this.data = new Uint8ClampedArray(width * height * 4);
-        }
-    };
-}
-if (typeof global.Path2D === 'undefined') {
-    global.Path2D = class Path2D {
-        constructor() {}
-    };
-}
 
 if (typeof process.getBuiltinModule !== 'function') {
     const { createRequire } = require('module');
