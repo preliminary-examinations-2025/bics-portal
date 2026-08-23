@@ -21,6 +21,14 @@ if (typeof global.Path2D === 'undefined') {
     };
 }
 
+if (typeof process.getBuiltinModule !== 'function') {
+    const { createRequire } = require('module');
+    const req = createRequire(__filename);
+    process.getBuiltinModule = function(name) {
+        return req(name);
+    };
+}
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
