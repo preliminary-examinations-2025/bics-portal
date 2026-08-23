@@ -229,6 +229,9 @@ export default function App() {
   // DOM Refs
   const calibVideoRef = useRef(null);
   const examVideoRef = useRef(null);
+  const blazefaceModelRef = useRef(null);
+  const faceAwayDurationRef = useRef(0);
+  const [webcamProctorWarning, setWebcamProctorWarning] = useState('');
 
   // Computed setup condition
   const setupReady = webcamGranted && micGranted && isFullscreen && isFocused;
@@ -245,6 +248,25 @@ export default function App() {
     pingBackend();
     const interval = setInterval(pingBackend, 300000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Load BlazeFace Model Failsafe
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        if (window.blazeface) {
+          console.log("[PROCTOR_ML]: Loading BlazeFace model...");
+          const model = await window.blazeface.load();
+          blazefaceModelRef.current = model;
+          console.log("[PROCTOR_ML]: BlazeFace model loaded successfully.");
+        } else {
+          console.warn("[PROCTOR_ML]: BlazeFace model CDN not available.");
+        }
+      } catch (e) {
+        console.error("[PROCTOR_ML]: Failed to initialize BlazeFace model:", e);
+      }
+    };
+    loadModel();
   }, []);
 
   // Helper trigger methods for custom modal system
@@ -566,6 +588,117 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [flow, proctoringWarnings]);
+
+  // ML webcam face proctoring loop
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+    
+    let active = true;
+    let frameId;
+    let lastLogTime = 0; // Throttle server proctoring warning logs
+    
+    const trackFace = async () => {
+      if (!active) return;
+      
+      const video = examVideoRef.current;
+      const model = blazefaceModelRef.current;
+      
+      if (video && model && video.readyState === 4) {
+        try {
+          // Detect faces in the video frame
+          const predictions = await model.estimateFaces(video, false);
+          
+          if (!active) return;
+          
+          if (predictions.length === 0) {
+            // No face detected!
+            faceAwayDurationRef.current += 1;
+            
+            if (faceAwayDurationRef.current > 30) { // ~3 seconds at 10 FPS
+              setWebcamProctorWarning("Proctor Reminder: No face detected. Please ensure you are visible to the webcam.");
+              
+              // Throttle database logging
+              const now = Date.now();
+              if (now - lastLogTime > 15000) {
+                logProctoringEvent(submission, 'PROCTOR_WARNING', 'No face detected in webcam stream.');
+                lastLogTime = now;
+              }
+            }
+          } else if (predictions.length > 1) {
+            // Multiple faces detected!
+            faceAwayDurationRef.current += 1;
+            
+            if (faceAwayDurationRef.current > 30) {
+              setWebcamProctorWarning("Proctor Reminder: Multiple faces detected in webcam frame.");
+              
+              const now = Date.now();
+              if (now - lastLogTime > 15000) {
+                logProctoringEvent(submission, 'PROCTOR_WARNING', 'Multiple faces detected in webcam stream.');
+                lastLogTime = now;
+              }
+            }
+          } else {
+            // Exactly one face detected. Let's inspect landmarks!
+            const prediction = predictions[0];
+            const landmarks = prediction.landmarks; // [right_eye, left_eye, nose, mouth, right_ear, left_ear]
+            
+            if (landmarks && landmarks.length >= 3) {
+              const rightEye = landmarks[0];
+              const leftEye = landmarks[1];
+              const nose = landmarks[2];
+              
+              const eyeCenterX = (rightEye[0] + leftEye[0]) / 2;
+              const eyeDistance = Math.abs(rightEye[0] - leftEye[0]);
+              
+              if (eyeDistance > 0) {
+                const offsetRatio = (nose[0] - eyeCenterX) / eyeDistance;
+                
+                // If nose offset is too far left or right (looking away)
+                if (Math.abs(offsetRatio) > 0.25) {
+                  faceAwayDurationRef.current += 1;
+                  
+                  if (faceAwayDurationRef.current > 30) {
+                    setWebcamProctorWarning("Proctor Reminder: Please keep facing forward. Looking away is prohibited.");
+                    
+                    const now = Date.now();
+                    if (now - lastLogTime > 15000) {
+                      logProctoringEvent(submission, 'PROCTOR_WARNING', 'Candidate is turned away / looking away from screen.');
+                      lastLogTime = now;
+                    }
+                  }
+                } else {
+                  // Face is facing forward and valid!
+                  faceAwayDurationRef.current = 0;
+                  setWebcamProctorWarning('');
+                }
+              } else {
+                faceAwayDurationRef.current = 0;
+                setWebcamProctorWarning('');
+              }
+            } else {
+              faceAwayDurationRef.current = 0;
+              setWebcamProctorWarning('');
+            }
+          }
+        } catch (e) {
+          console.warn("[PROCTOR_ML_LOOP_ERROR]: Face prediction loop caught exception:", e.message);
+        }
+      }
+      
+      if (active) {
+        frameId = setTimeout(trackFace, 100);
+      }
+    };
+    
+    // Start loop after a short delay
+    const initDelay = setTimeout(trackFace, 1000);
+    
+    return () => {
+      active = false;
+      clearTimeout(initDelay);
+      clearTimeout(frameId);
+    };
+  }, [flow, submission]);
 
   // WebRTC Live stream proctoring signal responder (for Admin Live Monitor)
   useEffect(() => {
@@ -1333,6 +1466,27 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {webcamProctorWarning && (
+          <div style={{
+            backgroundColor: '#fffbeb',
+            borderLeft: '5px solid #d97706',
+            color: '#b45309',
+            padding: '12px 15px',
+            fontSize: '9.5pt',
+            fontWeight: 'bold',
+            borderRadius: '4px',
+            boxShadow: '0 2px 5px rgba(0,0,0,0.05)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            margin: '0 0 -10px 0',
+            zIndex: 100
+          }}>
+            <AlertTriangle size={18} style={{ color: '#d97706', flexShrink: 0 }} />
+            <span>{webcamProctorWarning}</span>
+          </div>
+        )}
 
         {/* Split Screen Workspace */}
         <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
