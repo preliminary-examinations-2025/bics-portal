@@ -1735,13 +1735,25 @@ export default function App() {
                             {list.map((q) => {
                               const isCurrent = selectedQuestionIndex === q.originalIndex;
                               const ans = examAnswers[q.originalIndex];
-                              const isSaved = q.originalIndex === selectedQuestionIndex
-                                ? (q.type === 'mcq'
+                              const isSaved = (() => {
+                                if (q.type === 'mcq') {
+                                  return q.originalIndex === selectedQuestionIndex
                                     ? (draftMCQ !== null && draftMCQ !== undefined)
-                                    : (draftCode && draftCode.trim().length > 0 && !draftCode.includes('// Write your C++ code here')))
-                                : (q.type === 'mcq' 
-                                    ? (ans?.selectedOptionIndex !== null && ans?.selectedOptionIndex !== undefined)
-                                    : (ans?.submittedCode && ans.submittedCode.trim().length > 0 && !ans.submittedCode.includes('// Write your C++ code here')));
+                                    : (ans?.selectedOptionIndex !== null && ans?.selectedOptionIndex !== undefined);
+                                } else if (q.type === 'web') {
+                                  const initHtml = q.initialHtml || '';
+                                  const initCss = q.initialCss || '';
+                                  const initJs = q.initialJs || '';
+                                  return q.originalIndex === selectedQuestionIndex
+                                    ? (draftHtml !== initHtml || draftCss !== initCss || draftJs !== initJs)
+                                    : (ans?.submittedHtml !== undefined && (ans.submittedHtml !== initHtml || ans.submittedCss !== initCss || ans.submittedJs !== initJs));
+                                } else {
+                                  const initCode = q.initialTemplate || DEFAULT_TEMPLATES.cpp;
+                                  return q.originalIndex === selectedQuestionIndex
+                                    ? (draftCode && draftCode.trim().length > 0 && draftCode !== initCode)
+                                    : (ans?.submittedCode && ans.submittedCode.trim().length > 0 && ans.submittedCode !== initCode);
+                                }
+                              })();
                               const isFlagged = q.flaggedForReview;
 
                               return (
