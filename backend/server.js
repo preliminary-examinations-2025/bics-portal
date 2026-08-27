@@ -486,6 +486,7 @@ const QuestionSchema = new mongoose.Schema({
     type: String, // 'mcq', 'coding', or 'web'
     title: String,
     points: Number,
+    section: String,
     // MCQ
     options: [String],
     correctOptionIndex: Number,
@@ -3254,7 +3255,8 @@ const runOnJudge0 = async (sourceCode, testCases) => {
             const body = {
                 source_code: sourceCode,
                 language_id: 54, // C++
-                stdin: tc.input || ""
+                stdin: tc.input || "",
+                cpu_time_limit: 2.0
             };
             const headers = { "Content-Type": "application/json" };
             if (JUDGE0_KEY) {

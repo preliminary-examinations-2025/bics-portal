@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
-  Check, X, Lock, Eye, Clock
+  Check, X, Lock, Eye, Clock, Flag
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -140,7 +140,7 @@ function CandidateWatermark({ email }) {
       userSelect: 'none',
       overflow: 'hidden',
       zIndex: 10,
-      opacity: 0.05,
+      opacity: 0.12,
       display: 'grid',
       gridTemplateColumns: 'repeat(3, 1fr)',
       gridTemplateRows: 'repeat(4, 1fr)',
@@ -170,6 +170,33 @@ export default function App() {
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [verifyError, setVerifyError] = useState('');
+
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 1024);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnlineStatus = () => setIsOnline(true);
+    const handleOfflineStatus = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnlineStatus);
+    window.addEventListener('offline', handleOfflineStatus);
+
+    return () => {
+      window.removeEventListener('online', handleOnlineStatus);
+      window.removeEventListener('offline', handleOfflineStatus);
+    };
+  }, []);
   
   // Authenticated states
   const [candidate, setCandidate] = useState(null);
@@ -372,16 +399,16 @@ export default function App() {
       setCandidate(data.candidate);
       setTest(data.test);
       
-      // Load pre-existing state or sessionStorage cache
+      // Load pre-existing state or localStorage cache
       const storageKey = `bics_draft_${data.test.id}_${data.candidate.id}`;
-      const cached = sessionStorage.getItem(storageKey);
+      const cached = localStorage.getItem(storageKey);
       
       let answersArr = [];
       if (cached) {
         try {
           answersArr = JSON.parse(cached);
         } catch (e) {
-          console.warn("Failed to parse cached sessionStorage answers:", e);
+          console.warn("Failed to parse cached localStorage answers:", e);
         }
       }
 
@@ -900,9 +927,9 @@ export default function App() {
       }
     }
     
-    // Save to sessionStorage cache
+    // Save to localStorage cache
     const storageKey = `bics_draft_${test.id}_${candidate.id}`;
-    sessionStorage.setItem(storageKey, JSON.stringify(updated));
+    localStorage.setItem(storageKey, JSON.stringify(updated));
 
     // Auto-save to server draft
     saveServerDraft(updated);
@@ -911,6 +938,60 @@ export default function App() {
       setSelectedQuestionIndex(selectedQuestionIndex + 1);
     }
   };
+
+  // Auto-save active progress to localStorage every 3 seconds to recover from crashes
+  useEffect(() => {
+    if (!test || !candidate || examAnswers.length === 0) return;
+
+    const interval = setInterval(() => {
+      const updated = [...examAnswers];
+      updated[selectedQuestionIndex] = {
+        ...updated[selectedQuestionIndex],
+        selectedOptionIndex: draftMCQ,
+        submittedCode: draftCode,
+        selectedLanguage: draftLanguage,
+        submittedHtml: draftHtml,
+        submittedCss: draftCss,
+        submittedJs: draftJs
+      };
+      
+      const storageKey = `bics_draft_${test.id}_${candidate.id}`;
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [test, candidate, examAnswers, selectedQuestionIndex, draftMCQ, draftCode, draftLanguage, draftHtml, draftCss, draftJs]);
+
+  // Auto-sync pending submissions when connection comes back online
+  useEffect(() => {
+    if (!isOnline || !submission) return;
+    
+    const subId = submission._id || submission.id;
+    const pendingSubmitKey = `bics_pending_submit_${subId}`;
+    const cachedPayload = localStorage.getItem(pendingSubmitKey);
+    
+    if (cachedPayload) {
+      const syncDraft = async () => {
+        try {
+          const payload = JSON.parse(cachedPayload);
+          const res = await fetch(`${API_BASE}/tests/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if (data.success) {
+            localStorage.removeItem(pendingSubmitKey);
+            setFlow('finished');
+            setFinishedStep(1);
+          }
+        } catch (err) {
+          console.warn("Auto-sync background submission failed:", err.message);
+        }
+      };
+      syncDraft();
+    }
+  }, [isOnline, submission]);
 
   // Switch editor language and auto-populate default templates if editor is blank/default
   const handleLanguageChange = (newLang) => {
@@ -1056,13 +1137,38 @@ export default function App() {
 
   const finalizeExamSubmission = async (answersList, warningsObj, statusVal) => {
     setSubmittingExam(true);
+    const subId = submission?._id || submission?.id;
+    if (!subId) {
+      setSubmittingExam(false);
+      return;
+    }
+
+    if (!isOnline) {
+      const pendingSubmitKey = `bics_pending_submit_${subId}`;
+      const payload = {
+        submissionId: subId,
+        answers: answersList,
+        proctoringLog: warningsObj,
+        status: statusVal
+      };
+      localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+      
+      if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+
+      setFlow('finished');
+      setFinishedStep(1);
+      setSubmittingExam(false);
+      return;
+    }
+
     try {
-      if (!submission) return;
       const res = await fetch(`${API_BASE}/tests/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          submissionId: submission._id || submission.id,
+          submissionId: subId,
           answers: answersList,
           proctoringLog: warningsObj,
           status: statusVal
@@ -1071,22 +1177,35 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         await logProctoringEvent(submission, 'TEST_SUBMITTED', `Candidate finalized and submitted exam (Status: ${statusVal}).`);
-        // Clear sessionStorage cache on successful submit
-        sessionStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+        localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
         
-        // Stop webcam/mic streams
         if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
         if (micStream) micStream.getTracks().forEach(t => t.stop());
         
-        // Do NOT exit fullscreen here (retained in fullscreen during submission screens)
+        localStorage.removeItem(`bics_pending_submit_${subId}`);
+
         setFlow('finished');
         setFinishedStep(1);
       } else {
         triggerCustomAlert("Submission Failed", data.error || "An error occurred during submission. Please try again.");
       }
     } catch (err) {
-      console.error(err);
-      triggerCustomAlert("Network Error", "Unable to establish connection to BICS server. Verify your internet link and try again.");
+      console.error("Submission fetch crashed, caching payload locally:", err);
+      const pendingSubmitKey = `bics_pending_submit_${subId}`;
+      const payload = {
+        submissionId: subId,
+        answers: answersList,
+        proctoringLog: warningsObj,
+        status: statusVal
+      };
+      localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+      
+      if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+
+      setFlow('finished');
+      setFinishedStep(1);
     } finally {
       setSubmittingExam(false);
     }
@@ -1106,6 +1225,58 @@ export default function App() {
       <div style={{ color: '#777', fontSize: '8pt' }}>All rights reserved © 2026</div>
     </footer>
   );
+
+  // VIEW: Screen Size Blocker (Desktop Check)
+  if (!isDesktop) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f1f5f9' }}>
+        <header className="app-header">
+          <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
+            <span className="pixel-logo">Online Test BICS Terminal</span>
+          </div>
+          <div className="header-right">
+            <img src="/logo.png" alt="Portal Logo" className="pe-logo" style={{ height: '34px' }} />
+          </div>
+        </header>
+        
+        <div style={{ display: 'flex', flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: '40px 20px' }}>
+          <div className="cf-card" style={{ maxWidth: '600px', width: '100%', padding: '0', border: '1px solid #cbd5e1', backgroundColor: '#fff', overflow: 'hidden', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.05)' }}>
+            
+            <div style={{ backgroundColor: '#fef2f2', borderBottom: '1px solid #fee2e2', padding: '15px 25px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <ShieldAlert size={24} style={{ color: '#ef4444' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <h3 style={{ fontSize: '11pt', color: '#b91c1c', fontWeight: 'bold', margin: 0 }}>DESKTOP VIEWPORT REQUIRED</h3>
+                <span style={{ fontSize: '7.5pt', color: '#7f1d1d', fontFamily: 'monospace' }}>Device validation check failed (SCREEN_WIDTH &lt; 1024px)</span>
+              </div>
+            </div>
+
+            <div style={{ padding: '25px', textAlign: 'center' }}>
+              <div style={{ borderLeft: '4px solid #f59e0b', backgroundColor: '#fef3c7', padding: '12px 15px', color: '#78350f', fontSize: '9pt', borderRadius: '4px', marginBottom: '20px', textAlign: 'left', lineHeight: '1.5' }}>
+                <strong>Access Blocked:</strong> To ensure exam integrity and support the coding compiler's code-editor layouts, the Online Test Terminal can only be accessed on desktop screens (monitors or laptops). Mobile and tablet viewports are strictly blocked.
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px', padding: '20px', border: '1px dashed #cbd5e1', borderRadius: '8px', backgroundColor: '#f8fafc', marginBottom: '20px' }}>
+                <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#1e293b' }}>
+                  Your Current Resolution: {window.innerWidth}px x {window.innerHeight}px
+                </div>
+                <p style={{ fontSize: '8.5pt', color: '#64748b', margin: 0, lineHeight: '1.5' }}>
+                  Please switch to a desktop or laptop device, or maximize your browser window if you are already on a computer, to automatically unlock the terminal.
+                </p>
+              </div>
+
+              <div style={{ fontSize: '8pt', color: '#94a3b8' }}>
+                Waiting for screen resize detection...
+              </div>
+            </div>
+
+          </div>
+        </div>
+        
+        <CenteredFooter />
+      </div>
+    );
+  }
 
   // VIEW: Loader spinner
   if (loading) {
@@ -1420,15 +1591,37 @@ export default function App() {
           <video ref={examVideoRef} autoPlay playsInline muted />
         </div>
 
+        {/* Offline Shield Banner Alert */}
+        {!isOnline && (
+          <div style={{
+            backgroundColor: '#ef4444',
+            color: '#ffffff',
+            padding: '12px 20px',
+            fontSize: '9.5pt',
+            fontWeight: 'bold',
+            borderRadius: '4px',
+            boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '10px',
+            margin: '0 0 -10px 0',
+            zIndex: 100
+          }}>
+            <ShieldAlert size={18} style={{ color: '#ffffff', flexShrink: 0 }} />
+            <span>Connection Offline: Proctoring telemetry paused. You can continue writing code, and your work will be saved locally. Compilation (Run Code) and Test Submission are locked until connection is restored.</span>
+          </div>
+        )}
+
         {/* Floating Header Card */}
-        <div className="cf-card" style={{ margin: 0, padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: '5px solid #3b5998', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+        <div className="cf-card" style={{ margin: 0, padding: '12px 20px', display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', borderLeft: '5px solid #3b5998', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
           <div>
             <h3 style={{ fontSize: '12.5pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test?.title}</h3>
             <span style={{ fontSize: '8.5pt', color: '#666' }}>
               Candidate: <strong>{candidate?.name} ({candidate?.studentId})</strong>
             </span>
           </div>
-          
+
           {/* Timer Display Widget */}
           <div style={{
             padding: '8px 15px',
@@ -1441,13 +1634,14 @@ export default function App() {
             fontSize: '11pt',
             display: 'flex',
             alignItems: 'center',
-            gap: '6px'
+            gap: '6px',
+            justifySelf: 'center'
           }}>
             <Clock size={16} style={{ color: '#ef4444' }} />
             <span>{formatTimer(examTimeLeft)} remaining</span>
           </div>
 
-          <div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
               className="cf-btn-primary"
               disabled={submittingExam}
@@ -1489,18 +1683,222 @@ export default function App() {
         )}
 
         {/* Split Screen Workspace */}
-        <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          
+        <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+                    {/* Floating Questions Panel Overlay Card */}
+          {isSidebarOpen && (
+            <div className="cf-card" style={{
+              position: 'absolute',
+              top: '15px',
+              left: '15px',
+              width: '280px',
+              maxHeight: 'calc(100% - 30px)',
+              margin: 0,
+              padding: '15px',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '15px',
+              zIndex: 1500,
+              backgroundColor: '#ffffff',
+              border: '1px solid #cbd5e1',
+              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+              borderRadius: '6px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: '8px' }}>
+                <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '9.5pt', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Questions Panel</h4>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarOpen(false)}
+                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', margin: 0, padding: 0 }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Group questions by section */}
+              {(() => {
+                const groups = {};
+                (test?.questions || []).forEach((q, idx) => {
+                  const sec = q.section || 'General Questions';
+                  if (!groups[sec]) groups[sec] = [];
+                  groups[sec].push({ ...q, originalIndex: idx });
+                });
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    {Object.entries(groups).map(([sectionTitle, list]) => {
+                      if (list.length === 0) return null;
+                      return (
+                        <div key={sectionTitle} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <h5 style={{ fontSize: '8.5pt', color: '#64748b', fontWeight: 'bold', margin: '5px 0 2px 0' }}>{sectionTitle}</h5>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                            {list.map((q) => {
+                              const isCurrent = selectedQuestionIndex === q.originalIndex;
+                              const ans = examAnswers[q.originalIndex];
+                              const isSaved = q.originalIndex === selectedQuestionIndex
+                                ? (q.type === 'mcq'
+                                    ? (draftMCQ !== null && draftMCQ !== undefined)
+                                    : (draftCode && draftCode.trim().length > 0 && !draftCode.includes('// Write your C++ code here')))
+                                : (q.type === 'mcq' 
+                                    ? (ans?.selectedOptionIndex !== null && ans?.selectedOptionIndex !== undefined)
+                                    : (ans?.submittedCode && ans.submittedCode.trim().length > 0 && !ans.submittedCode.includes('// Write your C++ code here')));
+                              const isFlagged = q.flaggedForReview;
+
+                              return (
+                                <button
+                                  key={q.originalIndex}
+                                  type="button"
+                                  onClick={() => {
+                                    // Sync current changes before switching
+                                    const updated = [...examAnswers];
+                                    updated[selectedQuestionIndex] = {
+                                      ...updated[selectedQuestionIndex],
+                                      selectedOptionIndex: draftMCQ,
+                                      submittedCode: draftCode,
+                                      selectedLanguage: draftLanguage,
+                                      submittedHtml: draftHtml,
+                                      submittedCss: draftCss,
+                                      submittedJs: draftJs
+                                    };
+                                    setExamAnswers(updated);
+                                    saveServerDraft(updated);
+                                    setSelectedQuestionIndex(q.originalIndex);
+                                  }}
+                                  style={{
+                                    padding: '8px 0',
+                                    fontSize: '8.5pt',
+                                    fontWeight: 'bold',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    textAlign: 'center',
+                                    border: isCurrent 
+                                      ? '2px solid #a855f7' 
+                                      : (isFlagged ? '1px solid #c084fc' : '1px solid #cbd5e1'),
+                                    backgroundColor: isCurrent 
+                                      ? '#f3e8ff' 
+                                      : (isSaved ? '#10b981' : (isFlagged ? '#faf5ff' : '#f8fafc')),
+                                    color: isCurrent 
+                                      ? '#6b21a8' 
+                                      : (isSaved ? '#ffffff' : (isFlagged ? '#7e22ce' : '#475569')),
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    position: 'relative'
+                                  }}
+                                  title={`Question ${q.originalIndex + 1}: ${q.type.toUpperCase()}`}
+                                >
+                                  {q.originalIndex + 1}
+                                  {isFlagged && (
+                                    <span style={{
+                                      position: 'absolute',
+                                      top: '2px',
+                                      right: '2px',
+                                      width: '6px',
+                                      height: '6px',
+                                      borderRadius: '50%',
+                                      backgroundColor: '#a855f7'
+                                    }} />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              
+              {/* Legend guide */}
+              <div style={{ marginTop: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '7.5pt', color: '#64748b' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#dbeafe', border: '1px solid #2563eb' }} />
+                  <span>Current</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#10b981' }} />
+                  <span>Attempted</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#faf5ff', border: '1px solid #a855f7' }} />
+                  <span>Flagged</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }} />
+                  <span>Unvisited</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Left Pane: Question Description */}
-          <div className="cf-card" style={{ flex: '1 1 40%', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0, position: 'relative' }}>
+          <div className="cf-card" style={{ flex: '0 0 calc(50% - 10px)', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0, position: 'relative' }}>
             <CandidateWatermark email={candidate?.email || candidate?.studentId || candidate?.name} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px', zIndex: 11 }}>
               <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
                 Question {selectedQuestionIndex + 1} of {test.questions.length}
               </h4>
-              <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '2px 8px', borderRadius: '4px', fontSize: '8pt', fontWeight: 'bold' }}>
-                POINTS: {test.questions[selectedQuestionIndex].points || 0}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 10px',
+                    fontSize: '8.5pt',
+                    fontWeight: 'bold',
+                    backgroundColor: isSidebarOpen ? '#faf5ff' : '#ffffff',
+                    border: isSidebarOpen ? '2px solid #a855f7' : '1px solid #cbd5e1',
+                    color: '#7e22ce',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease-in-out',
+                    margin: 0
+                  }}
+                  title={isSidebarOpen ? "Close Questions Panel" : "Open Questions Panel"}
+                >
+                  <CheckSquare size={13} style={{ color: '#7e22ce' }} />
+                  <span>Questions Panel</span>
+                </button>
+                {(() => {
+                  const isFlagged = test?.questions?.[selectedQuestionIndex]?.flaggedForReview || false;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updatedQuestions = [...test.questions];
+                        updatedQuestions[selectedQuestionIndex].flaggedForReview = !isFlagged;
+                        setTest({ ...test, questions: updatedQuestions });
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        border: '1px solid #c084fc',
+                        backgroundColor: isFlagged ? '#a855f7' : '#ffffff',
+                        color: isFlagged ? '#ffffff' : '#7e22ce',
+                        transition: 'all 0.2s ease-in-out',
+                        margin: 0
+                      }}
+                      title={isFlagged ? "Remove Flag" : "Flag for Review"}
+                    >
+                      <Flag size={13} fill={isFlagged ? '#ffffff' : 'none'} style={{ color: isFlagged ? '#ffffff' : '#7e22ce' }} />
+                      <span>{isFlagged ? 'Flagged for Review' : 'Flag for Review'}</span>
+                    </button>
+                  );
+                })()}
+                <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '2px 8px', borderRadius: '4px', fontSize: '8pt', fontWeight: 'bold' }}>
+                  POINTS: {test.questions[selectedQuestionIndex].points || 0}
+                </span>
+              </div>
             </div>
 
             <RichText
@@ -1644,9 +2042,8 @@ export default function App() {
           </div>
 
           {/* Right Pane: Workspace / Monaco Editor / MCQ Options Display */}
-          {/* Right Pane: Workspace / Monaco Editor / MCQ Options Display */}
           <div className="cf-card" style={{
-            flex: '1 1 60%',
+            flex: '0 0 calc(50% - 10px)',
             margin: 0,
             display: 'flex',
             flexDirection: 'column',
@@ -2219,17 +2616,18 @@ export default function App() {
                     backgroundColor: '#ffffff',
                     border: '1px solid #cbd5e1',
                     borderRadius: '4px',
-                    cursor: isRunningCode ? 'not-allowed' : 'pointer',
+                    cursor: (isRunningCode || !isOnline) ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
-                    margin: 0
+                    margin: 0,
+                    opacity: !isOnline ? 0.6 : 1
                   }}
                   onClick={handleRunCode}
-                  disabled={isRunningCode}
+                  disabled={isRunningCode || !isOnline}
                 >
                   {isRunningCode ? <Loader2 className="cf-spinner" size={14} /> : <Play size={14} />}
-                  {isRunningCode ? 'Running...' : 'Run Code'}
+                  {!isOnline ? 'Compiler Offline' : (isRunningCode ? 'Running...' : 'Run Code')}
                 </button>
               ) : (
                 <div></div>
@@ -2424,22 +2822,81 @@ export default function App() {
           <div className="cf-card" style={{ maxWidth: '500px', width: '100%', padding: '40px', border: '1px solid var(--cf-border)', textAlign: 'center' }}>
             
             {finishedStep === 1 ? (
-              <>
-                {/* CSS Animated Checkmark */}
-                <div className="checkmark-wrapper">
-                  <svg className="animated-checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52">
-                    <circle className="checkmark-circle" cx="26" cy="26" r="25" fill="none" />
-                    <path className="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
-                  </svg>
-                </div>
+              (() => {
+                const subId = submission?._id || submission?.id;
+                const pendingSubmitKey = subId ? `bics_pending_submit_${subId}` : '';
+                const isPendingSubmit = pendingSubmitKey && localStorage.getItem(pendingSubmitKey);
 
-                <h2 style={{ fontSize: '16pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
-                  The test is successfully submitted.
-                </h2>
-                <p style={{ fontSize: '10pt', color: '#475569', lineHeight: 1.6, marginBottom: '10px' }}>
-                  Your BICS Course Examination paper has been successfully submitted and stored in the database.
-                </p>
-              </>
+                if (isPendingSubmit) {
+                  return (
+                    <>
+                      <div style={{ color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+                        <ShieldAlert size={64} style={{ color: '#f59e0b', animation: 'pulse 2s infinite' }} />
+                      </div>
+
+                      <h2 style={{ fontSize: '16pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
+                        Submission Cached Locally
+                      </h2>
+                      <div style={{ borderLeft: '4px solid #f59e0b', backgroundColor: '#fffbeb', padding: '12px 15px', color: '#78350f', fontSize: '9pt', borderRadius: '4px', marginBottom: '20px', textAlign: 'left', lineHeight: '1.5' }}>
+                        <strong>Connection Lost:</strong> We were unable to reach the BICS server to record your submission. Your answers and proctoring telemetry are **fully secured locally** in your browser.
+                      </div>
+                      <p style={{ fontSize: '10pt', color: '#475569', lineHeight: 1.6, marginBottom: '20px' }}>
+                        <strong>Do not close this tab or refresh the browser.</strong> The terminal is actively listening to sync your exam details to the database once connection is restored.
+                      </p>
+                      
+                      <button
+                        type="button"
+                        className="cf-btn-primary"
+                        onClick={async () => {
+                          const cachedPayload = localStorage.getItem(pendingSubmitKey);
+                          if (!cachedPayload) return;
+                          try {
+                            const payload = JSON.parse(cachedPayload);
+                            const res = await fetch(`${API_BASE}/tests/submit`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify(payload)
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                              localStorage.removeItem(pendingSubmitKey);
+                              setFinishedStep(1);
+                              triggerCustomAlert("Sync Successful", "Your exam has been successfully synchronized and submitted to the server.");
+                            } else {
+                              triggerCustomAlert("Sync Failed", data.error || "Server rejected submission. Please try again.");
+                            }
+                          } catch (e) {
+                            triggerCustomAlert("Sync Failed", "Unable to establish secure tunnel connection to server. Please verify your internet.");
+                          }
+                        }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', fontWeight: 'bold', border: 'none', background: '#3b5998', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}
+                      >
+                        <Play size={14} />
+                        <span>Force Sync Submission</span>
+                      </button>
+                    </>
+                  );
+                }
+
+                return (
+                  <>
+                    {/* CSS Animated Checkmark */}
+                    <div className="checkmark-wrapper">
+                      <svg className="animated-checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52">
+                        <circle className="checkmark-circle" cx="26" cy="26" r="25" fill="none" />
+                        <path className="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
+                      </svg>
+                    </div>
+
+                    <h2 style={{ fontSize: '16pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
+                      The test is successfully submitted.
+                    </h2>
+                    <p style={{ fontSize: '10pt', color: '#475569', lineHeight: 1.6, marginBottom: '10px' }}>
+                      Your BICS Course Examination paper has been successfully submitted and stored in the database.
+                    </p>
+                  </>
+                );
+              })()
             ) : (
               <>
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>

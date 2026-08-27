@@ -361,6 +361,44 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Auto-sync any pending test submissions cached in browser local storage
+  useEffect(() => {
+    const syncAllPendingSubmissions = async () => {
+      if (!navigator.onLine) return;
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('bics_pending_submit_')) {
+            const cachedPayload = localStorage.getItem(key);
+            if (cachedPayload) {
+              const payload = JSON.parse(cachedPayload);
+              const res = await fetch(`${API_BASE}/tests/submit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              const data = await res.json();
+              if (data.success) {
+                localStorage.removeItem(key);
+                console.log(`Auto-synced pending submission for key: ${key}`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Global background sync of pending submissions failed:", err);
+      }
+    };
+
+    syncAllPendingSubmissions();
+    window.addEventListener('online', syncAllPendingSubmissions);
+    const interval = setInterval(syncAllPendingSubmissions, 30000); // Check every 30s
+    return () => {
+      window.removeEventListener('online', syncAllPendingSubmissions);
+      clearInterval(interval);
+    };
+  }, []);
+
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -1414,6 +1452,13 @@ int main() {
   };
 
   const handleStartExam = async (testId) => {
+    if (window.innerWidth < 1024) {
+      showModalAlert(
+        "Desktop View Required",
+        "To ensure exam integrity, the Online Test Terminal can only be accessed on desktop screens (monitors or laptops). Mobile and tablet devices are not supported. Please switch to a desktop screen and maximize your window to enter the test."
+      );
+      return;
+    }
     setEnteringTestId(testId);
     try {
       const res = await fetch(`${API_BASE}/tests/generate-token`, {
@@ -6467,7 +6512,7 @@ int main() {
                               </button>
                             </div>
 
-                             <div className="cf-form-grid" style={{ gridTemplateColumns: '2fr 2fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                             <div className="cf-form-grid" style={{ gridTemplateColumns: '2fr 1.5fr 1.5fr 1fr', gap: '15px', marginBottom: '15px' }}>
                               <div className="cf-input-group">
                                 <label className="cf-label">Question Title</label>
                                 <input
@@ -6480,6 +6525,20 @@ int main() {
                                     setNewExamQuestions(updated);
                                   }}
                                   placeholder="Enter question task short summary"
+                                />
+                              </div>
+                              <div className="cf-input-group">
+                                <label className="cf-label">Section Name (Customizable)</label>
+                                <input
+                                  type="text"
+                                  className="cf-input"
+                                  value={newExamQuestions[editingQuestionIdx]?.section || ''}
+                                  onChange={e => {
+                                    const updated = [...newExamQuestions];
+                                    updated[editingQuestionIdx].section = e.target.value;
+                                    setNewExamQuestions(updated);
+                                  }}
+                                  placeholder="e.g. Section A: Theory"
                                 />
                               </div>
                               <div className="cf-input-group">
@@ -7129,7 +7188,7 @@ int main() {
                               {new Date(s.startedAt).toLocaleTimeString()}
                             </td>
                             <td style={{ fontSize: '8pt', color: '#555' }}>
-                              {s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString() : 'In Progress'}
+                              {s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString() : (s.status === 'evaluated' ? 'Graded' : (s.status === 'submitted' ? 'Submitted' : 'In Progress'))}
                             </td>
                             <td>
                               <span style={{
