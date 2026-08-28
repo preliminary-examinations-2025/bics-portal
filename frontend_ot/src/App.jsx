@@ -182,6 +182,7 @@ export default function App() {
   }, []);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [hasPendingSubmit, setHasPendingSubmit] = useState(false);
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -358,7 +359,7 @@ export default function App() {
 
   // Auto-redirect timer when flow === 'finished' (keeps fullscreen until redirection)
   useEffect(() => {
-    if (flow !== 'finished') return;
+    if (flow !== 'finished' || hasPendingSubmit) return;
     
     const t1 = setTimeout(() => {
       setFinishedStep(2);
@@ -380,7 +381,7 @@ export default function App() {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [flow]);
+  }, [flow, hasPendingSubmit]);
 
   const verifyExamToken = async (tokenStr) => {
     try {
@@ -964,32 +965,39 @@ export default function App() {
 
   // Auto-sync pending submissions when connection comes back online
   useEffect(() => {
-    if (!isOnline || !submission) return;
+    if (!submission) return;
     
     const subId = submission._id || submission.id;
     const pendingSubmitKey = `bics_pending_submit_${subId}`;
     const cachedPayload = localStorage.getItem(pendingSubmitKey);
     
     if (cachedPayload) {
-      const syncDraft = async () => {
-        try {
-          const payload = JSON.parse(cachedPayload);
-          const res = await fetch(`${API_BASE}/tests/submit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          const data = await res.json();
-          if (data.success) {
-            localStorage.removeItem(pendingSubmitKey);
-            setFlow('finished');
-            setFinishedStep(1);
+      setHasPendingSubmit(true);
+      
+      if (isOnline) {
+        const syncDraft = async () => {
+          try {
+            const payload = JSON.parse(cachedPayload);
+            const res = await fetch(`${API_BASE}/tests/submit`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+              localStorage.removeItem(pendingSubmitKey);
+              setHasPendingSubmit(false);
+              setFlow('finished');
+              setFinishedStep(1);
+            }
+          } catch (err) {
+            console.warn("Auto-sync background submission failed:", err.message);
           }
-        } catch (err) {
-          console.warn("Auto-sync background submission failed:", err.message);
-        }
-      };
-      syncDraft();
+        };
+        syncDraft();
+      }
+    } else {
+      setHasPendingSubmit(false);
     }
   }, [isOnline, submission]);
 
@@ -1152,6 +1160,7 @@ export default function App() {
         status: statusVal
       };
       localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+      setHasPendingSubmit(true);
       
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -1183,6 +1192,7 @@ export default function App() {
         if (micStream) micStream.getTracks().forEach(t => t.stop());
         
         localStorage.removeItem(`bics_pending_submit_${subId}`);
+        setHasPendingSubmit(false);
 
         setFlow('finished');
         setFinishedStep(1);
@@ -1199,6 +1209,7 @@ export default function App() {
         status: statusVal
       };
       localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+      setHasPendingSubmit(true);
       
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -2835,22 +2846,37 @@ export default function App() {
             
             {finishedStep === 1 ? (
               (() => {
-                const subId = submission?._id || submission?.id;
-                const pendingSubmitKey = subId ? `bics_pending_submit_${subId}` : '';
-                const isPendingSubmit = pendingSubmitKey && localStorage.getItem(pendingSubmitKey);
+                let pendingSubmitKey = '';
+                for (let i = 0; i < localStorage.length; i++) {
+                  const k = localStorage.key(i);
+                  if (k && k.startsWith('bics_pending_submit_')) {
+                    pendingSubmitKey = k;
+                    break;
+                  }
+                }
+                const isPendingSubmit = !!pendingSubmitKey;
 
                 if (isPendingSubmit) {
                   return (
                     <>
-                      <div style={{ color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
-                        <ShieldAlert size={64} style={{ color: '#f59e0b', animation: 'pulse 2s infinite' }} />
+                      <style>{`
+                        @keyframes cf-pulse {
+                          0%, 100% { opacity: 1; transform: scale(1); }
+                          50% { opacity: 0.6; transform: scale(0.96); }
+                        }
+                        .cf-pulse-icon {
+                          animation: cf-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+                        }
+                      `}</style>
+                      <div className="cf-pulse-icon" style={{ color: '#f59e0b', display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+                        <ShieldAlert size={64} style={{ color: '#f59e0b' }} />
                       </div>
 
                       <h2 style={{ fontSize: '16pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
                         Submission Cached Locally
                       </h2>
                       <div style={{ borderLeft: '4px solid #f59e0b', backgroundColor: '#fffbeb', padding: '12px 15px', color: '#78350f', fontSize: '9pt', borderRadius: '4px', marginBottom: '20px', textAlign: 'left', lineHeight: '1.5' }}>
-                        <strong>Connection Lost:</strong> We were unable to reach the BICS server to record your submission. Your answers and proctoring telemetry are **fully secured locally** in your browser.
+                        <strong>Connection Lost:</strong> We were unable to reach the BICS server to record your submission. Your answers and proctoring telemetry are <strong>fully secured locally</strong> in your browser.
                       </div>
                       <p style={{ fontSize: '10pt', color: '#475569', lineHeight: 1.6, marginBottom: '20px' }}>
                         <strong>Do not close this tab or refresh the browser.</strong> The terminal is actively listening to sync your exam details to the database once connection is restored.
@@ -2872,6 +2898,7 @@ export default function App() {
                             const data = await res.json();
                             if (data.success) {
                               localStorage.removeItem(pendingSubmitKey);
+                              setHasPendingSubmit(false);
                               setFinishedStep(1);
                               triggerCustomAlert("Sync Successful", "Your exam has been successfully synchronized and submitted to the server.");
                             } else {
