@@ -183,6 +183,7 @@ export default function App() {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [hasPendingSubmit, setHasPendingSubmit] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('');
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -976,21 +977,28 @@ export default function App() {
       
       if (isOnline) {
         const syncDraft = async () => {
+          setSyncStatus('initiating');
           try {
             const payload = JSON.parse(cachedPayload);
+            setSyncStatus('uploading');
             const res = await fetch(`${API_BASE}/tests/submit`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
             });
+            setSyncStatus('processing');
             const data = await res.json();
             if (data.success) {
               localStorage.removeItem(pendingSubmitKey);
+              setSyncStatus('completed');
               setHasPendingSubmit(false);
               setFlow('finished');
               setFinishedStep(1);
+            } else {
+              setSyncStatus('failed');
             }
           } catch (err) {
+            setSyncStatus('failed');
             console.warn("Auto-sync background submission failed:", err.message);
           }
         };
@@ -2875,43 +2883,107 @@ export default function App() {
                       <h2 style={{ fontSize: '16pt', color: '#002147', fontWeight: 'bold', marginBottom: '10px' }}>
                         Submission Cached Locally
                       </h2>
+
+                      {/* Connection Status Indicator */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '15px' }}>
+                        <div style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          backgroundColor: isOnline ? '#22c55e' : '#ef4444',
+                          boxShadow: isOnline ? '0 0 8px #22c55e' : '0 0 8px #ef4444'
+                        }} />
+                        <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: isOnline ? '#166534' : '#991b1b' }}>
+                          Browser Status: {isOnline ? 'Online (Ready to Sync)' : 'Offline (No Connection)'}
+                        </span>
+                      </div>
+
                       <div style={{ borderLeft: '4px solid #f59e0b', backgroundColor: '#fffbeb', padding: '12px 15px', color: '#78350f', fontSize: '9pt', borderRadius: '4px', marginBottom: '20px', textAlign: 'left', lineHeight: '1.5' }}>
                         <strong>Connection Lost:</strong> We were unable to reach the BICS server to record your submission. Your answers and proctoring telemetry are <strong>fully secured locally</strong> in your browser.
                       </div>
-                      <p style={{ fontSize: '10pt', color: '#475569', lineHeight: 1.6, marginBottom: '20px' }}>
-                        <strong>Do not close this tab or refresh the browser.</strong> The terminal is actively listening to sync your exam details to the database once connection is restored.
+                      
+                      {/* Critical warning message against closures/refreshes */}
+                      <p style={{ fontSize: '10pt', color: '#ef4444', lineHeight: 1.6, marginBottom: '20px', fontWeight: 'bold', backgroundColor: '#fef2f2', padding: '10px', borderRadius: '4px', border: '1px solid #fca5a5' }}>
+                        ⚠️ Do not close this tab or refresh the browser. Refreshing or closing this tab while sync is in progress will interrupt the session upload.
                       </p>
+
+                      {/* Sync Progress Indicator */}
+                      {syncStatus && (
+                        <div style={{ backgroundColor: '#f1f5f9', padding: '15px', borderRadius: '6px', border: '1px solid #cbd5e1', marginBottom: '20px', textAlign: 'left' }}>
+                          <h4 style={{ margin: '0 0 10px 0', fontSize: '9.5pt', fontWeight: 'bold', color: '#334155' }}>
+                            Synchronization Progress:
+                          </h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '8.5pt' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing' || syncStatus === 'completed') ? '#10b981' : '#64748b' }}>
+                              <span>{ (syncStatus === 'initiating') ? '⏳' : '✓' }</span>
+                              <span>1. Connecting to BICS Backend Servers...</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'uploading' || syncStatus === 'processing' || syncStatus === 'completed') ? '#10b981' : '#64748b' }}>
+                              <span>{ (syncStatus === 'uploading') ? '⏳' : (syncStatus === 'initiating' ? '○' : '✓') }</span>
+                              <span>2. Transferring secure offline answers payload...</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'processing' || syncStatus === 'completed') ? '#10b981' : '#64748b' }}>
+                              <span>{ (syncStatus === 'processing') ? '⏳' : (syncStatus === 'initiating' || syncStatus === 'uploading' ? '○' : '✓') }</span>
+                              <span>3. Executing unit test cases \& proctoring ledgers...</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'completed') ? '#10b981' : (syncStatus === 'failed' ? '#ef4444' : '#64748b') }}>
+                              <span>{ (syncStatus === 'completed') ? '✓' : (syncStatus === 'failed' ? '✗' : '○') }</span>
+                              <span style={{ fontWeight: syncStatus === 'completed' ? 'bold' : 'normal' }}>
+                                {syncStatus === 'completed' ? '4. Synced successfully! Redirecting...' : (syncStatus === 'failed' ? '4. Sync Failed. Please retry.' : '4. Finalizing database entry...')}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       
                       <button
                         type="button"
                         className="cf-btn-primary"
+                        disabled={syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing'}
                         onClick={async () => {
                           const cachedPayload = localStorage.getItem(pendingSubmitKey);
                           if (!cachedPayload) return;
+                          setSyncStatus('initiating');
                           try {
                             const payload = JSON.parse(cachedPayload);
+                            setSyncStatus('uploading');
                             const res = await fetch(`${API_BASE}/tests/submit`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify(payload)
                             });
+                            setSyncStatus('processing');
                             const data = await res.json();
                             if (data.success) {
                               localStorage.removeItem(pendingSubmitKey);
+                              setSyncStatus('completed');
                               setHasPendingSubmit(false);
                               setFinishedStep(1);
                               triggerCustomAlert("Sync Successful", "Your exam has been successfully synchronized and submitted to the server.");
                             } else {
+                              setSyncStatus('failed');
                               triggerCustomAlert("Sync Failed", data.error || "Server rejected submission. Please try again.");
                             }
                           } catch (e) {
+                            setSyncStatus('failed');
                             triggerCustomAlert("Sync Failed", "Unable to establish secure tunnel connection to server. Please verify your internet.");
                           }
                         }}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', fontWeight: 'bold', border: 'none', background: '#3b5998', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '10px 20px',
+                          fontWeight: 'bold',
+                          border: 'none',
+                          background: (syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing') ? '#cbd5e1' : '#3b5998',
+                          color: (syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing') ? '#64748b' : '#fff',
+                          borderRadius: '4px',
+                          cursor: (syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing') ? 'not-allowed' : 'pointer'
+                        }}
                       >
                         <Play size={14} />
-                        <span>Force Sync Submission</span>
+                        <span>{ (syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing') ? 'Syncing...' : 'Force Sync Submission' }</span>
                       </button>
                     </>
                   );
