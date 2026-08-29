@@ -1873,6 +1873,28 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
         doc.strokeColor('#002147').lineWidth(0.5).moveTo(30, footerY + 28).lineTo(140, footerY + 28).stroke();
         doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7.5).text("Candidate Signature (Verification)", 30, footerY + 32);
 
+        // Security Verification HMAC QR Code (Center Footer)
+        try {
+            const crypto = require('crypto');
+            const qrImage = require('qr-image');
+            const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
+            const payloadText = `${student.studentId || id}_${type}_${student.eligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE'}`;
+            const hmacHash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 24);
+            
+            const qrPayload = JSON.stringify({
+                sid: student.studentId || id,
+                name: student.name,
+                exam: type,
+                sign: hmacHash
+            });
+            
+            const qrBuffer = qrImage.imageSync(qrPayload, { type: 'png', margin: 1, size: 2 });
+            doc.image(qrBuffer, 270, footerY - 10, { width: 55, height: 55 });
+            doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(5.5).text("SECURITY VERIFICATION QR", 240, footerY + 48, { width: 115, align: 'center' });
+        } catch (qrErr) {
+            console.error("Failed to render security verification QR in PDF:", qrErr);
+        }
+
         // Registrar Sign
         doc.strokeColor('#002147').lineWidth(0.5).moveTo(440, footerY + 28).lineTo(565, footerY + 28).stroke();
         doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7.5).text("Chief Registrar (PE Board Exams)", 440, footerY + 32);
