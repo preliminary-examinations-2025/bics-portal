@@ -2914,21 +2914,69 @@ export default function App() {
                             Synchronization Progress:
                           </h4>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '8.5pt' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing' || syncStatus === 'completed') ? '#10b981' : '#64748b' }}>
-                              <span>{ (syncStatus === 'initiating') ? '⏳' : '✓' }</span>
-                              <span>1. Connecting to BICS Backend Servers...</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '15px', height: '15px' }}>
+                                { syncStatus === 'initiating' ? (
+                                  <Loader2 className="spinner" size={13} style={{ color: '#2563eb' }} />
+                                ) : (
+                                  <Check size={13} style={{ color: '#10b981', strokeWidth: 3 }} />
+                                )}
+                              </span>
+                              <span style={{ color: syncStatus === 'initiating' ? '#1e40af' : '#166534', fontWeight: syncStatus === 'initiating' ? 'bold' : 'normal' }}>
+                                1. Connecting to BICS Backend Servers...
+                              </span>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'uploading' || syncStatus === 'processing' || syncStatus === 'completed') ? '#10b981' : '#64748b' }}>
-                              <span>{ (syncStatus === 'uploading') ? '⏳' : (syncStatus === 'initiating' ? '○' : '✓') }</span>
-                              <span>2. Transferring secure offline answers payload...</span>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '15px', height: '15px' }}>
+                                { syncStatus === 'uploading' ? (
+                                  <Loader2 className="spinner" size={13} style={{ color: '#2563eb' }} />
+                                ) : (syncStatus === 'initiating' ? (
+                                  <span style={{ fontSize: '7pt', color: '#94a3b8' }}>○</span>
+                                ) : (
+                                  <Check size={13} style={{ color: '#10b981', strokeWidth: 3 }} />
+                                ))}
+                              </span>
+                              <span style={{ 
+                                color: syncStatus === 'uploading' ? '#1e40af' : ((syncStatus === 'processing' || syncStatus === 'completed') ? '#166534' : '#64748b'), 
+                                fontWeight: syncStatus === 'uploading' ? 'bold' : 'normal' 
+                              }}>
+                                2. Transferring secure offline answers payload...
+                              </span>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'processing' || syncStatus === 'completed') ? '#10b981' : '#64748b' }}>
-                              <span>{ (syncStatus === 'processing') ? '⏳' : (syncStatus === 'initiating' || syncStatus === 'uploading' ? '○' : '✓') }</span>
-                              <span>3. Executing unit test cases \& proctoring ledgers...</span>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '15px', height: '15px' }}>
+                                { syncStatus === 'processing' ? (
+                                  <Loader2 className="spinner" size={13} style={{ color: '#2563eb' }} />
+                                ) : ((syncStatus === 'initiating' || syncStatus === 'uploading') ? (
+                                  <span style={{ fontSize: '7pt', color: '#94a3b8' }}>○</span>
+                                ) : (
+                                  <Check size={13} style={{ color: '#10b981', strokeWidth: 3 }} />
+                                ))}
+                              </span>
+                              <span style={{ 
+                                color: syncStatus === 'processing' ? '#1e40af' : (syncStatus === 'completed' ? '#166534' : '#64748b'), 
+                                fontWeight: syncStatus === 'processing' ? 'bold' : 'normal' 
+                              }}>
+                                3. Executing unit test cases & proctoring ledgers...
+                              </span>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: (syncStatus === 'completed') ? '#10b981' : (syncStatus === 'failed' ? '#ef4444' : '#64748b') }}>
-                              <span>{ (syncStatus === 'completed') ? '✓' : (syncStatus === 'failed' ? '✗' : '○') }</span>
-                              <span style={{ fontWeight: syncStatus === 'completed' ? 'bold' : 'normal' }}>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '15px', height: '15px' }}>
+                                { syncStatus === 'completed' ? (
+                                  <Check size={13} style={{ color: '#10b981', strokeWidth: 3 }} />
+                                ) : (syncStatus === 'failed' ? (
+                                  <X size={13} style={{ color: '#ef4444', strokeWidth: 3 }} />
+                                ) : (
+                                  <span style={{ fontSize: '7pt', color: '#94a3b8' }}>○</span>
+                                ))}
+                              </span>
+                              <span style={{ 
+                                color: syncStatus === 'completed' ? '#166534' : (syncStatus === 'failed' ? '#991b1b' : '#64748b'), 
+                                fontWeight: (syncStatus === 'completed' || syncStatus === 'failed') ? 'bold' : 'normal' 
+                              }}>
                                 {syncStatus === 'completed' ? '4. Synced successfully! Redirecting...' : (syncStatus === 'failed' ? '4. Sync Failed. Please retry.' : '4. Finalizing database entry...')}
                               </span>
                             </div>
