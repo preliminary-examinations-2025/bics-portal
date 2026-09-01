@@ -25,6 +25,8 @@ const cloudinary = require('cloudinary').v2;
 const { exec } = require('child_process');
 const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
+const crypto = require('crypto');
+const qrImage = require('qr-image');
 require('dotenv').config();
 
 const app = express();
@@ -1671,10 +1673,14 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
 
         // Initialize PDF Document
         const doc = new PDFDocument({ size: 'A4', margin: 30 });
+        doc.page.margins.bottom = 10;
 
-        // Set response headers to prompt inline preview or download
+        // Set response headers to prompt inline preview or download with strict anti-caching
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="hallticket-${type}sem-${student.studentId || id}.pdf"`);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         doc.pipe(res);
 
         // Header Section
@@ -1863,8 +1869,8 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
             35, undertakerY + 16, { width: 525, lineGap: 1 }
         );
 
-        // Footer Signatures & Stamp block (Shifted down for better vertical balance)
-        let footerY = undertakerY + 65;
+        // Footer Signatures & Stamp block (Well-spaced above bottom footer)
+        let footerY = Math.max(undertakerY + 60, 665);
 
         // Candidate Sign
         if (sigBuffer) {
@@ -1873,10 +1879,8 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
         doc.strokeColor('#002147').lineWidth(0.5).moveTo(30, footerY + 28).lineTo(140, footerY + 28).stroke();
         doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7.5).text("Candidate Signature (Verification)", 30, footerY + 32);
 
-        // Security Verification HMAC QR Code (Center Footer, Shifted down and sized to fit)
+        // Security Verification HMAC QR Code (Center Footer)
         try {
-            const crypto = require('crypto');
-            const qrImage = require('qr-image');
             const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
             const payloadText = `${student.studentId || id}_${type}_${student.eligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE'}`;
             const hmacHash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 24);
@@ -1889,8 +1893,8 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
             });
             
             const qrBuffer = qrImage.imageSync(qrPayload, { type: 'png', margin: 1, size: 2 });
-            doc.image(qrBuffer, 272, footerY - 5, { width: 52, height: 52 });
-            doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(5.5).text("SECURITY VERIFICATION QR", 240, footerY + 52, { width: 115, align: 'center' });
+            doc.image(qrBuffer, 270, footerY - 14, { width: 56, height: 56 });
+            doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(5.5).text("SECURITY VERIFICATION QR", 240, footerY + 45, { width: 116, align: 'center', lineBreak: false });
         } catch (qrErr) {
             console.error("Failed to render security verification QR in PDF:", qrErr);
         }
@@ -1899,22 +1903,22 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
         doc.strokeColor('#002147').lineWidth(0.5).moveTo(440, footerY + 28).lineTo(565, footerY + 28).stroke();
         doc.fillColor('#475569').font('Helvetica-Bold').fontSize(7.5).text("Chief Registrar (PE Board Exams)", 440, footerY + 32);
 
-        // Dynamic centered footer metadata (matching main portal)
-        const pdfFooterY = footerY + 90;
-        doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(30, pdfFooterY).lineTo(565, pdfFooterY).stroke();
+        // Page Bottom Footer (Strictly locked to bottom of A4)
+        const pdfFooterY = doc.page.height - 42;
+        doc.strokeColor('#cbd5e1').lineWidth(0.5).moveTo(30, pdfFooterY).lineTo(565, pdfFooterY).stroke();
         
         doc.fillColor('#64748b')
            .font('Helvetica-Bold')
            .fontSize(7)
-           .text("Basic Introductory Computer Science (BICS) Course", 30, pdfFooterY + 8, { align: 'center' });
+           .text("Basic Introductory Computer Science (BICS) Course", 30, pdfFooterY + 6, { align: 'center', lineBreak: false });
            
         doc.font('Helvetica')
            .fontSize(6.5)
-           .text("Conducted by Preliminary Examinations 2026", 30, pdfFooterY + 18, { align: 'center' });
+           .text("Conducted by Preliminary Examinations 2026", 30, pdfFooterY + 15, { align: 'center', lineBreak: false });
            
         doc.font('Helvetica')
            .fontSize(6)
-           .text("© All rights reserved", 30, pdfFooterY + 28, { align: 'center' });
+           .text("© All rights reserved", 30, pdfFooterY + 24, { align: 'center', lineBreak: false });
 
         // Finalize document
         doc.end();

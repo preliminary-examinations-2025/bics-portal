@@ -4444,7 +4444,7 @@ int main() {
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
                         <button 
                           className="cf-btn-primary" 
-                          onClick={() => window.open(`${API_BASE}/candidate/generate-hallticket/${studentProfile.id || studentProfile._id}?type=${systemConfig.examType === 'midsem' ? 'mid' : 'end'}`, '_blank')}
+                          onClick={() => window.open(`${API_BASE}/candidate/generate-hallticket/${studentProfile.id || studentProfile._id}?type=${systemConfig.examType === 'midsem' ? 'mid' : 'end'}&t=${Date.now()}`, '_blank')}
                           style={{ padding: '12px 24px', fontSize: '10.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                         >
                           <Download size={18} /> Download Official Hall Ticket (PDF)
