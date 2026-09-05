@@ -3880,48 +3880,48 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Section 1 */}
+                {/* Section 1: Verification Window & Scope */}
                 <div>
                   <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#1e293b', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <FileText size={15} style={{ color: '#3b5998' }} />
-                    <span>1. Purpose &amp; Scope of Answer Script Verification</span>
+                    <Clock size={15} style={{ color: '#3b5998' }} />
+                    <span>1. 48-Hour Verification Window &amp; Academic Scope</span>
                   </h4>
                   <ul style={{ margin: 0, paddingLeft: '20px', width: '100%', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '8.5pt' }}>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      Candidates are granted transparent access to review their submitted examination responses, official answer keys, and automated testcase evaluation matrices.
+                      <strong>Strict 48-Hour Timeline:</strong> The Answer Script Verification and Grievance Window remains accessible strictly for <strong>48 hours</strong> from the timestamp of result publication. Once this deadline elapses, the verification portal is permanently locked, and all evaluated marks stand final and immutable.
                     </li>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      For Multiple Choice Questions (MCQs), the candidate's marked option is contrasted against the authorized institutional answer key.
+                      <strong>Evaluated Script Access:</strong> Candidates are provided complete visibility into their submitted responses, official MCQ answer keys, compiler logs, and testcase pass/fail execution matrices.
                     </li>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      For Coding &amp; Programming Tasks, candidate source code is evaluated against configured benchmark testcases uniquely indexed under the standardized 6-digit schema: <code>26[Question_No][Testcase_No]</code> (e.g., <code>260101</code>).
+                      <strong>Standardized Evaluation Matrix:</strong> All objective and programming submissions are processed against pre-verified benchmark criteria and sandboxed compiler environments under strict CPU time and memory boundaries.
                     </li>
                   </ul>
                 </div>
 
-                {/* Section 2 */}
+                {/* Section 2: Objection Procedure */}
                 <div>
                   <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#1e293b', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <Flag size={15} style={{ color: '#d97706' }} />
-                    <span>2. Procedure for Lodging an Academic Grievance / Objection</span>
+                    <span>2. Grievance Lodging Protocol &amp; Requirements</span>
                   </h4>
                   <ul style={{ margin: 0, paddingLeft: '20px', width: '100%', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '8.5pt' }}>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      If you observe an evaluation discrepancy or key anomaly, locate the respective question card and select the <strong>"Raise Objection"</strong> action.
+                      <strong>Per-Question Challenge:</strong> If you identify an evaluation anomaly or answer key ambiguity, navigate to that specific question card and click <strong>"Raise Objection"</strong>.
                     </li>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      Select the exact classification category (<em>Testcase Evaluation Discrepancy, Question Key Ambiguity, Valid Alternative Algorithm, or Output Formatting Grievance</em>).
+                      <strong>Specific Technical Substantiation:</strong> Objections must be accompanied by explicit technical reasoning (e.g., citing counter-examples, standard textbook formulas, benchmark output discrepancies, or specific line-level algorithmic logic).
                     </li>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      Articulate a concise, technical, and objective explanation citing relevant problem statements, input/output data, mathematical principles, or source code line numbers.
+                      <strong>Single Active Record:</strong> Only one grievance can remain active per question. Submitting modified remarks before the 48-hour window closes will overwrite any prior filing for that question.
                     </li>
                     <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.6' }}>
-                      Only one active objection may be filed per question; submitting updated remarks replaces any previously registered claim for that question.
+                      <strong>Official Portal Only:</strong> No grievances submitted via email, phone, or in-person will be recognized; all requests must be submitted through this portal.
                     </li>
                   </ul>
                 </div>
 
-                {/* Section 3 */}
+                {/* Section 3: Evaluation Criteria */}
                 <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '14px' }}>
                   <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#1e293b', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <Award size={15} style={{ color: '#059669' }} />
@@ -3945,15 +3945,15 @@ export default function App() {
                         <X size={13} /> Grounds for Summary Rejection:
                       </div>
                       <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '7.5pt', color: '#334155', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.5' }}>Vague, generic, or emotional appeals unsupported by technical or logical proof.</li>
-                        <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.5' }}>Submissions resulting in Time Limit Exceeded (TLE), segmentation faults, or unhandled edge cases.</li>
-                        <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.5' }}>Claims submitted following the conclusion of the scheduled verification window.</li>
+                        <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.5' }}>Vague, generic appeals or requests for sympathetic/grace marks without technical merit.</li>
+                        <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.5' }}>Code failures due to Time Limit Exceeded (TLE), memory limit exceed, syntax errors, or unhandled corner cases.</li>
+                        <li style={{ textAlign: 'justify', textJustify: 'inter-word', lineHeight: '1.5' }}>Claims logged after the conclusion of the 48-hour verification window.</li>
                       </ul>
                     </div>
                   </div>
 
                   <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '10px', fontStyle: 'italic', textAlign: 'justify' }}>
-                    * All determinations rendered by the Academic Evaluation Committee are recorded permanently within the audit trail and represent the final authority.
+                    * In the event of an official key revision or question annulment, score corrections will cascade automatically to all affected candidate transcripts across the institution.
                   </div>
                 </div>
 
