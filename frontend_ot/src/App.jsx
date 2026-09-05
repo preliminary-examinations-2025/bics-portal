@@ -256,6 +256,8 @@ export default function App() {
   const [kickoutCount, setKickoutCount] = useState(5);
 
   // Verification Review & Objection States (for /submissions/:id view)
+  const [verificationInstructionsModalOpen, setVerificationInstructionsModalOpen] = useState(false);
+  const [verificationConsentChecked, setVerificationConsentChecked] = useState(false);
   const [objectionModal, setObjectionModal] = useState({
     isOpen: false,
     questionIndex: null,
@@ -353,6 +355,13 @@ export default function App() {
       setSubmission(data.submission);
       setFlow('verification_review');
       setLoading(false);
+
+      // Check if student has already acknowledged instructions for this submission
+      const ackKey = `bics_verif_ack_${subId}`;
+      if (!localStorage.getItem(ackKey)) {
+        setVerificationInstructionsModalOpen(true);
+        setVerificationConsentChecked(false);
+      }
     } catch (err) {
       console.error("Verification fetch failed:", err);
       setVerifyError("Network Error: Unable to establish secure link to verify evaluated paper.");
@@ -3149,6 +3158,28 @@ export default function App() {
             </div>
 
             <button
+              onClick={() => {
+                setVerificationInstructionsModalOpen(true);
+                setVerificationConsentChecked(true);
+              }}
+              style={{
+                backgroundColor: '#ffffff',
+                color: '#002147',
+                border: '1px solid #cbd5e1',
+                padding: '7px 14px',
+                borderRadius: '6px',
+                fontWeight: '600',
+                fontSize: '8.5pt',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <BookOpen size={14} style={{ color: '#002147' }} /> Instructions &amp; Rules
+            </button>
+
+            <button
               onClick={() => window.location.href = dashboardUrl}
               style={{
                 backgroundColor: '#f8fafc',
@@ -3750,12 +3781,250 @@ export default function App() {
                   className="cf-btn-primary"
                   onClick={handleSubmitObjection}
                   disabled={objectionModal.submitting}
-                  style={{ padding: '8px 18px', fontSize: '9pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  style={{ padding: '8px 20px', fontSize: '9pt', backgroundColor: '#002147', color: '#fff' }}
                 >
-                  {objectionModal.submitting ? <Loader2 className="spinner" size={14} /> : <Send size={14} />}
-                  <span>{objectionModal.submitting ? 'Submitting...' : 'Submit Objection'}</span>
+                  {objectionModal.submitting ? 'Submitting...' : 'Submit Grievance'}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Important Instructions & Grievance Protocol Modal */}
+        {verificationInstructionsModalOpen && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(5px)',
+            zIndex: 10001,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '20px'
+          }}>
+            <div style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '8px',
+              maxWidth: '820px',
+              width: '100%',
+              maxHeight: '92vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1px solid #cbd5e1',
+              overflow: 'hidden'
+            }}>
+              {/* Header */}
+              <div style={{
+                backgroundColor: '#002147',
+                color: '#ffffff',
+                padding: '18px 24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '2px solid #3b5998'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '32px', width: '32px', objectFit: 'contain' }} />
+                  <div>
+                    <h3 style={{ fontSize: '12pt', fontWeight: 'bold', margin: '0 0 2px 0', color: '#ffffff', letterSpacing: '0.3px' }}>
+                      Preliminary Examinations 2026
+                    </h3>
+                    <div style={{ fontSize: '8pt', color: '#94a3b8' }}>
+                      Board of Academic Assessment • Answer Script Verification &amp; Objection Protocol
+                    </div>
+                  </div>
+                </div>
+                <div style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                  color: '#e2e8f0',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  fontSize: '7.5pt',
+                  fontWeight: 'bold',
+                  letterSpacing: '0.5px',
+                  textTransform: 'uppercase'
+                }}>
+                  Mandatory Notice
+                </div>
+              </div>
+
+              {/* Scrollable Content */}
+              <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '9pt', color: '#334155', lineHeight: '1.6' }}>
+                
+                {/* Examination Banner */}
+                <div style={{
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderLeft: '4px solid #002147',
+                  borderRadius: '4px',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '10px'
+                }}>
+                  <div>
+                    <div style={{ fontSize: '7.5pt', textTransform: 'uppercase', color: '#64748b', fontWeight: 'bold' }}>Examination Assessment</div>
+                    <div style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#0f172a' }}>{test?.title || 'Academic Examination'}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: '8pt', color: '#64748b' }}>
+                    <div><strong>Candidate:</strong> {candidate?.name || 'Candidate'} ({candidate?.studentId || 'N/A'})</div>
+                    <div><strong>Session:</strong> Academic Year 2026</div>
+                  </div>
+                </div>
+
+                {/* Section 1 */}
+                <div>
+                  <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <FileText size={15} style={{ color: '#002147' }} />
+                    <span>1. Purpose &amp; Scope of Answer Script Verification</span>
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '8.5pt' }}>
+                    <li>Candidates are granted transparent access to review their submitted examination responses, official answer keys, and automated testcase evaluation matrices.</li>
+                    <li>For Multiple Choice Questions (MCQs), the candidate's marked option is contrasted against the authorized institutional answer key.</li>
+                    <li>For Coding &amp; Programming Tasks, candidate source code is evaluated against configured benchmark testcases uniquely indexed under the standardized 6-digit schema: <code>26[Question_No][Testcase_No]</code> (e.g., <code>260101</code>).</li>
+                  </ul>
+                </div>
+
+                {/* Section 2 */}
+                <div>
+                  <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Flag size={15} style={{ color: '#b45309' }} />
+                    <span>2. Procedure for Lodging an Academic Grievance / Objection</span>
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '8.5pt' }}>
+                    <li>If you observe an evaluation discrepancy or key anomaly, locate the respective question and select the <strong>"Raise Objection"</strong> action.</li>
+                    <li>Select the exact classification category (*Testcase Evaluation Discrepancy, Question Key Ambiguity, Valid Alternative Algorithm, or Output Formatting Grievance*).</li>
+                    <li>Articulate a concise, technical, and objective explanation citing relevant problem statements, input/output data, mathematical principles, or source code line numbers.</li>
+                    <li>Only one active objection may be filed per question; submitting updated remarks replaces any previously registered claim for that question.</li>
+                  </ul>
+                </div>
+
+                {/* Section 3 */}
+                <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '14px' }}>
+                  <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Award size={15} style={{ color: '#047857' }} />
+                    <span>3. Evaluation Committee Review: Criteria for Resolution &amp; Grounds for Rejection</span>
+                  </h4>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '10px 12px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#166534', fontSize: '8pt', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Check size={13} /> Grounds for Favorable Resolution (Marks Revision):
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '7.5pt', color: '#14532d', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <li>Established typographical, computational, or answer-key inaccuracies in official benchmark data.</li>
+                        <li>Valid, mathematically correct alternative algorithms satisfying all time, memory, and boundary constraints.</li>
+                        <li>Autograder environment or compiler runtime anomalies verified by the Academic Board.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '10px 12px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#991b1b', fontSize: '8pt', marginBottom: '4px', display: 'center', alignItems: 'center', gap: '4px' }}>
+                        <X size={13} /> Grounds for Summary Rejection:
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '7.5pt', color: '#7f1d1d', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <li>Vague, generic, or emotional appeals unsupported by technical or logical proof.</li>
+                        <li>Submissions resulting in Time Limit Exceeded (TLE), segmentation faults, or unhandled edge cases.</li>
+                        <li>Claims submitted following the conclusion of the scheduled verification window.</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '8px', fontStyle: 'italic' }}>
+                    * All determinations rendered by the Academic Evaluation Committee are recorded permanently within the audit trail and represent the final authority.
+                  </div>
+                </div>
+
+                {/* Section 4: Mandatory Undertaking */}
+                <div style={{
+                  backgroundColor: '#fffbeb',
+                  border: '1px solid #fcd34d',
+                  borderRadius: '4px',
+                  padding: '12px 14px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '10px'
+                }}>
+                  <input
+                    type="checkbox"
+                    id="verificationUndertakingConsent"
+                    checked={verificationConsentChecked}
+                    onChange={(e) => setVerificationConsentChecked(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', marginTop: '2px', flexShrink: 0 }}
+                  />
+                  <label htmlFor="verificationUndertakingConsent" style={{ fontSize: '8pt', color: '#78350f', cursor: 'pointer', lineHeight: '1.5', fontWeight: '500' }}>
+                    <strong>Candidate Undertaking:</strong> I hereby declare that I have carefully read and understood the Answer Script Verification &amp; Objection Protocol. I undertake to submit only bona fide, technically substantiated academic grievances and agree to abide unconditionally by the final determination of the Academic Evaluation Committee.
+                  </label>
+                </div>
+
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                padding: '12px 24px',
+                borderTop: '1px solid #e2e8f0',
+                backgroundColor: '#f8fafc',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => window.location.href = dashboardUrl}
+                  style={{
+                    backgroundColor: 'transparent',
+                    border: '1px solid #cbd5e1',
+                    color: '#64748b',
+                    padding: '7px 14px',
+                    borderRadius: '4px',
+                    fontSize: '8.5pt',
+                    fontWeight: '600',
+                    cursor: 'pointer'
+                  }}
+                >
+                  ← Return to Portal
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!verificationConsentChecked}
+                  onClick={() => {
+                    if (!verificationConsentChecked) return;
+                    setVerificationInstructionsModalOpen(false);
+                    const subId = submission?._id || submission?.id;
+                    if (subId) {
+                      localStorage.setItem(`bics_verif_ack_${subId}`, 'true');
+                    }
+                  }}
+                  style={{
+                    backgroundColor: verificationConsentChecked ? '#002147' : '#94a3b8',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '8px 20px',
+                    borderRadius: '4px',
+                    fontSize: '8.5pt',
+                    fontWeight: 'bold',
+                    cursor: verificationConsentChecked ? 'pointer' : 'not-allowed',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: verificationConsentChecked ? '0 2px 4px rgba(0,33,71,0.2)' : 'none',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <span>Accept Undertaking &amp; View Script</span>
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+
             </div>
           </div>
         )}
