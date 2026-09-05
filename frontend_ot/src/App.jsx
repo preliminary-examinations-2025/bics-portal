@@ -2589,7 +2589,7 @@ export default function App() {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {sampleCases.map((tc, tcIdx) => (
                                   <div key={tcIdx} style={{ fontSize: '8.5pt', borderBottom: '1px dashed #cbd5e1', paddingBottom: '6px' }}>
-                                    <div style={{ fontWeight: 'bold', color: '#475569', marginBottom: '2px' }}>Case #{tcIdx + 1}:</div>
+                                    <div style={{ fontWeight: 'bold', color: '#475569', marginBottom: '2px' }}>Case 26{String(selectedQuestionIndex + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')}:</div>
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                                       <div>
                                         <span style={{ color: '#64748b' }}>Input: </span>
@@ -2671,7 +2671,7 @@ export default function App() {
                                             ) : (
                                               <X size={14} style={{ color: '#b91c1c' }} />
                                             )}
-                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - {isSample ? `Test Case #${rIdx + 1}` : `Hidden Test Case #${rIdx + 1}`}</span>
+                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - 26{String(selectedQuestionIndex + 1).padStart(2, '0')}{String(rIdx + 1).padStart(2, '0')} ({isSample ? 'Sample' : 'Hidden'})</span>
                                           </span>
                                         </div>
                                         {isSample && (
@@ -3520,7 +3520,9 @@ export default function App() {
 
                               return (
                                 <tr key={tcIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '8px 12px', fontWeight: 'bold' }}>#{tcIdx + 1}</td>
+                                  <td style={{ padding: '8px 12px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                                    26{String(idx + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')}
+                                  </td>
                                   <td style={{ padding: '8px 12px' }}>
                                     <span style={{ fontSize: '7.5pt', padding: '2px 6px', borderRadius: '3px', backgroundColor: tc.isSample ? '#e0e7ff' : '#f1f5f9', color: tc.isSample ? '#4338ca' : '#475569' }}>
                                       {tc.isSample ? 'Sample' : 'Hidden'}

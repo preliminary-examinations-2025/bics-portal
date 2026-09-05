@@ -6486,7 +6486,7 @@ int main() {
                                         <div key={tcIdx} style={{ border: '1px solid #e2e8f0', borderRadius: '4px', padding: '12px', backgroundColor: '#f8fafc' }}>
                                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                             <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#1e293b' }}>
-                                              Test Case #{tcIdx + 1} {!tc.isSample && <span style={{ marginLeft: '6px', fontSize: '7.5pt', color: '#64748b', display: 'inline-flex', alignItems: 'center', gap: '2px' }}><Lock size={10} /> Hidden</span>}
+                                              Test Case 26{String((editingQuestionIdx !== null && editingQuestionIdx !== undefined ? editingQuestionIdx : 0) + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')} {!tc.isSample && <span style={{ marginLeft: '6px', fontSize: '7.5pt', color: '#64748b', display: 'inline-flex', alignItems: 'center', gap: '2px' }}><Lock size={10} /> Hidden</span>}
                                             </span>
                                             <button
                                               type="button"
@@ -7118,7 +7118,7 @@ int main() {
                                               }}>
                                                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
                                                   {isPassed ? <Check size={14} /> : <X size={14} />}
-                                                  <span>Test Case #{rIdx + 1} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
+                                                  <span>Test Case 26{String((testConfig?.questions?.findIndex(q => q.id === ans.questionId) !== -1 ? (testConfig?.questions?.findIndex(q => q.id === ans.questionId) + 1) : 1)).padStart(2, '0')}{String(rIdx + 1).padStart(2, '0')} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
                                                 </span>
                                                 <span style={{ fontSize: '8pt', color: '#64748b' }}>Points: {questionConfig?.testCases?.[rIdx]?.points || 0}</span>
                                               </div>
