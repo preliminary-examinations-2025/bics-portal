@@ -3773,7 +3773,7 @@ export default function App() {
                   className="cf-btn-secondary"
                   onClick={handleCloseObjectionModal}
                   disabled={objectionModal.submitting}
-                  style={{ padding: '8px 16px', fontSize: '9pt' }}
+                  style={{ padding: '7px 16px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #cbd5e1' }}
                 >
                   Cancel
                 </button>
@@ -3781,7 +3781,7 @@ export default function App() {
                   className="cf-btn-primary"
                   onClick={handleSubmitObjection}
                   disabled={objectionModal.submitting}
-                  style={{ padding: '7px 18px', fontSize: '9pt', backgroundColor: '#3b5998', color: '#ffffff', border: '1px solid #2c4273' }}
+                  style={{ padding: '7px 18px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#0f172a', border: '1px solid #64748b', fontWeight: '600' }}
                 >
                   {objectionModal.submitting ? 'Submitting...' : 'Submit Grievance'}
                 </button>
@@ -3861,7 +3861,7 @@ export default function App() {
                 <div style={{
                   backgroundColor: '#f8fafc',
                   border: '1px solid #e2e8f0',
-                  borderLeft: '4px solid #3b5998',
+                  borderLeft: '4px solid #64748b',
                   borderRadius: '4px',
                   padding: '12px 16px',
                   display: 'flex',
@@ -3883,7 +3883,7 @@ export default function App() {
                 {/* Section 1: Verification Window & Scope */}
                 <div>
                   <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#1e293b', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Clock size={15} style={{ color: '#3b5998' }} />
+                    <Clock size={15} style={{ color: '#475569' }} />
                     <span>1. 48-Hour Verification Window &amp; Academic Scope</span>
                   </h4>
                   <ul style={{ margin: 0, paddingLeft: '20px', width: '100%', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '8.5pt' }}>
@@ -3961,7 +3961,7 @@ export default function App() {
                 <div style={{
                   backgroundColor: '#f8fafc',
                   border: '1px solid #cbd5e1',
-                  borderLeft: '4px solid #3b5998',
+                  borderLeft: '4px solid #64748b',
                   borderRadius: '4px',
                   padding: '12px 14px',
                   display: 'flex',
@@ -4001,7 +4001,7 @@ export default function App() {
                     padding: '7px 16px',
                     borderRadius: '4px',
                     fontSize: '8.5pt',
-                    fontWeight: '600',
+                    fontWeight: '500',
                     cursor: 'pointer',
                     transition: 'all 0.15s ease'
                   }}
@@ -4021,17 +4021,18 @@ export default function App() {
                     }
                   }}
                   style={{
-                    backgroundColor: verificationConsentChecked ? '#3b5998' : '#f1f5f9',
-                    color: verificationConsentChecked ? '#ffffff' : '#94a3b8',
-                    border: `1px solid ${verificationConsentChecked ? '#2c4273' : '#cbd5e1'}`,
+                    backgroundColor: verificationConsentChecked ? '#ffffff' : '#f8fafc',
+                    color: verificationConsentChecked ? '#0f172a' : '#94a3b8',
+                    border: `1px solid ${verificationConsentChecked ? '#64748b' : '#cbd5e1'}`,
                     padding: '7px 18px',
                     borderRadius: '4px',
                     fontSize: '8.5pt',
-                    fontWeight: 'bold',
+                    fontWeight: '600',
                     cursor: verificationConsentChecked ? 'pointer' : 'not-allowed',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '6px',
+                    boxShadow: verificationConsentChecked ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
                     transition: 'all 0.15s ease'
                   }}
                 >
