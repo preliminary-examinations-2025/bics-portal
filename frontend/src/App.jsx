@@ -1781,11 +1781,38 @@ int main() {
     e.preventDefault();
     if (!selectedExamSubmission) return;
 
+    const testConfig = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
+
     // Automatically calculate total coding score from individual fields
     const totalCodingScore = Object.entries(adminGradingAnswers).reduce((sum, [qId, score]) => {
       const ans = selectedExamSubmission.answers?.find(a => a.questionId === qId);
       return (ans && (ans.type === 'coding' || ans.type === 'web')) ? sum + Number(score || 0) : sum;
     }, 0);
+
+    const updatedAnswers = selectedExamSubmission.answers?.map(ans => {
+      const questionConfig = testConfig?.questions?.find(q => q.id === ans.questionId);
+      const evalRes = codingEvaluationResults[ans.questionId];
+
+      let updatedTestCaseResults = ans.testCaseResults;
+      if (evalRes && evalRes.results && Array.isArray(evalRes.results) && evalRes.results.length > 0) {
+        updatedTestCaseResults = evalRes.results.map((r, rIdx) => {
+          const tc = questionConfig?.testCases?.[rIdx];
+          const isAccepted = r.status === 'Accepted';
+          const pts = tc ? Number(tc.points || 0) : 0;
+          return {
+            status: r.status || (isAccepted ? 'Accepted' : 'Wrong Answer'),
+            points: pts,
+            scoredPoints: isAccepted ? pts : 0
+          };
+        });
+      }
+
+      return {
+        ...ans,
+        score: (ans.type === 'coding' || ans.type === 'web') ? Number(adminGradingAnswers[ans.questionId] || 0) : ans.score,
+        testCaseResults: updatedTestCaseResults || ans.testCaseResults
+      };
+    });
 
     try {
       const res = await fetch(`${API_BASE}/admin/tests/evaluate/${selectedExamSubmission.id || selectedExamSubmission._id}`, {
@@ -1796,10 +1823,7 @@ int main() {
           feedback: adminGradingFeedback,
           reevaluationStatus: selectedExamSubmission.reevaluation?.applied ? adminReevalStatus : undefined,
           resolutionFeedback: selectedExamSubmission.reevaluation?.applied ? adminReevalResolutionFeedback : undefined,
-          answers: selectedExamSubmission.answers?.map(ans => ({
-            ...ans,
-            score: (ans.type === 'coding' || ans.type === 'web') ? Number(adminGradingAnswers[ans.questionId] || 0) : ans.score
-          }))
+          answers: updatedAnswers
         })
       });
       const data = await res.json();
@@ -1835,14 +1859,29 @@ int main() {
       const data = await res.json();
       
       if (res.ok) {
+        const resultsList = data.results || [];
         setCodingEvaluationResults(prev => ({
           ...prev,
           [questionId]: {
             isRunning: false,
-            results: data.results || [],
+            results: resultsList,
             compileError: data.status === 'Compilation Error' ? data.compileError : null,
             success: data.success
           }
+        }));
+
+        // Calculate auto-evaluated score based on compiler testcase verdicts
+        let autoPoints = 0;
+        resultsList.forEach((r, rIdx) => {
+          if (r.status === 'Accepted') {
+            autoPoints += Number(testCases[rIdx]?.points || 0);
+          }
+        });
+
+        // Update score in grading form
+        setAdminGradingAnswers(prev => ({
+          ...prev,
+          [questionId]: autoPoints
         }));
       } else {
         setCodingEvaluationResults(prev => ({

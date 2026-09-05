@@ -3515,7 +3515,7 @@ export default function App() {
                               const isPassed = isAcceptedStatus || (tcRes.scoredPoints !== undefined && Number(tcRes.scoredPoints) > 0) || (isFull && (!ans.testCaseResults || ans.testCaseResults.length === 0));
                               
                               const pointsScored = tcRes.scoredPoints !== undefined ? Number(tcRes.scoredPoints) : (isPassed ? Number(tc.points || 15) : 0);
-                              const maxPoints = tcRes.points !== undefined ? Number(tcRes.points) : Number(tc.points || 15);
+                              const maxPoints = tc.points !== undefined ? Number(tc.points) : (tcRes.points !== undefined ? Number(tcRes.points) : 15);
                               const displayVerdict = tcRes.status ? (isPassed ? `✓ ${tcRes.status}` : `✗ ${tcRes.status}`) : (isPassed ? '✓ Accepted (Passed)' : '✗ Failed / Mismatch');
 
                               return (
