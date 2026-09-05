@@ -487,6 +487,9 @@ const QuestionSchema = new mongoose.Schema({
     id: String,
     type: String, // 'mcq', 'coding', or 'web'
     title: String,
+    questionText: String,
+    question: String,
+    statement: String,
     points: Number,
     section: String,
     // MCQ
@@ -503,7 +506,7 @@ const QuestionSchema = new mongoose.Schema({
     initialCss: String,
     initialJs: String,
     imageUrl: String
-}, { _id: false });
+}, { _id: false, strict: false });
 
 const TestConfigSchema = new mongoose.Schema({
     title: String,
@@ -513,7 +516,8 @@ const TestConfigSchema = new mongoose.Schema({
     startDate: Date,
     endDate: Date,
     questions: [QuestionSchema],
-    answersReleased: { type: Boolean, default: false }, // Admin release toggle for answer sheets
+    answersReleased: { type: Boolean, default: false }, // Admin release toggle for answer sheets (legacy)
+    verificationStatus: { type: String, enum: ['not_released', 'released', 'closed'], default: 'not_released' }, // 3-state verification status
     isPublished: { type: Boolean, default: false } // Admin display/publish toggle for student visibility
 });
 const TestConfigModel = mongoose.model('TestConfigV2', TestConfigSchema, 'testconfigs_v2');
@@ -569,7 +573,18 @@ const TestSubmissionSchema = new mongoose.Schema({
         proofImages: [String],
         status: { type: String, default: 'pending' }, // 'pending', 'resolved', 'rejected'
         resolutionFeedback: String
-    }
+    },
+    objections: [{
+        questionId: String,
+        questionIndex: Number,
+        reason: String,
+        details: String,
+        status: { type: String, default: 'pending' }, // 'pending', 'resolved', 'rejected'
+        raisedAt: { type: Date, default: Date.now },
+        adminRemarks: { type: String, default: '' },
+        resolvedMarks: Number,
+        resolvedAt: Date
+    }]
 }, { versionKey: false });
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
 
@@ -2307,7 +2322,8 @@ app.get('/api/tests/submitted', async (req, res) => {
 
             if (!test) return null;
 
-            const isReleased = !!test.answersReleased;
+            const vStatus = test.verificationStatus || (test.answersReleased ? 'released' : 'not_released');
+            const isReleased = (vStatus === 'released');
 
             return {
                 id: testId,
@@ -2316,6 +2332,7 @@ app.get('/api/tests/submitted', async (req, res) => {
                 startDate: test.startDate,
                 endDate: test.endDate,
                 answersReleased: isReleased,
+                verificationStatus: vStatus,
                 submission: {
                     id: sub._id || sub.id,
                     status: sub.status,
@@ -2323,6 +2340,7 @@ app.get('/api/tests/submitted', async (req, res) => {
                     proctoringLog: sub.proctoringLog,
                     evaluation: sub.evaluation,
                     reevaluation: sub.reevaluation,
+                    objections: sub.objections || [],
                     answers: isReleased ? sub.answers : [],
                     questions: isReleased ? test.questions : []
                 }
@@ -2726,20 +2744,25 @@ app.get('/api/admin/tests', async (req, res) => {
     }
 });
 
-// 5b. Toggle answers release state for candidate answer sheets view (Admin only)
-app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
+// 5b. Set verification status for answer sheets (Admin only: not_released | released | closed)
+app.post('/api/admin/tests/set-verification-status/:id', async (req, res) => {
     const { id } = req.params;
+    const { status } = req.body;
+    if (!['not_released', 'released', 'closed'].includes(status)) {
+        return res.status(400).json({ success: false, error: "Invalid status. Must be 'not_released', 'released', or 'closed'." });
+    }
     try {
-        let answersReleased = false;
+        let updatedStatus = status;
+        let isReleased = (status === 'released');
         if (useMongo) {
             const test = await TestConfigModel.findById(id);
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
-            test.answersReleased = !test.answersReleased;
+            test.verificationStatus = status;
+            test.answersReleased = isReleased;
             await test.save();
-            answersReleased = test.answersReleased;
-            await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Toggled answersReleased for test "${test.title}" (${id}) to ${answersReleased}`, 'info');
+            await logSystemAction('admin', 'VERIFICATION_STATUS_CHANGE', `Set verificationStatus for test "${test.title}" (${id}) to ${status}`, 'info');
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
@@ -2747,12 +2770,63 @@ app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
-            test.answersReleased = !test.answersReleased;
+            test.verificationStatus = status;
+            test.answersReleased = isReleased;
+            saveJSONData(db);
+            await logSystemAction('admin', 'VERIFICATION_STATUS_CHANGE', `Set verificationStatus for test "${test.title}" (${id}) to ${status}`, 'info');
+        }
+        return res.json({ success: true, verificationStatus: updatedStatus, answersReleased: isReleased });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 5c. Toggle answers release state for candidate answer sheets view (Admin only)
+app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    try {
+        let verificationStatus = 'not_released';
+        let answersReleased = false;
+        if (useMongo) {
+            const test = await TestConfigModel.findById(id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
+            }
+            if (status && ['not_released', 'released', 'closed'].includes(status)) {
+                test.verificationStatus = status;
+            } else {
+                if (!test.verificationStatus || test.verificationStatus === 'not_released') test.verificationStatus = 'released';
+                else if (test.verificationStatus === 'released') test.verificationStatus = 'closed';
+                else test.verificationStatus = 'not_released';
+            }
+            test.answersReleased = (test.verificationStatus === 'released');
+            await test.save();
+            verificationStatus = test.verificationStatus;
+            answersReleased = test.answersReleased;
+            await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Updated verificationStatus for test "${test.title}" (${id}) to ${verificationStatus}`, 'info');
+        } else {
+            const db = getJSONData();
+            db.tests = db.tests || [];
+            const test = db.tests.find(t => t.id === id || t._id === id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
+            }
+            if (status && ['not_released', 'released', 'closed'].includes(status)) {
+                test.verificationStatus = status;
+            } else {
+                if (!test.verificationStatus || test.verificationStatus === 'not_released') test.verificationStatus = 'released';
+                else if (test.verificationStatus === 'released') test.verificationStatus = 'closed';
+                else test.verificationStatus = 'not_released';
+            }
+            test.answersReleased = (test.verificationStatus === 'released');
+            verificationStatus = test.verificationStatus;
             answersReleased = test.answersReleased;
             saveJSONData(db);
-            await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Toggled answersReleased for test "${test.title}" (${id}) to ${answersReleased}`, 'info');
+            await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Updated verificationStatus for test "${test.title}" (${id}) to ${verificationStatus}`, 'info');
         }
-        return res.json({ success: true, answersReleased });
+        return res.json({ success: true, verificationStatus, answersReleased });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: e.message });
@@ -2801,6 +2875,17 @@ app.post('/api/admin/tests', async (req, res) => {
     }
 
     try {
+        const normalizedQuestions = (questions || []).map(q => {
+            const qObj = q.toObject ? q.toObject() : { ...q };
+            const mainText = qObj.questionText || qObj.title || qObj.description || qObj.question || qObj.statement || '';
+            return {
+                ...qObj,
+                title: qObj.title || mainText,
+                questionText: qObj.questionText || mainText,
+                description: qObj.description || mainText
+            };
+        });
+
         let savedTest = null;
         const testId = _id || id;
         if (useMongo) {
@@ -2814,11 +2899,11 @@ app.post('/api/admin/tests', async (req, res) => {
                 savedTest.duration = Number(duration || 60);
                 savedTest.startDate = new Date(startDate);
                 savedTest.endDate = new Date(endDate);
-                savedTest.questions = questions || [];
+                savedTest.questions = normalizedQuestions;
                 if (isPublished !== undefined) savedTest.isPublished = isPublished;
                 await savedTest.save();
             } else {
-                savedTest = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions, isPublished: isPublished || false });
+                savedTest = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions: normalizedQuestions, isPublished: isPublished || false });
                 await savedTest.save();
             }
         } else {
@@ -2835,7 +2920,7 @@ app.post('/api/admin/tests', async (req, res) => {
                         duration: Number(duration || 60),
                         startDate,
                         endDate,
-                        questions: questions || []
+                        questions: normalizedQuestions
                     };
                     if (isPublished !== undefined) db.tests[idx].isPublished = isPublished;
                     savedTest = db.tests[idx];
@@ -2851,7 +2936,7 @@ app.post('/api/admin/tests', async (req, res) => {
                     duration: Number(duration || 60),
                     startDate,
                     endDate,
-                    questions: questions || [],
+                    questions: normalizedQuestions,
                     answersReleased: false,
                     isPublished: isPublished || false
                 };
@@ -3047,6 +3132,296 @@ app.post('/api/tests/reevaluation/:submissionId', async (req, res) => {
         console.error(e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to register candidate complaint for submission ID ${submissionId}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
+    }
+});
+
+// 10b. Get Submission Verification Data for OT Terminal
+app.get('/api/tests/submission-verification/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        let submission = null;
+        if (useMongo) {
+            submission = await TestSubmissionModel.findById(id);
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === id || s._id === id);
+        }
+
+        if (!submission) {
+            return res.status(404).json({ success: false, error: "Submission not found." });
+        }
+
+        let test = null;
+        let student = null;
+        if (useMongo) {
+            test = await TestConfigModel.findById(submission.testId);
+            student = await CandidateModel.findById(submission.candidateId);
+        } else {
+            const db = getJSONData();
+            db.tests = db.tests || [];
+            db.candidates = db.candidates || [];
+            test = db.tests.find(t => t.id === String(submission.testId) || t._id === String(submission.testId));
+            student = db.candidates.find(c => c.id === String(submission.candidateId) || c._id === String(submission.candidateId));
+        }
+
+        if (!test) {
+            return res.status(404).json({ success: false, error: "Associated examination configuration not found." });
+        }
+
+        const vStatus = test.verificationStatus || (test.answersReleased ? 'released' : 'not_released');
+
+        // Security Gate: Check if verification window is open
+        if (vStatus === 'closed') {
+            return res.status(403).json({
+                success: false,
+                locked: true,
+                verificationStatus: 'closed',
+                error: "The answer sheet verification window for this examination has closed. Evaluated answer sheets are no longer accessible."
+            });
+        }
+
+        if (vStatus === 'not_released') {
+            return res.status(403).json({
+                success: false,
+                locked: true,
+                verificationStatus: 'not_released',
+                error: "Answer sheets for this examination have not been released by the administrator yet."
+            });
+        }
+
+        return res.json({
+            success: true,
+            verificationStatus: vStatus,
+            candidate: {
+                id: student?._id || student?.id || submission.candidateId,
+                name: student?.name || submission.candidateName || 'Candidate',
+                studentId: student?.studentId || submission.studentId || '',
+                email: student?.registrationData?.collegeEmail || student?.registrationData?.personalEmail || student?.username || 'candidate@bics.edu',
+                photoUrl: student?.registrationData?.photoUrl || '/public/uploads/default-photo.png'
+            },
+            test: {
+                id: test._id || test.id,
+                title: test.title,
+                duration: test.duration,
+                marks: test.marks,
+                instructions: test.instructions,
+                verificationStatus: vStatus,
+                questions: test.questions || []
+            },
+            submission: {
+                id: submission._id || submission.id,
+                status: submission.status,
+                startedAt: submission.startedAt,
+                submittedAt: submission.submittedAt,
+                proctoringLog: submission.proctoringLog,
+                evaluation: submission.evaluation,
+                reevaluation: submission.reevaluation,
+                objections: submission.objections || [],
+                answers: submission.answers || []
+            }
+        });
+    } catch (err) {
+        console.error("Failed to fetch submission verification data:", err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 10c. Candidate Raise Objection on a specific question
+app.post('/api/tests/objection/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    const { questionId, questionIndex, reason, details } = req.body;
+
+    if (!questionId && questionIndex === undefined) {
+        return res.status(400).json({ success: false, error: "Question reference is required." });
+    }
+    if (!reason || !details) {
+        return res.status(400).json({ success: false, error: "Objection reason and details are required." });
+    }
+
+    try {
+        let submission = null;
+        let test = null;
+        if (useMongo) {
+            submission = await TestSubmissionModel.findById(submissionId);
+            if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+            test = await TestConfigModel.findById(submission.testId);
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+            db.tests = db.tests || [];
+            test = db.tests.find(t => t.id === String(submission.testId) || t._id === String(submission.testId));
+        }
+
+        if (test) {
+            const vStatus = test.verificationStatus || (test.answersReleased ? 'released' : 'not_released');
+            if (vStatus === 'closed') {
+                return res.status(403).json({ success: false, error: "The objection and grievance window for this examination has been closed." });
+            }
+            if (vStatus === 'not_released') {
+                return res.status(403).json({ success: false, error: "Answer sheets for this examination have not been released yet." });
+            }
+        }
+
+        if (useMongo) {
+            submission.objections = submission.objections || [];
+            submission.objections = submission.objections.filter(o => o.questionIndex !== Number(questionIndex));
+            
+            const newObj = {
+                questionId: String(questionId || ''),
+                questionIndex: Number(questionIndex || 0),
+                reason: reason.trim(),
+                details: details.trim(),
+                status: 'pending',
+                raisedAt: new Date()
+            };
+            submission.objections.push(newObj);
+            submission.markModified('objections');
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            submission.objections = submission.objections || [];
+            submission.objections = submission.objections.filter(o => o.questionIndex !== Number(questionIndex));
+
+            const newObj = {
+                questionId: String(questionId || ''),
+                questionIndex: Number(questionIndex || 0),
+                reason: reason.trim(),
+                details: details.trim(),
+                status: 'pending',
+                raisedAt: new Date()
+            };
+            submission.objections.push(newObj);
+            saveJSONData(db);
+        }
+
+        await logSystemAction(submission.candidateName || 'Candidate', 'OBJECTION_RAISED', `Candidate raised objection for Question #${Number(questionIndex) + 1} on submission ${submissionId}: ${reason}`, 'info');
+        return res.json({ success: true, message: "Objection submitted successfully.", objections: submission.objections });
+    } catch (err) {
+        console.error("Failed to submit objection:", err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 10d. Admin Resolve Question Objection
+app.post('/api/admin/tests/objection/resolve', async (req, res) => {
+    const { submissionId, questionIndex, status, adminRemarks, revisedMarks } = req.body;
+
+    if (!submissionId || questionIndex === undefined || !status) {
+        return res.status(400).json({ success: false, error: "Submission ID, questionIndex, and status are required." });
+    }
+
+    try {
+        let submission = null;
+        if (useMongo) {
+            submission = await TestSubmissionModel.findById(submissionId);
+            if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+
+            submission.objections = submission.objections || [];
+            const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex));
+            if (!obj) return res.status(404).json({ success: false, error: "Objection not found." });
+
+            obj.status = status; // 'resolved' or 'rejected'
+            obj.adminRemarks = adminRemarks || '';
+            obj.resolvedAt = new Date();
+            if (revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
+                obj.resolvedMarks = Number(revisedMarks);
+                if (submission.answers && submission.answers[questionIndex]) {
+                    submission.answers[questionIndex].score = Number(revisedMarks);
+                }
+                let totalCoding = 0;
+                submission.answers.forEach(a => {
+                    if (a.type === 'coding' || a.type === 'web') {
+                        totalCoding += (a.score || 0);
+                    }
+                });
+                submission.evaluation.codingScore = totalCoding;
+            }
+            submission.markModified('objections');
+            submission.markModified('answers');
+            submission.markModified('evaluation');
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+
+            submission.objections = submission.objections || [];
+            const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex));
+            if (!obj) return res.status(404).json({ success: false, error: "Objection not found." });
+
+            obj.status = status;
+            obj.adminRemarks = adminRemarks || '';
+            obj.resolvedAt = new Date();
+            if (revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
+                obj.resolvedMarks = Number(revisedMarks);
+                if (submission.answers && submission.answers[questionIndex]) {
+                    submission.answers[questionIndex].score = Number(revisedMarks);
+                }
+                let totalCoding = 0;
+                submission.answers.forEach(a => {
+                    if (a.type === 'coding' || a.type === 'web') {
+                        totalCoding += (a.score || 0);
+                    }
+                });
+                submission.evaluation.codingScore = totalCoding;
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction('admin', 'OBJECTION_RESOLVED', `Admin resolved objection for Question #${Number(questionIndex) + 1} on submission ${submissionId} with status ${status}`, 'info');
+        return res.json({ success: true, message: `Objection marked as ${status}.`, submission });
+    } catch (err) {
+        console.error("Failed to resolve objection:", err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 10e. Admin Get All Objections
+app.get('/api/admin/objections', async (req, res) => {
+    try {
+        let submissions = [];
+        if (useMongo) {
+            submissions = await TestSubmissionModel.find({ "objections.0": { $exists: true } }).lean();
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submissions = db.testSubmissions.filter(s => s.objections && s.objections.length > 0);
+        }
+
+        const allObjections = [];
+        submissions.forEach(sub => {
+            (sub.objections || []).forEach(obj => {
+                allObjections.push({
+                    submissionId: sub._id || sub.id,
+                    candidateId: sub.candidateId,
+                    candidateName: sub.candidateName,
+                    studentId: sub.studentId,
+                    testId: sub.testId,
+                    testTitle: sub.testTitle,
+                    submittedAt: sub.submittedAt,
+                    questionIndex: obj.questionIndex,
+                    questionId: obj.questionId,
+                    reason: obj.reason,
+                    details: obj.details,
+                    status: obj.status,
+                    raisedAt: obj.raisedAt,
+                    adminRemarks: obj.adminRemarks,
+                    resolvedMarks: obj.resolvedMarks,
+                    resolvedAt: obj.resolvedAt,
+                    submittedAnswer: sub.answers ? sub.answers[obj.questionIndex] : null
+                });
+            });
+        });
+
+        allObjections.sort((a, b) => new Date(b.raisedAt) - new Date(a.raisedAt));
+        return res.json(allObjections);
+    } catch (err) {
+        console.error("Failed to fetch admin objections:", err);
+        return res.status(500).json({ error: err.message });
     }
 });
 

@@ -5,7 +5,7 @@ import {
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Loader2, Clock, XCircle, Image, FileEdit, Activity,
   Volume2, VolumeX, Eye, Play, Pause, RefreshCw, Trash2, Ticket, Mail, LifeBuoy,
-  Check, Plus, Code, Home, Phone, Layers, Printer, ExternalLink, Download
+  Check, Plus, Code, Home, Phone, Layers, Printer, ExternalLink, Download, Flag
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -877,6 +877,20 @@ export default function App() {
   const [adminActiveWebTabs, setAdminActiveWebTabs] = useState({});
   const [studentActiveWebTabs, setStudentActiveWebTabs] = useState({});
 
+  // Admin Objections states
+  const [adminObjectionsList, setAdminObjectionsList] = useState([]);
+  const [adminObjectionsFilter, setAdminObjectionsFilter] = useState('all');
+  const [adminObjectionModal, setAdminObjectionModal] = useState({
+    isOpen: false,
+    objection: null,
+    status: 'resolved',
+    revisedMarks: 0,
+    adminRemarks: '',
+    submitting: false,
+    error: '',
+    success: ''
+  });
+
   // Student exam workspace draft state variables
   // Digital Submission Tracker States
   const [studentSubmissions, setStudentSubmissions] = useState([]);
@@ -1482,7 +1496,7 @@ int main() {
           ? 'http://localhost:5174'
           : `${window.location.origin.replace('bics-portal', 'ot-bics').replace('bicsportal', 'otbicsexam')}`
       );
-      const examUrl = `${otBaseUrl}/?token=${data.token}`;
+      const examUrl = `${otBaseUrl}/test?token=${data.token}`;
       
       setTimeout(() => {
         window.location.href = examUrl;
@@ -2379,6 +2393,49 @@ int main() {
     setAdminClassTests(list);
   };
 
+  const fetchAdminObjections = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/objections`);
+      if (res.ok) {
+        const data = await res.json();
+        setAdminObjectionsList(data || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch admin objections:", err);
+    }
+  };
+
+  const handleResolveObjection = async (e) => {
+    if (e) e.preventDefault();
+    if (!adminObjectionModal.objection) return;
+    setAdminObjectionModal(prev => ({ ...prev, submitting: true, error: '', success: '' }));
+    try {
+      const res = await fetch(`${API_BASE}/admin/tests/objection/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submissionId: adminObjectionModal.objection.submissionId,
+          questionIndex: adminObjectionModal.objection.questionIndex,
+          status: adminObjectionModal.status,
+          adminRemarks: adminObjectionModal.adminRemarks,
+          revisedMarks: adminObjectionModal.status === 'resolved' ? Number(adminObjectionModal.revisedMarks || 0) : undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAdminObjectionModal(prev => ({ ...prev, submitting: false, success: 'Objection status and marks updated successfully.' }));
+        setTimeout(() => {
+          setAdminObjectionModal(prev => ({ ...prev, isOpen: false }));
+          fetchAdminObjections();
+        }, 1000);
+      } else {
+        setAdminObjectionModal(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to resolve objection.' }));
+      }
+    } catch (err) {
+      setAdminObjectionModal(prev => ({ ...prev, submitting: false, error: 'Network error communicating with backend.' }));
+    }
+  };
+
   const handleChangePassword = async (e) => {
     e.preventDefault();
     setPwdError('');
@@ -2687,7 +2744,7 @@ int main() {
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions'].includes(view);
+      return ['admin', 'admin_candidates', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections'].includes(view);
     }
     
     if (user.role === 'student') {
@@ -2767,9 +2824,6 @@ int main() {
                   <button className={`sidebar-item ${view === 'admin_coursework' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_coursework'); setIsMobileSidebarOpen(false); }}>
                     <BookOpen size={16} /> Coursework
                   </button>
-                  <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
-                    <ClipboardList size={16} /> Tests Manager
-                  </button>
                   <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs(); }}>
                     <Activity size={16} /> System Logs
                   </button>
@@ -2781,6 +2835,17 @@ int main() {
                   </button>
                   <button className={`sidebar-item ${view === 'admin_submissions' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_submissions'); setIsMobileSidebarOpen(false); fetchAdminSubmissions(); }}>
                     <Layers size={16} /> Submissions Tracker
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
+                    <ClipboardList size={16} /> Tests Manager
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_objections' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_objections'); setIsMobileSidebarOpen(false); fetchAdminObjections(); }}>
+                    <Flag size={16} style={{ color: '#b45309' }} /> Examination Objections
+                    {adminObjectionsList.filter(o => o.status === 'pending').length > 0 && (
+                      <span style={{ marginLeft: 'auto', backgroundColor: '#ef4444', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                        {adminObjectionsList.filter(o => o.status === 'pending').length}
+                      </span>
+                    )}
                   </button>
                 </>
               ) : (
@@ -4463,630 +4528,206 @@ int main() {
                 </div>
               )}
             </div>
-          )}
-          {view === 'verification' && (
+          )}          {view === 'verification' && (
             <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <BookOpen size={16} />
+                <BookOpen size={18} style={{ color: '#3b5998' }} />
                 <span>Evaluated Answer Sheet Verification</span>
               </div>
 
+              <p style={{ fontSize: '9.5pt', color: '#475569', margin: 0, lineHeight: 1.5 }}>
+                Official evaluated examination answer sheets, score distributions, and answer keys are accessible here. You can click <strong>Verify Evaluated Paper</strong> to review your complete evaluated submission in the dedicated Online Test Review Terminal.
+              </p>
+
               {submittedTestsList.length === 0 ? (
                 <div className="cf-alert cf-alert-info">
-                  No submitted tests or evaluated responses are available on your candidate profile at this moment.
+                  No submitted tests or evaluated examination records are found on your candidate profile at this moment.
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  
-                  {/* Select Dropdown */}
-                  <div className="cf-input-group">
-                    <label className="cf-label" style={{ fontWeight: 'bold' }}>Select Completed Exam:</label>
-                    <select
-                      className="cf-input"
-                      value={selectedVerificationTestId}
-                      onChange={(e) => setSelectedVerificationTestId(e.target.value)}
-                      style={{ padding: '8px 12px', fontSize: '9.5pt' }}
-                    >
-                      {submittedTestsList.map((st, sIdx) => (
-                        <option key={sIdx} value={st.id || st._id}>
-                          {st.title} (Submitted: {new Date(st.submission.submittedAt || st.submission.startedAt).toLocaleString()})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {submittedTestsList.map((st, sIdx) => {
+                    const sub = st.submission || {};
+                    const vStatus = st.verificationStatus || (st.answersReleased ? 'released' : 'not_released');
+                    const isReleased = (vStatus === 'released' || vStatus === 'closed');
+                    const totalScored = Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0);
+                    const totalMax = Number(st.marks || 0);
+                    const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
+                    const objectionsCount = (sub.objections || []).length;
 
-                  {(() => {
-                    const activeVer = submittedTestsList.find(st => (st.id || st._id) === selectedVerificationTestId);
-                    if (!activeVer) return null;
+                    const otBase = import.meta.env.VITE_OT_URL || (
+                      window.location.origin.includes('localhost')
+                        ? 'http://localhost:5174'
+                        : `${window.location.origin.replace('bics-portal', 'ot-bics').replace('bicsportal', 'otbicsexam')}`
+                    );
 
-                    if (!activeVer.answersReleased) {
-                      return (
-                        <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
-                          <ShieldAlert size={28} style={{ color: '#0284c7' }} />
-                          <div>
-                            <strong>Answer Sheets Locked:</strong><br />
-                            The administrator has not released the evaluated answer sheets for <strong>{activeVer.title}</strong> yet. Evaluation results will be published once grading is finalized.
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    // Render released evaluated answer sheet!
-                    const sub = activeVer.submission;
                     return (
-                      <div style={{ borderTop: '2px solid #3b5998', paddingTop: '20px', display: 'flex', flexDirection: 'column', gap: '25px' }}>
-                        
-                        {/* Grades Card */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', padding: '15px', borderRadius: '6px' }}>
+                      <div
+                        key={sIdx}
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderRadius: '8px',
+                          border: `1px solid ${isReleased ? '#cbd5e1' : '#e2e8f0'}`,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                          padding: '20px 24px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '14px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                           <div>
-                            <h4 style={{ fontSize: '10pt', color: '#002147', fontWeight: 'bold', margin: '0 0 6px 0' }}>Evaluation Grades Overview:</h4>
-                            <div style={{ fontSize: '9pt', color: '#555', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <div>MCQ Marks: <strong>{sub.evaluation?.mcqScore || 0} marks</strong></div>
-                              <div>Coding Marks: <strong>{sub.evaluation?.codingScore || 0} marks</strong></div>
-                              <div>Total Grade: <strong>{Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0)} / {activeVer.marks} marks</strong></div>
+                            <h3 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: '0 0 4px 0' }}>
+                              {st.title}
+                            </h3>
+                            <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                              Submitted on: {new Date(sub.submittedAt || sub.startedAt || Date.now()).toLocaleString()}
                             </div>
                           </div>
-                          <div style={{ borderLeft: '1px solid #cbd5e1', paddingLeft: '15px' }}>
-                            <h4 style={{ fontSize: '10pt', color: '#002147', fontWeight: 'bold', margin: '0 0 6px 0' }}>Proctoring Compliance Log:</h4>
-                            <div style={{ fontSize: '9pt', color: '#555', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <div>Fullscreen Exits: <strong>{sub.proctoringLog?.fullscreenExits || 0} warnings</strong></div>
-                              <div>Tab Switches / Focus Loss: <strong>{sub.proctoringLog?.tabSwitches || 0} warnings</strong></div>
-                              <div>Webcam Status: <strong>{sub.proctoringLog?.webcamStatus || 'Active'}</strong></div>
-                            </div>
-                          </div>
-                        </div>
 
-                        {/* RE-EVALUATION FILING AND STATUS GATEWAY */}
-                        <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', backgroundColor: '#ffffff', marginBottom: '10px' }}>
-                          
-                          {/* Case 1: Re-evaluation Request is already filed */}
-                          {sub.reevaluation?.applied ? (
-                            <div>
-                              
-                              {/* Status Header Bar */}
-                              <div style={{
-                                padding: '10px 15px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
+                          {/* Status Pill */}
+                          <div>
+                            {vStatus === 'released' ? (
+                              <span style={{
+                                backgroundColor: '#dcfce7',
+                                color: '#15803d',
+                                border: '1px solid #86efac',
+                                padding: '4px 12px',
+                                borderRadius: '20px',
+                                fontSize: '8.5pt',
                                 fontWeight: 'bold',
-                                fontSize: '9.5pt',
-                                backgroundColor: sub.reevaluation.status === 'pending' ? '#fef3c7' : sub.reevaluation.status === 'resolved' ? '#d1fae5' : '#fee2e2',
-                                color: sub.reevaluation.status === 'pending' ? '#d97706' : sub.reevaluation.status === 'resolved' ? '#065f46' : '#b91c1c',
-                                borderBottom: '1px solid #cbd5e1'
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
                               }}>
-                                {sub.reevaluation.status === 'pending' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={15} /> Re-evaluation Claim Filed - Pending Review</span>}
-                                {sub.reevaluation.status === 'resolved' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><CheckCircle size={15} /> Re-evaluation Request Resolved</span>}
-                                {sub.reevaluation.status === 'rejected' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><XCircle size={15} /> Re-evaluation Request Rejected</span>}
-                              </div>
+                                <CheckCircle size={14} /> Verification Active &amp; Open
+                              </span>
+                            ) : vStatus === 'closed' ? (
+                              <span style={{
+                                backgroundColor: '#f1f5f9',
+                                color: '#475569',
+                                border: '1px solid #cbd5e1',
+                                padding: '4px 12px',
+                                borderRadius: '20px',
+                                fontSize: '8.5pt',
+                                fontWeight: 'bold',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                <Lock size={14} /> Verification Window Closed
+                              </span>
+                            ) : (
+                              <span style={{
+                                backgroundColor: '#fef3c7',
+                                color: '#b45309',
+                                border: '1px solid #fcd34d',
+                                padding: '4px 12px',
+                                borderRadius: '20px',
+                                fontSize: '8.5pt',
+                                fontWeight: 'bold',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                <ShieldAlert size={14} /> Evaluation Pending Release
+                              </span>
+                            )}
+                          </div>
+                        </div>
 
-                              <div style={{ padding: '15px', fontSize: '9pt', display: 'flex', flexDirection: 'column', gap: '12px', lineHeight: '1.5' }}>
-                                <div>
-                                  <span style={{ fontWeight: 'bold', color: '#002147' }}>Date Filed: </span> 
-                                  {new Date(sub.reevaluation.appliedAt).toLocaleString()}
-                                </div>
-
-                                {sub.reevaluation.complainedQuestions?.length > 0 && (
-                                  <div>
-                                    <span style={{ fontWeight: 'bold', color: '#002147' }}>Contested Questions: </span>
-                                    <span style={{ fontSize: '8.5pt', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
-                                      {sub.reevaluation.complainedQuestions.map(qId => {
-                                        const foundQIdx = sub.questions.findIndex(q => q.id === qId);
-                                        return foundQIdx !== -1 ? `Q${foundQIdx + 1}` : qId;
-                                      }).join(', ')}
-                                    </span>
-                                  </div>
-                                )}
-
-                                <div>
-                                  <div style={{ fontWeight: 'bold', color: '#002147', marginBottom: '4px' }}>Candidate Explanation:</div>
-                                  <div style={{ backgroundColor: '#f8fafc', padding: '10px', borderRadius: '4px', border: '1px solid #e2e8f0', whiteSpace: 'pre-wrap', color: '#334155' }}>
-                                    {sub.reevaluation.complaintText}
-                                  </div>
-                                </div>
-
-                                {sub.reevaluation.proofImages?.length > 0 && (
-                                  <div>
-                                    <div style={{ fontWeight: 'bold', color: '#002147', marginBottom: '6px' }}>Uploaded Proof Screenshots:</div>
-                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                      {sub.reevaluation.proofImages.map((imgUrl, imgIdx) => (
-                                        <a key={imgIdx} href={imgUrl} target="_blank" rel="noreferrer" style={{ display: 'block', width: '80px', height: '80px', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
-                                          <img src={imgUrl} alt={`Proof screenshot ${imgIdx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                        </a>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {sub.reevaluation.status !== 'pending' && (
-                                  <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
-                                    <div style={{ fontWeight: 'bold', color: sub.reevaluation.status === 'resolved' ? '#065f46' : '#b91c1c', marginBottom: '4px' }}>
-                                      {sub.reevaluation.status === 'resolved' ? 'Resolution Comments:' : 'Rejection Comments:'}
-                                    </div>
-                                    <div style={{ backgroundColor: sub.reevaluation.status === 'resolved' ? '#f0fdf4' : '#fef2f2', border: `1px solid ${sub.reevaluation.status === 'resolved' ? '#bbf7d0' : '#fecaca'}`, padding: '10px', borderRadius: '4px', color: '#333', whiteSpace: 'pre-wrap' }}>
-                                      {sub.reevaluation.resolutionFeedback || 'No evaluator resolution comments provided.'}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-
-                            </div>
-                          ) : (
+                        {/* Scores & Details Row */}
+                        <div style={{
+                          backgroundColor: '#f8fafc',
+                          borderRadius: '6px',
+                          border: '1px solid #e2e8f0',
+                          padding: '12px 16px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: '15px'
+                        }}>
+                          <div style={{ display: 'flex', gap: '25px', flexWrap: 'wrap', fontSize: '9pt' }}>
                             <div>
-                              
-                              {/* Case 2: Apply Form is closed - show Apply Button */}
-                              {!showReevalForm ? (
-                                <div style={{ padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc' }}>
-                                  <div style={{ fontSize: '8.5pt', color: '#555', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <HelpCircle size={16} style={{ color: '#64748b' }} />
-                                    <span>If you identify discrepancies in the grading keys or evaluation marks, you can apply for verification re-evaluation.</span>
-                                  </div>
-                                  <button
-                                    className="cf-btn-primary"
-                                    style={{ padding: '6px 12px', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '6px', background: '#0f172a', borderColor: '#0f172a', color: '#ffffff' }}
-                                    onClick={() => setShowReevalForm(true)}
-                                  >
-                                    Apply for Re-evaluation
-                                  </button>
-                                </div>
-                              ) : (
-                                
-                                /* Case 3: Apply Form is open */
-                                <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                                  <h4 style={{ fontSize: '10pt', color: '#002147', fontWeight: 'bold', margin: '0 0 5px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <FileEdit size={16} />
-                                    <span>File Re-evaluation Claim: {activeVer.title}</span>
-                                  </h4>
-
-                                  {/* Select complained questions */}
-                                  <div>
-                                    <label className="cf-label" style={{ fontWeight: 'bold', marginBottom: '8px' }}>Select Contested Questions: (Optional)</label>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                                      {(sub.questions || []).map((q, qIdx) => {
-                                        const isChecked = reevalSelectedQuestions.includes(q.id);
-                                        return (
-                                          <label
-                                            key={qIdx}
-                                            style={{
-                                              padding: '8px 12px',
-                                              border: '1px solid #cbd5e1',
-                                              borderRadius: '4px',
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              gap: '8px',
-                                              cursor: 'pointer',
-                                              fontSize: '8.5pt',
-                                              backgroundColor: isChecked ? '#eff6ff' : '#ffffff'
-                                            }}
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              checked={isChecked}
-                                              onChange={(e) => {
-                                                if (e.target.checked) {
-                                                  setReevalSelectedQuestions(prev => [...prev, q.id]);
-                                                } else {
-                                                  setReevalSelectedQuestions(prev => prev.filter(id => id !== q.id));
-                                                }
-                                              }}
-                                            />
-                                            <span>Question {qIdx + 1}: {q.title}</span>
-                                          </label>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-
-                                  {/* Explanation input */}
-                                  <div className="cf-input-group">
-                                    <label className="cf-label" style={{ fontWeight: 'bold' }}>Complaint Explanation &amp; Argument: <span style={{ color: '#ef4444' }}>*</span></label>
-                                    <textarea
-                                      className="cf-input"
-                                      rows={4}
-                                      value={reevalComplaintText}
-                                      onChange={(e) => setReevalComplaintText(e.target.value)}
-                                      placeholder="Please explain clearly why you think your response is correct and matches the evaluation criteria..."
-                                      style={{ padding: '10px', fontSize: '9pt', fontFamily: 'inherit', resize: 'vertical' }}
-                                    />
-                                  </div>
-
-                                  {/* Screen proof files upload */}
-                                  <div>
-                                    <label className="cf-label" style={{ fontWeight: 'bold' }}>Provide Image Proof: (Upload screenshots)</label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginTop: '5px' }}>
-                                      <label style={{
-                                        padding: '6px 12px',
-                                        fontSize: '8.5pt',
-                                        fontWeight: 'bold',
-                                        backgroundColor: '#ffffff',
-                                        border: '1px solid #cbd5e1',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '6px'
-                                      }}>
-                                        {reevalUploading ? (
-                                          <>
-                                            <Loader2 className="spinner" size={14} /> Uploading...
-                                          </>
-                                        ) : (
-                                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <Image size={14} /> Add Screenshot Proof
-                                          </span>
-                                        )}
-                                        <input
-                                          type="file"
-                                          accept="image/*"
-                                          disabled={reevalUploading}
-                                          onChange={handleReevalImageUpload}
-                                          style={{ display: 'none' }}
-                                        />
-                                      </label>
-                                      <span style={{ fontSize: '8pt', color: '#64748b' }}>PNG, JPG acceptable. Max size 5MB.</span>
-                                    </div>
-
-                                    {/* Proof preview grid */}
-                                    {reevalProofUrls.length > 0 && (
-                                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
-                                        {reevalProofUrls.map((url, urlIdx) => (
-                                          <div key={urlIdx} style={{ position: 'relative', width: '70px', height: '70px', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
-                                            <img src={url} alt={`Uploaded proof ${urlIdx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                            <button
-                                              type="button"
-                                              onClick={() => setReevalProofUrls(prev => prev.filter((_, idx) => idx !== urlIdx))}
-                                              style={{
-                                                position: 'absolute',
-                                                top: '2px',
-                                                right: '2px',
-                                                backgroundColor: 'rgba(239, 68, 68, 0.85)',
-                                                color: '#ffffff',
-                                                border: 'none',
-                                                borderRadius: '50%',
-                                                width: '16px',
-                                                height: '16px',
-                                                fontSize: '8px',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center'
-                                              }}
-                                            >
-                                              
-                                            </button>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* Actions */}
-                                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '5px' }}>
-                                    <button
-                                      type="button"
-                                      className="cf-btn-secondary"
-                                      style={{ padding: '5px 12px', fontSize: '8.5pt' }}
-                                      onClick={() => {
-                                        setShowReevalForm(false);
-                                        setReevalComplaintText('');
-                                        setReevalSelectedQuestions([]);
-                                        setReevalProofUrls([]);
-                                      }}
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="cf-btn-primary"
-                                      disabled={reevalSubmitting}
-                                      style={{ padding: '5px 15px', fontSize: '8.5pt', fontWeight: 'bold' }}
-                                      onClick={() => handleApplyReevalSubmit(sub.id || sub._id)}
-                                    >
-                                      {reevalSubmitting ? 'Filing Complaint...' : 'Submit Re-evaluation Claim'}
-                                    </button>
-                                  </div>
-
-                                </div>
-                              )}
-
+                              <span style={{ color: '#64748b' }}>Total Score: </span>
+                              <strong style={{ color: (vStatus === 'released' || vStatus === 'closed') ? '#002147' : '#94a3b8' }}>
+                                {(vStatus === 'released' || vStatus === 'closed') ? `${totalScored} / ${totalMax} Marks (${percentage}%)` : `-- / ${totalMax} Marks`}
+                              </strong>
                             </div>
-                          )}
 
-                        </div>
+                            <div>
+                              <span style={{ color: '#64748b' }}>Submission Mode: </span>
+                              <strong style={{ textTransform: 'capitalize' }}>{sub.status || 'Submitted'}</strong>
+                            </div>
 
-                        {sub.evaluation?.feedback && (
-                          <div style={{ backgroundColor: '#eff6ff', borderLeft: '4px solid #3b5998', padding: '12px 15px', borderRadius: '4px' }}>
-                            <h5 style={{ fontSize: '9pt', fontWeight: 'bold', color: '#1e3a8a', margin: '0 0 4px 0' }}>Evaluator Feedback Comments:</h5>
-                            <p style={{ fontSize: '9pt', color: '#1e3a8a', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{sub.evaluation.feedback}</p>
+                            {objectionsCount > 0 && (
+                              <div style={{ color: '#b45309', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Flag size={13} />
+                                <span>{objectionsCount} Question Objection(s) Recorded</span>
+                              </div>
+                            )}
                           </div>
-                        )}
 
-                        {/* Questions & Responses Details */}
-                        <div>
-                          <h4 style={{ fontSize: '10.5pt', color: '#002147', fontWeight: 'bold', margin: '0 0 15px 0' }}>Question-wise Evaluation Details:</h4>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                            {(sub.questions || []).map((q, qIdx) => {
-                              const candAns = (sub.answers || []).find(a => String(a.questionId) === String(q.id));
-                              
-                              return (
-                                <div key={qIdx} style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
-                                  
-                                  {/* Header bar */}
-                                  <div style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1', padding: '10px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                      <span>Question {qIdx + 1}:</span>
-                                      <RichText text={q.title} style={{ display: 'inline-block' }} />
-                                    </span>
-                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                      {(() => {
-                                        let scored = 0;
-                                        if (q.type === 'mcq') {
-                                          scored = (candAns && candAns.selectedOptionIndex !== undefined && candAns.selectedOptionIndex !== null)
-                                            ? (Number(candAns.selectedOptionIndex) === Number(q.correctOptionIndex) ? q.points : 0)
-                                            : 0;
-                                        } else {
-                                          scored = candAns?.score || 0;
-                                        }
-                                        
-                                        return (
-                                          <span style={{
-                                            fontSize: '8.5pt',
-                                            backgroundColor: scored > 0 ? '#dcfce7' : '#fee2e2',
-                                            color: scored > 0 ? '#15803d' : '#b91c1c',
-                                            padding: '2px 8px',
-                                            borderRadius: '4px',
-                                            fontWeight: 'bold',
-                                            border: `1px solid ${scored > 0 ? '#bbf7d0' : '#fecaca'}`
-                                          }}>
-                                            Scored: {scored} / {q.points || 0} Marks
-                                          </span>
-                                        );
-                                      })()}
-                                      <span style={{ fontSize: '8.5pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
-                                        Weight: {q.points || 0} Points
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Description */}
-                                  <div style={{ padding: '15px', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '9pt', lineHeight: '1.5', color: '#333' }}>
-                                    
-                                    {q.description && (
-                                      <RichText
-                                        text={q.description}
-                                        style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '10px', borderRadius: '4px', lineHeight: '1.6' }}
-                                      />
-                                    )}
-
-                                    {/* MCQ Layout */}
-                                    {q.type === 'mcq' && (
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        {q.options?.map((opt, oIdx) => {
-                                          const isCorrect = Number(q.correctOptionIndex) === oIdx;
-                                          const isSelected = candAns && candAns.selectedOptionIndex !== undefined && candAns.selectedOptionIndex !== null && Number(candAns.selectedOptionIndex) === oIdx;
-                                          
-                                          let borderCol = '#cbd5e1';
-                                          let bgCol = '#fff';
-                                          let statusText = '';
-
-                                          if (isCorrect) {
-                                            borderCol = '#10b981';
-                                            bgCol = '#ecfdf5';
-                                            statusText = ' (Correct Answer)';
-                                          } else if (isSelected) {
-                                            borderCol = '#ef4444';
-                                            bgCol = '#fef2f2';
-                                            statusText = ' (Your Answer - Incorrect)';
-                                          }
-
-                                          if (isCorrect && isSelected) {
-                                            statusText = ' (Your Answer - Correct)';
-                                          }
-
-                                          return (
-                                            <div
-                                              key={oIdx}
-                                              style={{
-                                                padding: '10px 12px',
-                                                border: `1px solid ${borderCol}`,
-                                                backgroundColor: bgCol,
-                                                borderRadius: '4px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '8px'
-                                              }}
-                                            >
-                                              <input
-                                                type="radio"
-                                                checked={isSelected}
-                                                disabled
-                                                style={{ cursor: 'default' }}
-                                              />
-                                              <span style={{ fontWeight: (isCorrect || isSelected) ? 'bold' : 'normal', color: isCorrect ? '#065f46' : isSelected ? '#991b1b' : '#333' }}>
-                                                {opt}{statusText}
-                                              </span>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-
-                                    {/* Coding Layout */}
-                                    {q.type === 'coding' && (
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8pt', color: '#64748b' }}>
-                                          <span>Submitted Code: (Language: {candAns?.selectedLanguage?.toUpperCase() || 'CPP'})</span>
-                                        </div>
-                                        <pre style={{
-                                          padding: '12px',
-                                          backgroundColor: '#1e1e1e',
-                                          color: '#d4d4d4',
-                                          borderRadius: '4px',
-                                          fontFamily: 'Consolas, monospace',
-                                          fontSize: '8.5pt',
-                                          lineHeight: '1.4',
-                                          overflowX: 'auto',
-                                          margin: 0
-                                        }}>
-                                          {candAns?.submittedCode || '// No code response was saved.'}
-                                        </pre>
-
-                                        {/* Test Case Execution Output for Candidates */}
-                                        {candAns?.testCaseResults && candAns.testCaseResults.length > 0 && (
-                                          <div style={{ marginTop: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', padding: '12px' }}>
-                                            <h5 style={{ margin: '0 0 10px 0', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                              <CheckCircle size={14} style={{ color: '#10b981' }} />
-                                              <span>Automated Grading Test Cases:</span>
-                                            </h5>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                              {candAns.testCaseResults.map((tc, tcIdx) => {
-                                                const isPass = tc.status === 'Accepted';
-                                                return (
-                                                  <div key={tcIdx} style={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'center',
-                                                    padding: '6px 10px',
-                                                    backgroundColor: '#ffffff',
-                                                    border: '1px solid #e2e8f0',
-                                                    borderRadius: '4px',
-                                                    fontSize: '8.5pt'
-                                                  }}>
-                                                    <span style={{ fontWeight: '500', color: '#334155' }}>
-                                                      Test Case {tcIdx + 1}
-                                                    </span>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                      <span style={{
-                                                        padding: '2px 6px',
-                                                        borderRadius: '3px',
-                                                        fontSize: '7.5pt',
-                                                        fontWeight: 'bold',
-                                                        backgroundColor: isPass ? '#dcfce7' : '#fee2e2',
-                                                        color: isPass ? '#15803d' : '#b91c1c'
-                                                      }}>
-                                                        {tc.status}
-                                                      </span>
-                                                      <span style={{ fontWeight: 'bold', color: isPass ? '#166534' : '#991b1b' }}>
-                                                        {tc.scoredPoints} / {tc.points} Marks
-                                                      </span>
-                                                    </div>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {/* Web Workspace Submitted Answers */}
-                                    {q.type === 'web' && (
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                        <span style={{ fontWeight: 'bold', fontSize: '9pt', color: '#475569' }}>
-                                          Your Submitted Web Page Response (HTML/CSS/JS):
-                                        </span>
-                                        
-                                        {/* Tab Switchers */}
-                                        <div style={{ display: 'flex', gap: '5px', marginBottom: '5px' }}>
-                                          {['html', 'css', 'js', 'preview'].map(tab => (
-                                            <button
-                                              key={tab}
-                                              type="button"
-                                              className="cf-btn-secondary"
-                                              style={{
-                                                padding: '3px 10px',
-                                                fontSize: '8pt',
-                                                margin: 0,
-                                                backgroundColor: (studentActiveWebTabs[q.id] || 'preview') === tab ? '#e2e8f0' : '#ffffff',
-                                                fontWeight: (studentActiveWebTabs[q.id] || 'preview') === tab ? 'bold' : 'normal'
-                                              }}
-                                              onClick={() => setStudentActiveWebTabs(prev => ({ ...prev, [q.id]: tab }))}
-                                            >
-                                              {tab.toUpperCase()}
-                                            </button>
-                                          ))}
-                                        </div>
-
-                                        {/* Tab Contents */}
-                                        {(studentActiveWebTabs[q.id] || 'preview') === 'html' && (
-                                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
-                                            {candAns?.submittedHtml || '<!-- No HTML submitted -->'}
-                                          </pre>
-                                        )}
-                                        {(studentActiveWebTabs[q.id] || 'preview') === 'css' && (
-                                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
-                                            {candAns?.submittedCss || '/* No CSS submitted */'}
-                                          </pre>
-                                        )}
-                                        {(studentActiveWebTabs[q.id] || 'preview') === 'js' && (
-                                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '12px', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
-                                            {candAns?.submittedJs || '// No JS submitted'}
-                                          </pre>
-                                        )}
-                                        {(studentActiveWebTabs[q.id] || 'preview') === 'preview' && (
-                                          <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
-                                            <iframe
-                                              title={`Web Sandbox Student Preview ${q.id}`}
-                                              srcDoc={`
-                                                <!DOCTYPE html>
-                                                <html>
-                                                  <head>
-                                                    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-                                                    <base href="https://invalid-sandbox-origin.invalid/">
-                                                    <style>
-                                                      html, body {
-                                                        margin: 0;
-                                                        padding: 10px;
-                                                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                                                        word-wrap: break-word;
-                                                        word-break: break-word;
-                                                        overflow-x: hidden;
-                                                        box-sizing: border-box;
-                                                      }
-                                                      *, *:before, *:after {
-                                                        box-sizing: inherit;
-                                                      }
-                                                      img, video, iframe, canvas {
-                                                        max-width: 100%;
-                                                        height: auto;
-                                                        display: block;
-                                                      }
-                                                      pre, code {
-                                                        white-space: pre-wrap;
-                                                        word-break: break-all;
-                                                      }
-                                                    </style>
-                                                    <style>${candAns?.submittedCss || ''}</style>
-                                                  </head>
-                                                  <body>
-                                                    ${candAns?.submittedHtml || ''}
-                                                    <script>${candAns?.submittedJs || ''}</script>
-                                                  </body>
-                                                </html>
-                                              `}
-                                              sandbox="allow-scripts"
-                                              style={{ width: '100%', height: '240px', border: 'none', backgroundColor: '#ffffff' }}
-                                            />
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
-                                  </div>
-
-                                </div>
-                              );
-                            })}
+                          {/* Action Button */}
+                          <div>
+                            {vStatus === 'released' ? (
+                              <button
+                                className="cf-btn-primary"
+                                onClick={() => { window.location.href = `${otBase}/submissions/${sub.id || sub._id}`; }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  padding: '8px 18px',
+                                  fontSize: '9pt',
+                                  fontWeight: 'bold'
+                                }}
+                              >
+                                <ExternalLink size={15} /> Verify Evaluated Paper →
+                              </button>
+                            ) : vStatus === 'closed' ? (
+                              <button
+                                className="cf-btn-secondary"
+                                disabled
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '8px 16px',
+                                  fontSize: '9pt',
+                                  opacity: 0.7,
+                                  cursor: 'not-allowed',
+                                  color: '#475569',
+                                  backgroundColor: '#f1f5f9',
+                                  borderColor: '#cbd5e1'
+                                }}
+                              >
+                                <Lock size={14} /> Verification Window Closed
+                              </button>
+                            ) : (
+                              <button
+                                className="cf-btn-secondary"
+                                disabled
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '8px 16px',
+                                  fontSize: '9pt',
+                                  opacity: 0.6,
+                                  cursor: 'not-allowed'
+                                }}
+                              >
+                                <Lock size={14} /> Answer Sheets Locked
+                              </button>
+                            )}
                           </div>
                         </div>
-
                       </div>
                     );
-                  })()}
-
+                  })}
                 </div>
               )}
-
             </div>
           )}
 
@@ -6280,34 +5921,44 @@ int main() {
                                 >
                                   Grades ({t.submissionsCount || 'View'})
                                 </button>
-                                <button
-                                  className="cf-btn-primary"
-                                  style={{ 
-                                    padding: '3px 8px', 
-                                    fontSize: '8pt', 
-                                    background: t.answersReleased ? '#10b981' : '#64748b', 
-                                    borderColor: t.answersReleased ? '#10b981' : '#64748b',
-                                    color: '#ffffff' 
-                                  }}
-                                  onClick={async () => {
+                                <select
+                                  title="Answer Sheet Verification State"
+                                  value={t.verificationStatus || (t.answersReleased ? 'released' : 'not_released')}
+                                  onChange={async (e) => {
+                                    const newStatus = e.target.value;
                                     try {
-                                      const res = await fetch(`${API_BASE}/admin/tests/toggle-release/${t.id || t._id}`, {
+                                      const res = await fetch(`${API_BASE}/admin/tests/set-verification-status/${t.id || t._id}`, {
                                         method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' }
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ status: newStatus })
                                       });
                                       const data = await res.json();
                                       if (data.success) {
                                         fetchAdminTests();
                                       } else {
-                                        alert(data.error || "Failed to toggle answer sheet release state.");
+                                        alert(data.error || "Failed to update verification status.");
                                       }
-                                    } catch (e) {
+                                    } catch (err) {
                                       alert("Network Error: Unable to contact API server.");
                                     }
                                   }}
+                                  style={{
+                                    padding: '3px 6px',
+                                    fontSize: '8pt',
+                                    fontWeight: 'bold',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    border: '1px solid',
+                                    backgroundColor: (t.verificationStatus === 'released' || (!t.verificationStatus && t.answersReleased)) ? '#dcfce7' : (t.verificationStatus === 'closed' ? '#f1f5f9' : '#fef3c7'),
+                                    color: (t.verificationStatus === 'released' || (!t.verificationStatus && t.answersReleased)) ? '#15803d' : (t.verificationStatus === 'closed' ? '#475569' : '#b45309'),
+                                    borderColor: (t.verificationStatus === 'released' || (!t.verificationStatus && t.answersReleased)) ? '#86efac' : (t.verificationStatus === 'closed' ? '#cbd5e1' : '#fcd34d'),
+                                    outline: 'none'
+                                  }}
                                 >
-                                  {t.answersReleased ? 'Released' : 'Release Sheets'}
-                                </button>
+                                  <option value="not_released" style={{ background: '#ffffff', color: '#b45309' }}>Sheets: Not Released</option>
+                                  <option value="released" style={{ background: '#ffffff', color: '#15803d' }}>Sheets: Released</option>
+                                  <option value="closed" style={{ background: '#ffffff', color: '#475569' }}>Sheets: Closed</option>
+                                </select>
                                 <button
                                   className="cf-btn-primary"
                                   style={{ 
@@ -8764,6 +8415,337 @@ int main() {
                         </button>
                         <button type="submit" className="cf-btn-primary">
                           Save Submission Record
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ADMIN - EXAMINATION OBJECTIONS MANAGER */}
+          {view === 'admin_objections' && (
+            <div>
+              <div className="cf-card" style={{ marginBottom: '25px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '16pt', color: '#002147', margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Flag size={20} style={{ color: '#b45309' }} /> Examination Question Objections &amp; Grievances
+                    </h2>
+                    <div style={{ fontSize: '9pt', color: '#64748b' }}>
+                      Review candidate grievances per question, inspect submitted source code and choices, update marks awarded, and post committee resolution feedback.
+                    </div>
+                  </div>
+                  <button className="cf-btn-secondary" onClick={fetchAdminObjections} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <RefreshCw size={14} /> Refresh List
+                  </button>
+                </div>
+
+                {/* Filter Tabs */}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '15px' }}>
+                  {[
+                    { id: 'all', label: 'All Objections', count: adminObjectionsList.length },
+                    { id: 'pending', label: 'Pending Review', count: adminObjectionsList.filter(o => o.status === 'pending').length },
+                    { id: 'resolved', label: 'Resolved', count: adminObjectionsList.filter(o => o.status === 'resolved').length },
+                    { id: 'rejected', label: 'Rejected', count: adminObjectionsList.filter(o => o.status === 'rejected').length }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setAdminObjectionsFilter(tab.id)}
+                      className={`cf-btn-${adminObjectionsFilter === tab.id ? 'primary' : 'secondary'}`}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <span>{tab.label}</span>
+                      <span style={{
+                        backgroundColor: adminObjectionsFilter === tab.id ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                        color: adminObjectionsFilter === tab.id ? '#ffffff' : '#475569',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '7.5pt'
+                      }}>
+                        {tab.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Objections Data Table */}
+                {(() => {
+                  const filtered = adminObjectionsList.filter(o => {
+                    if (adminObjectionsFilter === 'all') return true;
+                    return o.status === adminObjectionsFilter;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="cf-alert cf-alert-info">
+                        No question objections found under the <strong>{adminObjectionsFilter.toUpperCase()}</strong> category.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="table-responsive" style={{ border: '1px solid var(--cf-border)', borderRadius: '6px', overflow: 'hidden' }}>
+                      <table className="cf-table">
+                        <thead>
+                          <tr style={{ backgroundColor: '#f8fafc' }}>
+                            <th>Candidate</th>
+                            <th>Exam &amp; Question</th>
+                            <th>Grievance Category</th>
+                            <th>Student Comments</th>
+                            <th>Raised Date</th>
+                            <th>Status</th>
+                            <th>Resolution / Marks</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filtered.map((obj, oIdx) => (
+                            <tr key={oIdx}>
+                              <td>
+                                <div style={{ fontWeight: 'bold', color: '#002147' }}>{obj.candidateName || 'Candidate'}</div>
+                                <div style={{ fontSize: '8pt', color: '#64748b' }}>ID: {obj.studentId || 'N/A'}</div>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: '600', color: '#334155' }}>{obj.testTitle}</div>
+                                <span style={{ fontSize: '7.5pt', backgroundColor: '#e2e8f0', color: '#1e293b', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                  Question #{Number(obj.questionIndex || 0) + 1}
+                                </span>
+                              </td>
+                              <td style={{ fontSize: '8.5pt', color: '#475569' }}>
+                                <strong>{obj.reason}</strong>
+                              </td>
+                              <td style={{ fontSize: '8.5pt', color: '#334155', maxWidth: '240px' }}>
+                                <div style={{ maxHeight: '60px', overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+                                  {obj.details}
+                                </div>
+                              </td>
+                              <td style={{ fontSize: '8pt', color: '#64748b', whiteSpace: 'nowrap' }}>
+                                {obj.raisedAt ? new Date(obj.raisedAt).toLocaleString() : 'N/A'}
+                              </td>
+                              <td>
+                                <span style={{
+                                  fontSize: '7.5pt',
+                                  fontWeight: 'bold',
+                                  padding: '3px 8px',
+                                  borderRadius: '4px',
+                                  backgroundColor: obj.status === 'resolved' ? '#dcfce7' : (obj.status === 'rejected' ? '#fee2e2' : '#fef3c7'),
+                                  color: obj.status === 'resolved' ? '#15803d' : (obj.status === 'rejected' ? '#b91c1c' : '#b45309'),
+                                  border: `1px solid ${obj.status === 'resolved' ? '#86efac' : (obj.status === 'rejected' ? '#fca5a5' : '#fcd34d')}`,
+                                  display: 'inline-block',
+                                  textTransform: 'uppercase'
+                                }}>
+                                  {obj.status}
+                                </span>
+                              </td>
+                              <td style={{ fontSize: '8.5pt' }}>
+                                {obj.status === 'resolved' ? (
+                                  <div>
+                                    <strong style={{ color: '#15803d' }}>Revised: {obj.resolvedMarks ?? 'N/A'} pts</strong>
+                                    {obj.adminRemarks && <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '2px' }}>{obj.adminRemarks}</div>}
+                                  </div>
+                                ) : obj.status === 'rejected' ? (
+                                  <div>
+                                    <span style={{ color: '#b91c1c', fontWeight: 'bold' }}>No Marks Awarded</span>
+                                    {obj.adminRemarks && <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '2px' }}>{obj.adminRemarks}</div>}
+                                  </div>
+                                ) : (
+                                  <span style={{ color: '#64748b', fontStyle: 'italic' }}>Pending Evaluation</span>
+                                )}
+                              </td>
+                              <td>
+                                <button
+                                  className="cf-btn-primary"
+                                  onClick={() => {
+                                    setAdminObjectionModal({
+                                      isOpen: true,
+                                      objection: obj,
+                                      status: obj.status === 'pending' ? 'resolved' : obj.status,
+                                      revisedMarks: obj.resolvedMarks !== undefined ? obj.resolvedMarks : (obj.submittedAnswer?.score || 0),
+                                      adminRemarks: obj.adminRemarks || '',
+                                      submitting: false,
+                                      error: '',
+                                      success: ''
+                                    });
+                                  }}
+                                  style={{ padding: '4px 10px', fontSize: '8pt', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+                                >
+                                  {obj.status === 'pending' ? 'Review & Resolve' : 'Edit Resolution'}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Objection Resolution Modal */}
+              {adminObjectionModal.isOpen && adminObjectionModal.objection && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(15, 23, 42, 0.75)',
+                  zIndex: 10000,
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  padding: '20px'
+                }}>
+                  <div style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '8px',
+                    maxWidth: '650px',
+                    width: '100%',
+                    padding: '25px',
+                    maxHeight: '90vh',
+                    overflowY: 'auto',
+                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '15px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                      <h3 style={{ fontSize: '13pt', color: '#002147', fontWeight: 'bold', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Flag size={18} style={{ color: '#b45309' }} />
+                        <span>Review Objection: Question #{Number(adminObjectionModal.objection.questionIndex || 0) + 1}</span>
+                      </h3>
+                      <button
+                        onClick={() => setAdminObjectionModal(prev => ({ ...prev, isOpen: false }))}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '12pt', fontWeight: 'bold' }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {adminObjectionModal.error && (
+                      <div className="cf-alert cf-alert-danger" style={{ fontSize: '8.5pt' }}>
+                        {adminObjectionModal.error}
+                      </div>
+                    )}
+
+                    {adminObjectionModal.success && (
+                      <div className="cf-alert cf-alert-success" style={{ fontSize: '8.5pt' }}>
+                        {adminObjectionModal.success}
+                      </div>
+                    )}
+
+                    {/* Candidate Grievance Summary Box */}
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '9pt' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px' }}>
+                        <div><strong>Candidate:</strong> {adminObjectionModal.objection.candidateName} ({adminObjectionModal.objection.studentId})</div>
+                        <div><strong>Exam:</strong> {adminObjectionModal.objection.testTitle}</div>
+                      </div>
+                      <div>
+                        <strong>Grievance Category:</strong> {adminObjectionModal.objection.reason}
+                      </div>
+                      <div>
+                        <strong>Candidate Explanation:</strong>
+                        <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '8px 12px', borderRadius: '4px', marginTop: '4px', whiteSpace: 'pre-wrap', color: '#1e293b' }}>
+                          {adminObjectionModal.objection.details}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Candidate Submitted Response Preview */}
+                    {adminObjectionModal.objection.submittedAnswer && (
+                      <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#ffffff' }}>
+                        <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase', marginBottom: '6px' }}>
+                          Candidate Submitted Response:
+                        </div>
+                        {adminObjectionModal.objection.submittedAnswer.submittedCode ? (
+                          <pre style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'Consolas, monospace', fontSize: '8.5pt', padding: '10px', borderRadius: '4px', maxHeight: '160px', overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+                            {adminObjectionModal.objection.submittedAnswer.submittedCode}
+                          </pre>
+                        ) : adminObjectionModal.objection.submittedAnswer.selectedOptionIndex !== undefined ? (
+                          <div style={{ fontSize: '9pt', color: '#0f172a' }}>
+                            Selected Option: <strong>Option {String.fromCharCode(65 + Number(adminObjectionModal.objection.submittedAnswer.selectedOptionIndex))}</strong>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                            Current Scored Points: <strong>{adminObjectionModal.objection.submittedAnswer.score ?? 0} pts</strong>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Resolution Form */}
+                    <form onSubmit={handleResolveObjection} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                            Resolution Decision: *
+                          </label>
+                          <select
+                            value={adminObjectionModal.status}
+                            onChange={e => setAdminObjectionModal(prev => ({ ...prev, status: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt' }}
+                          >
+                            <option value="resolved">Resolved (Award / Update Credit)</option>
+                            <option value="rejected">Rejected (Deny Grievance)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                            Revised Question Marks:
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={adminObjectionModal.revisedMarks}
+                            onChange={e => setAdminObjectionModal(prev => ({ ...prev, revisedMarks: Number(e.target.value || 0) }))}
+                            disabled={adminObjectionModal.status === 'rejected'}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                          Committee Resolution Remarks / Technical Feedback: *
+                        </label>
+                        <textarea
+                          rows="3"
+                          required
+                          value={adminObjectionModal.adminRemarks}
+                          onChange={e => setAdminObjectionModal(prev => ({ ...prev, adminRemarks: e.target.value }))}
+                          placeholder="State why the objection was accepted/rejected and any evaluation notes..."
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', resize: 'vertical' }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                        <button
+                          type="button"
+                          className="cf-btn-secondary"
+                          onClick={() => setAdminObjectionModal(prev => ({ ...prev, isOpen: false }))}
+                          disabled={adminObjectionModal.submitting}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="cf-btn-primary"
+                          disabled={adminObjectionModal.submitting}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}
+                        >
+                          {adminObjectionModal.submitting ? <Loader2 className="spinner" size={14} /> : <CheckCircle size={14} />}
+                          <span>{adminObjectionModal.submitting ? 'Saving...' : 'Save Resolution'}</span>
                         </button>
                       </div>
                     </form>

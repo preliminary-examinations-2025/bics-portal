@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
-  Check, X, Lock, Eye, Clock, Flag
+  Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -255,6 +255,19 @@ export default function App() {
   // Auto-kickout timer when verifyError is set (unauthorized view)
   const [kickoutCount, setKickoutCount] = useState(5);
 
+  // Verification Review & Objection States (for /submissions/:id view)
+  const [objectionModal, setObjectionModal] = useState({
+    isOpen: false,
+    questionIndex: null,
+    questionId: '',
+    reason: 'Testcase evaluation discrepancy',
+    details: '',
+    submitting: false,
+    error: '',
+    success: ''
+  });
+  const [webDevPreviewTabs, setWebDevPreviewTabs] = useState({}); // { [qIndex]: 'html' | 'css' | 'js' | 'preview' }
+
   // DOM Refs
   const calibVideoRef = useRef(null);
   const examVideoRef = useRef(null);
@@ -323,11 +336,64 @@ export default function App() {
     });
   };
 
-  // 1. Initial Load: Parse token and check connection
+  // Fetch evaluated answer sheet verification for /submissions/:id
+  const loadSubmissionVerification = async (subId) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/tests/submission-verification/${subId}`);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setVerifyError(data.error || "Unable to access evaluated answer sheet verification.");
+        setLoading(false);
+        return;
+      }
+
+      setCandidate(data.candidate);
+      setTest(data.test);
+      setSubmission(data.submission);
+      setFlow('verification_review');
+      setLoading(false);
+    } catch (err) {
+      console.error("Verification fetch failed:", err);
+      setVerifyError("Network Error: Unable to establish secure link to verify evaluated paper.");
+      setLoading(false);
+    }
+  };
+
+  // 1. Initial Load: Parse path and query parameters for test or verification route
   useEffect(() => {
-    const parsedToken = new URLSearchParams(window.location.search).get('token');
+    const path = window.location.pathname;
+    const searchParams = new URLSearchParams(window.location.search);
+    
+    // Check if route is for submission verification (e.g. /submissions/6a92..., /submission/6a92..., /submissions?id=6a92...)
+    let subId = null;
+    if (path.startsWith('/submissions/') || path.startsWith('/submission/')) {
+      const parts = path.split('/').filter(Boolean);
+      if (parts.length >= 2 && parts[1]) {
+        subId = parts[1];
+      }
+    }
+    if (!subId) {
+      subId = searchParams.get('submissionId') || searchParams.get('id');
+      if (path.startsWith('/submissions') && !subId) {
+        subId = searchParams.get('id') || searchParams.get('submissionId');
+      }
+    }
+
+    if (path.startsWith('/submissions') || path.startsWith('/submission') || (subId && !searchParams.get('token'))) {
+      if (!subId) {
+        setVerifyError("Invalid Submission Link. Missing examination submission reference.");
+        setLoading(false);
+        return;
+      }
+      loadSubmissionVerification(subId);
+      return;
+    }
+
+    // Online Exam Route (handles /test?token=..., /?token=..., /test/?token=...)
+    const parsedToken = searchParams.get('token');
     if (!parsedToken) {
-      setVerifyError("Authorization Token Missing. Direct portal access is prohibited.");
+      setVerifyError("Authorization Token Missing. Online tests must be launched from your Student Portal dashboard.");
       setLoading(false);
       return;
     }
@@ -358,6 +424,27 @@ export default function App() {
     return () => clearInterval(timer);
   }, [verifyError]);
 
+  // Dynamically update browser tab title based on route and examination/verification state
+  useEffect(() => {
+    const isSubmissionsRoute = window.location.pathname.startsWith('/submissions') || 
+                               window.location.pathname.startsWith('/submission') || 
+                               flow === 'verification_review';
+
+    if (isSubmissionsRoute) {
+      if (test?.title) {
+        document.title = `Answer Sheet Verification - ${test.title} | BICS Portal`;
+      } else {
+        document.title = "Answer Sheet Verification | BICS Examination Portal";
+      }
+    } else {
+      if (test?.title) {
+        document.title = `Online Examination Terminal - ${test.title} | BICS Portal`;
+      } else {
+        document.title = "Online Examination Terminal - BICS Portal";
+      }
+    }
+  }, [flow, test?.title]);
+
   // Auto-redirect timer when flow === 'finished' (keeps fullscreen until redirection)
   useEffect(() => {
     if (flow !== 'finished' || hasPendingSubmit) return;
@@ -383,6 +470,87 @@ export default function App() {
       clearTimeout(t2);
     };
   }, [flow, hasPendingSubmit]);
+
+  // Objection modal actions for verification paper review
+  const handleOpenObjectionModal = (qIndex, qId) => {
+    setObjectionModal({
+      isOpen: true,
+      questionIndex: qIndex,
+      questionId: qId,
+      reason: 'Testcase evaluation discrepancy',
+      details: '',
+      submitting: false,
+      error: '',
+      success: ''
+    });
+  };
+
+  const handleCloseObjectionModal = () => {
+    setObjectionModal({
+      isOpen: false,
+      questionIndex: null,
+      questionId: '',
+      reason: 'Testcase evaluation discrepancy',
+      details: '',
+      submitting: false,
+      error: '',
+      success: ''
+    });
+  };
+
+  const handleSubmitObjection = async () => {
+    if (!objectionModal.details.trim()) {
+      setObjectionModal(prev => ({ ...prev, error: 'Please provide detailed remarks explaining your grievance.' }));
+      return;
+    }
+
+    setObjectionModal(prev => ({ ...prev, submitting: true, error: '' }));
+    try {
+      const res = await fetch(`${API_BASE}/tests/objection/${submission.id || submission._id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionId: objectionModal.questionId,
+          questionIndex: objectionModal.questionIndex,
+          reason: objectionModal.reason,
+          details: objectionModal.details
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setObjectionModal(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to submit objection.' }));
+        return;
+      }
+
+      setSubmission(prev => ({
+        ...prev,
+        objections: data.objections || [
+          ...(prev.objections || []).filter(o => o.questionIndex !== objectionModal.questionIndex),
+          {
+            questionId: String(objectionModal.questionId),
+            questionIndex: Number(objectionModal.questionIndex),
+            reason: objectionModal.reason,
+            details: objectionModal.details,
+            status: 'pending',
+            raisedAt: new Date()
+          }
+        ]
+      }));
+
+      setObjectionModal(prev => ({
+        ...prev,
+        submitting: false,
+        success: 'Objection submitted successfully! The academic evaluation committee will review your remarks.'
+      }));
+
+      setTimeout(() => {
+        handleCloseObjectionModal();
+      }, 1600);
+    } catch (err) {
+      console.error(err);
+      setObjectionModal(prev => ({ ...prev, submitting: false, error: 'Network error while submitting objection.' }));
+    }
+  };
 
   const verifyExamToken = async (tokenStr) => {
     try {
@@ -1199,7 +1367,13 @@ export default function App() {
         if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
         if (micStream) micStream.getTracks().forEach(t => t.stop());
         
-        localStorage.removeItem(`bics_pending_submit_${subId}`);
+        // Clean up any lingering offline pending submit items
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('bics_pending_submit_')) {
+            localStorage.removeItem(k);
+          }
+        }
         setHasPendingSubmit(false);
 
         setFlow('finished');
@@ -1932,9 +2106,20 @@ export default function App() {
               </div>
             </div>
 
+            {/* If MCQ, show selection instruction box before the question */}
+            {test.questions[selectedQuestionIndex].type === 'mcq' && (
+              <div style={{ backgroundColor: '#f8fafc', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '4px', zIndex: 11 }}>
+                <RichText
+                  text="Please select the correct option response to the question on the right workspace panel."
+                  style={{ fontSize: '9.5pt', color: '#555', lineHeight: '1.6' }}
+                />
+              </div>
+            )}
+
+            {/* Question Title / Header */}
             <RichText
-              text={test.questions[selectedQuestionIndex].title}
-              style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#333', lineHeight: '1.5', zIndex: 11 }}
+              text={test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].title || test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].question || ''}
+              style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.5', zIndex: 11 }}
             />
 
             {test.questions[selectedQuestionIndex].imageUrl && (
@@ -1947,44 +2132,37 @@ export default function App() {
               </div>
             )}
 
-            {/* Render question description and examples for coding / web / mcq types */}
-            <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {test.questions[selectedQuestionIndex].type !== 'mcq' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <RichText
-                    text={test.questions[selectedQuestionIndex].description}
-                    style={{ fontSize: '9.5pt', color: '#555', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
-                  />
-
-                  {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
-                    <div>
-                      <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
-                      <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
-                            <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Sample Input</th>
-                            <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Expected Output</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
-                            <tr key={tcIdx} style={{ borderBottom: '1px solid #cbd5e1' }}>
-                              <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.input}</td>
-                              <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.output}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              ) : (
+            {/* Render question description and examples for coding / web types */}
+            {test.questions[selectedQuestionIndex].type !== 'mcq' && (
+              <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <RichText
-                  text={test.questions[selectedQuestionIndex].description || "Please select the correct option response to the question on the right workspace panel."}
-                  style={{ fontSize: '9.5pt', color: '#555', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
+                  text={test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].questionText || ''}
+                  style={{ fontSize: '9.5pt', color: '#334155', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
                 />
-              )}
-            </div>
+
+                {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
+                  <div>
+                    <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
+                    <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
+                          <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Sample Input</th>
+                          <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Expected Output</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
+                          <tr key={tcIdx} style={{ borderBottom: '1px solid #cbd5e1' }}>
+                            <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.input}</td>
+                            <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.output}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Left Pane bottom footer question grid switcher */}
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -2835,6 +3013,756 @@ export default function App() {
     );
   }
 
+  // VIEW: Evaluated Answer Sheet Verification Review (Long vertically scrollable paper)
+  if (flow === 'verification_review') {
+    const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
+      window.location.origin.includes('localhost')
+        ? 'http://localhost:5173/'
+        : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
+    );
+
+    const questions = test?.questions || [];
+    const answers = submission?.answers || [];
+    const objections = submission?.objections || [];
+    
+    // Calculate totals
+    const totalMax = questions.reduce((sum, q) => sum + Number(q.points || 0), 0);
+    const totalScored = (submission?.evaluation?.mcqScore || 0) + (submission?.evaluation?.codingScore || 0);
+    const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
+
+    return (
+      <div style={{
+        minHeight: '100vh',
+        backgroundColor: '#f1f5f9',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        color: '#1e293b'
+      }}>
+        {/* Anti-screenshot Watermark */}
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          pointerEvents: 'none',
+          zIndex: 9999,
+          opacity: 0.045,
+          backgroundImage: `radial-gradient(#002147 0.75px, transparent 0.75px), radial-gradient(#002147 0.75px, #f1f5f9 0.75px)`,
+          backgroundSize: '30px 30px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignContent: 'space-around',
+          justifyContent: 'space-around',
+          overflow: 'hidden',
+          userSelect: 'none'
+        }}>
+          {Array.from({ length: 40 }).map((_, i) => (
+            <span key={i} style={{ transform: 'rotate(-25deg)', fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '25px' }}>
+              {candidate?.studentId || 'BICS'} • {candidate?.email || 'verified'}
+            </span>
+          ))}
+        </div>
+
+        {/* Sticky Top Header Bar */}
+        <header style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 1000,
+          backgroundColor: '#ffffff',
+          color: '#0f172a',
+          padding: '12px 28px',
+          borderBottom: '1px solid #e2e8f0',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '15px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '36px', width: '36px', objectFit: 'contain' }} />
+            <div>
+              <div style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f172a', letterSpacing: '0.2px' }}>
+                BICS Examination Portal
+              </div>
+              <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                Evaluated Candidate Script Verification • {test?.title || 'Academic Assessment'}
+              </div>
+            </div>
+          </div>
+
+          {/* Center Score & Verification Status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              padding: '6px 14px',
+              borderRadius: '6px',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '7pt', textTransform: 'uppercase', color: '#64748b', fontWeight: 'bold', letterSpacing: '0.5px' }}>Overall Score</div>
+              <div style={{ fontSize: '12.5pt', fontWeight: 'bold', color: '#0f172a' }}>
+                {totalScored} <span style={{ fontSize: '9pt', color: '#64748b', fontWeight: 'normal' }}>/ {totalMax} Marks ({percentage}%)</span>
+              </div>
+            </div>
+
+            {test?.verificationStatus === 'closed' ? (
+              <div style={{
+                backgroundColor: '#f1f5f9',
+                border: '1px solid #cbd5e1',
+                color: '#475569',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '8.5pt',
+                fontWeight: 'bold',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <Lock size={15} /> Verification Closed
+              </div>
+            ) : (
+              <div style={{
+                backgroundColor: '#ecfdf5',
+                border: '1px solid #a7f3d0',
+                color: '#047857',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '8.5pt',
+                fontWeight: 'bold',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <ShieldCheck size={16} /> Verification Active
+              </div>
+            )}
+          </div>
+
+          {/* Right Profile & Return Button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ textAlign: 'right', fontSize: '8.5pt' }}>
+              <div style={{ fontWeight: 'bold', color: '#0f172a' }}>{candidate?.name || 'Candidate'}</div>
+              <div style={{ color: '#64748b' }}>ID: {candidate?.studentId || 'N/A'}</div>
+            </div>
+
+            <button
+              onClick={() => window.location.href = dashboardUrl}
+              style={{
+                backgroundColor: '#f8fafc',
+                color: '#334155',
+                border: '1px solid #cbd5e1',
+                padding: '7px 14px',
+                borderRadius: '6px',
+                fontWeight: '600',
+                fontSize: '8.5pt',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              ← Return to Student Portal
+            </button>
+          </div>
+        </header>
+
+        {/* Main Continuous Document Container */}
+        <div style={{ maxWidth: '1000px', width: '100%', margin: '0 auto', padding: '30px 20px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {/* Exam Paper Title Header Card */}
+          <div className="cf-card" style={{ padding: '24px 28px', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '15px', marginBottom: '15px' }}>
+              <div>
+                <h1 style={{ fontSize: '15pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 4px 0' }}>
+                  {test?.title || "BICS Examination Paper"}
+                </h1>
+                <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                  Basic Introductory Computer Science • Academic Script Verification
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: '8.5pt', color: '#475569' }}>
+                <div><strong>Submission Date:</strong> {submission?.submittedAt ? new Date(submission.submittedAt).toLocaleString() : 'Recorded'}</div>
+                <div><strong>Evaluation Status:</strong> <span style={{ color: test?.verificationStatus === 'closed' ? '#475569' : '#166534', fontWeight: 'bold' }}>{test?.verificationStatus === 'closed' ? 'Finalized (Verification Closed)' : 'Finalized & Verification Open'}</span></div>
+              </div>
+            </div>
+
+            {/* Quick jump to question navigation chips */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Jump to Question:</span>
+              {questions.map((q, idx) => {
+                const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
+                const qScore = ans.score !== undefined ? ans.score : (q.type === 'mcq' ? (Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex) ? (q.points || 0) : 0) : 0);
+                const isFull = qScore === Number(q.points || 0);
+                const isPartial = qScore > 0 && qScore < Number(q.points || 0);
+
+                return (
+                  <a
+                    key={idx}
+                    href={`#question-${idx + 1}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px 10px',
+                      borderRadius: '4px',
+                      fontSize: '8.5pt',
+                      fontWeight: 'bold',
+                      textDecoration: 'none',
+                      backgroundColor: isFull ? '#dcfce7' : (isPartial ? '#fef3c7' : '#fee2e2'),
+                      color: isFull ? '#15803d' : (isPartial ? '#b45309' : '#b91c1c'),
+                      border: `1px solid ${isFull ? '#86efac' : (isPartial ? '#fcd34d' : '#fca5a5')}`
+                    }}
+                  >
+                    Q{idx + 1} ({qScore}/{q.points})
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Notice banner if verification is closed */}
+          {test?.verificationStatus === 'closed' && (
+            <div style={{
+              backgroundColor: '#f8fafc',
+              border: '1px solid #cbd5e1',
+              borderLeft: '4px solid #64748b',
+              borderRadius: '6px',
+              padding: '12px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              fontSize: '9pt',
+              color: '#334155'
+            }}>
+              <Lock size={18} style={{ color: '#64748b', flexShrink: 0 }} />
+              <div>
+                <strong>Verification &amp; Objection Window Closed:</strong> The verification period for this examination has concluded. You can inspect your evaluated answer script, official solutions, and final awarded scores below in read-only mode.
+              </div>
+            </div>
+          )}
+
+          {/* Questions Render Loop */}
+          {questions.map((q, idx) => {
+            const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
+            const obj = objections.find(o => o.questionIndex === idx || String(o.questionId) === String(q.id));
+            const qScore = ans.score !== undefined ? ans.score : (q.type === 'mcq' ? (Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex) ? (q.points || 0) : 0) : 0);
+            const isFull = qScore === Number(q.points || 0);
+            const isPartial = qScore > 0 && qScore < Number(q.points || 0);
+
+            const activeWebTab = webDevPreviewTabs[idx] || 'html';
+
+            return (
+              <div
+                key={q.id || idx}
+                id={`question-${idx + 1}`}
+                className="cf-card"
+                style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                  padding: '25px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '20px'
+                }}
+              >
+                {/* Question Header Card */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <span style={{
+                      backgroundColor: '#002147',
+                      color: '#ffffff',
+                      fontWeight: 'bold',
+                      fontSize: '9.5pt',
+                      padding: '4px 12px',
+                      borderRadius: '4px'
+                    }}>
+                      Question {idx + 1}
+                    </span>
+                    <span style={{ fontSize: '9pt', color: '#64748b', fontWeight: 'bold' }}>
+                      Section: {q.section || (q.type === 'mcq' ? 'Multiple Choice' : (q.type === 'coding' ? 'C++ Algorithm' : 'Web Development'))}
+                    </span>
+                    <span style={{ fontSize: '8pt', textTransform: 'uppercase', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#475569', fontWeight: 'bold' }}>
+                      {q.type}
+                    </span>
+                  </div>
+
+                  {/* Score Pill */}
+                  <div style={{
+                    backgroundColor: isFull ? '#dcfce7' : (isPartial ? '#fef3c7' : '#fee2e2'),
+                    color: isFull ? '#15803d' : (isPartial ? '#b45309' : '#b91c1c'),
+                    border: `1px solid ${isFull ? '#86efac' : (isPartial ? '#fcd34d' : '#fca5a5')}`,
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontWeight: 'bold',
+                    fontSize: '9.5pt',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}>
+                    {isFull ? <Check size={15} /> : (isPartial ? <span>~</span> : <X size={15} />)}
+                    <span>Score: {qScore} / {q.points} Points</span>
+                  </div>
+                </div>
+
+                {/* Question Text & Description */}
+                <div>
+                  {q.type === 'mcq' ? (
+                    <div style={{ fontSize: '11pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 10px 0', lineHeight: 1.5 }}>
+                      <RichText text={q.questionText || q.title || q.description || q.question || q.statement || `Question #${idx + 1}`} />
+                    </div>
+                  ) : (
+                    <>
+                      <h3 style={{ fontSize: '11.5pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 8px 0', lineHeight: 1.5 }}>
+                        {q.title || `Problem Statement #${idx + 1}`}
+                      </h3>
+                      {(q.description || q.questionText) && (
+                        <div style={{ fontSize: '10pt', color: '#334155', lineHeight: 1.6 }}>
+                          <RichText text={q.description || q.questionText} />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Objection Status or Action Button */}
+                <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px 16px' }}>
+                  {obj ? (
+                    <div style={{
+                      backgroundColor: obj.status === 'resolved' ? '#f0fdf4' : (obj.status === 'rejected' ? '#fef2f2' : '#fffbeb'),
+                      border: `1px solid ${obj.status === 'resolved' ? '#86efac' : (obj.status === 'rejected' ? '#fca5a5' : '#fcd34d')}`,
+                      borderRadius: '6px',
+                      padding: '12px 15px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Flag size={16} style={{ color: obj.status === 'resolved' ? '#166534' : (obj.status === 'rejected' ? '#991b1b' : '#b45309') }} />
+                          <strong style={{ fontSize: '9.5pt', color: obj.status === 'resolved' ? '#166534' : (obj.status === 'rejected' ? '#991b1b' : '#b45309') }}>
+                            Objection Filed on Q{idx + 1} ({obj.status.toUpperCase()})
+                          </strong>
+                        </div>
+                        <span style={{ fontSize: '8pt', color: '#64748b' }}>
+                          Raised on: {new Date(obj.raisedAt).toLocaleString()}
+                        </span>
+                      </div>
+                      
+                      <div style={{ fontSize: '9pt', color: '#334155' }}>
+                        <strong>Reason:</strong> {obj.reason}<br />
+                        <strong>Candidate Comments:</strong> {obj.details}
+                      </div>
+
+                      {obj.adminRemarks && (
+                        <div style={{ backgroundColor: 'rgba(255,255,255,0.7)', borderLeft: '3px solid #3b5998', padding: '8px 12px', fontSize: '8.5pt', marginTop: '4px' }}>
+                          <strong>Committee Resolution Remarks:</strong> {obj.adminRemarks}
+                          {obj.resolvedMarks !== undefined && (
+                            <div style={{ color: '#166534', fontWeight: 'bold', marginTop: '2px' }}>
+                              Revised Marks Awarded: {obj.resolvedMarks} / {q.points}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : test?.verificationStatus === 'closed' ? (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>
+                        Verification &amp; objection window is closed. Marks for this question are finalized.
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ fontSize: '9pt', color: '#64748b' }}>
+                        Disagree with the automated evaluation or marks awarded for this question?
+                      </div>
+                      <button
+                        className="cf-btn-secondary"
+                        onClick={() => handleOpenObjectionModal(idx, q.id)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 14px',
+                          fontSize: '8.5pt',
+                          fontWeight: 'bold',
+                          color: '#b45309',
+                          borderColor: '#fcd34d',
+                          backgroundColor: '#fffbeb'
+                        }}
+                      >
+                        <Flag size={14} /> Raise Objection on Q{idx + 1}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Submitted Content Display: MCQ vs Coding vs Web */}
+                {q.type === 'mcq' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase' }}>
+                      Options Evaluation:
+                    </div>
+                    {(q.options || []).map((opt, optIdx) => {
+                      const isCandidateChoice = Number(ans.selectedOptionIndex) === optIdx;
+                      const isOfficialCorrect = Number(q.correctOptionIndex) === optIdx;
+
+                      let borderColor = '#e2e8f0';
+                      let bgColor = '#ffffff';
+                      let badge = null;
+
+                      if (isCandidateChoice && isOfficialCorrect) {
+                        borderColor = '#22c55e';
+                        bgColor = '#f0fdf4';
+                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>✓ Your Choice (Correct)</span>;
+                      } else if (isCandidateChoice && !isOfficialCorrect) {
+                        borderColor = '#ef4444';
+                        bgColor = '#fef2f2';
+                        badge = <span style={{ color: '#991b1b', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '4px' }}>✗ Your Selection (Incorrect)</span>;
+                      } else if (isOfficialCorrect) {
+                        borderColor = '#22c55e';
+                        bgColor = '#f0fdf4';
+                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key</span>;
+                      }
+
+                      return (
+                        <div
+                          key={optIdx}
+                          style={{
+                            border: `2px solid ${borderColor}`,
+                            backgroundColor: bgColor,
+                            borderRadius: '6px',
+                            padding: '12px 16px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: '15px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '9.5pt' }}>
+                            <span style={{ fontWeight: 'bold', color: '#64748b', width: '20px' }}>
+                              {String.fromCharCode(65 + optIdx)}.
+                            </span>
+                            <span>{opt}</span>
+                          </div>
+                          {badge}
+                        </div>
+                      );
+                    })}
+
+                    {/* Official Solution Explanation */}
+                    {q.explanation && (
+                      <div style={{ backgroundColor: '#f8fafc', borderLeft: '4px solid #3b5998', padding: '14px 18px', borderRadius: '4px', marginTop: '10px' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '9pt', color: '#002147', marginBottom: '4px' }}>
+                          Official Rationale & Solution Explanation:
+                        </div>
+                        <div style={{ fontSize: '9.5pt', color: '#334155', lineHeight: 1.6 }}>
+                          <RichText text={q.explanation} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {q.type === 'coding' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase' }}>
+                      Your Submitted C++ Source Code:
+                    </div>
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                      <Editor
+                        height="260px"
+                        language="cpp"
+                        theme="vs-light"
+                        value={ans.submittedCode || "// No code was submitted for this problem."}
+                        options={{
+                          readOnly: true,
+                          minimap: { enabled: false },
+                          fontSize: 13,
+                          scrollBeyondLastLine: false,
+                          lineNumbers: 'on',
+                          automaticLayout: true
+                        }}
+                      />
+                    </div>
+
+                    {/* Testcase Results Matrix */}
+                    <div>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase', marginBottom: '8px' }}>
+                        Automated Testcase Evaluation Matrix:
+                      </div>
+                      <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5pt', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', borderBottom: '1px solid #cbd5e1' }}>
+                              <th style={{ padding: '8px 12px' }}>Testcase</th>
+                              <th style={{ padding: '8px 12px' }}>Type</th>
+                              <th style={{ padding: '8px 12px' }}>Input</th>
+                              <th style={{ padding: '8px 12px' }}>Expected Output</th>
+                              <th style={{ padding: '8px 12px' }}>Evaluation Verdict</th>
+                              <th style={{ padding: '8px 12px' }}>Points</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(q.testCases || []).map((tc, tcIdx) => {
+                              const tcRes = ans.testCaseResults?.[tcIdx] || {};
+                              const statusLower = String(tcRes.status || '').toLowerCase();
+                              const isAcceptedStatus = statusLower === 'accepted' || statusLower === 'passed' || statusLower.includes('accept');
+                              const isPassed = isAcceptedStatus || (tcRes.scoredPoints !== undefined && Number(tcRes.scoredPoints) > 0) || (isFull && (!ans.testCaseResults || ans.testCaseResults.length === 0));
+                              
+                              const pointsScored = tcRes.scoredPoints !== undefined ? Number(tcRes.scoredPoints) : (isPassed ? Number(tc.points || 15) : 0);
+                              const maxPoints = tcRes.points !== undefined ? Number(tcRes.points) : Number(tc.points || 15);
+                              const displayVerdict = tcRes.status ? (isPassed ? `✓ ${tcRes.status}` : `✗ ${tcRes.status}`) : (isPassed ? '✓ Accepted (Passed)' : '✗ Failed / Mismatch');
+
+                              return (
+                                <tr key={tcIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                  <td style={{ padding: '8px 12px', fontWeight: 'bold' }}>#{tcIdx + 1}</td>
+                                  <td style={{ padding: '8px 12px' }}>
+                                    <span style={{ fontSize: '7.5pt', padding: '2px 6px', borderRadius: '3px', backgroundColor: tc.isSample ? '#e0e7ff' : '#f1f5f9', color: tc.isSample ? '#4338ca' : '#475569' }}>
+                                      {tc.isSample ? 'Sample' : 'Hidden'}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{tc.input || '(stdin empty)'}</td>
+                                  <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{tc.output || '(no output)'}</td>
+                                  <td style={{ padding: '8px 12px' }}>
+                                    <span style={{
+                                      fontSize: '8pt',
+                                      fontWeight: 'bold',
+                                      padding: '2px 8px',
+                                      borderRadius: '4px',
+                                      backgroundColor: isPassed ? '#dcfce7' : '#fee2e2',
+                                      color: isPassed ? '#15803d' : '#b91c1c'
+                                    }}>
+                                      {displayVerdict}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '8px 12px', fontWeight: 'bold' }}>
+                                    {pointsScored} / {maxPoints}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {q.type === 'web' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase' }}>
+                        Submitted Web Solution:
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {['html', 'css', 'js', 'preview'].map(tab => (
+                          <button
+                            key={tab}
+                            onClick={() => setWebDevPreviewTabs(prev => ({ ...prev, [idx]: tab }))}
+                            style={{
+                              padding: '5px 12px',
+                              fontSize: '8.5pt',
+                              fontWeight: 'bold',
+                              borderRadius: '4px',
+                              border: activeWebTab === tab ? '1px solid #3b5998' : '1px solid #cbd5e1',
+                              backgroundColor: activeWebTab === tab ? '#3b5998' : '#ffffff',
+                              color: activeWebTab === tab ? '#ffffff' : '#475569',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {tab.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {activeWebTab === 'preview' ? (
+                      <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', height: '280px', backgroundColor: '#ffffff', overflow: 'hidden' }}>
+                        <iframe
+                          title={`web-preview-${idx}`}
+                          sandbox="allow-scripts"
+                          srcDoc={`<!DOCTYPE html><html><head><style>${ans.submittedCss || ''}</style></head><body>${ans.submittedHtml || ''}<script>${ans.submittedJs || ''}<\/script></body></html>`}
+                          style={{ width: '100%', height: '100%', border: 'none' }}
+                        />
+                      </div>
+                    ) : (
+                      <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                        <Editor
+                          height="240px"
+                          language={activeWebTab === 'html' ? 'html' : (activeWebTab === 'css' ? 'css' : 'javascript')}
+                          theme="vs-light"
+                          value={activeWebTab === 'html' ? (ans.submittedHtml || '') : (activeWebTab === 'css' ? (ans.submittedCss || '') : (ans.submittedJs || ''))}
+                          options={{
+                            readOnly: true,
+                            minimap: { enabled: false },
+                            fontSize: 13,
+                            lineNumbers: 'on',
+                            automaticLayout: true
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Proctoring Audit Integrity Card */}
+          <div className="cf-card" style={{ padding: '20px 25px', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+            <h4 style={{ fontSize: '11pt', color: '#002147', fontWeight: 'bold', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ShieldAlert size={18} style={{ color: '#3b5998' }} />
+              <span>Proctoring Integrity Audit & Telemetry Log</span>
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', fontSize: '9pt' }}>
+              <div style={{ backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                <div style={{ color: '#64748b' }}>Fullscreen Exits Recorded:</div>
+                <div style={{ fontSize: '12pt', fontWeight: 'bold', color: (submission?.proctoringLog?.fullscreenExits || 0) > 0 ? '#b91c1c' : '#15803d' }}>
+                  {submission?.proctoringLog?.fullscreenExits || 0} Exits
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                <div style={{ color: '#64748b' }}>Window Focus Losses / Tab Switches:</div>
+                <div style={{ fontSize: '12pt', fontWeight: 'bold', color: (submission?.proctoringLog?.tabSwitches || 0) > 0 ? '#b91c1c' : '#15803d' }}>
+                  {submission?.proctoringLog?.tabSwitches || 0} Switches
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                <div style={{ color: '#64748b' }}>Webcam AI Biometric Telemetry:</div>
+                <div style={{ fontSize: '12pt', fontWeight: 'bold', color: '#15803d' }}>
+                  Active & Matched
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Objection Modal Dialog */}
+        {objectionModal.isOpen && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            zIndex: 10000,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '20px'
+          }}>
+            <div style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '8px',
+              maxWidth: '520px',
+              width: '100%',
+              padding: '25px',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '15px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                <h3 style={{ fontSize: '13pt', color: '#002147', fontWeight: 'bold', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Flag size={18} style={{ color: '#b45309' }} />
+                  <span>Raise Objection: Question {objectionModal.questionIndex !== null ? objectionModal.questionIndex + 1 : ''}</span>
+                </h3>
+                <button
+                  onClick={handleCloseObjectionModal}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {objectionModal.error && (
+                <div style={{
+                  color: '#dc2626',
+                  backgroundColor: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: '4px',
+                  padding: '8px 12px',
+                  fontSize: '9pt',
+                  fontWeight: '500'
+                }}>
+                  {objectionModal.error}
+                </div>
+              )}
+
+              {objectionModal.success && (
+                <div className="cf-alert cf-alert-success" style={{ fontSize: '8.5pt' }}>
+                  {objectionModal.success}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                    Select Objection Category:
+                  </label>
+                  <select
+                    value={objectionModal.reason}
+                    onChange={(e) => setObjectionModal(prev => ({ ...prev, reason: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt' }}
+                  >
+                    <option value="Testcase evaluation discrepancy">Testcase evaluation discrepancy / Hidden testcase error</option>
+                    <option value="MCQ answer key discrepancy">MCQ answer key discrepancy / Alternate correct option</option>
+                    <option value="Partial marks allocation request">Partial marks allocation request</option>
+                    <option value="Compiler runtime or format discrepancy">Compiler runtime or output format discrepancy</option>
+                    <option value="Other grievance">Other academic grievance</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                    Detailed Remarks & Explanation:
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={objectionModal.details}
+                    onChange={(e) => setObjectionModal(prev => ({ ...prev, details: e.target.value }))}
+                    placeholder="Provide clear technical rationale why your answer or logic deserves credit..."
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', resize: 'vertical' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button
+                  className="cf-btn-secondary"
+                  onClick={handleCloseObjectionModal}
+                  disabled={objectionModal.submitting}
+                  style={{ padding: '8px 16px', fontSize: '9pt' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="cf-btn-primary"
+                  onClick={handleSubmitObjection}
+                  disabled={objectionModal.submitting}
+                  style={{ padding: '8px 18px', fontSize: '9pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  {objectionModal.submitting ? <Loader2 className="spinner" size={14} /> : <Send size={14} />}
+                  <span>{objectionModal.submitting ? 'Submitting...' : 'Submit Objection'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <CenteredFooter />
+      </div>
+    );
+  }
+
   // VIEW: Submission Complete screen
   if (flow === 'finished') {
     return (
@@ -2854,15 +3782,9 @@ export default function App() {
             
             {finishedStep === 1 ? (
               (() => {
-                let pendingSubmitKey = '';
-                for (let i = 0; i < localStorage.length; i++) {
-                  const k = localStorage.key(i);
-                  if (k && k.startsWith('bics_pending_submit_')) {
-                    pendingSubmitKey = k;
-                    break;
-                  }
-                }
-                const isPendingSubmit = !!pendingSubmitKey;
+                const subId = submission?._id || submission?.id;
+                const pendingSubmitKey = subId ? `bics_pending_submit_${subId}` : '';
+                const isPendingSubmit = hasPendingSubmit;
 
                 if (isPendingSubmit) {
                   return (
