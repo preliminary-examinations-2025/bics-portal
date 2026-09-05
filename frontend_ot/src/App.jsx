@@ -3034,9 +3034,31 @@ export default function App() {
     const answers = submission?.answers || [];
     const objections = submission?.objections || [];
     
+    // Dynamic Score Helper (respects official admin objection resolution marks)
+    const getQuestionScore = (q, idx) => {
+      const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
+      const obj = objections.find(o => o.questionIndex === idx || (q.id && String(o.questionId) === String(q.id)));
+      
+      if (obj && obj.status === 'resolved' && obj.resolvedMarks !== undefined && obj.resolvedMarks !== null && !isNaN(obj.resolvedMarks)) {
+        return Number(obj.resolvedMarks);
+      }
+      
+      if (ans.score !== undefined && ans.score !== null && !isNaN(ans.score)) {
+        return Number(ans.score);
+      }
+      
+      if (q.type === 'mcq') {
+        return (ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex)) ? Number(q.points || 0) : 0;
+      }
+      
+      return 0;
+    };
+
     // Calculate totals
     const totalMax = questions.reduce((sum, q) => sum + Number(q.points || 0), 0);
-    const totalScored = (submission?.evaluation?.mcqScore || 0) + (submission?.evaluation?.codingScore || 0);
+    const totalScored = questions.length > 0 
+      ? questions.reduce((sum, q, idx) => sum + getQuestionScore(q, idx), 0)
+      : ((submission?.evaluation?.mcqScore || 0) + (submission?.evaluation?.codingScore || 0));
     const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
 
     return (
@@ -3224,8 +3246,7 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569' }}>Jump to Question:</span>
               {questions.map((q, idx) => {
-                const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
-                const qScore = ans.score !== undefined ? ans.score : (q.type === 'mcq' ? (Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex) ? (q.points || 0) : 0) : 0);
+                const qScore = getQuestionScore(q, idx);
                 const isFull = qScore === Number(q.points || 0);
                 const isPartial = qScore > 0 && qScore < Number(q.points || 0);
 
@@ -3278,8 +3299,8 @@ export default function App() {
           {/* Questions Render Loop */}
           {questions.map((q, idx) => {
             const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
-            const obj = objections.find(o => o.questionIndex === idx || String(o.questionId) === String(q.id));
-            const qScore = ans.score !== undefined ? ans.score : (q.type === 'mcq' ? (Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex) ? (q.points || 0) : 0) : 0);
+            const obj = objections.find(o => o.questionIndex === idx || (q.id && String(o.questionId) === String(q.id)));
+            const qScore = getQuestionScore(q, idx);
             const isFull = qScore === Number(q.points || 0);
             const isPartial = qScore > 0 && qScore < Number(q.points || 0);
 

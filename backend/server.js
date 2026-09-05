@@ -3320,7 +3320,7 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
 
             submission.objections = submission.objections || [];
-            const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex));
+            const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex) || (questionId && String(o.questionId) === String(questionId)));
             if (!obj) return res.status(404).json({ success: false, error: "Objection not found." });
 
             obj.status = status; // 'resolved' or 'rejected'
@@ -3328,16 +3328,34 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             obj.resolvedAt = new Date();
             if (revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
                 obj.resolvedMarks = Number(revisedMarks);
-                if (submission.answers && submission.answers[questionIndex]) {
-                    submission.answers[questionIndex].score = Number(revisedMarks);
+                
+                let targetAnswer = null;
+                if (obj.questionId) {
+                    targetAnswer = (submission.answers || []).find(a => String(a.questionId) === String(obj.questionId));
                 }
+                if (!targetAnswer && submission.answers && submission.answers[questionIndex]) {
+                    targetAnswer = submission.answers[questionIndex];
+                }
+                if (targetAnswer) {
+                    targetAnswer.score = Number(revisedMarks);
+                }
+
                 let totalCoding = 0;
-                submission.answers.forEach(a => {
+                let totalMCQ = 0;
+                (submission.answers || []).forEach(a => {
                     if (a.type === 'coding' || a.type === 'web') {
-                        totalCoding += (a.score || 0);
+                        totalCoding += (Number(a.score) || 0);
+                    } else if (a.type === 'mcq') {
+                        totalMCQ += (Number(a.score) || 0);
                     }
                 });
+                submission.evaluation = submission.evaluation || {};
                 submission.evaluation.codingScore = totalCoding;
+                if (totalMCQ > 0 || submission.evaluation.mcqScore !== undefined) {
+                    submission.evaluation.mcqScore = totalMCQ;
+                }
+                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + totalCoding;
+                submission.evaluation.score = submission.evaluation.totalScore;
             }
             submission.markModified('objections');
             submission.markModified('answers');
@@ -3350,7 +3368,7 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
 
             submission.objections = submission.objections || [];
-            const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex));
+            const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex) || (questionId && String(o.questionId) === String(questionId)));
             if (!obj) return res.status(404).json({ success: false, error: "Objection not found." });
 
             obj.status = status;
@@ -3358,16 +3376,34 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             obj.resolvedAt = new Date();
             if (revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
                 obj.resolvedMarks = Number(revisedMarks);
-                if (submission.answers && submission.answers[questionIndex]) {
-                    submission.answers[questionIndex].score = Number(revisedMarks);
+                
+                let targetAnswer = null;
+                if (obj.questionId) {
+                    targetAnswer = (submission.answers || []).find(a => String(a.questionId) === String(obj.questionId));
                 }
+                if (!targetAnswer && submission.answers && submission.answers[questionIndex]) {
+                    targetAnswer = submission.answers[questionIndex];
+                }
+                if (targetAnswer) {
+                    targetAnswer.score = Number(revisedMarks);
+                }
+
                 let totalCoding = 0;
-                submission.answers.forEach(a => {
+                let totalMCQ = 0;
+                (submission.answers || []).forEach(a => {
                     if (a.type === 'coding' || a.type === 'web') {
-                        totalCoding += (a.score || 0);
+                        totalCoding += (Number(a.score) || 0);
+                    } else if (a.type === 'mcq') {
+                        totalMCQ += (Number(a.score) || 0);
                     }
                 });
+                submission.evaluation = submission.evaluation || {};
                 submission.evaluation.codingScore = totalCoding;
+                if (totalMCQ > 0 || submission.evaluation.mcqScore !== undefined) {
+                    submission.evaluation.mcqScore = totalMCQ;
+                }
+                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + totalCoding;
+                submission.evaluation.score = submission.evaluation.totalScore;
             }
             saveJSONData(db);
         }
