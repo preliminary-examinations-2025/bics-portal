@@ -294,7 +294,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load BlazeFace Model Failsafe
+  // Load BlazeFace Model Failsafe & Pre-warm WebGL Shaders
   useEffect(() => {
     const loadModel = async () => {
       try {
@@ -303,6 +303,13 @@ export default function App() {
           const model = await window.blazeface.load();
           blazefaceModelRef.current = model;
           console.log("[PROCTOR_ML]: BlazeFace model loaded successfully.");
+
+          // If calibration video is already streaming, pre-warm shaders immediately
+          if (calibVideoRef.current && calibVideoRef.current.readyState >= 2) {
+            model.estimateFaces(calibVideoRef.current, false)
+              .then(() => console.log("[PROCTOR_ML]: BlazeFace shaders pre-warmed on load."))
+              .catch(() => {});
+          }
         } else {
           console.warn("[PROCTOR_ML]: BlazeFace model CDN not available.");
         }
@@ -312,6 +319,45 @@ export default function App() {
     };
     loadModel();
   }, []);
+
+  // Pre-warm WebGL shaders when webcam stream connects during guidelines setup
+  useEffect(() => {
+    if (!webcamStream) return;
+    let cancelled = false;
+
+    const warmUp = async () => {
+      try {
+        const vid = calibVideoRef.current;
+        if (!vid) return;
+
+        // Ensure video has received first frame
+        if (vid.readyState < 2) {
+          await new Promise(resolve => {
+            const onLoaded = () => {
+              vid.removeEventListener('loadeddata', onLoaded);
+              resolve();
+            };
+            vid.addEventListener('loadeddata', onLoaded);
+            setTimeout(resolve, 1500);
+          });
+        }
+
+        if (cancelled) return;
+        const model = blazefaceModelRef.current || (window.blazeface ? await window.blazeface.load() : null);
+        if (model && vid && vid.readyState >= 2 && !cancelled) {
+          blazefaceModelRef.current = model;
+          console.log("[PROCTOR_ML]: Pre-warming WebGL shaders during guidelines setup...");
+          await model.estimateFaces(vid, false);
+          console.log("[PROCTOR_ML]: BlazeFace WebGL shaders pre-warmed. Start Exam freeze eliminated.");
+        }
+      } catch (err) {
+        console.warn("[PROCTOR_ML]: Shader pre-warming notice:", err?.message || err);
+      }
+    };
+
+    warmUp();
+    return () => { cancelled = true; };
+  }, [webcamStream]);
 
   // Helper trigger methods for custom modal system
   const triggerCustomAlert = (title, message) => {
@@ -648,6 +694,13 @@ export default function App() {
       setTimeout(() => {
         if (calibVideoRef.current) {
           calibVideoRef.current.srcObject = stream;
+          calibVideoRef.current.onloadeddata = () => {
+            if (blazefaceModelRef.current) {
+              blazefaceModelRef.current.estimateFaces(calibVideoRef.current, false)
+                .then(() => console.log("[PROCTOR_ML]: BlazeFace shaders pre-warmed on calib stream ready."))
+                .catch(() => {});
+            }
+          };
         }
       }, 100);
     } catch (err) {
@@ -820,7 +873,7 @@ export default function App() {
             // No face detected!
             faceAwayDurationRef.current += 1;
             
-            if (faceAwayDurationRef.current > 30) { // ~3 seconds at 10 FPS
+            if (faceAwayDurationRef.current >= 3) { // 3 seconds at 1 FPS
               setWebcamProctorWarning("Proctor Reminder: No face detected. Please ensure you are visible to the webcam.");
               
               // Throttle database logging
@@ -834,7 +887,7 @@ export default function App() {
             // Multiple faces detected!
             faceAwayDurationRef.current += 1;
             
-            if (faceAwayDurationRef.current > 30) {
+            if (faceAwayDurationRef.current >= 3) {
               setWebcamProctorWarning("Proctor Reminder: Multiple faces detected in webcam frame.");
               
               const now = Date.now();
@@ -863,7 +916,7 @@ export default function App() {
                 if (Math.abs(offsetRatio) > 0.25) {
                   faceAwayDurationRef.current += 1;
                   
-                  if (faceAwayDurationRef.current > 30) {
+                  if (faceAwayDurationRef.current >= 3) {
                     setWebcamProctorWarning("Proctor Reminder: Please keep facing forward. Looking away is prohibited.");
                     
                     const now = Date.now();
@@ -892,12 +945,12 @@ export default function App() {
       }
       
       if (active) {
-        frameId = setTimeout(trackFace, 100);
+        frameId = setTimeout(trackFace, 1000); // 1 FPS check instead of 10 FPS to eliminate GPU & main-thread freezing
       }
     };
     
-    // Start loop after a short delay
-    const initDelay = setTimeout(trackFace, 1000);
+    // Start loop after a short delay (1.5s) to allow Monaco and UI to finish painting
+    const initDelay = setTimeout(trackFace, 1500);
     
     return () => {
       active = false;
@@ -3552,9 +3605,9 @@ export default function App() {
                           <thead>
                             <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', borderBottom: '1px solid #cbd5e1' }}>
                               <th style={{ padding: '8px 12px' }}>Testcase</th>
-                              <th style={{ padding: '8px 12px' }}>Type</th>
                               <th style={{ padding: '8px 12px' }}>Input</th>
                               <th style={{ padding: '8px 12px' }}>Expected Output</th>
+                              <th style={{ padding: '8px 12px' }}>Your Output</th>
                               <th style={{ padding: '8px 12px' }}>Evaluation Verdict</th>
                               <th style={{ padding: '8px 12px' }}>Points</th>
                             </tr>
@@ -3570,18 +3623,54 @@ export default function App() {
                               const maxPoints = tc.points !== undefined ? Number(tc.points) : (tcRes.points !== undefined ? Number(tcRes.points) : 15);
                               const displayVerdict = tcRes.status ? (isPassed ? `✓ ${tcRes.status}` : `✗ ${tcRes.status}`) : (isPassed ? '✓ Accepted (Passed)' : '✗ Failed / Mismatch');
 
+                              const expectedVal = tc.output !== undefined && tc.output !== null ? tc.output : (tcRes.expectedOutput || '');
+                              const actualVal = tcRes.actualOutput !== undefined && tcRes.actualOutput !== null && tcRes.actualOutput !== ''
+                                ? tcRes.actualOutput
+                                : (isPassed ? (tc.output || '(matched expected)') : (tcRes.status || '(no output)'));
+
+                              const renderOutputBox = (val, fallback = '(empty)') => {
+                                if (val === undefined || val === null || String(val).trim() === '') {
+                                  return <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '8pt' }}>{fallback}</span>;
+                                }
+                                const str = String(val);
+                                const isVeryLong = str.length > 150;
+                                const displayText = isVeryLong ? str.slice(0, 150) + '...' : str;
+
+                                return (
+                                  <div
+                                    title={str}
+                                    style={{
+                                      maxWidth: '220px',
+                                      overflowX: 'auto',
+                                      whiteSpace: 'pre',
+                                      fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                                      fontSize: '8pt',
+                                      backgroundColor: '#f8fafc',
+                                      padding: '4px 6px',
+                                      borderRadius: '4px',
+                                      border: '1px solid #e2e8f0',
+                                      boxSizing: 'border-box'
+                                    }}
+                                  >
+                                    {displayText}
+                                  </div>
+                                );
+                              };
+
                               return (
                                 <tr key={tcIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                   <td style={{ padding: '8px 12px', fontWeight: 'bold', fontFamily: 'monospace' }}>
                                     26{String(idx + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')}
                                   </td>
-                                  <td style={{ padding: '8px 12px' }}>
-                                    <span style={{ fontSize: '7.5pt', padding: '2px 6px', borderRadius: '3px', backgroundColor: tc.isSample ? '#e0e7ff' : '#f1f5f9', color: tc.isSample ? '#4338ca' : '#475569' }}>
-                                      {tc.isSample ? 'Sample' : 'Hidden'}
-                                    </span>
+                                  <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>
+                                    {tc.input || '(stdin empty)'}
                                   </td>
-                                  <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{tc.input || '(stdin empty)'}</td>
-                                  <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{tc.output || '(no output)'}</td>
+                                  <td style={{ padding: '8px 12px' }}>
+                                    {renderOutputBox(expectedVal, '(no output)')}
+                                  </td>
+                                  <td style={{ padding: '8px 12px' }}>
+                                    {renderOutputBox(actualVal, '(no output)')}
+                                  </td>
                                   <td style={{ padding: '8px 12px' }}>
                                     <span style={{
                                       fontSize: '8pt',

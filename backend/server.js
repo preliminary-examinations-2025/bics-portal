@@ -535,7 +535,10 @@ const AnswerSchema = new mongoose.Schema({
     testCaseResults: [{
         status: String,
         points: Number,
-        scoredPoints: Number
+        scoredPoints: Number,
+        actualOutput: String,
+        expectedOutput: String,
+        input: String
     }]
 }, { _id: false });
 
@@ -628,7 +631,10 @@ async function recalculateCodingScore(submission, test) {
                         ans.testCaseResults.push({
                             status: 'No Submission',
                             points: Number(tc.points || 0),
-                            scoredPoints: 0
+                            scoredPoints: 0,
+                            actualOutput: '',
+                            expectedOutput: tc.output || '',
+                            input: tc.input || ''
                         });
                     });
                 }
@@ -652,7 +658,10 @@ async function recalculateCodingScore(submission, test) {
                             ans.testCaseResults.push({
                                 status: tcStatus,
                                 points: pts,
-                                scoredPoints: scored
+                                scoredPoints: scored,
+                                actualOutput: res.actualOutput !== undefined ? res.actualOutput : (res.stdout || ''),
+                                expectedOutput: tc ? (tc.output || '') : '',
+                                input: tc ? (tc.input || '') : ''
                             });
                         });
                     } else if (runRes && runRes.status === 'Compilation Error') {
@@ -661,7 +670,10 @@ async function recalculateCodingScore(submission, test) {
                                 ans.testCaseResults.push({
                                     status: 'Compilation Error',
                                     points: Number(tc.points || 0),
-                                    scoredPoints: 0
+                                    scoredPoints: 0,
+                                    actualOutput: runRes ? (runRes.compileError || runRes.error || 'Compilation Error') : 'Compilation Error',
+                                    expectedOutput: tc.output || '',
+                                    input: tc.input || ''
                                 });
                             });
                         }
@@ -671,7 +683,10 @@ async function recalculateCodingScore(submission, test) {
                                 ans.testCaseResults.push({
                                     status: 'Runtime Error',
                                     points: Number(tc.points || 0),
-                                    scoredPoints: 0
+                                    scoredPoints: 0,
+                                    actualOutput: 'Runtime Error',
+                                    expectedOutput: tc.output || '',
+                                    input: tc.input || ''
                                 });
                             });
                         }
@@ -685,7 +700,10 @@ async function recalculateCodingScore(submission, test) {
                             ans.testCaseResults.push({
                                 status: 'Autograding Error',
                                 points: Number(tc.points || 0),
-                                scoredPoints: 0
+                                scoredPoints: 0,
+                                actualOutput: err?.message || 'Autograding Error',
+                                expectedOutput: tc.output || '',
+                                input: tc.input || ''
                             });
                         });
                     }
