@@ -1657,7 +1657,9 @@ app.post('/api/candidate/verify-code/:id', async (req, res) => {
 // 10e. Centralized PDF Hall Ticket Generator
 app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
     const { id } = req.params;
-    const { type } = req.query; // 'mid' or 'end'
+    const type = req.query?.type || req.body?.type; // 'mid' or 'end'
+    const t = req.query?.t || req.body?.t || Date.now();
+    const hallTicketNumber = String(t);
 
     if (type !== 'mid' && type !== 'end') {
         return res.status(400).send("<h3>Error</h3><p>Invalid exam type specified. Must be 'mid' or 'end'.</p>");
@@ -1715,6 +1717,17 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
         doc.pipe(res);
+
+        // Security Verification HMAC Hash for Hall Ticket Number & Security QR
+        const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
+        const payloadText = `${student.studentId || id}_${type}_${hallTicketNumber}_${student.eligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE'}`;
+        const hmacHash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 24);
+
+        // Hall Ticket Number in Typewriter Font (Top Right over logo)
+        doc.fillColor('#334155')
+           .font('Courier-Bold')
+           .fontSize(8.5)
+           .text(`Hall Ticket Number - ${hallTicketNumber}`, 30, 16, { align: 'right', width: 535 });
 
         // Header Section
         const logoPath = path.join(__dirname, 'public', 'logo.png');
@@ -1914,14 +1927,11 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
 
         // Security Verification HMAC QR Code (Center Footer)
         try {
-            const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
-            const payloadText = `${student.studentId || id}_${type}_${student.eligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE'}`;
-            const hmacHash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 24);
-            
             const qrPayload = JSON.stringify({
                 sid: student.studentId || id,
                 name: student.name,
                 exam: type,
+                ticketNo: hallTicketNumber,
                 sign: hmacHash
             });
             
