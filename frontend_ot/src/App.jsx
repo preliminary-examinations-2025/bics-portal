@@ -31,7 +31,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     if (!raw) return '';
 
     const mathBlocks = [];
-    let formatted = raw;
+    let formatted = String(raw).replace(/\r\n/g, '\n');
 
     let placeholderIndex = 0;
 
@@ -49,26 +49,73 @@ const RichText = React.memo(function RichText({ text, style, className }) {
       return placeholder;
     });
 
+    // Temporarily extract \[...\] display math
+    formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match) => {
+      const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
+      mathBlocks.push({ placeholder, content: match });
+      return placeholder;
+    });
+
+    // Temporarily extract \(...\) inline math
+    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match) => {
+      const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
+      mathBlocks.push({ placeholder, content: match });
+      return placeholder;
+    });
+
     // Escape raw text sections for safety
     formatted = formatted
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
-    // Markdown conversion rules
-    formatted = formatted.replace(/\n/g, '<br />');
+    // Markdown inline styling
     formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     formatted = formatted.replace(/__(.*?)__/g, '<strong>$1</strong>');
     formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
     formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
-    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
+    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: \'Roboto Mono\', Consolas, monospace; background-color: #f1f5f9; padding: 2px 5px; border-radius: 3px; font-size: 88%; border: 1px solid #e2e8f0;">$1</code>');
+
+    // Convert section headers (Input, Output, Note, Constraints, etc.)
+    formatted = formatted.replace(/^(?:#{1,6}\s+)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?$/gim, (m, title) => {
+      return `%%SECTIONTITLE%%${title}%%ENDSECTIONTITLE%%`;
+    });
+
+    // Split by double newlines into clean Codeforces paragraphs
+    const rawParagraphs = formatted.split(/\n\s*\n/);
+    const htmlChunks = [];
+
+    rawParagraphs.forEach((p) => {
+      const trimmed = p.trim();
+      if (!trimmed) return;
+
+      if (trimmed.includes('%%SECTIONTITLE%%')) {
+        const parts = trimmed.split(/(%%SECTIONTITLE%%.*?%%ENDSECTIONTITLE%%)/g);
+        parts.forEach(part => {
+          const pt = part.trim();
+          if (!pt) return;
+          if (pt.startsWith('%%SECTIONTITLE%%') && pt.endsWith('%%ENDSECTIONTITLE%%')) {
+            const titleName = pt.replace('%%SECTIONTITLE%%', '').replace('%%ENDSECTIONTITLE%%', '');
+            htmlChunks.push(`<div class="cf-section-title">${titleName}</div>`);
+          } else {
+            const content = pt.replace(/\n/g, '<br />');
+            htmlChunks.push(`<p class="cf-paragraph">${content}</p>`);
+          }
+        });
+      } else {
+        const content = trimmed.replace(/\n/g, '<br />');
+        htmlChunks.push(`<p class="cf-paragraph">${content}</p>`);
+      }
+    });
+
+    let resultHtml = htmlChunks.length > 0 ? htmlChunks.join('') : formatted.replace(/\n/g, '<br />');
 
     // Restore original LaTeX formulas back inside placeholders
     mathBlocks.forEach(({ placeholder, content }) => {
-      formatted = formatted.replace(placeholder, content);
+      resultHtml = resultHtml.replace(placeholder, content);
     });
 
-    return formatted;
+    return resultHtml;
   };
 
   useEffect(() => {
@@ -279,6 +326,20 @@ export default function App() {
 
   // Computed setup condition
   const setupReady = webcamGranted && micGranted && isFullscreen && isFocused;
+
+  // Set Google ecosystem font starting at the proctoring page ('guidelines_setup') onwards.
+  // The login page ('verify_login') strictly retains the main portal's font (verdana, arial, sans-serif).
+  useEffect(() => {
+    const isProctoringOrLater = ['guidelines_setup', 'active_exam', 'finished', 'verification_review'].includes(flow);
+    if (isProctoringOrLater) {
+      document.body.classList.add('ot-google-font');
+    } else {
+      document.body.classList.remove('ot-google-font');
+    }
+    return () => {
+      document.body.classList.remove('ot-google-font');
+    };
+  }, [flow]);
 
   // Heartbeat ping loop to keep Render backend awake
   useEffect(() => {
@@ -1368,6 +1429,13 @@ export default function App() {
   };
 
   const handleManualSubmitExam = () => {
+    if (examTimeLeft > 300) {
+      triggerCustomAlert(
+        "Submission Locked",
+        "Manual exam submission is only permitted during the final 5 minutes of the examination. Please continue reviewing your questions and solutions."
+      );
+      return;
+    }
     triggerCustomConfirm(
       "Submit Examination?",
       "Are you sure you want to finalize and submit your exam answers? You will not be able to re-enter this exam.",
@@ -1896,23 +1964,32 @@ export default function App() {
             <span>{formatTimer(examTimeLeft)} remaining</span>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
             <button
               className="cf-btn-primary"
-              disabled={submittingExam}
+              disabled={submittingExam || examTimeLeft > 300}
+              title={examTimeLeft > 300 ? `Manual submission will unlock in the final 5 minutes (${formatTimer(examTimeLeft - 300)} left)` : "Finalize and submit your test"}
               style={{
-                borderColor: submittingExam ? '#cbd5e1' : '#ef4444',
-                color: submittingExam ? '#64748b' : '#ef4444',
-                background: submittingExam ? '#cbd5e1' : 'transparent',
+                borderColor: (submittingExam || examTimeLeft > 300) ? '#cbd5e1' : '#ef4444',
+                color: (submittingExam || examTimeLeft > 300) ? '#94a3b8' : '#ef4444',
+                background: (submittingExam || examTimeLeft > 300) ? '#f8fafc' : 'transparent',
                 fontWeight: 'bold',
-                padding: '6px 12px',
+                padding: '6px 14px',
                 fontSize: '9pt',
-                cursor: submittingExam ? 'not-allowed' : 'pointer'
+                cursor: (submittingExam || examTimeLeft > 300) ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease'
               }}
               onClick={handleManualSubmitExam}
             >
-              Finalize &amp; Submit Test
+              {examTimeLeft > 300
+                ? `Submit (Available in ${Math.ceil((examTimeLeft - 300) / 60)}m)`
+                : (submittingExam ? "Submitting..." : "Finalize & Submit Test")}
             </button>
+            {examTimeLeft > 300 && (
+              <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
+                Submission unlocks at 05:00
+              </span>
+            )}
           </div>
         </div>
 
@@ -2205,22 +2282,28 @@ export default function App() {
                 {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
                   <div>
                     <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
-                    <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
-                          <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Sample Input</th>
-                          <th style={{ textAlign: 'left', width: '50%', padding: '6px 8px' }}>Expected Output</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
-                          <tr key={tcIdx} style={{ borderBottom: '1px solid #cbd5e1' }}>
-                            <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.input}</td>
-                            <td style={{ padding: '6px 8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc' }}>{tc.output}</td>
+                    <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '4px' }}>
+                      <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt', border: '1px solid #cbd5e1' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f1f5f9' }}>
+                            <th style={{ textAlign: 'left', width: '22%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Test Case</th>
+                            <th style={{ textAlign: 'left', width: '39%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Sample Input</th>
+                            <th style={{ textAlign: 'left', width: '39%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Expected Output</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
+                            <tr key={tcIdx}>
+                              <td style={{ padding: '6px 10px', fontWeight: 'bold', color: '#475569', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                                Test Case {tcIdx + 1}
+                              </td>
+                              <td style={{ padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>{tc.input}</td>
+                              <td style={{ padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>{tc.output}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2651,7 +2734,7 @@ export default function App() {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {sampleCases.map((tc, tcIdx) => (
                                   <div key={tcIdx} style={{ fontSize: '8.5pt', borderBottom: '1px dashed #cbd5e1', paddingBottom: '6px' }}>
-                                    <div style={{ fontWeight: 'bold', color: '#475569', marginBottom: '2px' }}>Case 26{String(selectedQuestionIndex + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')}:</div>
+                                    <div style={{ fontWeight: 'bold', color: '#475569', marginBottom: '2px' }}>Test Case {tcIdx + 1}:</div>
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                                       <div>
                                         <span style={{ color: '#64748b' }}>Input: </span>
@@ -2733,7 +2816,7 @@ export default function App() {
                                             ) : (
                                               <X size={14} style={{ color: '#b91c1c' }} />
                                             )}
-                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - 26{String(selectedQuestionIndex + 1).padStart(2, '0')}{String(rIdx + 1).padStart(2, '0')} ({isSample ? 'Sample' : 'Hidden'})</span>
+                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - Test Case {rIdx + 1} ({isSample ? 'Sample' : 'Hidden'})</span>
                                           </span>
                                         </div>
                                         {isSample && (
@@ -3497,7 +3580,8 @@ export default function App() {
                           fontWeight: 'bold',
                           color: '#b45309',
                           borderColor: '#fcd34d',
-                          backgroundColor: '#fffbeb'
+                          backgroundColor: '#fffbeb',
+                          fontFamily: 'verdana, arial, sans-serif'
                         }}
                       >
                         <Flag size={14} /> Raise Objection on Q{idx + 1}
@@ -3600,16 +3684,16 @@ export default function App() {
                       <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase', marginBottom: '8px' }}>
                         Automated Testcase Evaluation Matrix:
                       </div>
-                      <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5pt', textAlign: 'left' }}>
+                      <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '4px' }}>
+                        <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8.5pt', textAlign: 'left', border: '1px solid #cbd5e1' }}>
                           <thead>
-                            <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', borderBottom: '1px solid #cbd5e1' }}>
-                              <th style={{ padding: '8px 12px' }}>Testcase</th>
-                              <th style={{ padding: '8px 12px' }}>Input</th>
-                              <th style={{ padding: '8px 12px' }}>Expected Output</th>
-                              <th style={{ padding: '8px 12px' }}>Your Output</th>
-                              <th style={{ padding: '8px 12px' }}>Evaluation Verdict</th>
-                              <th style={{ padding: '8px 12px' }}>Points</th>
+                            <tr style={{ backgroundColor: '#f1f5f9', color: '#475569' }}>
+                              <th style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>Testcase ID</th>
+                              <th style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>Input</th>
+                              <th style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>Expected Output</th>
+                              <th style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>Your Output</th>
+                              <th style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>Evaluation Verdict</th>
+                              <th style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>Points</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -3633,8 +3717,8 @@ export default function App() {
                                   return <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '8pt' }}>{fallback}</span>;
                                 }
                                 const str = String(val);
-                                const isVeryLong = str.length > 150;
-                                const displayText = isVeryLong ? str.slice(0, 150) + '...' : str;
+                                const isVeryLong = str.length > 80;
+                                const displayText = isVeryLong ? str.slice(0, 80) + '...' : str;
 
                                 return (
                                   <div
@@ -3648,7 +3732,7 @@ export default function App() {
                                       backgroundColor: '#f8fafc',
                                       padding: '4px 6px',
                                       borderRadius: '4px',
-                                      border: '1px solid #e2e8f0',
+                                      border: '1px solid #cbd5e1',
                                       boxSizing: 'border-box'
                                     }}
                                   >
@@ -3658,20 +3742,20 @@ export default function App() {
                               };
 
                               return (
-                                <tr key={tcIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '8px 12px', fontWeight: 'bold', fontFamily: 'monospace' }}>
-                                    26{String(idx + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')}
+                                <tr key={tcIdx}>
+                                  <td style={{ padding: '8px 12px', fontWeight: 'bold', fontFamily: 'monospace', border: '1px solid #cbd5e1' }}>
+                                    2026{String(idx + 1).padStart(2, '0')}{String(tcIdx + 1).padStart(2, '0')}
                                   </td>
-                                  <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>
-                                    {tc.input || '(stdin empty)'}
+                                  <td style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>
+                                    {renderOutputBox(tc.input !== undefined && tc.input !== null ? tc.input : tcRes.input, '(stdin empty)')}
                                   </td>
-                                  <td style={{ padding: '8px 12px' }}>
+                                  <td style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>
                                     {renderOutputBox(expectedVal, '(no output)')}
                                   </td>
-                                  <td style={{ padding: '8px 12px' }}>
+                                  <td style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>
                                     {renderOutputBox(actualVal, '(no output)')}
                                   </td>
-                                  <td style={{ padding: '8px 12px' }}>
+                                  <td style={{ padding: '8px 12px', border: '1px solid #cbd5e1' }}>
                                     <span style={{
                                       fontSize: '8pt',
                                       fontWeight: 'bold',
@@ -3683,7 +3767,7 @@ export default function App() {
                                       {displayVerdict}
                                     </span>
                                   </td>
-                                  <td style={{ padding: '8px 12px', fontWeight: 'bold' }}>
+                                  <td style={{ padding: '8px 12px', fontWeight: 'bold', border: '1px solid #cbd5e1' }}>
                                     {pointsScored} / {maxPoints}
                                   </td>
                                 </tr>
@@ -3883,7 +3967,7 @@ export default function App() {
                   className="cf-btn-secondary"
                   onClick={handleCloseObjectionModal}
                   disabled={objectionModal.submitting}
-                  style={{ padding: '7px 16px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #cbd5e1' }}
+                  style={{ padding: '7px 16px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', fontFamily: 'verdana, arial, sans-serif' }}
                 >
                   Cancel
                 </button>
@@ -3891,7 +3975,7 @@ export default function App() {
                   className="cf-btn-primary"
                   onClick={handleSubmitObjection}
                   disabled={objectionModal.submitting}
-                  style={{ padding: '7px 18px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#0f172a', border: '1px solid #64748b', fontWeight: '600' }}
+                  style={{ padding: '7px 18px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#0f172a', border: '1px solid #64748b', fontWeight: '600', fontFamily: 'verdana, arial, sans-serif' }}
                 >
                   {objectionModal.submitting ? 'Submitting...' : 'Submit Grievance'}
                 </button>

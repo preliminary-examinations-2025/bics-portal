@@ -23,6 +23,35 @@ body {
     line-height: 1.5;
 }
 
+/* Strict protection for KaTeX math symbols & LaTeX formulas */
+.katex,
+.katex * {
+    font-family: KaTeX_Main, 'Times New Roman', serif !important;
+}
+.katex .mathnormal {
+    font-family: KaTeX_Math, 'Times New Roman', serif !important;
+}
+.katex .amsrm {
+    font-family: KaTeX_AMS, 'Times New Roman', serif !important;
+}
+.katex .mathbf {
+    font-family: KaTeX_Main, 'Times New Roman', serif !important;
+    font-weight: bold;
+}
+.katex .mathtt {
+    font-family: KaTeX_Typewriter, monospace !important;
+}
+.katex .mathscr,
+.katex .mathcal {
+    font-family: KaTeX_Caligraphic, serif !important;
+}
+.katex .mathfrak {
+    font-family: KaTeX_Fraktur, serif !important;
+}
+.katex .mathsf {
+    font-family: KaTeX_SansSerif, sans-serif !important;
+}
+
 /* Header layout */
 .app-header {
     background-color: white;
