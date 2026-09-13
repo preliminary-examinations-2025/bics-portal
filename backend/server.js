@@ -354,10 +354,12 @@ const initialDB = {
         timetableNotice: 'Mid semester test for BICS 2026 will be held in mid-August',
         examType: 'midsem',
         timetable: [
-            { code: "CS-101", course: "Introduction to Computer Science", date: "2026-08-10", time: "10:00 AM - 01:00 PM", marks: 50 },
-            { code: "CS-102", course: "Programming Fundamentals with C++", date: "2026-08-12", time: "10:00 AM - 01:00 PM", marks: 50 },
-            { code: "CS-103", course: "Basics of Web Development", date: "2026-08-14", time: "10:00 AM - 01:00 PM", marks: 50 },
-            { code: "CS-104", course: "Mathematical Thinking (Discrete Structures)", date: "2026-08-17", time: "10:00 AM - 01:00 PM", marks: 50 }
+            { code: "R526CS01T", course: "Introduction to Computer Science", date: "2026-09-11", time: "03:15 PM to 04:45 PM", marks: 100 },
+            { code: "R526CS02T", course: "Programming Fundamentals with C++", date: "2026-09-12", time: "03:15 PM to 04:45 PM", marks: 100 },
+            { code: "R526CS03T", course: "Basics of Web Development", date: "2026-09-13", time: "03:15 PM to 04:45 PM", marks: 100 },
+            { code: "R526CS04T", course: "Mathematical Thinking", date: "2026-09-14", time: "03:15 PM to 04:45 PM", marks: 100 },
+            { code: "R526CS02L", course: "Programming Fundamentals with C++ Lab", date: "2026-09-15", time: "02:00 PM to 05:00 PM", marks: 50 },
+            { code: "R526CS03L", course: "Basics of Web Development Lab", date: "2026-09-16", time: "02:00 PM to 05:00 PM", marks: 50 }
         ],
         classTests: [
             { id: "ct-1", courseName: "Introduction to Computer Science", date: "2026-08-01", time: "09:00 AM - 10:00 AM", topic: "Variables & Memory Structure", marks: 20 },

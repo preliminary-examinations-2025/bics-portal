@@ -19,10 +19,12 @@ const API_BASE = import.meta.env.VITE_API_BASE || (() => {
 })();
 
 const COURSES_LIST = [
-  "Introduction to Computer Science",
-  "Programming Fundamentals with C++",
-  "Basics of Web Development",
-  "Mathematical Thinking (Discrete Structures)"
+  "R526CS01T - Introduction to Computer Science",
+  "R526CS02T - Programming Fundamentals with C++",
+  "R526CS03T - Basics of Web Development",
+  "R526CS04T - Mathematical Thinking",
+  "R526CS02L - Programming Fundamentals with C++ Lab",
+  "R526CS03L - Basics of Web Development Lab"
 ];
 
 // Helper component to render KaTeX math expressions + basic bold/italics/code markdown
@@ -613,6 +615,25 @@ export default function App() {
   const [feedbackType, setFeedbackType] = useState('mid');
   const [feedbackAnswers, setFeedbackAnswers] = useState({});
   const [feedbackSuccess, setFeedbackSuccess] = useState('');
+  const [activeCourseFeedbackIdx, setActiveCourseFeedbackIdx] = useState(0);
+
+  // Admin Examination Attendance Sheet states
+  const [attendanceCourseCode, setAttendanceCourseCode] = useState('R526CS01T');
+  const [attendanceLabSheetType, setAttendanceLabSheetType] = useState('written'); // 'written' | 'online' | 'viva'
+  const [attendanceRoomNo, setAttendanceRoomNo] = useState('AL 001');
+  const [attendanceBenchPosition, setAttendanceBenchPosition] = useState('Left');
+  const [attendanceEligibilityFilter, setAttendanceEligibilityFilter] = useState('all'); // 'all' | 'eligible_only'
+  const [attendanceExamTypeOverride, setAttendanceExamTypeOverride] = useState(''); // '' (auto-synced with adminExamType) | 'MST' | 'ESE'
+  const [attendanceMainHeader, setAttendanceMainHeader] = useState('Preliminary Examinations 2026');
+  const [attendanceSubHeader, setAttendanceSubHeader] = useState('Basic Introductory Computer Science (BICS) Course');
+  const [attendanceDegree, setAttendanceDegree] = useState('Bachelor of Technology');
+  const [attendanceProgram, setAttendanceProgram] = useState('Computer Engineering');
+  const [attendanceExamName, setAttendanceExamName] = useState('');
+  const [attendanceSemester, setAttendanceSemester] = useState('I');
+  const [attendanceStudentsPerPage, setAttendanceStudentsPerPage] = useState(18);
+  const [attendanceCustomDate, setAttendanceCustomDate] = useState('');
+  const [attendanceCustomTime, setAttendanceCustomTime] = useState('');
+  const [attendanceCustomMarks, setAttendanceCustomMarks] = useState('');
 
   // Exit Form state
   const [exitAnswers, setExitAnswers] = useState({ reason: '', recommendation: '', rating: '5' });
@@ -622,10 +643,12 @@ export default function App() {
   const [adminTimetableNotice, setAdminTimetableNotice] = useState('');
   const [adminExamType, setAdminExamType] = useState('midsem');
   const [adminTimetable, setAdminTimetable] = useState([
-    { code: "CS-101", course: "Introduction to Computer Science", date: '', time: '', marks: 50 },
-    { code: "CS-102", course: "Programming Fundamentals with C++", date: '', time: '', marks: 50 },
-    { code: "CS-103", course: "Basics of Web Development", date: '', time: '', marks: 50 },
-    { code: "CS-104", course: "Mathematical Thinking (Discrete Structures)", date: '', time: '', marks: 50 }
+    { code: "R526CS01T", course: "Introduction to Computer Science", date: '11/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
+    { code: "R526CS02T", course: "Programming Fundamentals with C++", date: '12/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
+    { code: "R526CS03T", course: "Basics of Web Development", date: '13/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
+    { code: "R526CS04T", course: "Mathematical Thinking", date: '14/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
+    { code: "R526CS02L", course: "Programming Fundamentals with C++ Lab", date: '15/09/2026', time: '02:00 PM to 05:00 PM', marks: 50 },
+    { code: "R526CS03L", course: "Basics of Web Development Lab", date: '16/09/2026', time: '02:00 PM to 05:00 PM', marks: 50 }
   ]);
   const [adminClassTests, setAdminClassTests] = useState([]);
 
@@ -2702,9 +2725,10 @@ int main() {
     e.preventDefault();
     setFeedbackSuccess('');
 
-    // Validation check
+    // Validation check across all courses
     let valid = true;
     let missingInfo = '';
+    let firstMissingIdx = -1;
 
     for (let i = 0; i < COURSES_LIST.length; i++) {
       const course = COURSES_LIST[i];
@@ -2716,12 +2740,16 @@ int main() {
 
       if (!q1 || !q2 || !q3 || !q4 || !q5 || q5.trim() === '') {
         valid = false;
-        missingInfo = `Please answer all rating questions and provide general comments for "${course}".`;
+        missingInfo = `Please answer all questions and provide general remarks for "${course}".`;
+        firstMissingIdx = i;
         break;
       }
     }
 
     if (!valid) {
+      if (firstMissingIdx !== -1) {
+        setActiveCourseFeedbackIdx(firstMissingIdx);
+      }
       alert(missingInfo);
       return;
     }
@@ -2783,7 +2811,7 @@ int main() {
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections'].includes(view);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections'].includes(view);
     }
     
     if (user.role === 'student') {
@@ -2859,6 +2887,9 @@ int main() {
                   </button>
                   <button className={`sidebar-item ${view === 'admin_candidates' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_candidates'); setIsMobileSidebarOpen(false); }}>
                     <Users size={16} /> Candidates
+                  </button>
+                  <button className={`sidebar-item ${view === 'admin_attendance' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_attendance'); setIsMobileSidebarOpen(false); fetchCandidates(); }}>
+                    <FileText size={16} /> Examination Attendance
                   </button>
                   <button className={`sidebar-item ${view === 'admin_coursework' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_coursework'); setIsMobileSidebarOpen(false); }}>
                     <BookOpen size={16} /> Coursework
@@ -5021,190 +5052,382 @@ int main() {
                 ) : (
                   /* Survey Form */
                   <div>
-                    <div style={{ marginBottom: '20px', backgroundColor: '#eff6ff', padding: '15px', borderRadius: '6px', borderLeft: '4px solid #3b5998' }}>
-                      <p style={{ fontSize: '9.5pt', color: '#1e40af', margin: 0, lineHeight: '1.5' }}>
-                        <strong>Feedback Survey Notice:</strong> Please rate your experience across all enrolled course modules. Your honest feedback helps us improve textbook quality, lecture resources, and assignment layout parameters.
-                      </p>
+                    <div style={{ marginBottom: '20px', backgroundColor: '#eff6ff', padding: '15px 18px', borderRadius: '8px', borderLeft: '4px solid #1e3a8a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <div>
+                        <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#1e3a8a', marginBottom: '3px' }}>
+                          Course Feedback Survey Notice
+                        </div>
+                        <p style={{ fontSize: '9pt', color: '#1e40af', margin: 0, lineHeight: '1.4' }}>
+                          Please rate your academic experience for all 6 enrolled course modules. All 6 course reviews are required for submission.
+                        </p>
+                      </div>
+                      {(() => {
+                        const filledCoursesCount = COURSES_LIST.filter(c => {
+                          const a = feedbackAnswers[c];
+                          return a && a[0] && a[1] && a[2] && a[3] && a[4] && a[4].trim() !== '';
+                        }).length;
+                        const pct = Math.round((filledCoursesCount / COURSES_LIST.length) * 100);
+                        return (
+                          <div style={{ textAlign: 'right', minWidth: '150px' }}>
+                            <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#1e3a8a', marginBottom: '4px' }}>
+                              Overall Progress: {filledCoursesCount} / {COURSES_LIST.length} ({pct}%)
+                            </div>
+                            <div style={{ width: '100%', height: '8px', backgroundColor: '#bfdbfe', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div style={{ width: `${pct}%`, height: '100%', backgroundColor: pct === 100 ? '#16a34a' : '#2563eb', transition: 'width 0.3s ease' }} />
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {feedbackSuccess && <div className="cf-alert cf-alert-success">{feedbackSuccess}</div>}
 
+                    {/* Course Stepper / Tabs */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', marginBottom: '20px' }}>
+                      {COURSES_LIST.map((course, idx) => {
+                        const isSelected = activeCourseFeedbackIdx === idx;
+                        const a = feedbackAnswers[course];
+                        const isCourseDone = a && a[0] && a[1] && a[2] && a[3] && a[4] && a[4].trim() !== '';
+                        const courseCode = course.split(' - ')[0] || course;
+                        const courseTitle = course.split(' - ')[1] || course;
+
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setActiveCourseFeedbackIdx(idx)}
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-start',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              border: isSelected ? '2px solid #002147' : isCourseDone ? '1.5px solid #86efac' : '1px solid #cbd5e1',
+                              backgroundColor: isSelected ? '#002147' : isCourseDone ? '#f0fdf4' : '#ffffff',
+                              color: isSelected ? '#ffffff' : '#1e293b',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              transition: 'all 0.15s ease',
+                              boxShadow: isSelected ? '0 3px 8px rgba(0,33,71,0.2)' : 'none'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '7.5pt', fontWeight: 'bold', letterSpacing: '0.5px', textTransform: 'uppercase', color: isSelected ? '#93c5fd' : isCourseDone ? '#16a34a' : '#64748b' }}>
+                                Course 0{idx + 1}
+                              </span>
+                              {isCourseDone ? (
+                                <CheckCircle size={14} color={isSelected ? '#86efac' : '#16a34a'} />
+                              ) : (
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isSelected ? '#93c5fd' : '#cbd5e1' }} />
+                              )}
+                            </div>
+                            <div style={{ fontSize: '9pt', fontWeight: 'bold', lineHeight: '1.2', marginBottom: '2px' }}>
+                              {courseCode}
+                            </div>
+                            <div style={{ fontSize: '7.5pt', color: isSelected ? '#e2e8f0' : '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
+                              {courseTitle}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
                     <form onSubmit={handleFeedbackSubmit}>
-                      {COURSES_LIST.map((course, cIdx) => (
-                        <div key={cIdx} style={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '20px', marginBottom: '25px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                          <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '15px', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                            📖 {course}
-                          </h4>
-                          
-                          {/* Q1 */}
-                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
-                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>1. Rate the quality of the textbook</label>
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', maxWidth: '300px' }}>
-                              {[1, 2, 3, 4, 5].map(num => {
-                                const isSelected = feedbackAnswers[course]?.[0] === num.toString();
-                                let activeColor = '#64748b';
-                                if (isSelected) {
-                                  if (num === 5) activeColor = '#16a34a';
-                                  else if (num === 4) activeColor = '#22c55e';
-                                  else if (num === 3) activeColor = '#d97706';
-                                  else if (num === 2) activeColor = '#ea580c';
-                                  else activeColor = '#dc2626';
-                                }
-                                return (
+                      {(() => {
+                        const currentCourse = COURSES_LIST[activeCourseFeedbackIdx] || COURSES_LIST[0];
+                        const currentAnswers = feedbackAnswers[currentCourse] || [];
+                        const isCurrentCourseDone = currentAnswers[0] && currentAnswers[1] && currentAnswers[2] && currentAnswers[3] && currentAnswers[4] && currentAnswers[4].trim() !== '';
+                        const currentCode = currentCourse.split(' - ')[0] || currentCourse;
+                        const currentTitle = currentCourse.split(' - ')[1] || currentCourse;
+
+                        const suggestionChips = currentCourse.includes('Lab') ? [
+                          "Excellent hands-on lab sessions",
+                          "Lab machines and compilers worked smoothly",
+                          "Need more practical coding assignments",
+                          "Lab instructors were very helpful",
+                          "Well designed lab worksheets"
+                        ] : [
+                          "Textbook and notes are very well structured",
+                          "Video lectures are clear and conceptual",
+                          "Need more practice and test examples",
+                          "Interactive sessions were informative",
+                          "Curriculum pace is optimal"
+                        ];
+
+                        const ratingLabels = {
+                          1: "Poor",
+                          2: "Fair",
+                          3: "Good",
+                          4: "Very Good",
+                          5: "Excellent"
+                        };
+
+                        return (
+                          <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '24px', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
+                            {/* Course Header Banner */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px', borderBottom: '1.5px solid #f1f5f9', paddingBottom: '14px', marginBottom: '20px' }}>
+                              <div>
+                                <div style={{ display: 'inline-block', backgroundColor: '#e0f2fe', color: '#0369a1', fontSize: '8pt', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', marginBottom: '4px' }}>
+                                  {currentCode}
+                                </div>
+                                <h3 style={{ margin: 0, fontSize: '13pt', fontWeight: 'bold', color: '#002147' }}>
+                                  {currentTitle}
+                                </h3>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                                  Course {activeCourseFeedbackIdx + 1} of {COURSES_LIST.length}
+                                </span>
+                                {isCurrentCourseDone ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: '#dcfce7', color: '#15803d', fontSize: '8pt', fontWeight: 'bold', padding: '3px 8px', borderRadius: '12px' }}>
+                                    <CheckCircle size={12} /> Completed
+                                  </span>
+                                ) : (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: '#fef3c7', color: '#b45309', fontSize: '8pt', fontWeight: 'bold', padding: '3px 8px', borderRadius: '12px' }}>
+                                    Pending
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Q1 */}
+                            <div style={{ marginBottom: '22px', backgroundColor: '#f8fafc', padding: '14px 16px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                              <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', fontSize: '9.5pt', marginBottom: '10px' }}>
+                                1. Rate the quality and coverage of the {currentCourse.includes('Lab') ? 'Lab manual and instructions' : 'textbook and study material'}
+                              </label>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {[1, 2, 3, 4, 5].map(num => {
+                                  const isSelected = currentAnswers[0] === num.toString();
+                                  let activeBg = isSelected ? '#002147' : '#ffffff';
+                                  let activeColor = isSelected ? '#ffffff' : '#334155';
+                                  let activeBorder = isSelected ? '#002147' : '#cbd5e1';
+                                  return (
+                                    <button
+                                      key={num}
+                                      type="button"
+                                      onClick={() => handleFeedbackValueChange(currentCourse, 0, num.toString())}
+                                      style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        minWidth: '70px',
+                                        padding: '8px 12px',
+                                        borderRadius: '6px',
+                                        border: `1.5px solid ${activeBorder}`,
+                                        backgroundColor: activeBg,
+                                        color: activeColor,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                    >
+                                      <span style={{ fontSize: '11pt', fontWeight: 'bold' }}>{num}</span>
+                                      <span style={{ fontSize: '7pt', opacity: isSelected ? 0.9 : 0.7, marginTop: '2px' }}>{ratingLabels[num]}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Q2 */}
+                            <div style={{ marginBottom: '22px', backgroundColor: '#f8fafc', padding: '14px 16px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                              <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', fontSize: '9.5pt', marginBottom: '10px' }}>
+                                2. Rate the usefulness and clarity of video lectures / teaching sessions
+                              </label>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {[1, 2, 3, 4, 5].map(num => {
+                                  const isSelected = currentAnswers[1] === num.toString();
+                                  let activeBg = isSelected ? '#002147' : '#ffffff';
+                                  let activeColor = isSelected ? '#ffffff' : '#334155';
+                                  let activeBorder = isSelected ? '#002147' : '#cbd5e1';
+                                  return (
+                                    <button
+                                      key={num}
+                                      type="button"
+                                      onClick={() => handleFeedbackValueChange(currentCourse, 1, num.toString())}
+                                      style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        minWidth: '70px',
+                                        padding: '8px 12px',
+                                        borderRadius: '6px',
+                                        border: `1.5px solid ${activeBorder}`,
+                                        backgroundColor: activeBg,
+                                        color: activeColor,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                    >
+                                      <span style={{ fontSize: '11pt', fontWeight: 'bold' }}>{num}</span>
+                                      <span style={{ fontSize: '7pt', opacity: isSelected ? 0.9 : 0.7, marginTop: '2px' }}>{ratingLabels[num]}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Q3 */}
+                            <div style={{ marginBottom: '22px', backgroundColor: '#f8fafc', padding: '14px 16px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                              <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', fontSize: '9.5pt', marginBottom: '10px' }}>
+                                3. Rate the layout and difficulty level of Assignments & Practice Exercises
+                              </label>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {[1, 2, 3, 4, 5].map(num => {
+                                  const isSelected = currentAnswers[2] === num.toString();
+                                  let activeBg = isSelected ? '#002147' : '#ffffff';
+                                  let activeColor = isSelected ? '#ffffff' : '#334155';
+                                  let activeBorder = isSelected ? '#002147' : '#cbd5e1';
+                                  return (
+                                    <button
+                                      key={num}
+                                      type="button"
+                                      onClick={() => handleFeedbackValueChange(currentCourse, 2, num.toString())}
+                                      style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        minWidth: '70px',
+                                        padding: '8px 12px',
+                                        borderRadius: '6px',
+                                        border: `1.5px solid ${activeBorder}`,
+                                        backgroundColor: activeBg,
+                                        color: activeColor,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                    >
+                                      <span style={{ fontSize: '11pt', fontWeight: 'bold' }}>{num}</span>
+                                      <span style={{ fontSize: '7pt', opacity: isSelected ? 0.9 : 0.7, marginTop: '2px' }}>{ratingLabels[num]}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Q4 */}
+                            <div style={{ marginBottom: '22px', backgroundColor: '#f8fafc', padding: '14px 16px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                              <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', fontSize: '9.5pt', marginBottom: '10px' }}>
+                                4. Did the course curriculum and delivery meet your expectations?
+                              </label>
+                              <div style={{ display: 'flex', gap: '10px', maxWidth: '240px' }}>
+                                {['Yes', 'No'].map(opt => {
+                                  const isSelected = currentAnswers[3] === opt;
+                                  const activeColor = opt === 'Yes' ? '#16a34a' : '#dc2626';
+                                  return (
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      onClick={() => handleFeedbackValueChange(currentCourse, 3, opt)}
+                                      style={{
+                                        flex: '1',
+                                        padding: '10px 0',
+                                        border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
+                                        backgroundColor: isSelected ? (opt === 'Yes' ? '#dcfce7' : '#fee2e2') : '#fff',
+                                        color: isSelected ? activeColor : '#64748b',
+                                        fontWeight: 'bold',
+                                        fontSize: '10pt',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s'
+                                      }}
+                                    >
+                                      {opt === 'Yes' ? '✓ Yes' : '✗ No'}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Q5 */}
+                            <div style={{ marginBottom: '10px', backgroundColor: '#f8fafc', padding: '14px 16px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                              <label style={{ display: 'block', fontWeight: '600', color: '#1e293b', fontSize: '9.5pt', marginBottom: '6px' }}>
+                                5. General Comments / Constructive Suggestions
+                              </label>
+                              
+                              {/* Quick suggestion tags */}
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                                {suggestionChips.map((chip, idx) => (
                                   <button
-                                    key={num}
+                                    key={idx}
                                     type="button"
-                                    onClick={() => handleFeedbackValueChange(course, 0, num.toString())}
-                                    style={{
-                                      flex: '1',
-                                      padding: '8px 0',
-                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
-                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
-                                      color: isSelected ? activeColor : '#64748b',
-                                      fontWeight: 'bold',
-                                      fontSize: '10pt',
-                                      borderRadius: '6px',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.15s'
+                                    onClick={() => {
+                                      const currentVal = currentAnswers[4] || '';
+                                      if (currentVal.includes(chip)) return;
+                                      const newVal = currentVal ? `${currentVal}. ${chip}` : chip;
+                                      handleFeedbackValueChange(currentCourse, 4, newVal);
                                     }}
+                                    style={{
+                                      fontSize: '7.5pt',
+                                      backgroundColor: '#ffffff',
+                                      color: '#475569',
+                                      border: '1px solid #cbd5e1',
+                                      borderRadius: '12px',
+                                      padding: '3px 10px',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.1s'
+                                    }}
+                                    title="Click to add to remarks"
                                   >
-                                    {num}
+                                    + {chip}
                                   </button>
-                                );
-                              })}
+                                ))}
+                              </div>
+
+                              <textarea 
+                                className="cf-input" 
+                                rows="3"
+                                placeholder="Type your honest remarks or suggestions for this course module..." 
+                                value={currentAnswers[4] || ''} 
+                                onChange={e => handleFeedbackValueChange(currentCourse, 4, e.target.value)} 
+                                style={{ width: '100%', padding: '10px', fontSize: '9.5pt', border: '1px solid #cbd5e1', borderRadius: '6px', resize: 'vertical', minHeight: '75px' }}
+                              />
+                            </div>
+
+                            {/* Navigation Stepper Controls */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', flexWrap: 'wrap', gap: '10px' }}>
+                              <button
+                                type="button"
+                                className="cf-btn-secondary"
+                                onClick={() => setActiveCourseFeedbackIdx(prev => Math.max(0, prev - 1))}
+                                disabled={activeCourseFeedbackIdx === 0}
+                                style={{ padding: '8px 18px', fontSize: '9.5pt', opacity: activeCourseFeedbackIdx === 0 ? 0.5 : 1, cursor: activeCourseFeedbackIdx === 0 ? 'not-allowed' : 'pointer' }}
+                              >
+                                &larr; Previous Course
+                              </button>
+
+                              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                {activeCourseFeedbackIdx < COURSES_LIST.length - 1 && (
+                                  <button
+                                    type="button"
+                                    className="cf-btn-primary"
+                                    onClick={() => setActiveCourseFeedbackIdx(prev => Math.min(COURSES_LIST.length - 1, prev + 1))}
+                                    style={{ padding: '8px 20px', fontSize: '9.5pt' }}
+                                  >
+                                    Next Course &rarr;
+                                  </button>
+                                )}
+
+                                <button
+                                  type="submit"
+                                  className="cf-btn-primary"
+                                  style={{
+                                    padding: '8px 24px',
+                                    fontSize: '9.5pt',
+                                    fontWeight: 'bold',
+                                    backgroundColor: '#16a34a',
+                                    borderColor: '#15803d'
+                                  }}
+                                >
+                                  Submit All Feedback &rarr;
+                                </button>
+                              </div>
                             </div>
                           </div>
-
-                          {/* Q2 */}
-                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
-                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>2. Rate the usefulness of video lectures</label>
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', maxWidth: '300px' }}>
-                              {[1, 2, 3, 4, 5].map(num => {
-                                const isSelected = feedbackAnswers[course]?.[1] === num.toString();
-                                let activeColor = '#64748b';
-                                if (isSelected) {
-                                  if (num === 5) activeColor = '#16a34a';
-                                  else if (num === 4) activeColor = '#22c55e';
-                                  else if (num === 3) activeColor = '#d97706';
-                                  else if (num === 2) activeColor = '#ea580c';
-                                  else activeColor = '#dc2626';
-                                }
-                                return (
-                                  <button
-                                    key={num}
-                                    type="button"
-                                    onClick={() => handleFeedbackValueChange(course, 1, num.toString())}
-                                    style={{
-                                      flex: '1',
-                                      padding: '8px 0',
-                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
-                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
-                                      color: isSelected ? activeColor : '#64748b',
-                                      fontWeight: 'bold',
-                                      fontSize: '10pt',
-                                      borderRadius: '6px',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.15s'
-                                    }}
-                                  >
-                                    {num}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* Q3 */}
-                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
-                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>3. Rate the layout and difficulty of Assignments</label>
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', maxWidth: '300px' }}>
-                              {[1, 2, 3, 4, 5].map(num => {
-                                const isSelected = feedbackAnswers[course]?.[2] === num.toString();
-                                let activeColor = '#64748b';
-                                if (isSelected) {
-                                  if (num === 5) activeColor = '#16a34a';
-                                  else if (num === 4) activeColor = '#22c55e';
-                                  else if (num === 3) activeColor = '#d97706';
-                                  else if (num === 2) activeColor = '#ea580c';
-                                  else activeColor = '#dc2626';
-                                }
-                                return (
-                                  <button
-                                    key={num}
-                                    type="button"
-                                    onClick={() => handleFeedbackValueChange(course, 2, num.toString())}
-                                    style={{
-                                      flex: '1',
-                                      padding: '8px 0',
-                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
-                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
-                                      color: isSelected ? activeColor : '#64748b',
-                                      fontWeight: 'bold',
-                                      fontSize: '10pt',
-                                      borderRadius: '6px',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.15s'
-                                    }}
-                                  >
-                                    {num}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* Q4 */}
-                          <div className="cf-input-group" style={{ marginBottom: '15px', textAlign: 'left' }}>
-                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>4. Did the course curriculum meet your expectations?</label>
-                            <div style={{ display: 'flex', gap: '10px', marginTop: '6px', maxWidth: '180px' }}>
-                              {['Yes', 'No'].map(opt => {
-                                const isSelected = feedbackAnswers[course]?.[3] === opt;
-                                const activeColor = opt === 'Yes' ? '#16a34a' : '#dc2626';
-                                return (
-                                  <button
-                                    key={opt}
-                                    type="button"
-                                    onClick={() => handleFeedbackValueChange(course, 3, opt)}
-                                    style={{
-                                      flex: '1',
-                                      padding: '8px 0',
-                                      border: isSelected ? `2px solid ${activeColor}` : '1px solid #cbd5e1',
-                                      backgroundColor: isSelected ? `${activeColor}15` : '#fff',
-                                      color: isSelected ? activeColor : '#64748b',
-                                      fontWeight: 'bold',
-                                      fontSize: '10pt',
-                                      borderRadius: '6px',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.15s'
-                                    }}
-                                  >
-                                    {opt}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* Q5 */}
-                          <div className="cf-input-group" style={{ textAlign: 'left' }}>
-                            <label className="cf-label" style={{ fontWeight: '600', color: '#334155' }}>5. General Comments / Suggestions</label>
-                            <textarea 
-                              className="cf-input" 
-                              rows="3"
-                              placeholder="Type your feedback remarks here..." 
-                              value={feedbackAnswers[course]?.[4] || ''} 
-                              onChange={e => handleFeedbackValueChange(course, 4, e.target.value)} 
-                              style={{ width: '100%', marginTop: '6px', padding: '10px', fontSize: '9.5pt', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                      
-                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '20px', textAlign: 'right' }}>
-                        <button type="submit" className="cf-btn-primary" style={{ padding: '10px 24px', fontSize: '10pt', fontWeight: 'bold' }}>
-                          Submit Course Feedback Survey &rarr;
-                        </button>
-                      </div>
+                        );
+                      })()}
                     </form>
                   </div>
                 )}
@@ -8793,6 +9016,634 @@ int main() {
               )}
             </div>
           )}
+
+          {/* EXAMINATION ATTENDANCE VIEW */}
+          {view === 'admin_attendance' && (() => {
+            const isLab = attendanceCourseCode.endsWith('L') || attendanceCourseCode.toLowerCase().includes('lab');
+            
+            // Exam type: 'MST' (Mid Semester Test) or 'ESE' (End Semester Examination)
+            const defaultExamType = adminExamType === 'endsem' ? 'ESE' : 'MST';
+            const effectiveExamType = attendanceExamTypeOverride || defaultExamType;
+
+            // Find matched course in adminTimetable or COURSES_LIST
+            const matchedSlot = adminTimetable.find(t => t.code === attendanceCourseCode || t.course.toLowerCase().includes(attendanceCourseCode.toLowerCase()));
+            const selectedCourseCode = matchedSlot?.code || attendanceCourseCode;
+            const selectedCourseTitle = matchedSlot?.course || (COURSES_LIST.find(c => c.startsWith(attendanceCourseCode)) || attendanceCourseCode).replace(/^[^-]+-\s*/, '');
+            
+            const defaultSlotDate = matchedSlot?.date ? (matchedSlot.date.includes('-') ? matchedSlot.date.split('-').reverse().join('/') : matchedSlot.date) : '11/09/2026';
+            const defaultSlotTime = matchedSlot?.time || (isLab ? '02:00 PM to 05:00 PM' : '03:15 PM to 04:45 PM');
+            const defaultSlotMarks = matchedSlot?.marks !== undefined ? String(matchedSlot.marks) : (isLab ? '50' : '100');
+
+            const examDate = attendanceCustomDate || defaultSlotDate;
+            const examDuration = attendanceCustomTime || defaultSlotTime;
+            const examMarks = attendanceCustomMarks || defaultSlotMarks;
+
+            let bannerSubtitle = `${effectiveExamType} of Theory Courses`;
+            if (isLab) {
+              if (attendanceLabSheetType === 'written') {
+                bannerSubtitle = `${effectiveExamType} of Lab Courses - Written`;
+              } else if (attendanceLabSheetType === 'online') {
+                bannerSubtitle = `${effectiveExamType} of Lab Courses - Online/Terminal`;
+              } else if (attendanceLabSheetType === 'viva') {
+                bannerSubtitle = `${effectiveExamType} of Lab Courses - Viva-Voce`;
+              }
+            }
+
+            // Function to re-fetch / synchronize metadata from timetable slot
+            const syncFromTimetable = (courseCodeToSync) => {
+              const targetCode = courseCodeToSync || attendanceCourseCode;
+              const slot = adminTimetable.find(t => t.code === targetCode || t.course.toLowerCase().includes(targetCode.toLowerCase()));
+              if (slot) {
+                const sDate = slot.date ? (slot.date.includes('-') ? slot.date.split('-').reverse().join('/') : slot.date) : '';
+                setAttendanceCustomDate(sDate);
+                setAttendanceCustomTime(slot.time || '');
+                setAttendanceCustomMarks(slot.marks !== undefined ? String(slot.marks) : '');
+              }
+            };
+
+            // Filter students
+            let studentList = (candidatesList || []).filter(cand => {
+              if (attendanceEligibilityFilter === 'eligible_only') {
+                return cand.courseRegistrationApproved !== false;
+              }
+              return true;
+            }).sort((a, b) => {
+              const idA = a.studentId || a.username || '';
+              const idB = b.studentId || b.username || '';
+              return idA.localeCompare(idB, undefined, { numeric: true });
+            });
+
+            // If candidates is empty (e.g. initial dev state), provide mock entries for preview
+            if (studentList.length === 0) {
+              studentList = Array.from({ length: 25 }, (_, i) => ({
+                _id: `mock-${i+1}`,
+                studentId: `2410700${String(i+1).padStart(2, '0')}`,
+                username: `2410700${String(i+1).padStart(2, '0')}`,
+                name: `SAMPLE CANDIDATE ${i+1}`
+              }));
+            }
+
+            const perPage = Number(attendanceStudentsPerPage) || 18;
+            const totalPages = Math.max(1, Math.ceil(studentList.length / perPage));
+
+            // Chunk students into pages
+            const pages = [];
+            for (let i = 0; i < studentList.length; i += perPage) {
+              pages.push(studentList.slice(i, i + perPage));
+            }
+
+            const handlePrint = () => {
+              window.print();
+            };
+
+            return (
+              <div style={{ padding: '0 0 40px 0' }}>
+                {/* ADMIN CONTROLS BAR (Screen Only) */}
+                <div className="print-hide cf-card" style={{ padding: '20px', marginBottom: '24px', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderBottom: '1.5px solid #e2e8f0', paddingBottom: '14px', marginBottom: '16px' }}>
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: '13pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FileText size={20} color="#002147" />
+                        Examination Attendance Sheet Generator
+                      </h2>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '8.5pt', color: '#64748b' }}>
+                        Generate and print standardized exam attendance registers matching the official examination format.
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="cf-btn-secondary"
+                        onClick={() => syncFromTimetable(attendanceCourseCode)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '9px 16px', fontSize: '9pt', fontWeight: '600' }}
+                        title="Re-fetch date, duration, and marks from the timetable schedule"
+                      >
+                        <RefreshCw size={14} />
+                        Fetch from Timetable
+                      </button>
+
+                      <button
+                        type="button"
+                        className="attendance-print-btn"
+                        onClick={handlePrint}
+                      >
+                        <Printer size={16} />
+                        Print Attendance Sheet (A4)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Section 1: Course, Exam Type, Room, Bench */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Select Course: *
+                      </label>
+                      <select
+                        value={attendanceCourseCode}
+                        onChange={e => {
+                          const newCode = e.target.value;
+                          setAttendanceCourseCode(newCode);
+                          syncFromTimetable(newCode);
+                        }}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', fontWeight: '500' }}
+                      >
+                        {COURSES_LIST.map((c, idx) => {
+                          const code = c.split(' - ')[0];
+                          return (
+                            <option key={idx} value={code}>
+                              {c}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Examination Type (MST / ESE): *
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {[
+                          { id: 'MST', label: 'MST (Mid-Sem)' },
+                          { id: 'ESE', label: 'ESE (End-Sem)' }
+                        ].map(opt => {
+                          const isCurrent = effectiveExamType === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => setAttendanceExamTypeOverride(opt.id)}
+                              style={{
+                                flex: '1',
+                                padding: '8px 6px',
+                                borderRadius: '4px',
+                                border: isCurrent ? '2px solid #002147' : '1px solid #cbd5e1',
+                                backgroundColor: isCurrent ? '#002147' : '#ffffff',
+                                color: isCurrent ? '#ffffff' : '#334155',
+                                fontWeight: 'bold',
+                                fontSize: '8.5pt',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s'
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Room Number (Top-Right): *
+                      </label>
+                      <input
+                        type="text"
+                        value={attendanceRoomNo}
+                        onChange={e => setAttendanceRoomNo(e.target.value)}
+                        placeholder="e.g. AL 001"
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', fontWeight: 'bold' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Bench Position: *
+                      </label>
+                      <select
+                        value={attendanceBenchPosition}
+                        onChange={e => setAttendanceBenchPosition(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt' }}
+                      >
+                        <option value="Left">Left</option>
+                        <option value="Right">Right</option>
+                        <option value="Center">Center</option>
+                        <option value="Row 1">Row 1</option>
+                        <option value="Row 2">Row 2</option>
+                        <option value="All Benches">All Benches</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Section 2: Timetable Metadata (Auto-Fetched & Fully Editable) */}
+                  <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '14px 16px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                        📅 Timetable Schedule Details (Auto-Fetched & Editable)
+                      </span>
+                      <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
+                        Matched: <strong>{selectedCourseCode}</strong>
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '3px' }}>
+                          Exam Date:
+                        </label>
+                        <input
+                          type="text"
+                          value={examDate}
+                          onChange={e => setAttendanceCustomDate(e.target.value)}
+                          placeholder="DD/MM/YYYY"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '3px' }}>
+                          Duration / Timing:
+                        </label>
+                        <input
+                          type="text"
+                          value={examDuration}
+                          onChange={e => setAttendanceCustomTime(e.target.value)}
+                          placeholder="e.g. 03:15 PM to 04:45 PM"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '3px' }}>
+                          Max Marks:
+                        </label>
+                        <input
+                          type="text"
+                          value={examMarks}
+                          onChange={e => setAttendanceCustomMarks(e.target.value)}
+                          placeholder="100"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '3px' }}>
+                          Semester:
+                        </label>
+                        <input
+                          type="text"
+                          value={attendanceSemester}
+                          onChange={e => setAttendanceSemester(e.target.value)}
+                          placeholder="I"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '3px' }}>
+                          Degree:
+                        </label>
+                        <input
+                          type="text"
+                          value={attendanceDegree}
+                          onChange={e => setAttendanceDegree(e.target.value)}
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '3px' }}>
+                          Program:
+                        </label>
+                        <input
+                          type="text"
+                          value={attendanceProgram}
+                          onChange={e => setAttendanceProgram(e.target.value)}
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Header Titles & Print Settings */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Main Header (Large Title):
+                      </label>
+                      <input
+                        type="text"
+                        value={attendanceMainHeader}
+                        onChange={e => setAttendanceMainHeader(e.target.value)}
+                        placeholder="Preliminary Examinations 2026"
+                        style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', fontWeight: 'bold' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Sub Heading (Course Context):
+                      </label>
+                      <input
+                        type="text"
+                        value={attendanceSubHeader}
+                        onChange={e => setAttendanceSubHeader(e.target.value)}
+                        placeholder="Basic Introductory Computer Science (BICS) Course"
+                        style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Candidates Filter:
+                      </label>
+                      <select
+                        value={attendanceEligibilityFilter}
+                        onChange={e => setAttendanceEligibilityFilter(e.target.value)}
+                        style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                      >
+                        <option value="all">All Registered Students</option>
+                        <option value="eligible_only">Approved Registrations Only</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+                        Page Size / Rows Per Page:
+                      </label>
+                      <select
+                        value={attendanceStudentsPerPage}
+                        onChange={e => setAttendanceStudentsPerPage(Number(e.target.value))}
+                        style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
+                      >
+                        <option value="15">15 students / page</option>
+                        <option value="18">18 students / page (Recommended)</option>
+                        <option value="20">20 students / page</option>
+                        <option value="25">25 students / page</option>
+                        <option value="50">50 students / page</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* If Lab course, show the 3 attendance sheet types requested by user */}
+                  {isLab && (
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '6px', padding: '12px 16px' }}>
+                      <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#166534', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        🔬 Lab Examination Sheet Type:
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        {[
+                          { id: 'written', label: '1. Written Exam Attendance Sheet', desc: 'Answer book barcode & graph' },
+                          { id: 'online', label: '2. Online Exam Attendance Sheet', desc: 'Terminal / PC No. & IP tracking' },
+                          { id: 'viva', label: '3. Viva-Voce Attendance Sheet', desc: 'Marks & Examiner remarks' }
+                        ].map(type => (
+                          <button
+                            key={type.id}
+                            type="button"
+                            onClick={() => setAttendanceLabSheetType(type.id)}
+                            style={{
+                              flex: '1',
+                              minWidth: '200px',
+                              padding: '8px 12px',
+                              borderRadius: '6px',
+                              border: attendanceLabSheetType === type.id ? '2px solid #16a34a' : '1px solid #bbf7d0',
+                              backgroundColor: attendanceLabSheetType === type.id ? '#15803d' : '#ffffff',
+                              color: attendanceLabSheetType === type.id ? '#ffffff' : '#14532d',
+                              fontWeight: 'bold',
+                              fontSize: '9pt',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <div>{type.label}</div>
+                            <div style={{ fontSize: '7.5pt', fontWeight: 'normal', opacity: attendanceLabSheetType === type.id ? 0.9 : 0.7, marginTop: '2px' }}>
+                              {type.desc}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* PRINTABLE DOCUMENT PREVIEW */}
+                <div className="attendance-sheet-screen-wrapper">
+                  {pages.map((pageRows, pageIdx) => {
+                    const isLastPage = pageIdx === pages.length - 1;
+
+                    return (
+                      <div key={pageIdx} className="attendance-page">
+                        <div className="attendance-page-content">
+                          {/* TOP HEADER */}
+                          <div>
+                            {/* Room No. Box on Right */}
+                            <div style={{ float: 'right', border: '1.5px solid #000', padding: '4px 16px', textAlign: 'center', minWidth: '95px' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '9pt', color: '#000', lineHeight: '1.2' }}>Room No.</div>
+                              <div style={{ fontWeight: 'bold', fontSize: '11pt', color: '#000', marginTop: '2px' }}>{attendanceRoomNo || 'AL 001'}</div>
+                            </div>
+
+                            {/* BICS Logo on Left */}
+                            <div style={{ float: 'left', display: 'flex', alignItems: 'center' }}>
+                              <img
+                                src="/bics_logo.png"
+                                alt="BICS Logo"
+                                style={{ height: '56px', width: 'auto', objectFit: 'contain' }}
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                            </div>
+
+                            {/* Center Title: Preliminary Examinations 2026 as main header and Basic Introductory Computer Science (BICS) Course as sub heading */}
+                            <div style={{ textAlign: 'center', margin: '0 120px 0 70px' }}>
+                              <div style={{ fontSize: '13.5pt', fontWeight: 'bold', color: '#000', textTransform: 'none', letterSpacing: '0.3px', fontFamily: 'Arial, sans-serif' }}>
+                                {attendanceMainHeader || 'Preliminary Examinations 2026'}
+                              </div>
+                              <div style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#000', marginTop: '3px', fontFamily: 'Arial, sans-serif' }}>
+                                {attendanceSubHeader || 'Basic Introductory Computer Science (BICS) Course'}
+                              </div>
+                            </div>
+
+                            <div style={{ clear: 'both' }} />
+                          </div>
+
+                          {/* BLACK TITLE BANNER */}
+                          <div style={{
+                            backgroundColor: '#000000',
+                            color: '#ffffff',
+                            fontWeight: 'bold',
+                            fontSize: '9.5pt',
+                            textAlign: 'center',
+                            padding: '4px 6px',
+                            margin: '10px 0 10px 0',
+                            letterSpacing: '0.2px'
+                          }}>
+                            Attendance of Students ({bannerSubtitle})
+                          </div>
+
+                          {/* METADATA GRID (2 columns) */}
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1.4fr 1fr',
+                            rowGap: '3px',
+                            columnGap: '16px',
+                            fontSize: '8pt',
+                            lineHeight: '1.35',
+                            marginBottom: '10px',
+                            color: '#000000'
+                          }}>
+                            <div><strong>Name of Examination :</strong> {attendanceExamName || effectiveExamType}</div>
+                            <div><strong>Degree :</strong>{attendanceDegree}</div>
+                            <div><strong>Course Name :</strong> ({selectedCourseCode}) {selectedCourseTitle}</div>
+                            <div><strong>Program :</strong>{attendanceProgram}</div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: '320px' }}>
+                              <span><strong>Max Marks :</strong> {examMarks}</span>
+                              <span><strong>Duration :</strong> {examDuration}</span>
+                            </div>
+                            <div><strong>Exam Date :</strong> {examDate}</div>
+                            <div><strong>Bench Position :</strong> {attendanceBenchPosition}</div>
+                            <div><strong>Semester :</strong>{attendanceSemester}</div>
+                          </div>
+
+                          {/* STUDENTS ATTENDANCE TABLE */}
+                          <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #000', fontSize: '8pt', color: '#000' }}>
+                            <thead>
+                              <tr style={{ backgroundColor: '#ffffff' }}>
+                                <th style={{ border: '1px solid #000', padding: '4px 3px', width: '5%', textAlign: 'center', fontWeight: 'bold' }}>
+                                  Sr.<br />No.
+                                </th>
+                                <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                  Reg No.
+                                </th>
+                                <th style={{ border: '1px solid #000', padding: '4px 8px', width: '38%', textAlign: 'left', fontWeight: 'bold' }}>
+                                  Name of Student
+                                </th>
+                                {isLab ? (
+                                  attendanceLabSheetType === 'online' ? (
+                                    <>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Terminal / PC No.
+                                      </th>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Workstation / IP
+                                      </th>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Signature<br />of Student
+                                      </th>
+                                    </>
+                                  ) : attendanceLabSheetType === 'viva' ? (
+                                    <>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Marks Obtained<br />(Max: {examMarks})
+                                      </th>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Examiner Remarks
+                                      </th>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Signature<br />of Student
+                                      </th>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Serial No .of<br />Answer book
+                                      </th>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        No. of<br />Supplements/Graph
+                                      </th>
+                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
+                                        Signature<br />of Student
+                                      </th>
+                                    </>
+                                  )
+                                ) : (
+                                  <>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Serial No .of<br />Answer book
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      No. of<br />Supplements/Graph
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Signature<br />of Student
+                                    </th>
+                                  </>
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pageRows.map((cand, rIdx) => {
+                                const srNo = pageIdx * perPage + rIdx + 1;
+                                const regNo = cand.studentId || cand.username || '-';
+                                const fullName = (cand.name || cand.username || cand.studentId || '').toUpperCase();
+
+                                return (
+                                  <tr key={cand._id || rIdx} style={{ height: '26px' }}>
+                                    <td style={{ border: '1px solid #000', padding: '3px 4px', textAlign: 'center' }}>
+                                      {srNo}
+                                    </td>
+                                    <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center', fontFamily: 'monospace', fontSize: '8.5pt' }}>
+                                      {regNo}
+                                    </td>
+                                    <td style={{ border: '1px solid #000', padding: '3px 8px', textAlign: 'left', fontWeight: '500' }}>
+                                      {fullName}
+                                    </td>
+                                    <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
+                                    <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
+                                    <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+
+                          {/* SUMMARY STATISTICS (Only on the Last Page - Reference Image 2) */}
+                          {isLastPage && (
+                            <table style={{
+                              borderCollapse: 'collapse',
+                              width: '250px',
+                              margin: '18px auto 14px auto',
+                              border: '1.5px solid #000',
+                              fontSize: '8.5pt'
+                            }}>
+                              <tbody>
+                                <tr>
+                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center', width: '60%' }}>
+                                    Total Students
+                                  </td>
+                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
+                                    {studentList.length}
+                                  </td>
+                                </tr>
+                                <tr>
+                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
+                                    Present Students
+                                  </td>
+                                  <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}></td>
+                                </tr>
+                                <tr>
+                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
+                                    Absent Students
+                                  </td>
+                                  <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+
+                        {/* PAGE FOOTER & SIGNATURES BLOCK */}
+                        <div className="attendance-page-footer-block">
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '8.5pt', fontWeight: 'bold', padding: '0 2px' }}>
+                            <div>Name and Dated Signature of Invigilator :</div>
+                            <div>Name and Dated Signature of Dept.Exam Co-ordinator</div>
+                          </div>
+                          <hr style={{ border: 'none', borderTop: '1.5px solid #000', margin: '12px 0 5px 0' }} />
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8pt', color: '#000', padding: '0 2px' }}>
+                            <div>{examDate}</div>
+                            <div>Page {pageIdx + 1} of {totalPages}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
             </>
           )}
         </main>
