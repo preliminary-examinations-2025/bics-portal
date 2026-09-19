@@ -1258,9 +1258,9 @@ export default function App() {
       setDraftMCQ(activeAns?.selectedOptionIndex ?? null);
       setDraftCode(activeAns?.submittedCode ?? '');
       setDraftLanguage(activeAns?.selectedLanguage ?? 'cpp');
-      setDraftHtml(activeAns?.submittedHtml ?? (activeQuest.initialHtml || ''));
-      setDraftCss(activeAns?.submittedCss ?? (activeQuest.initialCss || ''));
-      setDraftJs(activeAns?.submittedJs ?? (activeQuest.initialJs || ''));
+      setDraftHtml(activeAns?.submittedHtml ?? (activeQuest.initialHtml || activeQuest.initialCode?.html || ''));
+      setDraftCss(activeAns?.submittedCss ?? (activeQuest.initialCss || activeQuest.initialCode?.css || ''));
+      setDraftJs(activeAns?.submittedJs ?? (activeQuest.initialJs || activeQuest.initialCode?.js || ''));
       setWebActiveTab('html');
       setWebConsoleLogs([]);
       setRunResults(null);
@@ -3043,88 +3043,96 @@ export default function App() {
                       )
                     ) : (
                       /* HTML/CSS/JS Web Console contents */
-                      (consoleTab === 'testcase' || consoleTab === 'preview') ? (
-                        <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
-                          <iframe
-                            key={`web_preview_q_${selectedQuestionIndex}`}
-                            id="web-sandbox-preview"
-                            title="Web Sandbox Preview"
-                            srcDoc={`
-                              <!DOCTYPE html>
-                              <html>
-                                <head>
-                                   <meta charset="utf-8">
-                                  <base href="https://invalid-sandbox-origin.invalid/">
-                                  <style>
-                                    html, body {
-                                      margin: 0;
-                                      padding: 10px;
-                                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                                      word-wrap: break-word;
-                                      word-break: break-word;
-                                      overflow-x: hidden;
-                                      box-sizing: border-box;
-                                    }
-                                    *, *:before, *:after {
-                                      box-sizing: inherit;
-                                    }
-                                    img, video, iframe, canvas {
-                                      max-width: 100%;
-                                      height: auto;
-                                      display: block;
-                                    }
-                                    pre, code {
-                                      white-space: pre-wrap;
-                                      word-break: break-all;
-                                    }
-                                  </style>
-                                  <style>${draftCss}</style>
-                                  <script>
-                                    window.onerror = function(message, source, lineno, colno, error) {
-                                      window.parent.postMessage({
-                                        type: 'IFRAME_CONSOLE_LOG',
-                                        level: 'error',
-                                        text: message + (lineno ? ' (line ' + lineno + ')' : '')
-                                      }, '*');
-                                      return true;
-                                    };
-                                    const _log = console.log;
-                                    const _error = console.error;
-                                    console.log = function(...args) {
-                                      _log.apply(console, args);
-                                      window.parent.postMessage({
-                                        type: 'IFRAME_CONSOLE_LOG',
-                                        level: 'log',
-                                        text: args.join(' ')
-                                      }, '*');
-                                    };
-                                    console.error = function(...args) {
-                                      _error.apply(console, args);
-                                      window.parent.postMessage({
-                                        type: 'IFRAME_CONSOLE_LOG',
-                                        level: 'error',
-                                        text: args.join(' ')
-                                      }, '*');
-                                    };
-                                    document.addEventListener('DOMContentLoaded', function() {
-                                      try {
-                                        ${draftJs || ''}
-                                      } catch(err) {
-                                        console.error(err.message || String(err));
+                      (consoleTab === 'testcase' || consoleTab === 'preview') ? (() => {
+                        const activeQuestForWeb = test?.questions?.[selectedQuestionIndex];
+                        const activeAnsForWeb = examAnswers?.[selectedQuestionIndex];
+                        const livePreviewHtml = draftHtml || activeAnsForWeb?.submittedHtml || activeQuestForWeb?.initialHtml || activeQuestForWeb?.initialCode?.html || '';
+                        const livePreviewCss = draftCss || activeAnsForWeb?.submittedCss || activeQuestForWeb?.initialCss || activeQuestForWeb?.initialCode?.css || '';
+                        const livePreviewJs = draftJs || activeAnsForWeb?.submittedJs || activeQuestForWeb?.initialJs || activeQuestForWeb?.initialCode?.js || '';
+
+                        return (
+                          <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
+                            <iframe
+                              key={`web_preview_q_${selectedQuestionIndex}`}
+                              id="web-sandbox-preview"
+                              title="Web Sandbox Preview"
+                              srcDoc={`
+                                <!DOCTYPE html>
+                                <html>
+                                  <head>
+                                     <meta charset="utf-8">
+                                    <base href="https://invalid-sandbox-origin.invalid/">
+                                    <style>
+                                      html, body {
+                                        margin: 0;
+                                        padding: 10px;
+                                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                                        word-wrap: break-word;
+                                        word-break: break-word;
+                                        overflow-x: hidden;
+                                        box-sizing: border-box;
                                       }
-                                    });
-                                  </script>
-                                </head>
-                                <body>
-                                  ${draftHtml || ''}
-                                </body>
-                              </html>
-                            `}
-                            sandbox="allow-scripts"
-                            style={{ width: '100%', height: '100%', border: 'none' }}
-                          />
-                        </div>
-                      ) : (
+                                      *, *:before, *:after {
+                                        box-sizing: inherit;
+                                      }
+                                      img, video, iframe, canvas {
+                                        max-width: 100%;
+                                        height: auto;
+                                        display: block;
+                                      }
+                                      pre, code {
+                                        white-space: pre-wrap;
+                                        word-break: break-all;
+                                      }
+                                    </style>
+                                    <style>${livePreviewCss}</style>
+                                    <script>
+                                      window.onerror = function(message, source, lineno, colno, error) {
+                                        window.parent.postMessage({
+                                          type: 'IFRAME_CONSOLE_LOG',
+                                          level: 'error',
+                                          text: message + (lineno ? ' (line ' + lineno + ')' : '')
+                                        }, '*');
+                                        return true;
+                                      };
+                                      const _log = console.log;
+                                      const _error = console.error;
+                                      console.log = function(...args) {
+                                        _log.apply(console, args);
+                                        window.parent.postMessage({
+                                          type: 'IFRAME_CONSOLE_LOG',
+                                          level: 'log',
+                                          text: args.join(' ')
+                                        }, '*');
+                                      };
+                                      console.error = function(...args) {
+                                        _error.apply(console, args);
+                                        window.parent.postMessage({
+                                          type: 'IFRAME_CONSOLE_LOG',
+                                          level: 'error',
+                                          text: args.join(' ')
+                                        }, '*');
+                                      };
+                                      document.addEventListener('DOMContentLoaded', function() {
+                                        try {
+                                          ${livePreviewJs || ''}
+                                        } catch(err) {
+                                          console.error(err.message || String(err));
+                                        }
+                                      });
+                                    </script>
+                                  </head>
+                                  <body>
+                                    ${livePreviewHtml || ''}
+                                  </body>
+                                </html>
+                              `}
+                              sandbox="allow-scripts"
+                              style={{ width: '100%', height: '100%', border: 'none' }}
+                            />
+                          </div>
+                        );
+                      })() : (
                         <div style={{
                           backgroundColor: '#1e1e1e',
                           color: '#f8fafc',
@@ -3559,9 +3567,17 @@ export default function App() {
                     transition: 'all 0.2s ease',
                     border: '1px solid #cbd5e1'
                   }}>
-                    <iframe
-                      title="Full Web Studio Sandbox"
-                      srcDoc={`<!DOCTYPE html>
+                    {(() => {
+                      const activeQuestForWeb = test?.questions?.[selectedQuestionIndex];
+                      const activeAnsForWeb = examAnswers?.[selectedQuestionIndex];
+                      const livePreviewHtml = draftHtml || activeAnsForWeb?.submittedHtml || activeQuestForWeb?.initialHtml || activeQuestForWeb?.initialCode?.html || '';
+                      const livePreviewCss = draftCss || activeAnsForWeb?.submittedCss || activeQuestForWeb?.initialCss || activeQuestForWeb?.initialCode?.css || '';
+                      const livePreviewJs = draftJs || activeAnsForWeb?.submittedJs || activeQuestForWeb?.initialJs || activeQuestForWeb?.initialCode?.js || '';
+
+                      return (
+                        <iframe
+                          title="Full Web Studio Sandbox"
+                          srcDoc={`<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
@@ -3574,7 +3590,7 @@ export default function App() {
         word-wrap: break-word;
         box-sizing: border-box;
       }
-      ${draftCss || ''}
+      ${livePreviewCss || ''}
     </style>
     <script>
       (function() {
@@ -3599,7 +3615,7 @@ export default function App() {
         };
         document.addEventListener('DOMContentLoaded', function() {
           try {
-            ${draftJs || ''}
+            ${livePreviewJs || ''}
           } catch(err) {
             console.error(err.message || String(err));
           }
@@ -3608,12 +3624,14 @@ export default function App() {
     </script>
   </head>
   <body>
-    ${draftHtml || ''}
+    ${livePreviewHtml || ''}
   </body>
 </html>`}
-                      style={{ width: '100%', height: '100%', border: 'none' }}
-                      sandbox="allow-scripts"
-                    />
+                          style={{ width: '100%', height: '100%', border: 'none' }}
+                          sandbox="allow-scripts"
+                        />
+                      );
+                    })()}
                   </div>
                 </div>
 
