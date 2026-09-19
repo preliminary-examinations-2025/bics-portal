@@ -724,7 +724,10 @@ export default function App() {
           type: q.type,
           selectedOptionIndex: cachedAns ? cachedAns.selectedOptionIndex : null,
           submittedCode: cachedAns ? cachedAns.submittedCode : (q.initialTemplate || DEFAULT_TEMPLATES.cpp),
-          selectedLanguage: cachedAns ? (cachedAns.selectedLanguage || 'cpp') : 'cpp'
+          selectedLanguage: cachedAns ? (cachedAns.selectedLanguage || 'cpp') : 'cpp',
+          submittedHtml: cachedAns ? cachedAns.submittedHtml : (q.initialHtml || q.initialCode?.html || ''),
+          submittedCss: cachedAns ? cachedAns.submittedCss : (q.initialCss || q.initialCode?.css || ''),
+          submittedJs: cachedAns ? cachedAns.submittedJs : (q.initialJs || q.initialCode?.js || '')
         };
       });
 
@@ -3122,11 +3125,12 @@ export default function App() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(6px)',
             display: 'flex',
             justifyContent: 'center',
             alignItems: 'center',
-            zIndex: 2000
+            zIndex: 500000
           }}>
             <div className="cf-card" style={{ maxWidth: '450px', padding: '25px', textAlign: 'center', border: '2px solid #e11d48' }}>
               <div style={{ color: '#e11d48', display: 'flex', justifyContent: 'center', marginBottom: '12px' }}><ShieldAlert size={48} /></div>
@@ -3425,10 +3429,18 @@ export default function App() {
                         newJs = value;
                         setDraftJs(value);
                       }
-                      setExamAnswers(prev => ({
-                        ...prev,
-                        [selectedQuestionIndex]: JSON.stringify({ html: newHtml, css: newCss, js: newJs })
-                      }));
+                      setExamAnswers(prev => {
+                        const updated = Array.isArray(prev) ? [...prev] : [];
+                        if (updated[selectedQuestionIndex]) {
+                          updated[selectedQuestionIndex] = {
+                            ...updated[selectedQuestionIndex],
+                            submittedHtml: newHtml,
+                            submittedCss: newCss,
+                            submittedJs: newJs
+                          };
+                        }
+                        return updated;
+                      });
                     }}
                     options={{
                       fontSize: 13,
