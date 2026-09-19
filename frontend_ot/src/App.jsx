@@ -84,6 +84,11 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
     formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: \'Roboto Mono\', Consolas, monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 90%; border: 1px solid #cbd5e1; color: #002147; font-weight: 600;">$1</code>');
 
+    // Auto-detect and format raw/escaped HTML tags (e.g. &lt;div&gt;, &lt;label for="email"&gt;) into markdown code pills
+    formatted = formatted.replace(/&lt;(?:\/?[a-z1-6]+(?:[\s=][^&>]*?)?)\/?&gt;/gi, (tag) => {
+      return `<code style="font-family: 'Roboto Mono', Consolas, monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 90%; border: 1px solid #cbd5e1; color: #002147; font-weight: 600;">${tag}</code>`;
+    });
+
     // Convert section headers (Input, Output, Note, Constraints, etc.)
     formatted = formatted.replace(/^(?:#{1,6}\s+)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?$/gim, (m, title) => {
       return `%%SECTIONTITLE%%${title}%%ENDSECTIONTITLE%%`;
@@ -198,28 +203,25 @@ function CandidateWatermark({ email }) {
       bottom: 0,
       pointerEvents: 'none',
       userSelect: 'none',
-      overflow: 'hidden',
       zIndex: 10,
-      opacity: 0.12,
+      overflow: 'hidden',
       display: 'grid',
       gridTemplateColumns: 'repeat(3, 1fr)',
       gridTemplateRows: 'repeat(4, 1fr)',
-      gap: '40px 20px',
-      padding: '20px',
-      boxSizing: 'border-box'
+      opacity: 0.04,
+      transform: 'rotate(-15deg) scale(1.2)'
     }}>
-      {repeatedEmails.map((text, idx) => (
+      {repeatedEmails.map((e, idx) => (
         <div key={idx} style={{
-          transform: 'rotate(-25deg)',
-          fontSize: '10pt',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '11pt',
           fontWeight: 'bold',
-          color: '#000000',
-          fontFamily: 'monospace',
-          whiteSpace: 'nowrap',
-          textAlign: 'center',
-          alignSelf: 'center'
+          color: '#002147',
+          fontFamily: 'monospace'
         }}>
-          {text}
+          {e}
         </div>
       ))}
     </div>
@@ -1198,7 +1200,7 @@ export default function App() {
       setRunResults(null);
       setCompileError(null);
     }
-  }, [selectedQuestionIndex, test, examAnswers]);
+  }, [selectedQuestionIndex]);
 
   // Listen for iframe log and error events from HTML/CSS/JS preview
   useEffect(() => {
