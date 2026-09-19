@@ -3564,6 +3564,7 @@ export default function App() {
         box-sizing: border-box;
       }
       ${draftCss || ''}
+    </style>
     <script>
       (function() {
         var _log = console.log;
