@@ -82,7 +82,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     formatted = formatted.replace(/__(.*?)__/g, '<strong>$1</strong>');
     formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
     formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
-    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: \'Roboto Mono\', Consolas, monospace; background-color: #f1f5f9; padding: 2px 5px; border-radius: 3px; font-size: 88%; border: 1px solid #e2e8f0; color: #002147;">$1</code>');
+    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: \'Roboto Mono\', Consolas, monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 90%; border: 1px solid #cbd5e1; color: #002147; font-weight: 600;">$1</code>');
 
     // Convert section headers (Input, Output, Note, Constraints, etc.)
     formatted = formatted.replace(/^(?:#{1,6}\s+)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?$/gim, (m, title) => {
@@ -104,27 +104,27 @@ const RichText = React.memo(function RichText({ text, style, className }) {
           if (!pt) return;
           if (pt.startsWith('%%SECTIONTITLE%%') && pt.endsWith('%%ENDSECTIONTITLE%%')) {
             const titleName = pt.replace('%%SECTIONTITLE%%', '').replace('%%ENDSECTIONTITLE%%', '');
-            htmlChunks.push(`<div class="cf-section-title">${titleName}</div>`);
+            htmlChunks.push(`<div class="cf-section-title" style="font-weight: bold; color: #002147; margin-top: 12px; margin-bottom: 6px;">${titleName}</div>`);
           } else {
             const content = pt.replace(/\n/g, '<br />');
-            htmlChunks.push(`<p class="cf-paragraph">${content}</p>`);
+            htmlChunks.push(`<p class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7;">${content}</p>`);
           }
         });
       } else {
         const content = trimmed.replace(/\n/g, '<br />');
-        htmlChunks.push(`<p class="cf-paragraph">${content}</p>`);
+        htmlChunks.push(`<p class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7;">${content}</p>`);
       }
     });
 
     let resultHtml = htmlChunks.length > 0 ? htmlChunks.join('') : formatted.replace(/\n/g, '<br />');
 
-    // Restore Code Blocks
+    // Restore Code Blocks with Light Theme
     codeBlocks.forEach(({ placeholder, code }) => {
       const escapedCode = code
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
-      const codeHtml = `<pre style="background-color: #0f172a; color: #f8fafc; padding: 12px; border-radius: 6px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 9.5pt; overflow-x: auto; margin: 10px 0; border: 1px solid #1e293b; line-height: 1.45; text-align: left;"><code>${escapedCode}</code></pre>`;
+      const codeHtml = `<pre style="background-color: #f8fafc; color: #0f172a; padding: 12px 16px; border-radius: 6px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 9.5pt; overflow-x: auto; margin: 12px 0; border: 1px solid #cbd5e1; line-height: 1.5; text-align: left;"><code>${escapedCode}</code></pre>`;
       resultHtml = resultHtml.replace(placeholder, codeHtml);
     });
 
@@ -137,9 +137,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
   };
 
   useEffect(() => {
-    let active = true;
     const renderMath = () => {
-      if (!active) return;
       if (containerRef.current && window.renderMathInElement) {
         try {
           window.renderMathInElement(containerRef.current, {
@@ -160,10 +158,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     };
 
     renderMath();
-    return () => {
-      active = false;
-    };
-  }, [text]);
+  }); // Run math rendering on every render cycle so KaTeX math is always preserved!
 
   return (
     <div
@@ -2330,28 +2325,28 @@ export default function App() {
               </div>
             </div>
 
-            {/* If MCQ, show selection instruction box before the question */}
+            {/* Question Title Header */}
+            <div style={{ zIndex: 11, marginBottom: '6px' }}>
+              <RichText
+                text={test.questions[selectedQuestionIndex].title || `Question ${selectedQuestionIndex + 1}`}
+                style={{ fontSize: '13pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.4' }}
+              />
+            </div>
+
+            {/* MCQ Questions Rendering */}
             {test.questions[selectedQuestionIndex].type === 'mcq' && (
-              <div style={{ backgroundColor: '#f8fafc', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '4px', zIndex: 11 }}>
+              <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ backgroundColor: '#f8fafc', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                  <RichText
+                    text="Select the correct response option from the right workspace panel."
+                    style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: '1.4', fontStyle: 'italic' }}
+                  />
+                </div>
                 <RichText
-                  text="Please select the correct option response to the question on the right workspace panel."
-                  style={{ fontSize: '9.5pt', color: '#555', lineHeight: '1.6' }}
+                  text={test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].description || ''}
+                  style={{ fontSize: '10.5pt', color: '#1e293b', lineHeight: '1.75', padding: '4px 0' }}
                 />
               </div>
-            )}
-
-            {/* Question Title / Header */}
-            <RichText
-              text={test.questions[selectedQuestionIndex].title || test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].description || ''}
-              style={{ fontSize: '13pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.4', zIndex: 11 }}
-            />
-
-            {/* Subheading / Question text statement if distinct from title */}
-            {test.questions[selectedQuestionIndex].questionText && test.questions[selectedQuestionIndex].title && test.questions[selectedQuestionIndex].questionText !== test.questions[selectedQuestionIndex].title && (
-              <RichText
-                text={test.questions[selectedQuestionIndex].questionText}
-                style={{ fontSize: '10pt', color: '#334155', fontWeight: 'normal', lineHeight: '1.5', zIndex: 11, marginBottom: '8px' }}
-              />
             )}
 
             {test.questions[selectedQuestionIndex].imageUrl && (
@@ -2364,13 +2359,15 @@ export default function App() {
               </div>
             )}
 
-            {/* Render question description and examples for coding / web types */}
+            {/* Coding & Web questions: Render description ONLY ONCE inside the light blue box */}
             {test.questions[selectedQuestionIndex].type !== 'mcq' && (
-              <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <RichText
-                  text={test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].questionText || ''}
-                  style={{ fontSize: '9.5pt', color: '#334155', lineHeight: '1.6', backgroundColor: '#f8fafc', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}
-                />
+              <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ backgroundColor: '#f0f9ff', padding: '16px', border: '1px solid #bae6fd', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                  <RichText
+                    text={test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].questionText || ''}
+                    style={{ fontSize: '10pt', color: '#0f172a', lineHeight: '1.7' }}
+                  />
+                </div>
 
                 {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
                   <div>
@@ -2630,23 +2627,23 @@ export default function App() {
                     {test.questions[selectedQuestionIndex].type === 'web' && (
                       <button
                         type="button"
-                        className="cf-btn-primary"
                         style={{
-                          padding: '4px 12px',
+                          padding: '5px 14px',
                           fontSize: '8.5pt',
-                          border: '1px solid #1e3a8a',
+                          border: '1px solid #0284c7',
                           borderRadius: '4px',
-                          backgroundColor: '#002147',
+                          backgroundColor: '#0284c7',
                           color: '#ffffff',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           gap: '6px',
-                          fontWeight: 'bold'
+                          fontWeight: 'bold',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
                         }}
                         onClick={() => setIsFullWebStudioOpen(true)}
                       >
-                        <Maximize2 size={13} />
+                        <Maximize2 size={13} style={{ color: '#ffffff' }} />
                         <span>Open Full Web Studio</span>
                       </button>
                     )}
@@ -3244,7 +3241,7 @@ export default function App() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: '#0f172a',
+            backgroundColor: '#f0f9ff',
             zIndex: 150000,
             display: 'flex',
             flexDirection: 'column',
@@ -3254,29 +3251,29 @@ export default function App() {
             {/* Studio Header Bar */}
             <div style={{
               height: '48px',
-              backgroundColor: '#1e293b',
-              borderBottom: '1px solid #334155',
+              backgroundColor: '#e0f2fe',
+              borderBottom: '1px solid #bae6fd',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '0 16px',
-              color: '#f8fafc',
+              color: '#002147',
               flexShrink: 0
             }}>
               {/* Left Title */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#38bdf8', fontWeight: 'bold', fontSize: '10pt' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#0284c7', fontWeight: 'bold', fontSize: '10pt' }}>
                   <Code size={18} />
                   <span>Full Web Studio</span>
                 </div>
-                <span style={{ color: '#64748b' }}>|</span>
-                <span style={{ fontSize: '9pt', color: '#94a3b8', fontWeight: 500, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#94a3b8' }}>|</span>
+                <span style={{ fontSize: '9pt', color: '#334155', fontWeight: 600, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   Q{selectedQuestionIndex + 1}: {test.questions[selectedQuestionIndex]?.title || 'Web Development Question'}
                 </span>
               </div>
 
               {/* Center: File Tabs */}
-              <div style={{ display: 'flex', gap: '4px', background: '#0f172a', padding: '3px', borderRadius: '6px', border: '1px solid #334155' }}>
+              <div style={{ display: 'flex', gap: '4px', background: '#f0f9ff', padding: '3px', borderRadius: '6px', border: '1px solid #bae6fd' }}>
                 {[
                   { id: 'html', label: 'index.html', icon: FileCode },
                   { id: 'css', label: 'style.css', icon: Layers },
@@ -3296,7 +3293,7 @@ export default function App() {
                         borderRadius: '4px',
                         border: 'none',
                         backgroundColor: isActive ? '#0284c7' : 'transparent',
-                        color: isActive ? '#ffffff' : '#94a3b8',
+                        color: isActive ? '#ffffff' : '#475569',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -3314,7 +3311,7 @@ export default function App() {
               {/* Right Controls: Viewport Mode, Console Toggle & Close */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 {/* Viewport Modes */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: '#0f172a', padding: '3px', borderRadius: '6px', border: '1px solid #334155' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: '#f0f9ff', padding: '3px', borderRadius: '6px', border: '1px solid #bae6fd' }}>
                   {[
                     { mode: 'desktop', title: 'Desktop View (100%)', icon: Laptop },
                     { mode: 'tablet', title: 'Tablet View (768px)', icon: Tablet },
@@ -3332,8 +3329,8 @@ export default function App() {
                           padding: '4px 8px',
                           borderRadius: '4px',
                           border: 'none',
-                          backgroundColor: isActive ? '#334155' : 'transparent',
-                          color: isActive ? '#38bdf8' : '#64748b',
+                          backgroundColor: isActive ? '#bae6fd' : 'transparent',
+                          color: isActive ? '#0284c7' : '#64748b',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -3356,9 +3353,9 @@ export default function App() {
                     fontSize: '8.5pt',
                     fontWeight: 'bold',
                     borderRadius: '4px',
-                    border: '1px solid #334155',
-                    backgroundColor: webStudioConsoleOpen ? '#334155' : 'transparent',
-                    color: webStudioConsoleOpen ? '#38bdf8' : '#94a3b8',
+                    border: '1px solid #93c5fd',
+                    backgroundColor: webStudioConsoleOpen ? '#dbeafe' : '#ffffff',
+                    color: '#1e40af',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -3383,8 +3380,8 @@ export default function App() {
                     fontSize: '8.5pt',
                     fontWeight: 'bold',
                     borderRadius: '4px',
-                    border: '1px solid #ef4444',
-                    backgroundColor: '#7f1d1d',
+                    border: '1px solid #dc2626',
+                    backgroundColor: '#ef4444',
                     color: '#ffffff',
                     cursor: 'pointer',
                     display: 'flex',
@@ -3401,15 +3398,15 @@ export default function App() {
             {/* Studio Split Body */}
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
               {/* Left Pane: Code Editor */}
-              <div style={{ flex: '1 1 50%', width: '50%', borderRight: '1px solid #334155', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ height: '30px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 12px', fontSize: '8pt', color: '#94a3b8', fontWeight: 'bold' }}>
+              <div style={{ flex: '1 1 50%', width: '50%', borderRight: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', backgroundColor: '#ffffff' }}>
+                <div style={{ height: '30px', backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', padding: '0 12px', fontSize: '8pt', color: '#475569', fontWeight: 'bold' }}>
                   <span>CODE EDITOR ({webActiveTab === 'html' ? 'index.html' : webActiveTab === 'css' ? 'style.css' : 'script.js'})</span>
                 </div>
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   <Editor
                     height="100%"
                     language={webActiveTab === 'html' ? 'html' : webActiveTab === 'css' ? 'css' : 'javascript'}
-                    theme="vs-dark"
+                    theme="vs-light"
                     value={webActiveTab === 'html' ? draftHtml : webActiveTab === 'css' ? draftCss : draftJs}
                     onChange={(val) => {
                       const value = val || '';
@@ -3445,24 +3442,24 @@ export default function App() {
               </div>
 
               {/* Right Pane: Live Render Sandbox */}
-              <div style={{ flex: '1 1 50%', width: '50%', display: 'flex', flexDirection: 'column', backgroundColor: '#020617' }}>
-                <div style={{ height: '30px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', fontSize: '8pt', color: '#94a3b8', fontWeight: 'bold' }}>
+              <div style={{ flex: '1 1 50%', width: '50%', display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc' }}>
+                <div style={{ height: '30px', backgroundColor: '#f1f5f9', borderBottom: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', fontSize: '8pt', color: '#475569', fontWeight: 'bold' }}>
                   <span>LIVE PREVIEW ({webStudioViewportMode.toUpperCase()} VIEW)</span>
                   <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
                     {webStudioViewportMode === 'desktop' ? '100% Width' : webStudioViewportMode === 'tablet' ? '768px Width' : '375px Width'}
                   </span>
                 </div>
 
-                <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: webStudioViewportMode === 'desktop' ? '0' : '20px', backgroundColor: '#020617' }}>
+                <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: webStudioViewportMode === 'desktop' ? '0' : '20px', backgroundColor: '#e2e8f0' }}>
                   <div style={{
                     width: webStudioViewportMode === 'desktop' ? '100%' : webStudioViewportMode === 'tablet' ? '768px' : '375px',
                     height: '100%',
                     backgroundColor: '#ffffff',
                     borderRadius: webStudioViewportMode === 'desktop' ? '0' : '8px',
-                    boxShadow: webStudioViewportMode === 'desktop' ? 'none' : '0 10px 25px rgba(0,0,0,0.5)',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                     overflow: 'hidden',
                     transition: 'all 0.2s ease',
-                    border: webStudioViewportMode === 'desktop' ? 'none' : '1px solid #334155'
+                    border: '1px solid #cbd5e1'
                   }}>
                     <iframe
                       title="Full Web Studio Sandbox"
@@ -3519,33 +3516,33 @@ export default function App() {
                 {webStudioConsoleOpen && (
                   <div style={{
                     height: '160px',
-                    backgroundColor: '#0f172a',
-                    borderTop: '1px solid #334155',
+                    backgroundColor: '#ffffff',
+                    borderTop: '1px solid #cbd5e1',
                     display: 'flex',
                     flexDirection: 'column',
                     fontSize: '8.5pt',
                     fontFamily: 'monospace'
                   }}>
-                    <div style={{ padding: '6px 12px', backgroundColor: '#1e293b', color: '#94a3b8', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>JS DIAGNOSTIC CONSOLE</span>
+                    <div style={{ padding: '6px 12px', backgroundColor: '#f1f5f9', color: '#334155', borderBottom: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 'bold' }}>JS DIAGNOSTIC CONSOLE</span>
                       <button
                         type="button"
                         onClick={() => setWebConsoleLogs([])}
-                        style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '7.5pt' }}
+                        style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '7.5pt', fontWeight: 'bold' }}
                       >
                         Clear Console
                       </button>
                     </div>
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', color: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', color: '#0f172a', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                       {webConsoleLogs.length === 0 ? (
                         <span style={{ color: '#64748b', fontStyle: 'italic' }}>Console clean. No output or exceptions logged.</span>
                       ) : (
                         webConsoleLogs.map((log, lIdx) => (
                           <div key={lIdx} style={{ display: 'flex', gap: '8px' }}>
-                            <span style={{ color: log.level === 'error' ? '#f87171' : '#38bdf8', fontWeight: 'bold' }}>
+                            <span style={{ color: log.level === 'error' ? '#ef4444' : '#0284c7', fontWeight: 'bold' }}>
                               {log.level === 'error' ? '[error]' : '[log]'}
                             </span>
-                            <span style={{ color: log.level === 'error' ? '#fca5a5' : '#e2e8f0' }}>{log.text}</span>
+                            <span style={{ color: log.level === 'error' ? '#991b1b' : '#334155' }}>{log.text}</span>
                           </div>
                         ))
                       )}
