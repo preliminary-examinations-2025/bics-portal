@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
-  Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck
+  Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck,
+  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -293,6 +294,9 @@ export default function App() {
   const [draftJs, setDraftJs] = useState('');
   const [webActiveTab, setWebActiveTab] = useState('html'); // 'html' | 'css' | 'js'
   const [webConsoleLogs, setWebConsoleLogs] = useState([]); // Console output array
+  const [isFullWebStudioOpen, setIsFullWebStudioOpen] = useState(false);
+  const [webStudioViewportMode, setWebStudioViewportMode] = useState('desktop'); // 'desktop' | 'tablet' | 'mobile'
+  const [webStudioConsoleOpen, setWebStudioConsoleOpen] = useState(false);
   const [examTimeLeft, setExamTimeLeft] = useState(0);
   const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0 });
   const [showWarningModal, setShowWarningModal] = useState(false);
@@ -2622,7 +2626,30 @@ export default function App() {
                     </div>
                   )}
 
-                  <div style={{ paddingBottom: '4px' }}>
+                  <div style={{ paddingBottom: '4px', display: 'flex', gap: '8px' }}>
+                    {test.questions[selectedQuestionIndex].type === 'web' && (
+                      <button
+                        type="button"
+                        className="cf-btn-primary"
+                        style={{
+                          padding: '4px 12px',
+                          fontSize: '8.5pt',
+                          border: '1px solid #1e3a8a',
+                          borderRadius: '4px',
+                          backgroundColor: '#002147',
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontWeight: 'bold'
+                        }}
+                        onClick={() => setIsFullWebStudioOpen(true)}
+                      >
+                        <Maximize2 size={13} />
+                        <span>Open Full Web Studio</span>
+                      </button>
+                    )}
                     <button
                       className="cf-btn-secondary"
                       style={{ padding: '4px 10px', fontSize: '8pt', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#ffffff', cursor: 'pointer' }}
@@ -3204,6 +3231,327 @@ export default function App() {
                 >
                   {customModal.confirmText}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FULL WEB STUDIO MODAL OVERLAY */}
+        {isFullWebStudioOpen && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: '#0f172a',
+            zIndex: 150000,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+          }}>
+            {/* Studio Header Bar */}
+            <div style={{
+              height: '48px',
+              backgroundColor: '#1e293b',
+              borderBottom: '1px solid #334155',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '0 16px',
+              color: '#f8fafc',
+              flexShrink: 0
+            }}>
+              {/* Left Title */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#38bdf8', fontWeight: 'bold', fontSize: '10pt' }}>
+                  <Code size={18} />
+                  <span>Full Web Studio</span>
+                </div>
+                <span style={{ color: '#64748b' }}>|</span>
+                <span style={{ fontSize: '9pt', color: '#94a3b8', fontWeight: 500, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Q{selectedQuestionIndex + 1}: {test.questions[selectedQuestionIndex]?.title || 'Web Development Question'}
+                </span>
+              </div>
+
+              {/* Center: File Tabs */}
+              <div style={{ display: 'flex', gap: '4px', background: '#0f172a', padding: '3px', borderRadius: '6px', border: '1px solid #334155' }}>
+                {[
+                  { id: 'html', label: 'index.html', icon: FileCode },
+                  { id: 'css', label: 'style.css', icon: Layers },
+                  { id: 'js', label: 'script.js', icon: Code }
+                ].map(tab => {
+                  const isActive = webActiveTab === tab.id;
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setWebActiveTab(tab.id)}
+                      style={{
+                        padding: '4px 12px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        borderRadius: '4px',
+                        border: 'none',
+                        backgroundColor: isActive ? '#0284c7' : 'transparent',
+                        color: isActive ? '#ffffff' : '#94a3b8',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <Icon size={13} />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Right Controls: Viewport Mode, Console Toggle & Close */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {/* Viewport Modes */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: '#0f172a', padding: '3px', borderRadius: '6px', border: '1px solid #334155' }}>
+                  {[
+                    { mode: 'desktop', title: 'Desktop View (100%)', icon: Laptop },
+                    { mode: 'tablet', title: 'Tablet View (768px)', icon: Tablet },
+                    { mode: 'mobile', title: 'Mobile View (375px)', icon: Smartphone }
+                  ].map(v => {
+                    const isActive = webStudioViewportMode === v.mode;
+                    const VIcon = v.icon;
+                    return (
+                      <button
+                        key={v.mode}
+                        type="button"
+                        title={v.title}
+                        onClick={() => setWebStudioViewportMode(v.mode)}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: 'none',
+                          backgroundColor: isActive ? '#334155' : 'transparent',
+                          color: isActive ? '#38bdf8' : '#64748b',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <VIcon size={14} />
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Console Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setWebStudioConsoleOpen(!webStudioConsoleOpen)}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '8.5pt',
+                    fontWeight: 'bold',
+                    borderRadius: '4px',
+                    border: '1px solid #334155',
+                    backgroundColor: webStudioConsoleOpen ? '#334155' : 'transparent',
+                    color: webStudioConsoleOpen ? '#38bdf8' : '#94a3b8',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  <Terminal size={14} />
+                  <span>Console</span>
+                  {webConsoleLogs.length > 0 && (
+                    <span style={{ backgroundColor: '#0284c7', color: '#fff', fontSize: '7.5pt', padding: '1px 5px', borderRadius: '10px' }}>
+                      {webConsoleLogs.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Close Studio Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsFullWebStudioOpen(false)}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '8.5pt',
+                    fontWeight: 'bold',
+                    borderRadius: '4px',
+                    border: '1px solid #ef4444',
+                    backgroundColor: '#7f1d1d',
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  <X size={14} />
+                  <span>Close Studio</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Studio Split Body */}
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
+              {/* Left Pane: Code Editor */}
+              <div style={{ flex: '1 1 50%', width: '50%', borderRight: '1px solid #334155', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ height: '30px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 12px', fontSize: '8pt', color: '#94a3b8', fontWeight: 'bold' }}>
+                  <span>CODE EDITOR ({webActiveTab === 'html' ? 'index.html' : webActiveTab === 'css' ? 'style.css' : 'script.js'})</span>
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <Editor
+                    height="100%"
+                    language={webActiveTab === 'html' ? 'html' : webActiveTab === 'css' ? 'css' : 'javascript'}
+                    theme="vs-dark"
+                    value={webActiveTab === 'html' ? draftHtml : webActiveTab === 'css' ? draftCss : draftJs}
+                    onChange={(val) => {
+                      const value = val || '';
+                      let newHtml = draftHtml;
+                      let newCss = draftCss;
+                      let newJs = draftJs;
+                      if (webActiveTab === 'html') {
+                        newHtml = value;
+                        setDraftHtml(value);
+                      } else if (webActiveTab === 'css') {
+                        newCss = value;
+                        setDraftCss(value);
+                      } else {
+                        newJs = value;
+                        setDraftJs(value);
+                      }
+                      setExamAnswers(prev => ({
+                        ...prev,
+                        [selectedQuestionIndex]: JSON.stringify({ html: newHtml, css: newCss, js: newJs })
+                      }));
+                    }}
+                    options={{
+                      fontSize: 13,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      tabSize: 2,
+                      lineNumbers: 'on',
+                      wordWrap: 'on'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Right Pane: Live Render Sandbox */}
+              <div style={{ flex: '1 1 50%', width: '50%', display: 'flex', flexDirection: 'column', backgroundColor: '#020617' }}>
+                <div style={{ height: '30px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', fontSize: '8pt', color: '#94a3b8', fontWeight: 'bold' }}>
+                  <span>LIVE PREVIEW ({webStudioViewportMode.toUpperCase()} VIEW)</span>
+                  <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
+                    {webStudioViewportMode === 'desktop' ? '100% Width' : webStudioViewportMode === 'tablet' ? '768px Width' : '375px Width'}
+                  </span>
+                </div>
+
+                <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: webStudioViewportMode === 'desktop' ? '0' : '20px', backgroundColor: '#020617' }}>
+                  <div style={{
+                    width: webStudioViewportMode === 'desktop' ? '100%' : webStudioViewportMode === 'tablet' ? '768px' : '375px',
+                    height: '100%',
+                    backgroundColor: '#ffffff',
+                    borderRadius: webStudioViewportMode === 'desktop' ? '0' : '8px',
+                    boxShadow: webStudioViewportMode === 'desktop' ? 'none' : '0 10px 25px rgba(0,0,0,0.5)',
+                    overflow: 'hidden',
+                    transition: 'all 0.2s ease',
+                    border: webStudioViewportMode === 'desktop' ? 'none' : '1px solid #334155'
+                  }}>
+                    <iframe
+                      title="Full Web Studio Sandbox"
+                      srcDoc={`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <style>
+      html, body {
+        margin: 0;
+        padding: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        word-wrap: break-word;
+        box-sizing: border-box;
+      }
+      ${draftCss || ''}
+    </style>
+  </head>
+  <body>
+    ${draftHtml || ''}
+    <script>
+      (function() {
+        var _log = console.log;
+        var _err = console.error;
+        console.log = function() {
+          _log.apply(console, arguments);
+          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'log', text: Array.from(arguments).join(' ') }, '*');
+        };
+        console.error = function() {
+          _err.apply(console, arguments);
+          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: Array.from(arguments).join(' ') }, '*');
+        };
+        window.onerror = function(msg, url, line) {
+          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: msg + ' (line ' + line + ')' }, '*');
+        };
+      })();
+    </script>
+    <script>
+      try {
+        ${draftJs || ''}
+      } catch(e) {
+        console.error(e.message);
+      }
+    </script>
+  </body>
+</html>`}
+                      style={{ width: '100%', height: '100%', border: 'none' }}
+                      sandbox="allow-scripts"
+                    />
+                  </div>
+                </div>
+
+                {/* Console Drawer inside Studio */}
+                {webStudioConsoleOpen && (
+                  <div style={{
+                    height: '160px',
+                    backgroundColor: '#0f172a',
+                    borderTop: '1px solid #334155',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    fontSize: '8.5pt',
+                    fontFamily: 'monospace'
+                  }}>
+                    <div style={{ padding: '6px 12px', backgroundColor: '#1e293b', color: '#94a3b8', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>JS DIAGNOSTIC CONSOLE</span>
+                      <button
+                        type="button"
+                        onClick={() => setWebConsoleLogs([])}
+                        style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '7.5pt' }}
+                      >
+                        Clear Console
+                      </button>
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', color: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {webConsoleLogs.length === 0 ? (
+                        <span style={{ color: '#64748b', fontStyle: 'italic' }}>Console clean. No output or exceptions logged.</span>
+                      ) : (
+                        webConsoleLogs.map((log, lIdx) => (
+                          <div key={lIdx} style={{ display: 'flex', gap: '8px' }}>
+                            <span style={{ color: log.level === 'error' ? '#f87171' : '#38bdf8', fontWeight: 'bold' }}>
+                              {log.level === 'error' ? '[error]' : '[log]'}
+                            </span>
+                            <span style={{ color: log.level === 'error' ? '#fca5a5' : '#e2e8f0' }}>{log.text}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
