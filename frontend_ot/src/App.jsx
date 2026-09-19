@@ -44,13 +44,6 @@ const RichText = React.memo(function RichText({ text, style, className }) {
       return placeholder;
     });
 
-    // Extract HTML img tags BEFORE HTML escaping: <img src="..." ...>
-    formatted = formatted.replace(/<img\s+[^>]*src=["']([^"']+)["'][^>]*\/?>/gi, (match, src) => {
-      const placeholder = `%%IMAGEBLOCK${placeholderIndex++}%%`;
-      imageBlocks.push({ placeholder, alt: 'Question Image', src: src.trim() });
-      return placeholder;
-    });
-
     // Temporarily extract triple-backtick code blocks
     formatted = formatted.replace(/```(?:cpp|c|python|java|html|css|js)?\n?([\s\S]*?)```/gi, (match, code) => {
       const placeholder = `%%CODEBLOCK${placeholderIndex++}%%`;
@@ -1270,6 +1263,7 @@ export default function App() {
       setWebConsoleLogs([]);
       setRunResults(null);
       setCompileError(null);
+      setConsoleTab('testcase');
     }
   }, [selectedQuestionIndex]);
 
@@ -1294,7 +1288,8 @@ export default function App() {
       selectedLanguage: draftLanguage,
       submittedHtml: draftHtml,
       submittedCss: draftCss,
-      submittedJs: draftJs
+      submittedJs: draftJs,
+      isSavedByUser: true
     };
     setExamAnswers(updated);
 
@@ -2487,23 +2482,36 @@ export default function App() {
                 {test.questions.map((q, qIdx) => {
                   const ans = examAnswers[qIdx];
                   let isAnswered = false;
+                  const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
+
                   if (ans) {
-                    if (q.type === 'mcq') {
+                    if (ans.isSavedByUser) {
+                      isAnswered = true;
+                    } else if (q.type === 'mcq') {
                       isAnswered = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined;
                     } else if (q.type === 'coding') {
-                      const currentCode = ans.submittedCode || '';
-                      const initialCode = q.initialTemplate || DEFAULT_TEMPLATES.cpp || '';
-                      isAnswered = currentCode.trim() !== '' && currentCode.trim() !== initialCode.trim();
+                      const curCode = cleanStr(ans.submittedCode);
+                      const initC1 = cleanStr(q.initialTemplate);
+                      const initC2 = cleanStr(DEFAULT_TEMPLATES[ans.selectedLanguage || 'cpp']);
+                      isAnswered = curCode !== '' && curCode !== initC1 && curCode !== initC2;
                     } else if (q.type === 'web') {
-                      const currentHtml = ans.submittedHtml || '';
-                      const initialHtml = q.initialHtml || '';
-                      const currentCss = ans.submittedCss || '';
-                      const initialCss = q.initialCss || '';
-                      const currentJs = ans.submittedJs || '';
-                      const initialJs = q.initialJs || '';
-                      isAnswered = (currentHtml.trim() !== '' && currentHtml.trim() !== initialHtml.trim()) ||
-                                   (currentCss.trim() !== '' && currentCss.trim() !== initialCss.trim()) ||
-                                   (currentJs.trim() !== '' && currentJs.trim() !== initialJs.trim());
+                      const curHtml = cleanStr(ans.submittedHtml);
+                      const initH1 = cleanStr(q.initialHtml);
+                      const initH2 = cleanStr(q.initialCode?.html);
+
+                      const curCss = cleanStr(ans.submittedCss);
+                      const initC1 = cleanStr(q.initialCss);
+                      const initC2 = cleanStr(q.initialCode?.css);
+
+                      const curJs = cleanStr(ans.submittedJs);
+                      const initJ1 = cleanStr(q.initialJs);
+                      const initJ2 = cleanStr(q.initialCode?.js);
+
+                      const htmlMod = curHtml !== '' && curHtml !== initH1 && curHtml !== initH2;
+                      const cssMod = curCss !== '' && curCss !== initC1 && curCss !== initC2;
+                      const jsMod = curJs !== '' && curJs !== initJ1 && curJs !== initJ2;
+
+                      isAnswered = htmlMod || cssMod || jsMod;
                     }
                   }
 
@@ -3555,6 +3563,7 @@ export default function App() {
 <html>
   <head>
     <meta charset="utf-8">
+    <base href="https://invalid-sandbox-origin.invalid/">
     <style>
       html, body {
         margin: 0;
