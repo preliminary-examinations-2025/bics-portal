@@ -3006,7 +3006,7 @@ export default function App() {
                                       window.parent.postMessage({
                                         type: 'IFRAME_CONSOLE_LOG',
                                         level: 'error',
-                                        text: message + ' (line ' + lineno + ')'
+                                        text: message + (lineno ? ' (line ' + lineno + ')' : '')
                                       }, '*');
                                       return true;
                                     };
@@ -3028,11 +3028,17 @@ export default function App() {
                                         text: args.join(' ')
                                       }, '*');
                                     };
+                                    document.addEventListener('DOMContentLoaded', function() {
+                                      try {
+                                        ${draftJs || ''}
+                                      } catch(err) {
+                                        console.error(err.message || String(err));
+                                      }
+                                    });
                                   </script>
                                 </head>
                                 <body>
-                                  ${draftHtml}
-                                  <script>${draftJs}</script>
+                                  ${draftHtml || ''}
                                 </body>
                               </html>
                             `}
@@ -3490,34 +3496,39 @@ export default function App() {
         box-sizing: border-box;
       }
       ${draftCss || ''}
-    </style>
-  </head>
-  <body>
-    ${draftHtml || ''}
     <script>
       (function() {
         var _log = console.log;
         var _err = console.error;
         console.log = function() {
           _log.apply(console, arguments);
-          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'log', text: Array.from(arguments).join(' ') }, '*');
+          var text = Array.from(arguments).join(' ');
+          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'log', text: text }, '*');
+          window.parent.postMessage({ type: 'IFRAME_CONSOLE_LOG', level: 'log', text: text }, '*');
         };
         console.error = function() {
           _err.apply(console, arguments);
-          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: Array.from(arguments).join(' ') }, '*');
+          var text = Array.from(arguments).join(' ');
+          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: text }, '*');
+          window.parent.postMessage({ type: 'IFRAME_CONSOLE_LOG', level: 'error', text: text }, '*');
         };
         window.onerror = function(msg, url, line) {
-          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: msg + ' (line ' + line + ')' }, '*');
+          var errText = msg + (line ? ' (line ' + line + ')' : '');
+          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: errText }, '*');
+          window.parent.postMessage({ type: 'IFRAME_CONSOLE_LOG', level: 'error', text: errText }, '*');
         };
+        document.addEventListener('DOMContentLoaded', function() {
+          try {
+            ${draftJs || ''}
+          } catch(err) {
+            console.error(err.message || String(err));
+          }
+        });
       })();
     </script>
-    <script>
-      try {
-        ${draftJs || ''}
-      } catch(e) {
-        console.error(e.message);
-      }
-    </script>
+  </head>
+  <body>
+    ${draftHtml || ''}
   </body>
 </html>`}
                       style={{ width: '100%', height: '100%', border: 'none' }}
