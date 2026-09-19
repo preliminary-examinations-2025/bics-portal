@@ -763,9 +763,11 @@ export default function App() {
 
       setCandidate(data.candidate);
       setTest(data.test);
+      if (data.submission) setSubmission(data.submission);
       
-      // Load pre-existing state or localStorage cache
-      const storageKey = `bics_draft_${data.test.id}_${data.candidate.id}`;
+      // Load pre-existing state or localStorage cache tied strictly to unique submission attempt
+      const subId = data.submission?.id || data.submission?._id || 'new_attempt';
+      const storageKey = `bics_draft_${data.test.id}_${data.candidate.id}_${subId}`;
       const cached = localStorage.getItem(storageKey);
       
       let answersArr = [];
@@ -1304,8 +1306,9 @@ export default function App() {
       }
     }
     
-    // Save to localStorage cache
-    const storageKey = `bics_draft_${test.id}_${candidate.id}`;
+    // Save to localStorage cache using unique submission ID
+    const subId = submission?.id || submission?._id || 'new_attempt';
+    const storageKey = `bics_draft_${test.id}_${candidate.id}_${subId}`;
     localStorage.setItem(storageKey, JSON.stringify(updated));
 
     // Auto-save to server draft
@@ -2481,7 +2484,37 @@ export default function App() {
               <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 {test.questions.map((q, qIdx) => {
                   const ans = examAnswers[qIdx];
-                  const isAnswered = Boolean(ans && ans.isSavedByUser);
+                  let isAnswered = false;
+                  const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
+
+                  if (ans && ans.isSavedByUser) {
+                    if (q.type === 'mcq') {
+                      isAnswered = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined;
+                    } else if (q.type === 'coding') {
+                      const curCode = cleanStr(ans.submittedCode);
+                      const initC1 = cleanStr(q.initialTemplate);
+                      const initC2 = cleanStr(DEFAULT_TEMPLATES[ans.selectedLanguage || 'cpp']);
+                      isAnswered = curCode !== '' && curCode !== initC1 && curCode !== initC2;
+                    } else if (q.type === 'web') {
+                      const curHtml = cleanStr(ans.submittedHtml);
+                      const initH1 = cleanStr(q.initialHtml);
+                      const initH2 = cleanStr(q.initialCode?.html);
+
+                      const curCss = cleanStr(ans.submittedCss);
+                      const initC1 = cleanStr(q.initialCss);
+                      const initC2 = cleanStr(q.initialCode?.css);
+
+                      const curJs = cleanStr(ans.submittedJs);
+                      const initJ1 = cleanStr(q.initialJs);
+                      const initJ2 = cleanStr(q.initialCode?.js);
+
+                      const htmlMod = curHtml !== '' && curHtml !== initH1 && curHtml !== initH2;
+                      const cssMod = curCss !== '' && curCss !== initC1 && curCss !== initC2;
+                      const jsMod = curJs !== '' && curJs !== initJ1 && curJs !== initJ2;
+
+                      isAnswered = htmlMod || cssMod || jsMod;
+                    }
+                  }
 
                   const isActive = selectedQuestionIndex === qIdx;
 
@@ -3020,7 +3053,7 @@ export default function App() {
                               <!DOCTYPE html>
                               <html>
                                 <head>
-                                  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+                                   <meta charset="utf-8">
                                   <base href="https://invalid-sandbox-origin.invalid/">
                                   <style>
                                     html, body {
