@@ -2481,39 +2481,7 @@ export default function App() {
               <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 {test.questions.map((q, qIdx) => {
                   const ans = examAnswers[qIdx];
-                  let isAnswered = false;
-                  const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
-
-                  if (ans) {
-                    if (ans.isSavedByUser) {
-                      isAnswered = true;
-                    } else if (q.type === 'mcq') {
-                      isAnswered = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined;
-                    } else if (q.type === 'coding') {
-                      const curCode = cleanStr(ans.submittedCode);
-                      const initC1 = cleanStr(q.initialTemplate);
-                      const initC2 = cleanStr(DEFAULT_TEMPLATES[ans.selectedLanguage || 'cpp']);
-                      isAnswered = curCode !== '' && curCode !== initC1 && curCode !== initC2;
-                    } else if (q.type === 'web') {
-                      const curHtml = cleanStr(ans.submittedHtml);
-                      const initH1 = cleanStr(q.initialHtml);
-                      const initH2 = cleanStr(q.initialCode?.html);
-
-                      const curCss = cleanStr(ans.submittedCss);
-                      const initC1 = cleanStr(q.initialCss);
-                      const initC2 = cleanStr(q.initialCode?.css);
-
-                      const curJs = cleanStr(ans.submittedJs);
-                      const initJ1 = cleanStr(q.initialJs);
-                      const initJ2 = cleanStr(q.initialCode?.js);
-
-                      const htmlMod = curHtml !== '' && curHtml !== initH1 && curHtml !== initH2;
-                      const cssMod = curCss !== '' && curCss !== initC1 && curCss !== initC2;
-                      const jsMod = curJs !== '' && curJs !== initJ1 && curJs !== initJ2;
-
-                      isAnswered = htmlMod || cssMod || jsMod;
-                    }
-                  }
+                  const isAnswered = Boolean(ans && ans.isSavedByUser);
 
                   const isActive = selectedQuestionIndex === qIdx;
 
@@ -3045,6 +3013,7 @@ export default function App() {
                       (consoleTab === 'testcase' || consoleTab === 'preview') ? (
                         <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
                           <iframe
+                            key={`web_preview_q_${selectedQuestionIndex}`}
                             id="web-sandbox-preview"
                             title="Web Sandbox Preview"
                             srcDoc={`
