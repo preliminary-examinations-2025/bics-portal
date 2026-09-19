@@ -350,6 +350,7 @@ export default function App() {
   const [draftHtml, setDraftHtml] = useState('');
   const [draftCss, setDraftCss] = useState('');
   const [draftJs, setDraftJs] = useState('');
+  const [draftQIdx, setDraftQIdx] = useState(null);
   const [webActiveTab, setWebActiveTab] = useState('html'); // 'html' | 'css' | 'js'
   const [webConsoleLogs, setWebConsoleLogs] = useState([]); // Console output array
   const [isFullWebStudioOpen, setIsFullWebStudioOpen] = useState(false);
@@ -1261,6 +1262,7 @@ export default function App() {
       setDraftHtml(activeAns?.submittedHtml ?? (activeQuest.initialHtml || activeQuest.initialCode?.html || ''));
       setDraftCss(activeAns?.submittedCss ?? (activeQuest.initialCss || activeQuest.initialCode?.css || ''));
       setDraftJs(activeAns?.submittedJs ?? (activeQuest.initialJs || activeQuest.initialCode?.js || ''));
+      setDraftQIdx(selectedQuestionIndex);
       setWebActiveTab('html');
       setWebConsoleLogs([]);
       setRunResults(null);
@@ -2761,8 +2763,11 @@ export default function App() {
                       height="100%"
                       language={draftLanguage}
                       theme="vs-light"
-                      value={draftCode}
-                      onChange={(value) => setDraftCode(value || '')}
+                      value={draftQIdx === selectedQuestionIndex ? draftCode : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (test.questions[selectedQuestionIndex]?.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]))}
+                      onChange={(value) => {
+                        setDraftQIdx(selectedQuestionIndex);
+                        setDraftCode(value || '');
+                      }}
                       loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco IDE Engine...</div>}
                       options={{
                         fontSize: 13,
@@ -2782,8 +2787,16 @@ export default function App() {
                       height="100%"
                       language={webActiveTab === 'js' ? 'javascript' : webActiveTab}
                       theme="vs-light"
-                      value={webActiveTab === 'html' ? draftHtml : (webActiveTab === 'css' ? draftCss : draftJs)}
+                      value={(() => {
+                        const isCurrent = (draftQIdx === selectedQuestionIndex);
+                        const activeAns = examAnswers[selectedQuestionIndex];
+                        const activeQuest = test.questions[selectedQuestionIndex];
+                        if (webActiveTab === 'html') return isCurrent ? draftHtml : (activeAns?.submittedHtml ?? (activeQuest.initialHtml || activeQuest.initialCode?.html || ''));
+                        if (webActiveTab === 'css') return isCurrent ? draftCss : (activeAns?.submittedCss ?? (activeQuest.initialCss || activeQuest.initialCode?.css || ''));
+                        return isCurrent ? draftJs : (activeAns?.submittedJs ?? (activeQuest.initialJs || activeQuest.initialCode?.js || ''));
+                      })()}
                       onChange={(value) => {
+                        setDraftQIdx(selectedQuestionIndex);
                         if (webActiveTab === 'html') setDraftHtml(value || '');
                         if (webActiveTab === 'css') setDraftCss(value || '');
                         if (webActiveTab === 'js') setDraftJs(value || '');
@@ -3046,9 +3059,10 @@ export default function App() {
                       (consoleTab === 'testcase' || consoleTab === 'preview') ? (() => {
                         const activeQuestForWeb = test?.questions?.[selectedQuestionIndex];
                         const activeAnsForWeb = examAnswers?.[selectedQuestionIndex];
-                        const livePreviewHtml = draftHtml || activeAnsForWeb?.submittedHtml || activeQuestForWeb?.initialHtml || activeQuestForWeb?.initialCode?.html || '';
-                        const livePreviewCss = draftCss || activeAnsForWeb?.submittedCss || activeQuestForWeb?.initialCss || activeQuestForWeb?.initialCode?.css || '';
-                        const livePreviewJs = draftJs || activeAnsForWeb?.submittedJs || activeQuestForWeb?.initialJs || activeQuestForWeb?.initialCode?.js || '';
+                        const isCurrent = (draftQIdx === selectedQuestionIndex);
+                        const livePreviewHtml = isCurrent ? draftHtml : (activeAnsForWeb?.submittedHtml ?? (activeQuestForWeb?.initialHtml || activeQuestForWeb?.initialCode?.html || ''));
+                        const livePreviewCss = isCurrent ? draftCss : (activeAnsForWeb?.submittedCss ?? (activeQuestForWeb?.initialCss || activeQuestForWeb?.initialCode?.css || ''));
+                        const livePreviewJs = isCurrent ? draftJs : (activeAnsForWeb?.submittedJs ?? (activeQuestForWeb?.initialJs || activeQuestForWeb?.initialCode?.js || ''));
 
                         return (
                           <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
@@ -3505,8 +3519,16 @@ export default function App() {
                     height="100%"
                     language={webActiveTab === 'html' ? 'html' : webActiveTab === 'css' ? 'css' : 'javascript'}
                     theme="vs-light"
-                    value={webActiveTab === 'html' ? draftHtml : webActiveTab === 'css' ? draftCss : draftJs}
+                    value={(() => {
+                      const isCurrent = (draftQIdx === selectedQuestionIndex);
+                      const activeAns = examAnswers[selectedQuestionIndex];
+                      const activeQuest = test?.questions?.[selectedQuestionIndex];
+                      if (webActiveTab === 'html') return isCurrent ? draftHtml : (activeAns?.submittedHtml ?? (activeQuest?.initialHtml || activeQuest?.initialCode?.html || ''));
+                      if (webActiveTab === 'css') return isCurrent ? draftCss : (activeAns?.submittedCss ?? (activeQuest?.initialCss || activeQuest?.initialCode?.css || ''));
+                      return isCurrent ? draftJs : (activeAns?.submittedJs ?? (activeQuest?.initialJs || activeQuest?.initialCode?.js || ''));
+                    })()}
                     onChange={(val) => {
+                      setDraftQIdx(selectedQuestionIndex);
                       const value = val || '';
                       let newHtml = draftHtml;
                       let newCss = draftCss;
@@ -3570,9 +3592,10 @@ export default function App() {
                     {(() => {
                       const activeQuestForWeb = test?.questions?.[selectedQuestionIndex];
                       const activeAnsForWeb = examAnswers?.[selectedQuestionIndex];
-                      const livePreviewHtml = draftHtml || activeAnsForWeb?.submittedHtml || activeQuestForWeb?.initialHtml || activeQuestForWeb?.initialCode?.html || '';
-                      const livePreviewCss = draftCss || activeAnsForWeb?.submittedCss || activeQuestForWeb?.initialCss || activeQuestForWeb?.initialCode?.css || '';
-                      const livePreviewJs = draftJs || activeAnsForWeb?.submittedJs || activeQuestForWeb?.initialJs || activeQuestForWeb?.initialCode?.js || '';
+                      const isCurrent = (draftQIdx === selectedQuestionIndex);
+                      const livePreviewHtml = isCurrent ? draftHtml : (activeAnsForWeb?.submittedHtml ?? (activeQuestForWeb?.initialHtml || activeQuestForWeb?.initialCode?.html || ''));
+                      const livePreviewCss = isCurrent ? draftCss : (activeAnsForWeb?.submittedCss ?? (activeQuestForWeb?.initialCss || activeQuestForWeb?.initialCode?.css || ''));
+                      const livePreviewJs = isCurrent ? draftJs : (activeAnsForWeb?.submittedJs ?? (activeQuestForWeb?.initialJs || activeQuestForWeb?.initialCode?.js || ''));
 
                       return (
                         <iframe
