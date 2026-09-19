@@ -1401,8 +1401,72 @@ export default function App() {
       if (res.ok) {
         if (data.status === 'Compilation Error') {
           setCompileError(data.compileError || "Failed to compile C++ code.");
+          const formattedErrResults = allCases.map(tc => ({
+            status: 'Compilation Error',
+            points: Number(tc.points || 0),
+            scoredPoints: 0,
+            actualOutput: data.compileError || 'Compilation Error',
+            expectedOutput: tc.output || '',
+            input: tc.input || ''
+          }));
+          setExamAnswers(prev => {
+            const updated = [...prev];
+            const qId = activeQuestion.id;
+            const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
+            if (existingIdx !== -1) {
+              updated[existingIdx] = {
+                ...updated[existingIdx],
+                submittedCode: draftCode,
+                selectedLanguage: selectedLang,
+                testCaseResults: formattedErrResults,
+                score: 0
+              };
+            }
+            return updated;
+          });
         } else {
-          setRunResults(data.results || []);
+          const rawResults = data.results || [];
+          setRunResults(rawResults);
+          const formattedResults = rawResults.map((r, rIdx) => {
+            const tc = allCases[rIdx] || {};
+            const isAccepted = r.status === 'Accepted';
+            const pts = Number(tc.points || 0);
+            const scored = isAccepted ? pts : 0;
+            return {
+              status: r.status || 'Failed',
+              points: pts,
+              scoredPoints: scored,
+              actualOutput: r.actualOutput !== undefined ? r.actualOutput : (r.stdout || ''),
+              expectedOutput: tc.output || '',
+              input: tc.input || ''
+            };
+          });
+          const questionScore = formattedResults.reduce((acc, curr) => acc + curr.scoredPoints, 0);
+
+          setExamAnswers(prev => {
+            const updated = [...prev];
+            const qId = activeQuestion.id;
+            const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
+            if (existingIdx !== -1) {
+              updated[existingIdx] = {
+                ...updated[existingIdx],
+                submittedCode: draftCode,
+                selectedLanguage: selectedLang,
+                testCaseResults: formattedResults,
+                score: questionScore
+              };
+            } else {
+              updated.push({
+                questionId: qId,
+                type: 'coding',
+                submittedCode: draftCode,
+                selectedLanguage: selectedLang,
+                testCaseResults: formattedResults,
+                score: questionScore
+              });
+            }
+            return updated;
+          });
         }
       } else {
         setCompileError(data.error || "Execution failed. Server error.");

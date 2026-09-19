@@ -616,6 +616,33 @@ function recalculateMCQScore(submission, test) {
     submission.evaluation.mcqScore = mcqPoints;
 }
 
+function calculateCodingScoreFast(submission, test) {
+    if (!test || !submission) return;
+    submission.answers = submission.answers || [];
+    let totalCodingPoints = 0;
+
+    submission.answers.forEach(ans => {
+        const quest = test.questions ? test.questions.find(q => String(q.id) === String(ans.questionId)) : null;
+        if (quest && quest.type === 'coding') {
+            if (ans.testCaseResults && ans.testCaseResults.length > 0) {
+                let questionPoints = 0;
+                ans.testCaseResults.forEach(tc => {
+                    const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' ? (tc.points || 0) : 0));
+                    questionPoints += pts;
+                });
+                ans.score = Number(ans.score !== undefined ? ans.score : questionPoints);
+            } else if (ans.score === undefined || ans.score === null) {
+                ans.score = 0;
+            }
+            totalCodingPoints += Number(ans.score || 0);
+        }
+    });
+
+    submission.evaluation = submission.evaluation || {};
+    submission.evaluation.codingScore = totalCodingPoints;
+    submission.evaluation.evaluatedAt = new Date();
+}
+
 async function recalculateCodingScore(submission, test) {
     if (!test || !submission) return;
     submission.answers = submission.answers || [];
@@ -2681,9 +2708,7 @@ app.post('/api/tests/submit', async (req, res) => {
             const test = await TestConfigModel.findById(submission.testId);
             if (test) {
                 recalculateMCQScore(submission, test);
-                if (status !== 'started') {
-                    await recalculateCodingScore(submission, test);
-                }
+                calculateCodingScoreFast(submission, test);
             } else {
                 submission.evaluation = {
                     mcqScore: 0,
@@ -2722,9 +2747,7 @@ app.post('/api/tests/submit', async (req, res) => {
             const test = db.tests.find(t => t.id === submission.testId || t._id === submission.testId);
             if (test) {
                 recalculateMCQScore(submission, test);
-                if (status !== 'started') {
-                    await recalculateCodingScore(submission, test);
-                }
+                calculateCodingScoreFast(submission, test);
             } else {
                 submission.evaluation = {
                     mcqScore: 0,
