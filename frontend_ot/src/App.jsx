@@ -31,9 +31,16 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     if (!raw) return '';
 
     const mathBlocks = [];
+    const codeBlocks = [];
+    let placeholderIndex = 0;
     let formatted = String(raw).replace(/\r\n/g, '\n');
 
-    let placeholderIndex = 0;
+    // Temporarily extract triple-backtick code blocks
+    formatted = formatted.replace(/```(?:cpp|c|python|java|html|css|js)?\n?([\s\S]*?)```/gi, (match, code) => {
+      const placeholder = `%%CODEBLOCK${placeholderIndex++}%%`;
+      codeBlocks.push({ placeholder, code: code.trim() });
+      return placeholder;
+    });
 
     // Temporarily extract double-dollar display math blocks
     formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
@@ -74,7 +81,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     formatted = formatted.replace(/__(.*?)__/g, '<strong>$1</strong>');
     formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
     formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
-    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: \'Roboto Mono\', Consolas, monospace; background-color: #f1f5f9; padding: 2px 5px; border-radius: 3px; font-size: 88%; border: 1px solid #e2e8f0;">$1</code>');
+    formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: \'Roboto Mono\', Consolas, monospace; background-color: #f1f5f9; padding: 2px 5px; border-radius: 3px; font-size: 88%; border: 1px solid #e2e8f0; color: #002147;">$1</code>');
 
     // Convert section headers (Input, Output, Note, Constraints, etc.)
     formatted = formatted.replace(/^(?:#{1,6}\s+)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?$/gim, (m, title) => {
@@ -109,6 +116,16 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     });
 
     let resultHtml = htmlChunks.length > 0 ? htmlChunks.join('') : formatted.replace(/\n/g, '<br />');
+
+    // Restore Code Blocks
+    codeBlocks.forEach(({ placeholder, code }) => {
+      const escapedCode = code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      const codeHtml = `<pre style="background-color: #0f172a; color: #f8fafc; padding: 12px; border-radius: 6px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 9.5pt; overflow-x: auto; margin: 10px 0; border: 1px solid #1e293b; line-height: 1.45; text-align: left;"><code>${escapedCode}</code></pre>`;
+      resultHtml = resultHtml.replace(placeholder, codeHtml);
+    });
 
     // Restore original LaTeX formulas back inside placeholders
     mathBlocks.forEach(({ placeholder, content }) => {
@@ -2257,9 +2274,17 @@ export default function App() {
 
             {/* Question Title / Header */}
             <RichText
-              text={test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].title || test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].question || ''}
-              style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.5', zIndex: 11 }}
+              text={test.questions[selectedQuestionIndex].title || test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].description || ''}
+              style={{ fontSize: '13pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.4', zIndex: 11 }}
             />
+
+            {/* Subheading / Question text statement if distinct from title */}
+            {test.questions[selectedQuestionIndex].questionText && test.questions[selectedQuestionIndex].title && test.questions[selectedQuestionIndex].questionText !== test.questions[selectedQuestionIndex].title && (
+              <RichText
+                text={test.questions[selectedQuestionIndex].questionText}
+                style={{ fontSize: '10pt', color: '#334155', fontWeight: 'normal', lineHeight: '1.5', zIndex: 11, marginBottom: '8px' }}
+              />
+            )}
 
             {test.questions[selectedQuestionIndex].imageUrl && (
               <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center', zIndex: 11 }}>
