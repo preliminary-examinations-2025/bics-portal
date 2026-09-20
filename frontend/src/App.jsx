@@ -1376,9 +1376,10 @@ int main() {
       const candId = user ? (user.id || user._id) : '';
       const res = await fetch(`${API_BASE}/tests/active?candidateId=${candId}`);
       const data = await res.json();
-      setActiveStudentTests(data || []);
+      setActiveStudentTests(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Error fetching active student tests:", e);
+      setActiveStudentTests([]);
     }
   };
 
@@ -1386,9 +1387,10 @@ int main() {
     try {
       const res = await fetch(`${API_BASE}/admin/tests`);
       const data = await res.json();
-      setAdminTests(data || []);
+      setAdminTests(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Error fetching admin tests:", e);
+      setAdminTests([]);
     }
   };
 
@@ -1396,14 +1398,14 @@ int main() {
     try {
       const res = await fetch(`${API_BASE}/tests/submitted?candidateId=${candidateId}`);
       const data = await res.json();
-      if (res.ok) {
-        setSubmittedTestsList(data || []);
-        if (data && data.length > 0) {
-          setSelectedVerificationTestId(data[0].id || data[0]._id);
-        }
+      const list = Array.isArray(data) ? data : [];
+      setSubmittedTestsList(list);
+      if (list.length > 0) {
+        setSelectedVerificationTestId(list[0].id || list[0]._id);
       }
     } catch (e) {
       console.error("Failed to retrieve candidate submitted tests:", e);
+      setSubmittedTestsList([]);
     }
   };
 
@@ -3961,7 +3963,7 @@ int main() {
                     </p>
                   </div>
                 </div>
-              ) : activeStudentTests.length === 0 ? (
+              ) : (!Array.isArray(activeStudentTests) || activeStudentTests.length === 0) ? (
                 <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
                   <Calendar size={48} style={{ color: '#3b5998', flexShrink: 0 }} />
                   <div>
@@ -3975,7 +3977,7 @@ int main() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
-                  {activeStudentTests.map((test, idx) => {
+                  {(Array.isArray(activeStudentTests) ? activeStudentTests : []).map((test, idx) => {
                     const startTime = new Date(test.startDate);
                     const endTime = new Date(test.endDate);
                     const isFuture = startTime > currentTime;
@@ -4616,13 +4618,13 @@ int main() {
                 Official evaluated examination answer sheets, score distributions, and answer keys are accessible here. You can click <strong>Verify Evaluated Paper</strong> to review your complete evaluated submission in the dedicated Online Test Review Terminal.
               </p>
 
-              {submittedTestsList.length === 0 ? (
+              {(!Array.isArray(submittedTestsList) || submittedTestsList.length === 0) ? (
                 <div className="cf-alert cf-alert-info">
-                  No submitted tests or evaluated examination records are found on your candidate profile at this moment.
+                  No submitted tests found for verification view.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {submittedTestsList.map((st, sIdx) => {
+                  {(Array.isArray(submittedTestsList) ? submittedTestsList : []).map((st, sIdx) => {
                     const sub = st.submission || {};
                     const vStatus = st.verificationStatus || (st.answersReleased ? 'released' : 'not_released');
                     const isReleased = (vStatus === 'released' || vStatus === 'closed');

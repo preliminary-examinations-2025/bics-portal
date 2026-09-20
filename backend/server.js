@@ -2255,7 +2255,81 @@ app.post('/api/admin/verify-registration/:id', async (req, res) => {
 
 // ==========================================
 // ONLINE TEST MODULE ENDPOINTS
-// ==========================================
+// ==========================================// 10a-2. Generate Ledger QR Verification Data
+app.get('/api/candidate/ledger-qr-data/:id', async (req, res) => {
+    const { id } = req.params;
+    const { type } = req.query; // 'mid' or 'end'
+    
+    if (type !== 'mid' && type !== 'end') {
+        return res.status(400).json({ error: "Invalid type. Must be 'mid' or 'end'." });
+    }
+    
+    try {
+        let student = null;
+        if (useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                student = await CandidateModel.findById(id);
+            }
+            if (!student) {
+                student = await CandidateModel.findOne({
+                    $or: [
+                        { studentId: id },
+                        { studentId: new RegExp(`^${id}$`, 'i') },
+                        { id: id }
+                    ]
+                });
+            }
+        } else {
+            const db = getJSONData();
+            student = (db.candidates || []).find(c => c.id === id || c._id === id || c.studentId === id || (c.studentId && c.studentId.toUpperCase() === id.toUpperCase()));
+        }
+        
+        if (!student) {
+            return res.json({
+                success: false,
+                studentId: id,
+                verificationStatus: 'not_found',
+                message: "Candidate ledger verification data pending."
+            });
+        }
+        
+        const studentId = student.studentId;
+        
+        // Count classroom submissions
+        let submissions = [];
+        if (useMongo) {
+            submissions = await ClassroomSubmissionModel.find({ studentId: studentId });
+        } else {
+            const db = getJSONData();
+            submissions = (db.classroomSubmissions || []).filter(s => s.studentId && s.studentId.trim().toUpperCase() === studentId.trim().toUpperCase());
+        }
+        const gradesCount = submissions.length;
+        
+        // Generate secure signature
+        const crypto = require('crypto');
+        const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
+        const payloadText = studentId + '_' + type + '_' + gradesCount;
+        const hash = crypto.createHmac('sha256', SECRET_KEY).update(payloadText).digest('hex').substring(0, 16);
+        
+        return res.json({
+            success: true,
+            studentId,
+            studentName: student.name,
+            examType: type,
+            gradesCount,
+            signature: hash,
+            verifiedAt: new Date().toISOString()
+        });
+    } catch (e) {
+        console.error("Error in ledger-qr-data:", e);
+        return res.json({
+            success: false,
+            studentId: id,
+            verificationStatus: 'error',
+            message: e.message
+        });
+    }
+});
 
 // 1. Get active tests for student dashboard (Strips answer keys for security)
 app.get('/api/tests/active', async (req, res) => {
@@ -2291,22 +2365,35 @@ app.get('/api/tests/active', async (req, res) => {
             const testId = tObj.id || tObj._id;
             let submissionStatus = null;
             if (candidateId) {
-                if (useMongo) {
-                    if (mongoose.Types.ObjectId.isValid(candidateId)) {
-                        const queryCandidateId = new mongoose.Types.ObjectId(candidateId);
-                        const queryTestId = mongoose.Types.ObjectId.isValid(testId.toString()) ? new mongoose.Types.ObjectId(testId.toString()) : testId;
-                        const sub = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId }).sort({ startedAt: -1 });
+                try {
+                    if (useMongo) {
+                        const isValidCandObjId = mongoose.Types.ObjectId.isValid(candidateId);
+                        const isValidTestObjId = mongoose.Types.ObjectId.isValid(testId.toString());
+                        const candConditions = [{ candidateId: candidateId }, { studentId: candidateId }];
+                        if (isValidCandObjId) candConditions.push({ candidateId: new mongoose.Types.ObjectId(candidateId) });
+
+                        const testConditions = [{ testId: testId.toString() }];
+                        if (isValidTestObjId) testConditions.push({ testId: new mongoose.Types.ObjectId(testId.toString()) });
+
+                        const sub = await TestSubmissionModel.findOne({
+                            $and: [
+                                { $or: candConditions },
+                                { $or: testConditions }
+                            ]
+                        }).sort({ startedAt: -1 });
+                        if (sub) submissionStatus = sub.status;
+                    } else {
+                        const db = getJSONData();
+                        db.testSubmissions = db.testSubmissions || [];
+                        const sub = db.testSubmissions.find(s => 
+                            s.candidateId && s.testId &&
+                            (s.candidateId.toString() === candidateId.toString() || s.studentId === candidateId.toString()) && 
+                            s.testId.toString() === testId.toString()
+                        );
                         if (sub) submissionStatus = sub.status;
                     }
-                } else {
-                    const db = getJSONData();
-                    db.testSubmissions = db.testSubmissions || [];
-                    const sub = db.testSubmissions.find(s => 
-                        s.candidateId && s.testId &&
-                        s.candidateId.toString() === candidateId.toString() && 
-                        s.testId.toString() === testId.toString()
-                    );
-                    if (sub) submissionStatus = sub.status;
+                } catch (subErr) {
+                    console.error("Warning querying submissionStatus for active test:", subErr);
                 }
             }
             const qSanitized = (tObj.questions || []).map(q => {
@@ -2330,10 +2417,10 @@ app.get('/api/tests/active', async (req, res) => {
             };
         }));
 
-        return res.json(sanitizedTests);
+        return res.json(sanitizedTests || []);
     } catch (e) {
-        console.error(e);
-        return res.status(500).json({ error: e.message });
+        console.error("Error in /api/tests/active:", e);
+        return res.json([]);
     }
 });
 
