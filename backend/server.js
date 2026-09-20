@@ -3404,7 +3404,7 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
                 queryConditions.push({ testId: test.id });
             }
 
-            subs = await TestSubmissionModel.find({ $or: queryConditions });
+            subs = await TestSubmissionModel.find({ $or: queryConditions, isDeleted: { $ne: true } });
 
             // Auto-heal MCQ scores dynamically
             if (test) {
