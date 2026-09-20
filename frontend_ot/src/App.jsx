@@ -359,6 +359,7 @@ export default function App() {
   const [examTimeLeft, setExamTimeLeft] = useState(0);
   const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0 });
   const [showWarningModal, setShowWarningModal] = useState(false);
+  const [showQuestionInfoModal, setShowQuestionInfoModal] = useState(false);
   const [submittingExam, setSubmittingExam] = useState(false);
   const [isRunningCode, setIsRunningCode] = useState(false);
   const [runResults, setRunResults] = useState(null);
@@ -2399,11 +2400,48 @@ export default function App() {
             </div>
 
             {/* Question Title Header */}
-            <div style={{ zIndex: 11, marginBottom: '6px' }}>
-              <RichText
-                text={test.questions[selectedQuestionIndex].title || `Question ${selectedQuestionIndex + 1}`}
-                style={{ fontSize: '13pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.4' }}
-              />
+            <div style={{ zIndex: 11, marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <RichText
+                  text={test.questions[selectedQuestionIndex].title || `Question ${selectedQuestionIndex + 1}`}
+                  style={{ fontSize: '13pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.4' }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowQuestionInfoModal(true)}
+                title="View Question Instructions & Evaluation Criteria"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '4px 10px',
+                  backgroundColor: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '20px',
+                  color: '#1e293b',
+                  fontSize: '8pt',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease-in-out',
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#e2e8f0';
+                  e.currentTarget.style.borderColor = '#94a3b8';
+                  e.currentTarget.style.color = '#002147';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#f1f5f9';
+                  e.currentTarget.style.borderColor = '#cbd5e1';
+                  e.currentTarget.style.color = '#1e293b';
+                }}
+              >
+                <HelpCircle size={14} style={{ color: '#0284c7' }} />
+                <span>Question Info</span>
+              </button>
             </div>
 
             {/* MCQ Questions Rendering */}
@@ -3695,6 +3733,237 @@ export default function App() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* QUESTION INFO & EVALUATION GUIDELINES MODAL */}
+        {showQuestionInfoModal && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 150000,
+            padding: '16px'
+          }}
+          onClick={() => setShowQuestionInfoModal(false)}
+          >
+            <div 
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '8px',
+                maxWidth: '580px',
+                width: '100%',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                border: '1px solid #cbd5e1',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div style={{
+                backgroundColor: '#002147',
+                color: '#ffffff',
+                padding: '14px 18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid #1e3a8a'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <HelpCircle size={18} style={{ color: '#38bdf8' }} />
+                  <span style={{ fontSize: '10.5pt', fontWeight: 'bold', letterSpacing: '0.3px' }}>
+                    Question Guidelines &amp; Evaluation Info
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowQuestionInfoModal(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderRadius: '4px',
+                    transition: 'color 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ padding: '20px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                  <span style={{ fontSize: '8.5pt', fontWeight: 'bold', textTransform: 'uppercase', padding: '4px 10px', borderRadius: '4px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' }}>
+                    {test.questions[selectedQuestionIndex].type === 'mcq' ? 'Multiple Choice Question (MCQ)' : (test.questions[selectedQuestionIndex].type === 'coding' ? 'C++ Algorithmic Problem' : 'HTML / CSS / JS Web Application')}
+                  </span>
+                  <span style={{ fontSize: '8.5pt', color: '#64748b', fontWeight: 'bold' }}>
+                    Q{selectedQuestionIndex + 1} of {test.questions.length} ({test.questions[selectedQuestionIndex].points || 0} Marks)
+                  </span>
+                </div>
+
+                {/* MCQ Section */}
+                {test.questions[selectedQuestionIndex].type === 'mcq' && (
+                  <>
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0f172a', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <CheckSquare size={15} style={{ color: '#0284c7' }} />
+                        <span>How to Answer</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+                        <li>Read the question prompt carefully in the left pane.</li>
+                        <li>Select your chosen response option (A, B, C, or D) from the choices listed in the right workspace panel.</li>
+                        <li>Click <strong>Save &amp; Next</strong> to lock in your answer and proceed to the next question.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0f172a', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Award size={15} style={{ color: '#16a34a' }} />
+                        <span>Evaluation &amp; Scoring Criteria</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+                        <li><strong>Full Credit</strong>: Awarded automatically if your selected option matches the correct answer key.</li>
+                        <li><strong>No Negative Marking</strong>: Unanswered or incorrect responses receive 0 marks without penalty.</li>
+                        <li>You may modify your selected option anytime before finalizing and submitting your exam.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ border: '1px solid #bae6fd', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f0f9ff' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0369a1', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Info size={15} style={{ color: '#0284c7' }} />
+                        <span>Question Status Indicator</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '8.5pt', color: '#1e3a8a', lineHeight: '1.5' }}>
+                        A question turns GREEN in the bottom navigation bar only when you click "Save &amp; Next" with a valid option selected.
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {/* C++ Coding Section */}
+                {test.questions[selectedQuestionIndex].type === 'coding' && (
+                  <>
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0f172a', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Code size={15} style={{ color: '#0284c7' }} />
+                        <span>How to Write &amp; Execute C++ Code</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+                        <li>Write standard C++ code inside the Monaco IDE editor in the right workspace.</li>
+                        <li>Read input using <code>std::cin</code> / <code>scanf</code> and output results using <code>std::cout</code> / <code>printf</code>.</li>
+                        <li><strong>Do NOT print extra text</strong> like <code>"Enter value: "</code> as this will cause exact output test cases to fail.</li>
+                        <li>Click <strong>Run Code</strong> to compile with GCC and test your logic against sample inputs.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0f172a', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Award size={15} style={{ color: '#16a34a' }} />
+                        <span>Evaluation &amp; Test Case Scoring</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+                        <li><strong>Automated Grading</strong>: Submissions are executed against hidden benchmark test cases upon exam submission.</li>
+                        <li><strong>Partial Scoring</strong>: Marks are awarded proportionally based on the number of hidden test cases passed.</li>
+                        <li>Sample test cases allow live testing but do not contribute to final marks.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ border: '1px solid #bae6fd', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f0f9ff' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0369a1', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Terminal size={15} style={{ color: '#0284c7' }} />
+                        <span>Execution Limits &amp; Best Practices</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '8.5pt', color: '#1e3a8a', lineHeight: '1.5' }}>
+                        Watch out for Time Limit Exceeded (TLE &gt; 2.0s), Segmentation Faults, and Memory Limits. Click "Save &amp; Next" to save your C++ solution.
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {/* Web Coding Section */}
+                {test.questions[selectedQuestionIndex].type === 'web' && (
+                  <>
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0f172a', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <FileCode size={15} style={{ color: '#0284c7' }} />
+                        <span>How to Develop &amp; Inspect Web Code</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+                        <li>Use the tab bar (<strong>HTML</strong>, <strong>CSS</strong>, <strong>JS</strong>) above the editor to switch file buffers.</li>
+                        <li>View live output rendered automatically in the <strong>Live Preview</strong> window at the bottom left.</li>
+                        <li>Click <strong>Full Editor</strong> to open the full-screen split studio with Desktop, Tablet, and Mobile viewports.</li>
+                        <li>Use the <strong>Console Logs</strong> tab to view JavaScript <code>console.log()</code> messages and runtime errors.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f8fafc' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0f172a', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Award size={15} style={{ color: '#16a34a' }} />
+                        <span>Evaluation &amp; Grading Rules</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+                        <li><strong>DOM &amp; HTML Structure</strong>: Checked for required semantic elements, IDs, classes, and hierarchy.</li>
+                        <li><strong>CSS Styling</strong>: Evaluated for visual layout compliance, responsiveness, colors, and positioning.</li>
+                        <li><strong>JavaScript Logic</strong>: Graded on dynamic interactivity, event handling, and functional requirements.</li>
+                      </ul>
+                    </div>
+
+                    <div style={{ border: '1px solid #bae6fd', borderRadius: '6px', padding: '12px 14px', backgroundColor: '#f0f9ff' }}>
+                      <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#0369a1', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Layers size={15} style={{ color: '#0284c7' }} />
+                        <span>Auto-Saving &amp; Submitting</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '8.5pt', color: '#1e3a8a', lineHeight: '1.5' }}>
+                        Draft changes are saved locally as you type. Always click "Save &amp; Next" to record your completed web project in the exam system.
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                padding: '12px 18px',
+                backgroundColor: '#f8fafc',
+                borderTop: '1px solid #cbd5e1',
+                display: 'flex',
+                justifyContent: 'flex-end'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setShowQuestionInfoModal(false)}
+                  style={{
+                    padding: '6px 18px',
+                    fontSize: '9pt',
+                    fontWeight: 'bold',
+                    backgroundColor: '#002147',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3b5998'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#002147'}
+                >
+                  Got it, Close
+                </button>
               </div>
             </div>
           </div>
