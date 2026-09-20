@@ -2469,10 +2469,13 @@ int main() {
       const res = await fetch(`${API_BASE}/admin/objections`);
       if (res.ok) {
         const data = await res.json();
-        setAdminObjectionsList(data || []);
+        setAdminObjectionsList(Array.isArray(data) ? data : (data && Array.isArray(data.objections) ? data.objections : []));
+      } else {
+        setAdminObjectionsList([]);
       }
     } catch (err) {
       console.error("Failed to fetch admin objections:", err);
+      setAdminObjectionsList([]);
     }
   };
 
@@ -7862,7 +7865,7 @@ int main() {
                     }}
                   >
                     <option value="">-- Choose Live Access Exam --</option>
-                    {adminTests.map(t => (
+                    {(Array.isArray(adminTests) ? adminTests : []).map(t => (
                       <option key={t.id || t._id} value={t.id || t._id}>{t.title}</option>
                     ))}
                   </select>
@@ -8410,12 +8413,12 @@ int main() {
                       </tr>
                     </thead>
                     <tbody>
-                      {adminSubmissions.length === 0 ? (
+                      {(!Array.isArray(adminSubmissions) || adminSubmissions.length === 0) ? (
                         <tr>
                           <td colSpan="8" style={{ fontStyle: 'italic', textAlign: 'center', padding: '20px', color: '#64748b' }}>No submissions found in ledger. Use the simulator or manual add.</td>
                         </tr>
                       ) : (
-                        adminSubmissions.map((sub, idx) => {
+                        (Array.isArray(adminSubmissions) ? adminSubmissions : []).map((sub, idx) => {
                           let badgeBg = '#f1f5f9';
                           let badgeColor = '#475569';
                           if (sub.status === 'on_time') {
@@ -8779,7 +8782,7 @@ int main() {
                           </tr>
                         </thead>
                         <tbody>
-                          {filtered.map((obj, oIdx) => (
+                          {(Array.isArray(filtered) ? filtered : []).map((obj, oIdx) => (
                             <tr key={oIdx}>
                               <td>
                                 <div style={{ fontWeight: 'bold', color: '#002147' }}>{obj.candidateName || 'Candidate'}</div>
@@ -10335,12 +10338,12 @@ function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
             maxHeight: '380px',
             minHeight: '260px'
           }}>
-            {logs.length === 0 ? (
+            {(!Array.isArray(logs) || logs.length === 0) ? (
               <div style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: '20px' }}>
                 No compliance events recorded.
               </div>
             ) : (
-              logs.map((log, idx) => {
+              (Array.isArray(logs) ? logs : []).map((log, idx) => {
                 const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED');
                 const isCode = log.type?.includes('CODE_RUN') || log.type?.includes('CODE_SAVED');
                 const isMcq = log.type?.includes('OPTION_MARKED');
