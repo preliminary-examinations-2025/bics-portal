@@ -3020,7 +3020,7 @@ app.post('/api/admin/tests/toggle-publish/:id', async (req, res) => {
 
 // 6. Create/configure a test (Admin only)
 app.post('/api/admin/tests', async (req, res) => {
-    const { _id, id, title, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
+    const { _id, id, code, title, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
     console.log("DEBUG: POST /api/admin/tests req.body =", JSON.stringify(req.body, null, 2));
     if (!title || !duration || !startDate || !endDate) {
         return res.status(400).json({ error: "Title, Duration, Start Date, and End Date are required" });
@@ -3046,6 +3046,8 @@ app.post('/api/admin/tests', async (req, res) => {
             }
             if (savedTest) {
                 savedTest.title = title;
+                if (code) savedTest.code = code;
+                if (id) savedTest.id = id;
                 savedTest.marks = Number(marks || 0);
                 savedTest.instructions = instructions || '';
                 savedTest.duration = Number(duration || 60);
@@ -3055,7 +3057,7 @@ app.post('/api/admin/tests', async (req, res) => {
                 if (isPublished !== undefined) savedTest.isPublished = isPublished;
                 await savedTest.save();
             } else {
-                savedTest = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions: normalizedQuestions, isPublished: isPublished || false });
+                savedTest = new TestConfigModel({ id: id || code, code: code || id, title, marks, instructions, duration, startDate, endDate, questions: normalizedQuestions, isPublished: isPublished || false });
                 await savedTest.save();
             }
         } else {
