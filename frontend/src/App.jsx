@@ -1770,8 +1770,8 @@ int main() {
 
   const handleDeleteTest = async (id) => {
     showModalConfirm(
-      "Confirm Test Deletion",
-      "Are you sure you want to delete this test? All candidate answer sheets and grading records will be deleted permanently.",
+      "Move Test to Recycle Bin",
+      "Are you sure you want to move this test configuration to the Recycle Bin? All linked candidate submissions will be safely protected and held in the Recycle Bin for 24 hours.",
       async () => {
         try {
           const res = await fetch(`${API_BASE}/admin/tests/${id}`, {
@@ -1779,18 +1779,19 @@ int main() {
           });
           const data = await res.json();
           if (data.success) {
-            showModalAlert("Test Deleted", "The practice test has been successfully deleted.");
+            showModalAlert("Moved to Recycle Bin", "The test configuration and linked candidate submissions have been moved to the Recycle Bin (24 Hours Retention).");
             fetchAdminTests();
+            if (typeof fetchRecycleBinItems === 'function') fetchRecycleBinItems();
             if (selectedExamSubmission && selectedExamSubmission.testId === id) {
               setSelectedExamSubmission(null);
             }
           }
         } catch (err) {
           console.error(err);
-          showModalAlert("Deletion Failure", "Failed to delete the practice test. Please check connection.");
+          showModalAlert("Deletion Failure", "Failed to move test configuration to Recycle Bin. Please check connection.");
         }
       },
-      "Yes, Delete Permanently",
+      "Move to Recycle Bin",
       "Cancel"
     );
   };
@@ -2495,6 +2496,7 @@ int main() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           submissionId: adminObjectionModal.objection.submissionId,
+          questionId: adminObjectionModal.objection.questionId,
           questionIndex: adminObjectionModal.objection.questionIndex,
           status: adminObjectionModal.status,
           adminRemarks: adminObjectionModal.adminRemarks,
@@ -2541,50 +2543,70 @@ int main() {
       const res = await fetch(`${API_BASE}/admin/recycle-bin/restore/${itemId}`, { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
+        showModalAlert("Item Restored", "Item and all linked candidate submissions have been successfully restored to active status!");
         setRecycleBinSuccess('Item and all linked data restored successfully!');
         setTimeout(() => setRecycleBinSuccess(''), 3000);
         fetchRecycleBinItems();
-        fetchTests();
+        fetchAdminTests();
       } else {
-        alert(data.error || 'Failed to restore item.');
+        showModalAlert("Restore Error", data.error || 'Failed to restore item.');
       }
     } catch (err) {
-      alert('Network error attempting to restore item.');
+      console.error("Error restoring recycle item:", err);
+      showModalAlert("Network Error", "Network error occurred while attempting to restore item.");
     }
   };
 
   const handlePurgeRecycleItem = async (itemId) => {
-    if (!window.confirm("Are you sure you want to PERMANENTLY delete this item? This action CANNOT be undone.")) return;
-    try {
-      const res = await fetch(`${API_BASE}/admin/recycle-bin/purge/${itemId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setRecycleBinSuccess('Item permanently purged from database.');
-        setTimeout(() => setRecycleBinSuccess(''), 3000);
-        fetchRecycleBinItems();
-      } else {
-        alert(data.error || 'Failed to purge item.');
-      }
-    } catch (err) {
-      alert('Network error attempting to purge item.');
-    }
+    showModalConfirm(
+      "Permanently Delete Item",
+      "Are you sure you want to PERMANENTLY delete this item? This action CANNOT be undone.",
+      async () => {
+        try {
+          const res = await fetch(`${API_BASE}/admin/recycle-bin/purge/${itemId}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showModalAlert("Item Purged", "Item permanently purged from database.");
+            setRecycleBinSuccess('Item permanently purged from database.');
+            setTimeout(() => setRecycleBinSuccess(''), 3000);
+            fetchRecycleBinItems();
+          } else {
+            showModalAlert("Purge Error", data.error || 'Failed to purge item.');
+          }
+        } catch (err) {
+          console.error("Error purging recycle item:", err);
+          showModalAlert("Network Error", "Network error occurred while attempting to purge item.");
+        }
+      },
+      "Yes, Purge Permanently",
+      "Cancel"
+    );
   };
 
   const handlePurgeAllRecycleItems = async () => {
-    if (!window.confirm("Are you sure you want to PERMANENTLY delete ALL items in the Recycle Bin? All cascaded student submissions and logs will be permanently erased.")) return;
-    try {
-      const res = await fetch(`${API_BASE}/admin/recycle-bin/purge-all`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setRecycleBinSuccess('Recycle bin cleared completely!');
-        setTimeout(() => setRecycleBinSuccess(''), 3000);
-        fetchRecycleBinItems();
-      } else {
-        alert(data.error || 'Failed to clear recycle bin.');
-      }
-    } catch (err) {
-      alert('Network error attempting to clear recycle bin.');
-    }
+    showModalConfirm(
+      "Purge All Recycled Items",
+      "Are you sure you want to PERMANENTLY delete ALL items in the Recycle Bin? All cascaded student submissions and logs will be permanently erased.",
+      async () => {
+        try {
+          const res = await fetch(`${API_BASE}/admin/recycle-bin/purge-all`, { method: 'POST' });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showModalAlert("Recycle Bin Cleared", "All recycled items permanently deleted.");
+            setRecycleBinSuccess('Recycle bin cleared completely!');
+            setTimeout(() => setRecycleBinSuccess(''), 3000);
+            fetchRecycleBinItems();
+          } else {
+            showModalAlert("Clear Error", data.error || 'Failed to clear recycle bin.');
+          }
+        } catch (err) {
+          console.error("Error clearing recycle bin:", err);
+          showModalAlert("Network Error", "Network error occurred while attempting to clear recycle bin.");
+        }
+      },
+      "Yes, Purge All",
+      "Cancel"
+    );
   };
 
   const handleChangePassword = async (e) => {
@@ -2900,7 +2922,7 @@ int main() {
     if ((view === 'onlinetest' || view === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections'].includes(view);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin'].includes(view);
     }
     
     if (user.role === 'student') {

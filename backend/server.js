@@ -3738,7 +3738,7 @@ app.post('/api/tests/objection/:submissionId', async (req, res) => {
 
 // 10d. Admin Resolve Question Objection
 app.post('/api/admin/tests/objection/resolve', async (req, res) => {
-    const { submissionId, questionIndex, status, adminRemarks, revisedMarks } = req.body;
+    const { submissionId, questionId, questionIndex, status, adminRemarks, revisedMarks } = req.body;
 
     if (!submissionId || questionIndex === undefined || !status) {
         return res.status(400).json({ success: false, error: "Submission ID, questionIndex, and status are required." });
