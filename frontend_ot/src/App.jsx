@@ -2404,7 +2404,7 @@ export default function App() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <RichText
                   text={test.questions[selectedQuestionIndex].title || `Question ${selectedQuestionIndex + 1}`}
-                  style={{ fontSize: '13pt', fontWeight: 'bold', color: '#002147', lineHeight: '1.4' }}
+                  style={{ fontSize: '13pt', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.4' }}
                 />
               </div>
 
@@ -2416,12 +2416,12 @@ export default function App() {
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '5px',
-                  padding: '4px 10px',
-                  backgroundColor: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
+                  padding: '4px 12px',
+                  backgroundColor: '#f0f9ff',
+                  border: '1px solid #bae6fd',
                   borderRadius: '20px',
-                  color: '#1e293b',
-                  fontSize: '8pt',
+                  color: '#0284c7',
+                  fontSize: '8.5pt',
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease-in-out',
@@ -2429,14 +2429,14 @@ export default function App() {
                   boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#e2e8f0';
-                  e.currentTarget.style.borderColor = '#94a3b8';
-                  e.currentTarget.style.color = '#002147';
+                  e.currentTarget.style.backgroundColor = '#e0f2fe';
+                  e.currentTarget.style.borderColor = '#38bdf8';
+                  e.currentTarget.style.color = '#0369a1';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f1f5f9';
-                  e.currentTarget.style.borderColor = '#cbd5e1';
-                  e.currentTarget.style.color = '#1e293b';
+                  e.currentTarget.style.backgroundColor = '#f0f9ff';
+                  e.currentTarget.style.borderColor = '#bae6fd';
+                  e.currentTarget.style.color = '#0284c7';
                 }}
               >
                 <HelpCircle size={14} style={{ color: '#0284c7' }} />
@@ -3772,17 +3772,17 @@ export default function App() {
             >
               {/* Header */}
               <div style={{
-                backgroundColor: '#002147',
-                color: '#ffffff',
+                backgroundColor: '#f0f9ff',
+                color: '#0369a1',
                 padding: '14px 18px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                borderBottom: '1px solid #1e3a8a'
+                borderBottom: '1px solid #bae6fd'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <HelpCircle size={18} style={{ color: '#38bdf8' }} />
-                  <span style={{ fontSize: '10.5pt', fontWeight: 'bold', letterSpacing: '0.3px' }}>
+                  <HelpCircle size={18} style={{ color: '#0284c7' }} />
+                  <span style={{ fontSize: '10.5pt', fontWeight: 'bold', letterSpacing: '0.3px', color: '#0369a1' }}>
                     Question Guidelines &amp; Evaluation Info
                   </span>
                 </div>
@@ -3791,7 +3791,7 @@ export default function App() {
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: '#94a3b8',
+                    color: '#64748b',
                     cursor: 'pointer',
                     padding: '2px',
                     display: 'flex',
@@ -3799,8 +3799,8 @@ export default function App() {
                     borderRadius: '4px',
                     transition: 'color 0.15s'
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
-                  onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
+                  onMouseEnter={(e) => e.currentTarget.style.color = '#0284c7'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = '#64748b'}
                 >
                   <X size={18} />
                 </button>
@@ -3949,18 +3949,19 @@ export default function App() {
                   type="button"
                   onClick={() => setShowQuestionInfoModal(false)}
                   style={{
-                    padding: '6px 18px',
+                    padding: '7px 20px',
                     fontSize: '9pt',
                     fontWeight: 'bold',
-                    backgroundColor: '#002147',
+                    backgroundColor: '#0284c7',
                     color: '#ffffff',
                     border: 'none',
-                    borderRadius: '4px',
+                    borderRadius: '6px',
                     cursor: 'pointer',
-                    transition: 'background-color 0.15s'
+                    transition: 'background-color 0.15s',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.08)'
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3b5998'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#002147'}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0369a1'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#0284c7'}
                 >
                   Got it, Close
                 </button>
