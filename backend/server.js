@@ -2797,6 +2797,18 @@ app.get('/api/admin/tests', async (req, res) => {
     }
 });
 
+const findTestConfig = async (id) => {
+    if (!id) return null;
+    let test = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+        test = await TestConfigModel.findById(id);
+    }
+    if (!test) {
+        test = await TestConfigModel.findOne({ $or: [{ id: id }, { code: id }, { title: id }] });
+    }
+    return test;
+};
+
 // 5b. Set verification status for answer sheets (Admin only: not_released | released | closed)
 app.post('/api/admin/tests/set-verification-status/:id', async (req, res) => {
     const { id } = req.params;
@@ -2808,7 +2820,7 @@ app.post('/api/admin/tests/set-verification-status/:id', async (req, res) => {
         let updatedStatus = status;
         let isReleased = (status === 'released');
         if (useMongo) {
-            const test = await TestConfigModel.findById(id);
+            const test = await findTestConfig(id);
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
@@ -2843,7 +2855,7 @@ app.post('/api/admin/tests/toggle-release/:id', async (req, res) => {
         let verificationStatus = 'not_released';
         let answersReleased = false;
         if (useMongo) {
-            const test = await TestConfigModel.findById(id);
+            const test = await findTestConfig(id);
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
@@ -2892,7 +2904,7 @@ app.post('/api/admin/tests/toggle-publish/:id', async (req, res) => {
     try {
         let isPublished = false;
         if (useMongo) {
-            const test = await TestConfigModel.findById(id);
+            const test = await findTestConfig(id);
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
@@ -2943,7 +2955,7 @@ app.post('/api/admin/tests', async (req, res) => {
         const testId = _id || id;
         if (useMongo) {
             if (testId) {
-                savedTest = await TestConfigModel.findById(testId);
+                savedTest = await findTestConfig(testId);
             }
             if (savedTest) {
                 savedTest.title = title;
@@ -3010,8 +3022,11 @@ app.delete('/api/admin/tests/:id', async (req, res) => {
     const { id } = req.params;
     try {
         if (useMongo) {
-            await TestConfigModel.findByIdAndDelete(id);
-            await TestSubmissionModel.deleteMany({ testId: id });
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                await TestConfigModel.findByIdAndDelete(id);
+            }
+            await TestConfigModel.deleteMany({ $or: [{ id: id }, { code: id }] });
+            await TestSubmissionModel.deleteMany({ $or: [{ testId: id }, ...(mongoose.Types.ObjectId.isValid(id) ? [{ testId: new mongoose.Types.ObjectId(id) }] : [])] });
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
@@ -3035,14 +3050,36 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
         let subs = [];
         let test = null;
         if (useMongo) {
-            test = await TestConfigModel.findById(testId);
-            const queryTestId = mongoose.Types.ObjectId.isValid(testId) ? new mongoose.Types.ObjectId(testId) : testId;
-            subs = await TestSubmissionModel.find({ testId: queryTestId });
-            
+            const isValidObjectId = mongoose.Types.ObjectId.isValid(testId);
+            if (isValidObjectId) {
+                test = await TestConfigModel.findById(testId);
+            }
+            if (!test) {
+                test = await TestConfigModel.findOne({ $or: [{ id: testId }, { code: testId }, { title: testId }] });
+            }
+
+            const queryConditions = [{ testId: testId }];
+            if (isValidObjectId) {
+                queryConditions.push({ testId: new mongoose.Types.ObjectId(testId) });
+            }
+            if (test && test._id) {
+                queryConditions.push({ testId: test._id.toString() });
+                queryConditions.push({ testId: test._id });
+            }
+            if (test && test.id) {
+                queryConditions.push({ testId: test.id });
+            }
+
+            subs = await TestSubmissionModel.find({ $or: queryConditions });
+
             // Auto-heal MCQ scores dynamically
             if (test) {
                 for (let sub of subs) {
-                    recalculateMCQScore(sub, test);
+                    try {
+                        recalculateMCQScore(sub, test);
+                    } catch (err) {
+                        console.error("MCQ score recalculation warning:", err);
+                    }
                 }
             }
         } else {
@@ -3051,13 +3088,20 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
             subs = db.testSubmissions.filter(s => s.testId === testId);
             test = db.tests.find(t => t.id === testId || t._id === testId);
             if (test) {
-                subs.forEach(sub => recalculateMCQScore(sub, test));
+                subs.forEach(sub => {
+                    try {
+                        recalculateMCQScore(sub, test);
+                    } catch (err) {
+                        console.error("MCQ score recalculation warning:", err);
+                    }
+                });
                 saveJSONData(db);
             }
         }
-        return res.json(subs);
+        return res.json(subs || []);
     } catch (e) {
-        return res.status(500).json({ error: e.message });
+        console.error("Error fetching test submissions:", e);
+        return res.status(200).json([]);
     }
 });
 

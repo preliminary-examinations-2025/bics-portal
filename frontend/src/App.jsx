@@ -1792,9 +1792,16 @@ int main() {
     try {
       const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
       const data = await res.json();
-      setAdminExamSubmissions(data || []);
+      if (Array.isArray(data)) {
+        setAdminExamSubmissions(data);
+      } else if (data && Array.isArray(data.submissions)) {
+        setAdminExamSubmissions(data.submissions);
+      } else {
+        setAdminExamSubmissions([]);
+      }
     } catch (err) {
       console.error(err);
+      setAdminExamSubmissions([]);
     } finally {
       setLoadingMessage('');
     }
@@ -7055,13 +7062,13 @@ int main() {
                 <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <GraduationCap size={18} style={{ color: '#10b981' }} />
                   <span>Exam Submissions Evaluation Console</span>
-                  {adminExamSubmissions.length > 0 && (
+                  {(Array.isArray(adminExamSubmissions) && adminExamSubmissions.length > 0) && (
                     <button
                       type="button"
                       className="cf-btn-secondary"
                       style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: '8pt', background: '#ffffff', color: '#002147', borderColor: '#cbd5e1', cursor: 'pointer' }}
                       onClick={() => {
-                        const firstSub = adminExamSubmissions[0];
+                        const firstSub = (adminExamSubmissions || [])[0];
                         const testId = firstSub?.testId;
                         if (testId) {
                           fetchExamSubmissions(testId);
@@ -7073,7 +7080,7 @@ int main() {
                   )}
                 </div>
                 
-                {adminExamSubmissions.length === 0 ? (
+                {(!Array.isArray(adminExamSubmissions) || adminExamSubmissions.length === 0) ? (
                   <div className="cf-alert cf-alert-info">
                     Select an exam from the configured list above to view candidate answers and sheets.
                   </div>
@@ -7093,7 +7100,7 @@ int main() {
                         </tr>
                       </thead>
                       <tbody>
-                        {adminExamSubmissions.map((s, idx) => (
+                        {(Array.isArray(adminExamSubmissions) ? adminExamSubmissions : []).map((s, idx) => (
                           <tr key={idx}>
                             <td>{s.studentId}</td>
                             <td style={{ fontWeight: 'bold' }}>{s.candidateName}</td>
