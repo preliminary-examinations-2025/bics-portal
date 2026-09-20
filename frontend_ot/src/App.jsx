@@ -1490,7 +1490,7 @@ export default function App() {
               updated[existingIdx] = {
                 ...updated[existingIdx],
                 submittedCode: draftCode,
-                selectedLanguage: selectedLang,
+                selectedLanguage: draftLanguage,
                 testCaseResults: formattedErrResults,
                 score: 0
               };
@@ -1524,7 +1524,7 @@ export default function App() {
               updated[existingIdx] = {
                 ...updated[existingIdx],
                 submittedCode: draftCode,
-                selectedLanguage: selectedLang,
+                selectedLanguage: draftLanguage,
                 testCaseResults: formattedResults,
                 score: questionScore
               };
@@ -1533,7 +1533,7 @@ export default function App() {
                 questionId: qId,
                 type: 'coding',
                 submittedCode: draftCode,
-                selectedLanguage: selectedLang,
+                selectedLanguage: draftLanguage,
                 testCaseResults: formattedResults,
                 score: questionScore
               });
