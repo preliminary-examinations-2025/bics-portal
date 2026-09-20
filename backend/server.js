@@ -511,6 +511,8 @@ const QuestionSchema = new mongoose.Schema({
 }, { _id: false, strict: false });
 
 const TestConfigSchema = new mongoose.Schema({
+    id: String,
+    code: String,
     title: String,
     marks: Number,
     instructions: String,
@@ -520,7 +522,10 @@ const TestConfigSchema = new mongoose.Schema({
     questions: [QuestionSchema],
     answersReleased: { type: Boolean, default: false }, // Admin release toggle for answer sheets (legacy)
     verificationStatus: { type: String, enum: ['not_released', 'released', 'closed'], default: 'not_released' }, // 3-state verification status
-    isPublished: { type: Boolean, default: false } // Admin display/publish toggle for student visibility
+    isPublished: { type: Boolean, default: false }, // Admin display/publish toggle for student visibility
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: Date,
+    deletedBy: String
 });
 const TestConfigModel = mongoose.model('TestConfigV2', TestConfigSchema, 'testconfigs_v2');
 
@@ -553,6 +558,9 @@ const TestSubmissionSchema = new mongoose.Schema({
     startedAt: { type: Date, default: Date.now },
     submittedAt: Date,
     status: { type: String, default: 'started' }, // 'started', 'submitted', 'auto-submitted', 'evaluated'
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: Date,
+    restoreToken: String,
     proctoringLog: {
         fullscreenExits: { type: Number, default: 0 },
         tabSwitches: { type: Number, default: 0 },
@@ -583,15 +591,28 @@ const TestSubmissionSchema = new mongoose.Schema({
         questionId: String,
         questionIndex: Number,
         reason: String,
-        details: String,
-        status: { type: String, default: 'pending' }, // 'pending', 'resolved', 'rejected'
-        raisedAt: { type: Date, default: Date.now },
-        adminRemarks: { type: String, default: '' },
-        resolvedMarks: Number,
-        resolvedAt: Date
+        status: { type: String, default: 'pending' },
+        createdAt: { type: Date, default: Date.now },
+        resolutionNote: String
     }]
-}, { versionKey: false });
+});
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
+
+// 24-Hour Recycle Bin Schema & Model
+const RecycleBinSchema = new mongoose.Schema({
+    entityType: { type: String, required: true }, // 'TestConfig', 'TestSubmission', etc.
+    entityId: { type: String, required: true },
+    title: String,
+    code: String,
+    deletedBy: { type: String, default: 'admin' },
+    deletedAt: { type: Date, default: Date.now },
+    expiresAt: { type: Date, required: true }, // 24 hours from deletedAt
+    cascadeCount: { type: Number, default: 0 },
+    cascadeDetails: mongoose.Schema.Types.Mixed,
+    snapshot: mongoose.Schema.Types.Mixed
+});
+RecycleBinSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // MongoDB TTL Index
+const RecycleBinModel = mongoose.model('RecycleBinV2', RecycleBinSchema, 'recycle_bin_v2');
 
 function recalculateMCQScore(submission, test) {
     if (!test || !submission) return;
@@ -2872,11 +2893,11 @@ app.get('/api/admin/tests', async (req, res) => {
     try {
         let tests = [];
         if (useMongo) {
-            tests = await TestConfigModel.find({});
+            tests = await TestConfigModel.find({ isDeleted: { $ne: true } });
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            tests = db.tests;
+            tests = db.tests.filter(t => !t.isDeleted);
         }
         return res.json(tests);
     } catch (e) {
@@ -2888,10 +2909,10 @@ const findTestConfig = async (id) => {
     if (!id) return null;
     let test = null;
     if (mongoose.Types.ObjectId.isValid(id)) {
-        test = await TestConfigModel.findById(id);
+        test = await TestConfigModel.findOne({ _id: id, isDeleted: { $ne: true } });
     }
     if (!test) {
-        test = await TestConfigModel.findOne({ $or: [{ id: id }, { code: id }, { title: id }] });
+        test = await TestConfigModel.findOne({ $or: [{ id: id }, { code: id }, { title: id }], isDeleted: { $ne: true } });
     }
     return test;
 };
@@ -3106,28 +3127,252 @@ app.post('/api/admin/tests', async (req, res) => {
     }
 });
 
-// 7. Delete test config (Admin only)
+// 7. Delete test config (Admin only - moves to 24-Hour Recycle Bin)
 app.delete('/api/admin/tests/:id', async (req, res) => {
     const { id } = req.params;
+    const deletedBy = req.body?.adminUsername || 'admin';
     try {
+        const deletedAt = new Date();
+        const expiresAt = new Date(deletedAt.getTime() + 24 * 60 * 60 * 1000); // 24 Hours retention
+
         if (useMongo) {
-            if (mongoose.Types.ObjectId.isValid(id)) {
-                await TestConfigModel.findByIdAndDelete(id);
+            const test = await findTestConfig(id);
+            if (!test) {
+                return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
-            await TestConfigModel.deleteMany({ $or: [{ id: id }, { code: id }] });
-            await TestSubmissionModel.deleteMany({ $or: [{ testId: id }, ...(mongoose.Types.ObjectId.isValid(id) ? [{ testId: new mongoose.Types.ObjectId(id) }] : [])] });
+
+            const targetId = test._id;
+            test.isDeleted = true;
+            test.deletedAt = deletedAt;
+            test.deletedBy = deletedBy;
+            await test.save();
+
+            // Soft-delete linked candidate submissions
+            const subQuery = { $or: [{ testId: targetId }, { testId: targetId.toString() }, { testTitle: test.title }, { testId: test.code || test.id }] };
+            const subDocs = await TestSubmissionModel.find(subQuery);
+            await TestSubmissionModel.updateMany(subQuery, {
+                $set: { isDeleted: true, deletedAt: deletedAt, restoreToken: targetId.toString() }
+            });
+
+            // Create entry in Recycle Bin collection
+            const recycleEntry = new RecycleBinModel({
+                entityType: 'TestConfig',
+                entityId: targetId.toString(),
+                title: test.title || test.code || 'Test Configuration',
+                code: test.code || test.id || '',
+                deletedBy: deletedBy,
+                deletedAt: deletedAt,
+                expiresAt: expiresAt,
+                cascadeCount: subDocs.length,
+                cascadeDetails: { candidateSubmissions: subDocs.length },
+                snapshot: { test, submissions: subDocs }
+            });
+            await recycleEntry.save();
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            db.tests = db.tests.filter(t => t.id !== id && t._id !== id);
             db.testSubmissions = db.testSubmissions || [];
-            db.testSubmissions = db.testSubmissions.filter(s => s.testId !== id);
+            db.recycleBin = db.recycleBin || [];
+
+            const testIdx = db.tests.findIndex(t => t.id === id || t._id === id);
+            if (testIdx !== -1) {
+                const test = db.tests[testIdx];
+                test.isDeleted = true;
+                test.deletedAt = deletedAt;
+                test.deletedBy = deletedBy;
+
+                const subDocs = db.testSubmissions.filter(s => s.testId === id || s.testId === test._id || s.testTitle === test.title);
+                subDocs.forEach(s => {
+                    s.isDeleted = true;
+                    s.deletedAt = deletedAt;
+                    s.restoreToken = id;
+                });
+
+                db.recycleBin.push({
+                    _id: 'rb_' + Date.now(),
+                    entityType: 'TestConfig',
+                    entityId: id,
+                    title: test.title || test.code || 'Test Configuration',
+                    code: test.code || test.id || '',
+                    deletedBy: deletedBy,
+                    deletedAt: deletedAt.toISOString(),
+                    expiresAt: expiresAt.toISOString(),
+                    cascadeCount: subDocs.length,
+                    cascadeDetails: { candidateSubmissions: subDocs.length },
+                    snapshot: { test, submissions: subDocs }
+                });
+                saveJSONData(db);
+            }
+        }
+        await logSystemAction('admin', 'TEST_SOFT_DELETED', `Moved test config "${id}" and related submissions to 24-Hour Recycle Bin`, 'info');
+        return res.json({ success: true, message: "Moved to Recycle Bin. You have 24 hours to restore this item." });
+    } catch (e) {
+        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to soft-delete test config ID ${id}: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// --- 24-HOUR RECYCLE BIN REST API ENDPOINTS ---
+
+// GET /api/admin/recycle-bin - List active recycled items
+app.get('/api/admin/recycle-bin', async (req, res) => {
+    try {
+        const now = new Date();
+        let items = [];
+        if (useMongo) {
+            // Auto-purge any expired entities and recycle bin entries
+            const expiredItems = await RecycleBinModel.find({ expiresAt: { $lte: now } });
+            for (const item of expiredItems) {
+                if (item.entityType === 'TestConfig') {
+                    await TestConfigModel.deleteOne({ _id: item.entityId });
+                    await TestSubmissionModel.deleteMany({ restoreToken: item.entityId });
+                }
+            }
+            await RecycleBinModel.deleteMany({ expiresAt: { $lte: now } });
+
+            items = await RecycleBinModel.find({ expiresAt: { $gt: now } }).sort({ deletedAt: -1 });
+        } else {
+            const db = getJSONData();
+            db.recycleBin = db.recycleBin || [];
+            db.recycleBin = db.recycleBin.filter(item => new Date(item.expiresAt) > now);
+            saveJSONData(db);
+            items = db.recycleBin;
+        }
+
+        const formatted = items.map(item => {
+            const doc = item.toObject ? item.toObject() : item;
+            const expTime = new Date(doc.expiresAt).getTime();
+            const timeRemainingMs = Math.max(0, expTime - now.getTime());
+            return {
+                ...doc,
+                timeRemainingMs
+            };
+        });
+
+        return res.json(formatted);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/admin/recycle-bin/restore/:id - Restore recycled item & all cascaded items
+app.post('/api/admin/recycle-bin/restore/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        if (useMongo) {
+            const rbItem = await RecycleBinModel.findById(id).catch(() => null) || await RecycleBinModel.findOne({ entityId: id });
+            if (!rbItem) {
+                return res.status(404).json({ success: false, error: "Item not found in Recycle Bin or retention period expired." });
+            }
+
+            if (rbItem.entityType === 'TestConfig') {
+                const targetId = rbItem.entityId;
+                await TestConfigModel.updateOne({ _id: targetId }, { $set: { isDeleted: false }, $unset: { deletedAt: 1, deletedBy: 1 } });
+                await TestSubmissionModel.updateMany({ $or: [{ testId: targetId }, { restoreToken: targetId }] }, { $set: { isDeleted: false }, $unset: { deletedAt: 1, restoreToken: 1 } });
+            } else if (rbItem.entityType === 'TestSubmission') {
+                await TestSubmissionModel.updateOne({ _id: rbItem.entityId }, { $set: { isDeleted: false }, $unset: { deletedAt: 1, restoreToken: 1 } });
+            }
+
+            await RecycleBinModel.deleteOne({ _id: rbItem._id });
+            await logSystemAction('admin', 'RECYCLE_BIN_RESTORE', `Restored item "${rbItem.title}" (${rbItem.entityId}) and all cascaded records from Recycle Bin`, 'info');
+        } else {
+            const db = getJSONData();
+            db.recycleBin = db.recycleBin || [];
+            const rbIdx = db.recycleBin.findIndex(item => item._id === id || item.entityId === id);
+            if (rbIdx === -1) {
+                return res.status(404).json({ success: false, error: "Item not found in Recycle Bin." });
+            }
+
+            const rbItem = db.recycleBin[rbIdx];
+            if (rbItem.entityType === 'TestConfig') {
+                const test = (db.tests || []).find(t => t.id === rbItem.entityId || t._id === rbItem.entityId);
+                if (test) {
+                    test.isDeleted = false;
+                    delete test.deletedAt;
+                    delete test.deletedBy;
+                }
+                (db.testSubmissions || []).forEach(s => {
+                    if (s.restoreToken === rbItem.entityId || s.testId === rbItem.entityId) {
+                        s.isDeleted = false;
+                        delete s.deletedAt;
+                        delete s.restoreToken;
+                    }
+                });
+            }
+            db.recycleBin.splice(rbIdx, 1);
+            saveJSONData(db);
+            await logSystemAction('admin', 'RECYCLE_BIN_RESTORE', `Restored item "${rbItem.title}" (${rbItem.entityId}) from Recycle Bin`, 'info');
+        }
+
+        return res.json({ success: true, message: "Item and all associated data successfully restored to active status!" });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// DELETE /api/admin/recycle-bin/purge/:id - Permanently hard-delete recycled item
+app.delete('/api/admin/recycle-bin/purge/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        if (useMongo) {
+            const rbItem = await RecycleBinModel.findById(id).catch(() => null) || await RecycleBinModel.findOne({ entityId: id });
+            if (!rbItem) {
+                return res.status(404).json({ success: false, error: "Item not found in Recycle Bin." });
+            }
+
+            if (rbItem.entityType === 'TestConfig') {
+                const targetId = rbItem.entityId;
+                if (mongoose.Types.ObjectId.isValid(targetId)) {
+                    await TestConfigModel.findByIdAndDelete(targetId);
+                }
+                await TestConfigModel.deleteMany({ $or: [{ id: targetId }, { code: targetId }] });
+                await TestSubmissionModel.deleteMany({ $or: [{ testId: targetId }, { restoreToken: targetId }] });
+            }
+
+            await RecycleBinModel.deleteOne({ _id: rbItem._id });
+            await logSystemAction('admin', 'RECYCLE_BIN_PURGE', `Permanently deleted item "${rbItem.title}" (${rbItem.entityId}) and all cascaded data`, 'warning');
+        } else {
+            const db = getJSONData();
+            db.recycleBin = db.recycleBin || [];
+            const rbIdx = db.recycleBin.findIndex(item => item._id === id || item.entityId === id);
+            if (rbIdx !== -1) {
+                const rbItem = db.recycleBin[rbIdx];
+                db.tests = (db.tests || []).filter(t => t.id !== rbItem.entityId && t._id !== rbItem.entityId);
+                db.testSubmissions = (db.testSubmissions || []).filter(s => s.testId !== rbItem.entityId && s.restoreToken !== rbItem.entityId);
+                db.recycleBin.splice(rbIdx, 1);
+                saveJSONData(db);
+            }
+        }
+        return res.json({ success: true, message: "Item permanently deleted from system." });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/admin/recycle-bin/purge-all - Permanently purge all recycled items
+app.post('/api/admin/recycle-bin/purge-all', async (req, res) => {
+    try {
+        if (useMongo) {
+            const allItems = await RecycleBinModel.find({});
+            for (const item of allItems) {
+                if (item.entityType === 'TestConfig') {
+                    await TestConfigModel.deleteOne({ _id: item.entityId });
+                    await TestSubmissionModel.deleteMany({ $or: [{ testId: item.entityId }, { restoreToken: item.entityId }] });
+                }
+            }
+            await RecycleBinModel.deleteMany({});
+        } else {
+            const db = getJSONData();
+            (db.recycleBin || []).forEach(item => {
+                db.tests = (db.tests || []).filter(t => t.id !== item.entityId && t._id !== item.entityId);
+                db.testSubmissions = (db.testSubmissions || []).filter(s => s.testId !== item.entityId && s.restoreToken !== item.entityId);
+            });
+            db.recycleBin = [];
             saveJSONData(db);
         }
-        await logSystemAction('admin', 'TEST_DELETED', `Deleted test config with ID: ${id} and all related student submissions`, 'info');
-        return res.json({ success: true });
+        await logSystemAction('admin', 'RECYCLE_BIN_PURGE_ALL', `Purged all items from Recycle Bin`, 'warning');
+        return res.json({ success: true, message: "All recycled items permanently deleted." });
     } catch (e) {
-        await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to delete test config ID ${id}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
     }
 });
