@@ -591,9 +591,14 @@ const TestSubmissionSchema = new mongoose.Schema({
         questionId: String,
         questionIndex: Number,
         reason: String,
+        details: String,
         status: { type: String, default: 'pending' },
+        raisedAt: { type: Date, default: Date.now },
         createdAt: { type: Date, default: Date.now },
-        resolutionNote: String
+        adminRemarks: String,
+        resolutionNote: String,
+        resolvedMarks: Number,
+        resolvedAt: Date
     }]
 });
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
@@ -3773,19 +3778,25 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
 
                 let totalCoding = 0;
                 let totalMCQ = 0;
+                let hasCodingInAnswers = false;
+                let hasMCQInAnswers = false;
                 (submission.answers || []).forEach(a => {
                     if (a.type === 'coding' || a.type === 'web') {
                         totalCoding += (Number(a.score) || 0);
-                    } else if (a.type === 'mcq') {
+                        hasCodingInAnswers = true;
+                    } else {
                         totalMCQ += (Number(a.score) || 0);
+                        hasMCQInAnswers = true;
                     }
                 });
                 submission.evaluation = submission.evaluation || {};
-                submission.evaluation.codingScore = totalCoding;
-                if (totalMCQ > 0 || submission.evaluation.mcqScore !== undefined) {
+                if (hasCodingInAnswers) {
+                    submission.evaluation.codingScore = totalCoding;
+                }
+                if (hasMCQInAnswers) {
                     submission.evaluation.mcqScore = totalMCQ;
                 }
-                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + totalCoding;
+                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + (submission.evaluation.codingScore || 0);
                 submission.evaluation.score = submission.evaluation.totalScore;
             }
             submission.markModified('objections');
@@ -3821,19 +3832,25 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
 
                 let totalCoding = 0;
                 let totalMCQ = 0;
+                let hasCodingInAnswers = false;
+                let hasMCQInAnswers = false;
                 (submission.answers || []).forEach(a => {
                     if (a.type === 'coding' || a.type === 'web') {
                         totalCoding += (Number(a.score) || 0);
-                    } else if (a.type === 'mcq') {
+                        hasCodingInAnswers = true;
+                    } else {
                         totalMCQ += (Number(a.score) || 0);
+                        hasMCQInAnswers = true;
                     }
                 });
                 submission.evaluation = submission.evaluation || {};
-                submission.evaluation.codingScore = totalCoding;
-                if (totalMCQ > 0 || submission.evaluation.mcqScore !== undefined) {
+                if (hasCodingInAnswers) {
+                    submission.evaluation.codingScore = totalCoding;
+                }
+                if (hasMCQInAnswers) {
                     submission.evaluation.mcqScore = totalMCQ;
                 }
-                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + totalCoding;
+                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + (submission.evaluation.codingScore || 0);
                 submission.evaluation.score = submission.evaluation.totalScore;
             }
             saveJSONData(db);
@@ -3872,13 +3889,13 @@ app.get('/api/admin/objections', async (req, res) => {
                     submittedAt: sub.submittedAt,
                     questionIndex: obj.questionIndex,
                     questionId: obj.questionId,
-                    reason: obj.reason,
-                    details: obj.details,
-                    status: obj.status,
-                    raisedAt: obj.raisedAt,
-                    adminRemarks: obj.adminRemarks,
-                    resolvedMarks: obj.resolvedMarks,
-                    resolvedAt: obj.resolvedAt,
+                    reason: obj.reason || 'General Grievance',
+                    details: obj.details || obj.studentComment || obj.description || '',
+                    status: obj.status || 'pending',
+                    raisedAt: obj.raisedAt || obj.createdAt || sub.submittedAt || new Date(),
+                    adminRemarks: obj.adminRemarks || obj.resolutionNote || '',
+                    resolvedMarks: (obj.resolvedMarks !== undefined && obj.resolvedMarks !== null) ? obj.resolvedMarks : null,
+                    resolvedAt: obj.resolvedAt || null,
                     submittedAnswer: sub.answers ? sub.answers[obj.questionIndex] : null
                 });
             });

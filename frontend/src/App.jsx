@@ -4912,6 +4912,67 @@ int main() {
                             )}
                           </div>
                         </div>
+
+                        {/* Inline Objections Resolution Status Cards */}
+                        {Array.isArray(sub.objections) && sub.objections.length > 0 && (
+                          <div style={{ marginTop: '4px', borderTop: '1px dashed #cbd5e1', paddingTop: '12px' }}>
+                            <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <Flag size={14} style={{ color: '#b45309' }} />
+                              <span>Grievance Objections &amp; Resolution Remarks:</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {sub.objections.map((obj, oIdx) => {
+                                const objStatus = obj.status || 'pending';
+                                const isResolved = objStatus === 'resolved';
+                                const isRejected = objStatus === 'rejected';
+                                return (
+                                  <div key={oIdx} style={{
+                                    backgroundColor: isResolved ? '#f0fdf4' : (isRejected ? '#fef2f2' : '#fffbeb'),
+                                    border: `1px solid ${isResolved ? '#bbf7d0' : (isRejected ? '#fecaca' : '#fde68a')}`,
+                                    borderRadius: '6px',
+                                    padding: '10px 14px',
+                                    fontSize: '8.5pt'
+                                  }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                      <div style={{ fontWeight: 'bold', color: '#1e293b' }}>
+                                        Question #{Number(obj.questionIndex || 0) + 1}: <span style={{ color: '#475569' }}>{obj.reason || 'General Grievance'}</span>
+                                      </div>
+                                      <span style={{
+                                        fontSize: '7.5pt',
+                                        fontWeight: 'bold',
+                                        padding: '2px 8px',
+                                        borderRadius: '4px',
+                                        backgroundColor: isResolved ? '#dcfce7' : (isRejected ? '#fee2e2' : '#fef3c7'),
+                                        color: isResolved ? '#15803d' : (isRejected ? '#b91c1c' : '#b45309'),
+                                        border: `1px solid ${isResolved ? '#86efac' : (isRejected ? '#fca5a5' : '#fcd34d')}`,
+                                        textTransform: 'uppercase'
+                                      }}>
+                                        {isResolved ? 'Resolved / Credit Updated' : (isRejected ? 'Objection Rejected' : 'Under Committee Review')}
+                                      </span>
+                                    </div>
+
+                                    <div style={{ color: '#334155', marginBottom: '4px' }}>
+                                      <strong>Candidate Explanation:</strong> {obj.details || obj.studentComment || obj.description || 'No detailed explanation recorded.'}
+                                    </div>
+
+                                    {(obj.adminRemarks || obj.resolutionNote) && (
+                                      <div style={{ backgroundColor: '#ffffff', border: `1px solid ${isResolved ? '#86efac' : '#cbd5e1'}`, borderRadius: '4px', padding: '6px 10px', marginTop: '6px', color: '#0f172a' }}>
+                                        <strong style={{ color: isResolved ? '#15803d' : '#b91c1c' }}>Committee Remarks:</strong> {obj.adminRemarks || obj.resolutionNote}
+                                      </div>
+                                    )}
+
+                                    {isResolved && (obj.resolvedMarks !== undefined && obj.resolvedMarks !== null) && (
+                                      <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#15803d', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        <CheckCircle size={13} />
+                                        <span>Revised Question Score: {obj.resolvedMarks} pts</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
