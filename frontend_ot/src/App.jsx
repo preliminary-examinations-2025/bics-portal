@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
   Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck,
-  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw
+  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -344,6 +344,18 @@ export default function App() {
   // Active Exam states
   const [examAnswers, setExamAnswers] = useState([]);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
+  const [showQuestionPalette, setShowQuestionPalette] = useState(false);
+  const activeQuestionBtnRef = useRef(null);
+
+  useEffect(() => {
+    if (activeQuestionBtnRef.current) {
+      activeQuestionBtnRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center'
+      });
+    }
+  }, [selectedQuestionIndex]);
   const [draftMCQ, setDraftMCQ] = useState(null);
   const [draftCode, setDraftCode] = useState('');
   const [draftLanguage, setDraftLanguage] = useState('cpp');
@@ -2511,17 +2523,28 @@ export default function App() {
             )}
 
             {/* Left Pane bottom footer question grid switcher */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center', flexWrap: 'nowrap', gap: '8px', width: '100%', overflow: 'hidden' }}>
               <button
                 className="cf-btn-secondary"
                 disabled={selectedQuestionIndex === 0}
                 onClick={() => setSelectedQuestionIndex(selectedQuestionIndex - 1)}
-                style={{ padding: '6px 12px', fontSize: '9pt' }}
+                style={{ padding: '6px 10px', fontSize: '9pt', flexShrink: 0, whiteSpace: 'nowrap' }}
               >
                 ← Previous
               </button>
               
-              <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  gap: '5px', 
+                  overflowX: 'auto', 
+                  flex: 1, 
+                  padding: '2px 0', 
+                  alignItems: 'center',
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none'
+                }}
+              >
                 {test.questions.map((q, qIdx) => {
                   const ans = examAnswers[qIdx];
                   let isAnswered = false;
@@ -2575,11 +2598,12 @@ export default function App() {
                   return (
                     <button
                       key={qIdx}
+                      ref={isActive ? activeQuestionBtnRef : null}
                       onClick={() => setSelectedQuestionIndex(qIdx)}
                       style={{
                         minWidth: '32px',
                         height: '32px',
-                        padding: '0',
+                        padding: '0 6px',
                         fontSize: '9pt',
                         fontWeight: isActive ? 'bold' : 'normal',
                         backgroundColor: bgColor,
@@ -2587,8 +2611,10 @@ export default function App() {
                         border: isActive ? `2px solid ${borderColor}` : `1px solid ${borderColor}`,
                         borderRadius: '4px',
                         cursor: 'pointer',
+                        flexShrink: 0,
                         transition: 'all 0.15s'
                       }}
+                      title={`Question ${qIdx + 1}: ${isAnswered ? 'Answered' : 'Unanswered'}`}
                     >
                       {qIdx + 1}
                     </button>
@@ -2598,13 +2624,174 @@ export default function App() {
 
               <button
                 className="cf-btn-secondary"
+                onClick={() => setShowQuestionPalette(true)}
+                style={{
+                  padding: '6px 8px',
+                  fontSize: '9pt',
+                  flexShrink: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  whiteSpace: 'nowrap'
+                }}
+                title="Question Overview Palette"
+              >
+                <Grid size={14} />
+                <span>Grid</span>
+              </button>
+
+              <button
+                className="cf-btn-secondary"
                 disabled={selectedQuestionIndex === test.questions.length - 1}
                 onClick={() => setSelectedQuestionIndex(selectedQuestionIndex + 1)}
-                style={{ padding: '6px 12px', fontSize: '9pt' }}
+                style={{ padding: '6px 10px', fontSize: '9pt', flexShrink: 0, whiteSpace: 'nowrap' }}
               >
                 Next →
               </button>
             </div>
+
+            {/* Question Overview Grid Popover Modal */}
+            {showQuestionPalette && (
+              <div 
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                  zIndex: 10000,
+                  display: 'flex',
+                  justify: 'center',
+                  alignItems: 'center',
+                  padding: '20px'
+                }} 
+                onClick={() => setShowQuestionPalette(false)}
+              >
+                <div 
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    maxWidth: '460px',
+                    width: '100%',
+                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
+                    border: '1px solid #cbd5e1',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px'
+                  }} 
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                    <h3 style={{ margin: 0, fontSize: '11pt', color: '#002147', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Grid size={16} style={{ color: '#3b5998' }} />
+                      <span>Question Navigation Matrix ({test.questions.length} Items)</span>
+                    </h3>
+                    <button 
+                      onClick={() => setShowQuestionPalette(false)} 
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12pt', color: '#64748b', fontWeight: 'bold' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Status Legend */}
+                  <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '8.5pt', color: '#475569', backgroundColor: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <span style={{ width: '12px', height: '12px', backgroundColor: '#3b5998', borderRadius: '2px', display: 'inline-block' }}></span>
+                      <span>Active</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <span style={{ width: '12px', height: '12px', backgroundColor: '#dcfce7', border: '1px solid #86efac', borderRadius: '2px', display: 'inline-block' }}></span>
+                      <span>Answered</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <span style={{ width: '12px', height: '12px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '2px', display: 'inline-block' }}></span>
+                      <span>Unanswered</span>
+                    </div>
+                  </div>
+
+                  {/* Question Grid Matrix */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(42px, 1fr))', gap: '8px', maxHeight: '320px', overflowY: 'auto', padding: '2px' }}>
+                    {test.questions.map((q, qIdx) => {
+                      const ans = examAnswers[qIdx];
+                      let isAnswered = false;
+                      const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
+
+                      if (ans && ans.isSavedByUser) {
+                        if (q.type === 'mcq') {
+                          isAnswered = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined;
+                        } else if (q.type === 'coding') {
+                          const curCode = cleanStr(ans.submittedCode);
+                          const initC1 = cleanStr(q.initialTemplate);
+                          const initC2 = cleanStr(DEFAULT_TEMPLATES[ans.selectedLanguage || 'cpp']);
+                          isAnswered = curCode !== '' && curCode !== initC1 && curCode !== initC2;
+                        } else if (q.type === 'web') {
+                          const curHtml = cleanStr(ans.submittedHtml);
+                          const initH1 = cleanStr(q.initialHtml);
+                          const initH2 = cleanStr(q.initialCode?.html);
+
+                          const curCss = cleanStr(ans.submittedCss);
+                          const initC1 = cleanStr(q.initialCss);
+                          const initC2 = cleanStr(q.initialCode?.css);
+
+                          const curJs = cleanStr(ans.submittedJs);
+                          const initJ1 = cleanStr(q.initialJs);
+                          const initJ2 = cleanStr(q.initialCode?.js);
+
+                          const htmlMod = curHtml !== '' && curHtml !== initH1 && curHtml !== initH2;
+                          const cssMod = curCss !== '' && curCss !== initC1 && curCss !== initC2;
+                          const jsMod = curJs !== '' && curJs !== initJ1 && curJs !== initJ2;
+
+                          isAnswered = htmlMod || cssMod || jsMod;
+                        }
+                      }
+
+                      const isActive = selectedQuestionIndex === qIdx;
+
+                      let bgColor = '#fff';
+                      let textColor = '#64748b';
+                      let borderColor = '#cbd5e1';
+
+                      if (isActive) {
+                        bgColor = isAnswered ? '#16a34a' : '#3b5998';
+                        textColor = '#fff';
+                        borderColor = isAnswered ? '#16a34a' : '#3b5998';
+                      } else if (isAnswered) {
+                        bgColor = '#dcfce7';
+                        textColor = '#15803d';
+                        borderColor = '#86efac';
+                      }
+
+                      return (
+                        <button
+                          key={qIdx}
+                          onClick={() => {
+                            setSelectedQuestionIndex(qIdx);
+                            setShowQuestionPalette(false);
+                          }}
+                          style={{
+                            height: '38px',
+                            fontSize: '9pt',
+                            fontWeight: isActive ? 'bold' : 'normal',
+                            backgroundColor: bgColor,
+                            color: textColor,
+                            border: isActive ? `2px solid ${borderColor}` : `1px solid ${borderColor}`,
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s'
+                          }}
+                          title={`Jump to Question ${qIdx + 1} (${isAnswered ? 'Answered' : 'Unanswered'})`}
+                        >
+                          {qIdx + 1}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right Pane: Workspace / Monaco Editor / MCQ Options Display */}
