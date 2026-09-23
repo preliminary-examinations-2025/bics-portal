@@ -346,13 +346,18 @@ export default function App() {
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [showQuestionPalette, setShowQuestionPalette] = useState(false);
   const activeQuestionBtnRef = useRef(null);
+  const navTrackRef = useRef(null);
 
   useEffect(() => {
-    if (activeQuestionBtnRef.current) {
-      activeQuestionBtnRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-        inline: 'center'
+    if (navTrackRef.current && activeQuestionBtnRef.current) {
+      const track = navTrackRef.current;
+      const btn = activeQuestionBtnRef.current;
+      const trackWidth = track.clientWidth;
+      const btnLeft = btn.offsetLeft;
+      const btnWidth = btn.clientWidth;
+      track.scrollTo({
+        left: btnLeft - trackWidth / 2 + btnWidth / 2,
+        behavior: 'smooth'
       });
     }
   }, [selectedQuestionIndex]);
@@ -2343,9 +2348,11 @@ export default function App() {
           )}
 
           {/* Left Pane: Question Description */}
-          <div className="cf-card" style={{ flex: '0 0 calc(50% - 10px)', margin: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px', minHeight: 0, position: 'relative' }}>
+          <div className="cf-card" style={{ flex: '0 0 calc(50% - 10px)', margin: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
             <CandidateWatermark email={candidate?.email || candidate?.studentId || candidate?.name} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px', zIndex: 11 }}>
+            
+            {/* 1. Fixed Header */}
+            <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px', zIndex: 11, marginBottom: '10px' }}>
               <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
                 Question {selectedQuestionIndex + 1} of {test.questions.length}
               </h4>
@@ -2411,119 +2418,122 @@ export default function App() {
               </div>
             </div>
 
-            {/* Question Title Header */}
-            <div style={{ zIndex: 11, marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <RichText
-                  text={test.questions[selectedQuestionIndex].title || `Question ${selectedQuestionIndex + 1}`}
-                  style={{ fontSize: '13pt', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.4' }}
-                />
+            {/* 2. Scrollable Question Content Body (Y-Overflow Only) */}
+            <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '15px', paddingRight: '4px', marginBottom: '10px' }}>
+              {/* Question Title Header */}
+              <div style={{ zIndex: 11, marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <RichText
+                    text={test.questions[selectedQuestionIndex].title || `Question ${selectedQuestionIndex + 1}`}
+                    style={{ fontSize: '13pt', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.4' }}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowQuestionInfoModal(true)}
+                  title="View Question Instructions & Evaluation Criteria"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '4px 12px',
+                    backgroundColor: '#f0f9ff',
+                    border: '1px solid #bae6fd',
+                    borderRadius: '20px',
+                    color: '#0284c7',
+                    fontSize: '8.5pt',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease-in-out',
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#e0f2fe';
+                    e.currentTarget.style.borderColor = '#38bdf8';
+                    e.currentTarget.style.color = '#0369a1';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f0f9ff';
+                    e.currentTarget.style.borderColor = '#bae6fd';
+                    e.currentTarget.style.color = '#0284c7';
+                  }}
+                >
+                  <HelpCircle size={14} style={{ color: '#0284c7' }} />
+                  <span>Question Info</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowQuestionInfoModal(true)}
-                title="View Question Instructions & Evaluation Criteria"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  padding: '4px 12px',
-                  backgroundColor: '#f0f9ff',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '20px',
-                  color: '#0284c7',
-                  fontSize: '8.5pt',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease-in-out',
-                  whiteSpace: 'nowrap',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#e0f2fe';
-                  e.currentTarget.style.borderColor = '#38bdf8';
-                  e.currentTarget.style.color = '#0369a1';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f0f9ff';
-                  e.currentTarget.style.borderColor = '#bae6fd';
-                  e.currentTarget.style.color = '#0284c7';
-                }}
-              >
-                <HelpCircle size={14} style={{ color: '#0284c7' }} />
-                <span>Question Info</span>
-              </button>
+              {/* MCQ Questions Rendering */}
+              {test.questions[selectedQuestionIndex].type === 'mcq' && (
+                <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ backgroundColor: '#f8fafc', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                    <RichText
+                      text="Select the correct response option from the right workspace panel."
+                      style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: '1.4', fontStyle: 'italic' }}
+                    />
+                  </div>
+                  <RichText
+                    text={test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].description || ''}
+                    style={{ fontSize: '10.5pt', color: '#1e293b', lineHeight: '1.75', padding: '4px 0' }}
+                  />
+                </div>
+              )}
+
+              {test.questions[selectedQuestionIndex].imageUrl && (
+                <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center', zIndex: 11 }}>
+                  <img
+                    src={test.questions[selectedQuestionIndex].imageUrl}
+                    alt="Question Diagram Context"
+                    style={{ maxWidth: '100%', maxHeight: '220px', objectFit: 'contain', borderRadius: '2px' }}
+                  />
+                </div>
+              )}
+
+              {/* Coding & Web questions: Render description ONLY ONCE inside the light blue box */}
+              {test.questions[selectedQuestionIndex].type !== 'mcq' && (
+                <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ backgroundColor: '#f0f9ff', padding: '16px', border: '1px solid #bae6fd', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                    <RichText
+                      text={test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].questionText || ''}
+                      style={{ fontSize: '10pt', color: '#0f172a', lineHeight: '1.7' }}
+                    />
+                  </div>
+
+                  {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
+                    <div>
+                      <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
+                      <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '4px' }}>
+                        <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt', border: '1px solid #cbd5e1' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#f1f5f9' }}>
+                              <th style={{ textAlign: 'left', width: '22%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Test Case</th>
+                              <th style={{ textAlign: 'left', width: '39%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Sample Input</th>
+                              <th style={{ textAlign: 'left', width: '39%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Expected Output</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
+                              <tr key={tcIdx}>
+                                <td style={{ padding: '6px 10px', fontWeight: 'bold', color: '#475569', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                                  Test Case {tcIdx + 1}
+                                </td>
+                                <td style={{ padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>{tc.input}</td>
+                                <td style={{ padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>{tc.output}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* MCQ Questions Rendering */}
-            {test.questions[selectedQuestionIndex].type === 'mcq' && (
-              <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ backgroundColor: '#f8fafc', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
-                  <RichText
-                    text="Select the correct response option from the right workspace panel."
-                    style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: '1.4', fontStyle: 'italic' }}
-                  />
-                </div>
-                <RichText
-                  text={test.questions[selectedQuestionIndex].questionText || test.questions[selectedQuestionIndex].description || ''}
-                  style={{ fontSize: '10.5pt', color: '#1e293b', lineHeight: '1.75', padding: '4px 0' }}
-                />
-              </div>
-            )}
-
-            {test.questions[selectedQuestionIndex].imageUrl && (
-              <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center', zIndex: 11 }}>
-                <img
-                  src={test.questions[selectedQuestionIndex].imageUrl}
-                  alt="Question Diagram Context"
-                  style={{ maxWidth: '100%', maxHeight: '220px', objectFit: 'contain', borderRadius: '2px' }}
-                />
-              </div>
-            )}
-
-            {/* Coding & Web questions: Render description ONLY ONCE inside the light blue box */}
-            {test.questions[selectedQuestionIndex].type !== 'mcq' && (
-              <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ backgroundColor: '#f0f9ff', padding: '16px', border: '1px solid #bae6fd', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
-                  <RichText
-                    text={test.questions[selectedQuestionIndex].description || test.questions[selectedQuestionIndex].questionText || ''}
-                    style={{ fontSize: '10pt', color: '#0f172a', lineHeight: '1.7' }}
-                  />
-                </div>
-
-                {test.questions[selectedQuestionIndex].testCases?.length > 0 && (
-                  <div>
-                    <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Example Inputs &amp; Outputs:</h5>
-                    <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '4px' }}>
-                      <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '9pt', border: '1px solid #cbd5e1' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f1f5f9' }}>
-                            <th style={{ textAlign: 'left', width: '22%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Test Case</th>
-                            <th style={{ textAlign: 'left', width: '39%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Sample Input</th>
-                            <th style={{ textAlign: 'left', width: '39%', padding: '6px 10px', border: '1px solid #cbd5e1' }}>Expected Output</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {test.questions[selectedQuestionIndex].testCases.slice(0, 2).map((tc, tcIdx) => (
-                            <tr key={tcIdx}>
-                              <td style={{ padding: '6px 10px', fontWeight: 'bold', color: '#475569', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>
-                                Test Case {tcIdx + 1}
-                              </td>
-                              <td style={{ padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>{tc.input}</td>
-                              <td style={{ padding: '6px 10px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>{tc.output}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Left Pane bottom footer question grid switcher */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', alignItems: 'center', flexWrap: 'nowrap', gap: '8px', width: '100%', overflow: 'hidden' }}>
+            {/* 3. Fixed Bottom Navigation Footer */}
+            <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '12px', marginTop: 'auto', alignItems: 'center', flexWrap: 'nowrap', gap: '8px', width: '100%', overflow: 'hidden' }}>
               <button
                 className="cf-btn-secondary"
                 disabled={selectedQuestionIndex === 0}
@@ -2534,6 +2544,7 @@ export default function App() {
               </button>
               
               <div 
+                ref={navTrackRef}
                 style={{ 
                   display: 'flex', 
                   gap: '5px', 
