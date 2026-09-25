@@ -17,6 +17,50 @@ const API_BASE = import.meta.env.VITE_API_BASE || (() => {
     : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`;
 })();
 
+const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
+
+// Automatically attach apiSecret query parameter to all frontend_ot backend API requests
+if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_patched) {
+  window.__bics_ot_fetch_patched = true;
+  const originalFetch = window.fetch;
+  window.fetch = function(resource, init) {
+    const secret = API_ACCESS_SECRET || 
+                   localStorage.getItem('portal_api_secret') || 
+                   window.__BICS_API_SECRET__ || 
+                   'qwertty';
+
+    let urlString = '';
+    if (typeof resource === 'string') {
+      urlString = resource;
+    } else if (resource && typeof resource.url === 'string') {
+      urlString = resource.url;
+    }
+
+    const isExternal = urlString.includes('tfhub.dev') || 
+                       urlString.includes('googleapis.com') || 
+                       urlString.includes('jsdelivr.net') || 
+                       urlString.includes('unpkg.com') ||
+                       urlString.includes('cloudinary.com');
+
+    const isBackendApi = (urlString.startsWith('/api') || 
+                          urlString.includes('/api/') || 
+                          (typeof API_BASE !== 'undefined' && API_BASE && urlString.startsWith(API_BASE)) ||
+                          urlString.startsWith(window.location.origin) ||
+                          (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
+
+    if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
+      const separator = urlString.includes('?') ? '&' : '?';
+      const targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
+      if (typeof resource === 'string') {
+        return originalFetch.call(this, targetUrl, init);
+      } else if (resource && typeof resource === 'object') {
+        return originalFetch.call(this, new Request(targetUrl, resource), init);
+      }
+    }
+    return originalFetch.call(this, resource, init);
+  };
+}
+
 const DEFAULT_TEMPLATES = {
   c: ``,
   cpp: `#include <iostream>\nusing namespace std;\n\nint main() {\n    // Write your C++ code here\n    return 0;\n}`,
@@ -439,9 +483,14 @@ export default function App() {
     };
   }, [flow]);
 
-  // Heartbeat ping loop to keep Render backend awake
+  // Heartbeat ping loop to keep Render backend awake & fetch config
   useEffect(() => {
     const pingBackend = async () => {
+      try {
+        await fetch(`${API_BASE}/config`);
+      } catch (err) {
+        console.warn("Config fetch failed:", err);
+      }
       try {
         await fetch(`${API_BASE}/health`);
       } catch (err) {

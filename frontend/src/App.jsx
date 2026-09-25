@@ -18,6 +18,50 @@ const API_BASE = import.meta.env.VITE_API_BASE || (() => {
   return isLocal ? `http://127.0.0.1:5000/api` : `${window.location.origin}/api`;
 })();
 
+const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
+
+// Automatically attach apiSecret query parameter to all backend API requests
+if (typeof window !== 'undefined' && window.fetch && !window.__bics_fetch_patched) {
+  window.__bics_fetch_patched = true;
+  const originalFetch = window.fetch;
+  window.fetch = function(resource, init) {
+    const secret = API_ACCESS_SECRET || 
+                   localStorage.getItem('portal_api_secret') || 
+                   window.__BICS_API_SECRET__ || 
+                   'qwertty';
+
+    let urlString = '';
+    if (typeof resource === 'string') {
+      urlString = resource;
+    } else if (resource && typeof resource.url === 'string') {
+      urlString = resource.url;
+    }
+
+    const isExternal = urlString.includes('tfhub.dev') || 
+                       urlString.includes('googleapis.com') || 
+                       urlString.includes('jsdelivr.net') || 
+                       urlString.includes('unpkg.com') ||
+                       urlString.includes('cloudinary.com');
+
+    const isBackendApi = (urlString.startsWith('/api') || 
+                          urlString.includes('/api/') || 
+                          (typeof API_BASE !== 'undefined' && API_BASE && urlString.startsWith(API_BASE)) ||
+                          urlString.startsWith(window.location.origin) ||
+                          (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
+
+    if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
+      const separator = urlString.includes('?') ? '&' : '?';
+      const targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
+      if (typeof resource === 'string') {
+        return originalFetch.call(this, targetUrl, init);
+      } else if (resource && typeof resource === 'object') {
+        return originalFetch.call(this, new Request(targetUrl, resource), init);
+      }
+    }
+    return originalFetch.call(this, resource, init);
+  };
+}
+
 const COURSES_LIST = [
   "R526CS01T - Introduction to Computer Science",
   "R526CS02T - Programming Fundamentals with C++",
@@ -2125,7 +2169,9 @@ int main() {
     try {
       const res = await fetch(`${API_BASE}/config`);
       const data = await res.json();
-      setSystemConfig(data);
+      if (data) {
+        setSystemConfig(prev => ({ ...(prev || {}), ...data }));
+      }
     } catch (e) {
       console.error(e);
     }

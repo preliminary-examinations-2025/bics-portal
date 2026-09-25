@@ -218,7 +218,8 @@ const initialDB = {
     courseMaterials: [],
     tests: [
         {
-            id: "demo_test_id",
+            _id: "60c72b2f9b1d8b2bad000002",
+            id: "60c72b2f9b1d8b2bad000002",
             title: "BICS Practice Examination (Demo)",
             marks: 30,
             instructions: "This is a demonstration exam to verify MCQs selection, dark-mode code editors, proctoring warnings (fullscreen, tab switch) and submission parameters.",
@@ -511,8 +512,6 @@ const QuestionSchema = new mongoose.Schema({
 }, { _id: false, strict: false });
 
 const TestConfigSchema = new mongoose.Schema({
-    id: String,
-    code: String,
     title: String,
     marks: Number,
     instructions: String,
@@ -526,7 +525,7 @@ const TestConfigSchema = new mongoose.Schema({
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
     deletedBy: String
-});
+}, { toJSON: { virtuals: true }, toObject: { virtuals: true } });
 const TestConfigModel = mongoose.model('TestConfigV2', TestConfigSchema, 'testconfigs_v2');
 
 const AnswerSchema = new mongoose.Schema({
@@ -926,6 +925,124 @@ app.use(async (req, res, next) => {
     next();
 });
 
+const FORBIDDEN_HTML_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Error</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #e6e6e6;
+            font-family: Arial, "Segoe UI", sans-serif;
+        }
+        .header-bar {
+            background-color: #505050;
+            color: #ffffff;
+            font-size: 20px;
+            font-weight: normal;
+            padding: 10px 20px;
+        }
+        .main-container {
+            margin: 15px 20px;
+            background-color: #ffffff;
+            border: 1px solid #d4d4d4;
+            padding: 12px;
+        }
+        .error-card {
+            border: 1px solid #dcdcdc;
+            padding: 12px 16px;
+            background-color: #ffffff;
+        }
+        .error-title {
+            color: #cc0000;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 0 0 6px 0;
+        }
+        .error-message {
+            color: #000000;
+            font-size: 13px;
+            font-weight: bold;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header-bar">Server Error</div>
+    <div class="main-container">
+        <div class="error-card">
+            <h1 class="error-title">403 - Forbidden: Access is denied.</h1>
+            <p class="error-message">You do not have permission to view this directory or page using the credentials that you supplied.</p>
+        </div>
+    </div>
+</body>
+</html>`;
+
+const authorizeApiRequest = (req, res, next) => {
+    const secret = process.env.API_ACCESS_SECRET;
+
+    // Allow pass-through if process.env.API_ACCESS_SECRET is not configured in environment
+    if (!secret) {
+        return next();
+    }
+
+    const fullPath = (req.originalUrl || req.path).split('?')[0].toLowerCase();
+    const relativePath = req.path.toLowerCase();
+
+    // Whitelist rules: OPTIONS preflight, health checks, authentication, and external webhooks
+    const isWhitelisted = 
+        req.method === 'OPTIONS' ||
+        fullPath === '/health' || relativePath === '/health' ||
+        fullPath === '/api/health' || relativePath === '/health' ||
+        fullPath.startsWith('/api/webhooks/') || relativePath.startsWith('/webhooks/') ||
+        fullPath === '/api/login' || relativePath === '/login' ||
+        fullPath === '/api/register' || relativePath === '/register' ||
+        fullPath === '/api/candidate/login' || relativePath === '/candidate/login' ||
+        fullPath === '/api/candidate/register' || relativePath === '/candidate/register' ||
+        fullPath.startsWith('/api/candidate/send-verification-code') || relativePath.startsWith('/candidate/send-verification-code') ||
+        fullPath === '/api/candidate/verify-email-code' || relativePath === '/candidate/verify-email-code' ||
+        fullPath.startsWith('/api/candidate/verify-code') || relativePath.startsWith('/candidate/verify-code') ||
+        fullPath === '/api/tests/verify-token' || relativePath === '/tests/verify-token' ||
+        fullPath === '/api/config' || relativePath === '/config' ||
+        fullPath === '/api/system-config' || relativePath === '/system-config' ||
+        fullPath.startsWith('/api/candidate/generate-hallticket') || relativePath.startsWith('/candidate/generate-hallticket') ||
+        fullPath.startsWith('/api/tests/submission-verification') || relativePath.startsWith('/tests/submission-verification') ||
+        fullPath === '/api/log-client-error' || relativePath === '/log-client-error';
+
+    if (isWhitelisted) {
+        return next();
+    }
+
+    // Check credentials via apiSecret or apiKey query parameter, or header
+    const clientSecret = req.query.apiSecret || 
+                         req.query.apiKey || 
+                         req.headers['x-portal-api-key'] ||
+                         (req.headers['authorization'] ? req.headers['authorization'].replace(/^Bearer\s+/i, '') : null);
+
+    if (clientSecret && clientSecret === secret) {
+        return next();
+    }
+
+    console.warn(`[SECURITY ALERT] Unauthorized API access blocked: ${req.method} ${req.originalUrl} from IP ${req.ip}`);
+    
+    // Direct browser navigation (GET requesting text/html) gets the custom Server Error HTML page
+    const acceptHeader = req.headers['accept'] || '';
+    if (req.method === 'GET' && acceptHeader.includes('text/html')) {
+        return res.status(403).type('html').send(FORBIDDEN_HTML_PAGE);
+    }
+
+    // Programmatic fetch / API calls get clean JSON response
+    return res.status(403).json({
+        success: false,
+        error: "403 Forbidden: Access is denied. Invalid or missing API Secret."
+    });
+};
+
+app.use('/api', authorizeApiRequest);
+
 // JSON File Access Helpers
 const getJSONData = () => {
     try {
@@ -1001,25 +1118,31 @@ app.post('/api/log-client-error', async (req, res) => {
 
 // 2. Fetch System Configuration
 app.get('/api/config', async (req, res) => {
-    if (useMongo) {
-        try {
+    try {
+        let configObj = {};
+        if (useMongo) {
             const conf = await ConfigModel.findOne();
-            if (conf && !conf.timetableNotice) {
-                conf.timetableNotice = 'Mid semester test for BICS 2026 will be held in mid-August';
-                await conf.save();
+            if (conf) {
+                if (!conf.timetableNotice) {
+                    conf.timetableNotice = 'Mid semester test for BICS 2026 will be held in mid-August';
+                    await conf.save();
+                }
+                configObj = conf.toObject();
             }
-            return res.json(conf);
-        } catch (e) {
-            await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to fetch system configuration: ${e.message || e}`, 'error');
-            return res.status(500).json({ error: e.message });
+        } else {
+            const db = getJSONData();
+            if (db && db.config) {
+                if (!db.config.timetableNotice) {
+                    db.config.timetableNotice = 'Mid semester test for BICS 2026 will be held in mid-August';
+                    saveJSONData(db);
+                }
+                configObj = { ...db.config };
+            }
         }
-    } else {
-        const db = getJSONData();
-        if (db && db.config && !db.config.timetableNotice) {
-            db.config.timetableNotice = 'Mid semester test for BICS 2026 will be held in mid-August';
-            saveJSONData(db);
-        }
-        return res.json(db.config);
+        return res.json(configObj);
+    } catch (e) {
+        await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to fetch system configuration: ${e.message || e}`, 'error');
+        return res.status(500).json({ error: e.message });
     }
 });
 
@@ -2395,19 +2518,24 @@ app.get('/api/tests/active', async (req, res) => {
                     if (useMongo) {
                         const isValidCandObjId = mongoose.Types.ObjectId.isValid(candidateId);
                         const isValidTestObjId = mongoose.Types.ObjectId.isValid(testId.toString());
-                        const candConditions = [{ candidateId: candidateId }, { studentId: candidateId }];
+                        const candConditions = [{ candidateId: candidateId.toString() }, { studentId: candidateId.toString() }];
                         if (isValidCandObjId) candConditions.push({ candidateId: new mongoose.Types.ObjectId(candidateId) });
 
-                        const testConditions = [{ testId: testId.toString() }];
-                        if (isValidTestObjId) testConditions.push({ testId: new mongoose.Types.ObjectId(testId.toString()) });
+                        const testConditions = [];
+                        if (isValidTestObjId) {
+                            testConditions.push({ testId: new mongoose.Types.ObjectId(testId.toString()) });
+                            testConditions.push({ testId: testId.toString() });
+                        }
 
-                        const sub = await TestSubmissionModel.findOne({
-                            $and: [
-                                { $or: candConditions },
-                                { $or: testConditions }
-                            ]
-                        }).sort({ startedAt: -1 });
-                        if (sub) submissionStatus = sub.status;
+                        if (testConditions.length > 0) {
+                            const sub = await TestSubmissionModel.findOne({
+                                $and: [
+                                    { $or: candConditions },
+                                    { $or: testConditions }
+                                ]
+                            }).sort({ startedAt: -1 });
+                            if (sub) submissionStatus = sub.status;
+                        }
                     } else {
                         const db = getJSONData();
                         db.testSubmissions = db.testSubmissions || [];
@@ -2422,13 +2550,6 @@ app.get('/api/tests/active', async (req, res) => {
                     console.error("Warning querying submissionStatus for active test:", subErr);
                 }
             }
-            const qSanitized = (tObj.questions || []).map(q => {
-                if (q.type === 'mcq') {
-                    const { correctOptionIndex, ...rest } = q;
-                    return rest;
-                }
-                return q;
-            });
             return { 
                 id: testId,
                 _id: testId,
@@ -2438,7 +2559,7 @@ app.get('/api/tests/active', async (req, res) => {
                 startDate: tObj.startDate,
                 endDate: tObj.endDate,
                 instructions: tObj.instructions,
-                questions: qSanitized,
+                questionsCount: (tObj.questions || []).length,
                 submissionStatus 
             };
         }));
@@ -2797,41 +2918,56 @@ app.post('/api/tests/submit', async (req, res) => {
     try {
         let submission = null;
         if (useMongo) {
-            submission = await TestSubmissionModel.findById(submissionId);
-            if (!submission) return res.status(404).json({ error: "Submission not found" });
+            let retries = 5;
+            while (retries > 0) {
+                try {
+                    submission = await TestSubmissionModel.findById(submissionId);
+                    if (!submission) return res.status(404).json({ error: "Submission not found" });
 
-            // Duplicate submission guard: if already in final status, return immediately
-            if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
-                console.log(`DEBUG: Ignoring duplicate submission for ID ${submissionId} (already in status ${submission.status})`);
-                return res.json({ success: true, submission });
-            }
+                    // Duplicate submission guard: if already in final status, return immediately
+                    if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
+                        console.log(`DEBUG: Ignoring duplicate submission for ID ${submissionId} (already in status ${submission.status})`);
+                        return res.json({ success: true, submission });
+                    }
 
-            submission.answers = answers;
-            if (proctoringLog) {
-                submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active', events: [] };
-                submission.proctoringLog.fullscreenExits = proctoringLog.fullscreenExits !== undefined ? proctoringLog.fullscreenExits : submission.proctoringLog.fullscreenExits;
-                submission.proctoringLog.tabSwitches = proctoringLog.tabSwitches !== undefined ? proctoringLog.tabSwitches : submission.proctoringLog.tabSwitches;
-                submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
-            }
-            submission.status = status || 'submitted';
-            if (status !== 'started') {
-                submission.submittedAt = new Date();
-            }
+                    submission.answers = answers;
+                    if (proctoringLog) {
+                        submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active', events: [] };
+                        submission.proctoringLog.fullscreenExits = proctoringLog.fullscreenExits !== undefined ? proctoringLog.fullscreenExits : submission.proctoringLog.fullscreenExits;
+                        submission.proctoringLog.tabSwitches = proctoringLog.tabSwitches !== undefined ? proctoringLog.tabSwitches : submission.proctoringLog.tabSwitches;
+                        submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
+                    }
+                    submission.status = status || 'submitted';
+                    if (status !== 'started') {
+                        submission.submittedAt = new Date();
+                    }
 
-            const test = await TestConfigModel.findById(submission.testId);
-            if (test) {
-                recalculateMCQScore(submission, test);
-                calculateCodingScoreFast(submission, test);
-            } else {
-                submission.evaluation = {
-                    mcqScore: 0,
-                    codingScore: 0,
-                    feedback: '',
-                    evaluatedAt: null
-                };
-            }
+                    const test = await TestConfigModel.findById(submission.testId);
+                    if (test) {
+                        recalculateMCQScore(submission, test);
+                        calculateCodingScoreFast(submission, test);
+                    } else {
+                        submission.evaluation = {
+                            mcqScore: 0,
+                            codingScore: 0,
+                            feedback: '',
+                            evaluatedAt: null
+                        };
+                    }
 
-            await submission.save();
+                    await submission.save();
+                    break; // Save successful!
+                } catch (saveErr) {
+                    if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
+                        retries--;
+                        console.log(`DEBUG: VersionError on submission save for ID ${submissionId}. Retrying... (${retries} retries left)`);
+                        if (retries === 0) throw saveErr;
+                        await new Promise(resolve => setTimeout(resolve, 50 * (6 - retries)));
+                    } else {
+                        throw saveErr;
+                    }
+                }
+            }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
@@ -2912,14 +3048,11 @@ app.get('/api/admin/tests', async (req, res) => {
 
 const findTestConfig = async (id) => {
     if (!id) return null;
-    let test = null;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-        test = await TestConfigModel.findOne({ _id: id, isDeleted: { $ne: true } });
+    const strId = id.toString();
+    if (mongoose.Types.ObjectId.isValid(strId)) {
+        return await TestConfigModel.findOne({ _id: new mongoose.Types.ObjectId(strId), isDeleted: { $ne: true } });
     }
-    if (!test) {
-        test = await TestConfigModel.findOne({ $or: [{ id: id }, { code: id }, { title: id }], isDeleted: { $ne: true } });
-    }
-    return test;
+    return null;
 };
 
 // 5b. Set verification status for answer sheets (Admin only: not_released | released | closed)
@@ -3065,15 +3198,13 @@ app.post('/api/admin/tests', async (req, res) => {
         });
 
         let savedTest = null;
-        const testId = _id || id;
+        const testId = _id || (id && mongoose.Types.ObjectId.isValid(id.toString()) ? id : null);
         if (useMongo) {
             if (testId) {
                 savedTest = await findTestConfig(testId);
             }
             if (savedTest) {
                 savedTest.title = title;
-                if (code) savedTest.code = code;
-                if (id) savedTest.id = id;
                 savedTest.marks = Number(marks || 0);
                 savedTest.instructions = instructions || '';
                 savedTest.duration = Number(duration || 60);
@@ -3083,7 +3214,7 @@ app.post('/api/admin/tests', async (req, res) => {
                 if (isPublished !== undefined) savedTest.isPublished = isPublished;
                 await savedTest.save();
             } else {
-                savedTest = new TestConfigModel({ id: id || code, code: code || id, title, marks, instructions, duration, startDate, endDate, questions: normalizedQuestions, isPublished: isPublished || false });
+                savedTest = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions: normalizedQuestions, isPublished: isPublished || false });
                 await savedTest.save();
             }
         } else {
@@ -3153,7 +3284,7 @@ app.delete('/api/admin/tests/:id', async (req, res) => {
             await test.save();
 
             // Soft-delete linked candidate submissions
-            const subQuery = { $or: [{ testId: targetId }, { testId: targetId.toString() }, { testTitle: test.title }, { testId: test.code || test.id }] };
+            const subQuery = { testId: targetId };
             const subDocs = await TestSubmissionModel.find(subQuery);
             await TestSubmissionModel.updateMany(subQuery, {
                 $set: { isDeleted: true, deletedAt: deletedAt, restoreToken: targetId.toString() }
@@ -3163,8 +3294,8 @@ app.delete('/api/admin/tests/:id', async (req, res) => {
             const recycleEntry = new RecycleBinModel({
                 entityType: 'TestConfig',
                 entityId: targetId.toString(),
-                title: test.title || test.code || 'Test Configuration',
-                code: test.code || test.id || '',
+                title: test.title || 'Test Configuration',
+                code: '',
                 deletedBy: deletedBy,
                 deletedAt: deletedAt,
                 expiresAt: expiresAt,
@@ -3330,8 +3461,10 @@ app.delete('/api/admin/recycle-bin/purge/:id', async (req, res) => {
                 if (mongoose.Types.ObjectId.isValid(targetId)) {
                     await TestConfigModel.findByIdAndDelete(targetId);
                 }
-                await TestConfigModel.deleteMany({ $or: [{ id: targetId }, { code: targetId }] });
-                await TestSubmissionModel.deleteMany({ $or: [{ testId: targetId }, { restoreToken: targetId }] });
+                if (mongoose.Types.ObjectId.isValid(targetId)) {
+                    await TestConfigModel.findByIdAndDelete(targetId);
+                    await TestSubmissionModel.deleteMany({ $or: [{ testId: targetId }, { restoreToken: targetId }] });
+                }
             }
 
             await RecycleBinModel.deleteOne({ _id: rbItem._id });
@@ -3389,27 +3522,14 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
         let subs = [];
         let test = null;
         if (useMongo) {
-            const isValidObjectId = mongoose.Types.ObjectId.isValid(testId);
-            if (isValidObjectId) {
-                test = await TestConfigModel.findById(testId);
+            if (!mongoose.Types.ObjectId.isValid(testId)) {
+                return res.status(400).json({ error: "Invalid test ObjectId format." });
             }
+            test = await TestConfigModel.findById(testId);
             if (!test) {
-                test = await TestConfigModel.findOne({ $or: [{ id: testId }, { code: testId }, { title: testId }] });
+                return res.status(404).json({ error: "Test configuration not found." });
             }
-
-            const queryConditions = [{ testId: testId }];
-            if (isValidObjectId) {
-                queryConditions.push({ testId: new mongoose.Types.ObjectId(testId) });
-            }
-            if (test && test._id) {
-                queryConditions.push({ testId: test._id.toString() });
-                queryConditions.push({ testId: test._id });
-            }
-            if (test && test.id) {
-                queryConditions.push({ testId: test.id });
-            }
-
-            subs = await TestSubmissionModel.find({ $or: queryConditions, isDeleted: { $ne: true } });
+            subs = await TestSubmissionModel.find({ testId: test._id, isDeleted: { $ne: true } }).sort({ startedAt: -1 });
 
             // Auto-heal MCQ scores dynamically
             if (test) {
@@ -4753,8 +4873,8 @@ app.use(async (err, req, res, next) => {
 
 // Start Express Server
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-    app.listen(PORT, () => {
-        console.log(`BICS Portal Backend server running on port ${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`BICS Portal Backend server running on port ${PORT} (0.0.0.0)`);
     });
 }
 
