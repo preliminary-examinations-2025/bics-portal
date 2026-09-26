@@ -180,14 +180,14 @@ const RichText = React.memo(function RichText({ text, style, className }) {
               <span style="font-weight: bold; color: #0284c7; min-width: ${isBullet ? '12px' : '22px'}; font-family: ${isBullet ? 'sans-serif' : '\'Roboto Mono\', monospace'}; text-align: left;">
                 ${isBullet ? '•' : marker}
               </span>
-              <div style="flex: 1; color: #0f172a; line-height: 1.65;">${content}</div>
+              <div style="flex: 1; color: #0f172a; line-height: 1.65; text-align: justify; text-align-last: left;">${content}</div>
             </div>
           `);
           return;
         }
 
         // Normal paragraph line
-        resultLines.push(`<div style="line-height: 1.7; margin-bottom: 4px;">${trimmedLine}</div>`);
+        resultLines.push(`<div style="line-height: 1.7; margin-bottom: 4px; text-align: justify; text-align-last: left;">${trimmedLine}</div>`);
       });
 
       return resultLines.join('');
@@ -208,15 +208,15 @@ const RichText = React.memo(function RichText({ text, style, className }) {
           if (!pt) return;
           if (pt.startsWith('%%SECTIONTITLE%%') && pt.endsWith('%%ENDSECTIONTITLE%%')) {
             const titleName = pt.replace('%%SECTIONTITLE%%', '').replace('%%ENDSECTIONTITLE%%', '');
-            htmlChunks.push(`<div class="cf-section-title" style="font-weight: bold; color: #002147; font-size: 10.5pt; margin-top: 14px; margin-bottom: 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px;">${titleName}</div>`);
+            htmlChunks.push(`<div class="cf-section-title" style="font-weight: bold; color: #002147; font-size: 10.5pt; margin-top: 14px; margin-bottom: 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; text-align: left;">${titleName}</div>`);
           } else {
             const content = parseLinesWithIndentation(pt);
-            htmlChunks.push(`<div class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7;">${content}</div>`);
+            htmlChunks.push(`<div class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7; text-align: justify; text-align-last: left;">${content}</div>`);
           }
         });
       } else {
         const content = parseLinesWithIndentation(trimmed);
-        htmlChunks.push(`<div class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7;">${content}</div>`);
+        htmlChunks.push(`<div class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7; text-align: justify; text-align-last: left;">${content}</div>`);
       }
     });
 
