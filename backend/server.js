@@ -622,8 +622,14 @@ function recalculateMCQScore(submission, test) {
     if (!test || !submission) return;
     let mcqPoints = 0;
     submission.answers = submission.answers || [];
-    submission.answers.forEach(ans => {
-        const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
+    submission.answers.forEach((ans, index) => {
+        let quest = null;
+        if (ans.questionId && String(ans.questionId) !== 'undefined') {
+            quest = test.questions.find(q => (q.id && String(q.id) === String(ans.questionId)) || (q._id && String(q._id) === String(ans.questionId)));
+        }
+        if (!quest && test.questions && test.questions[index]) {
+            quest = test.questions[index];
+        }
         if (quest && quest.type === 'mcq') {
             if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
                 if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
@@ -3186,11 +3192,13 @@ app.post('/api/admin/tests', async (req, res) => {
     }
 
     try {
-        const normalizedQuestions = (questions || []).map(q => {
+        const normalizedQuestions = (questions || []).map((q, qIdx) => {
             const qObj = q.toObject ? q.toObject() : { ...q };
             const mainText = qObj.questionText || qObj.title || qObj.description || qObj.question || qObj.statement || '';
+            const qId = qObj.id || qObj._id || `q_${Date.now()}_${qIdx + 1}`;
             return {
                 ...qObj,
+                id: qId,
                 title: qObj.title || mainText,
                 questionText: qObj.questionText || mainText,
                 description: qObj.description || mainText
