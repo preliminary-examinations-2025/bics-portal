@@ -1520,12 +1520,10 @@ int main() {
         return;
       }
  
-      // Redirect to FrontendOT (using VITE_OT_URL, port 5174 in development, or /terminal subpath on Netlify)
-      const otBaseUrl = import.meta.env.VITE_OT_URL || (
-        window.location.origin.includes('localhost')
-          ? 'http://localhost:5174/terminal'
-          : `${window.location.origin}/terminal`
-      );
+      // Redirect to FrontendOT (using port 5174 in development, or /terminal subpath on Netlify)
+      const otBaseUrl = window.location.origin.includes('localhost')
+        ? 'http://localhost:5174/terminal'
+        : `${window.location.origin}/terminal`;
       const examUrl = otBaseUrl.includes('?') 
         ? `${otBaseUrl}&token=${data.token}`
         : `${otBaseUrl}/test?token=${data.token}`;
