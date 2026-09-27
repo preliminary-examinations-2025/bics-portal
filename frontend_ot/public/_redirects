@@ -1,3 +1,5 @@
-# SPA fallback for OT Terminal routes
-/terminal/*  /index.html                           200
-/*           /index.html                           200
+# SPA fallback & asset rewrites for OT Terminal routes
+/terminal/assets/*  /assets/:splat  200
+/terminal/*         /index.html     200
+/*                  /index.html     200
+
