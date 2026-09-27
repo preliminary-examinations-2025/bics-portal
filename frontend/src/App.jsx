@@ -745,11 +745,14 @@ export default function App() {
     }
   };
 
-  const [submissionsLoading, setSubmissionsLoading] = useState(false);
+  const [submissionsLoading, setSubmissionsLoading] = useState(true);
 
   const fetchStudentSubmissions = async (paramStudentId) => {
     const rawId = studentProfile?.studentId || user?.studentId || (user?.username !== 'admin' ? user?.username : null) || paramStudentId;
-    if (!rawId || rawId === 'STU1001' || rawId === 'admin') return;
+    if (!rawId || rawId === 'STU1001' || rawId === 'admin') {
+      setSubmissionsLoading(false);
+      return;
+    }
     const studentId = rawId;
     setSubmissionsLoading(true);
     setLoadingMessage("Synchronizing Classroom Submissions...");

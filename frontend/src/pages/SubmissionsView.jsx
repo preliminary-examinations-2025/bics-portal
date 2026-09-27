@@ -188,7 +188,16 @@ export default function SubmissionsView({
         const avgScorePct = maxScoreSum > 0 ? Math.round((totalScoreSum / maxScoreSum) * 100) : 0;
 
         return (
-          <>
+          <div key="loaded-content" className="cf-smooth-fade">
+            <style>{`
+              @keyframes cfFadeIn {
+                from { opacity: 0; transform: translateY(6px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              .cf-smooth-fade {
+                animation: cfFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+              }
+            `}</style>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '25px' }}>
               <div className="cf-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '110px' }}>
                 <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>Total Records</div>
@@ -377,7 +386,7 @@ export default function SubmissionsView({
                 Raise Ticket Shortcut
               </button>
             </div>
-          </>
+          </div>
         );
       })()}
     </div>
