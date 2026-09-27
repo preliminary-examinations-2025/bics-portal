@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Clock, AlertTriangle, ShieldAlert } from 'lucide-react';
-
-const API_BASE = 'https://bics-portal.onrender.com';
+import { API_BASE } from '../config';
 
 const STANDARD_COURSES = [
   { code: 'R526CS01T', name: 'Introduction to Computer Science' },
@@ -37,7 +36,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
   const fetchSubmissions = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/api/counterfoil/my-submissions/${encodeURIComponent(studentId)}`);
+      const res = await fetch(`${API_BASE}/counterfoil/my-submissions/${encodeURIComponent(studentId)}`);
       if (res.ok) {
         const data = await res.json();
         setSubmissions(data || []);
@@ -136,7 +135,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
     try {
       setSaving(true);
       setNotice({ type: '', msg: '' });
-      const res = await fetch(`${API_BASE}/api/counterfoil/submit`, {
+      const res = await fetch(`${API_BASE}/counterfoil/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
