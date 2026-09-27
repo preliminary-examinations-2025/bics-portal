@@ -31,8 +31,11 @@ const getReturnUrl = (targetPath = '/coursework/online-tests') => {
       : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
   );
   const cleanBase = base.replace(/\/+$/, '');
-  const cleanPath = targetPath.startsWith('/') ? targetPath : `/${targetPath}`;
-  return `${cleanBase}${cleanPath}`;
+  let subPath = targetPath.startsWith('/') ? targetPath : `/${targetPath}`;
+  if (!subPath.startsWith('/main/')) {
+    subPath = `/main${subPath}`;
+  }
+  return `${cleanBase}${subPath}`;
 };
 
 // Automatically attach apiSecret query parameter to all frontend_ot backend API requests
