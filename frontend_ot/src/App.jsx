@@ -313,7 +313,7 @@ function CandidateWatermark({ email }) {
       display: 'grid',
       gridTemplateColumns: 'repeat(3, 1fr)',
       gridTemplateRows: 'repeat(4, 1fr)',
-      opacity: 0.04,
+      opacity: 0.10,
       transform: 'rotate(-15deg) scale(1.2)'
     }}>
       {repeatedEmails.map((e, idx) => (
@@ -4601,7 +4601,7 @@ export default function App() {
                   ) : (
                     <>
                       <h3 style={{ fontSize: '11.5pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 8px 0', lineHeight: 1.5 }}>
-                        {q.title || `Problem Statement #${idx + 1}`}
+                        <RichText text={q.title || `Problem Statement #${idx + 1}`} />
                       </h3>
                       {(q.description || q.questionText) && (
                         <div style={{ fontSize: '10pt', color: '#334155', lineHeight: 1.6 }}>
@@ -4731,7 +4731,7 @@ export default function App() {
                             <span style={{ fontWeight: 'bold', color: '#64748b', width: '20px' }}>
                               {String.fromCharCode(65 + optIdx)}.
                             </span>
-                            <span>{opt}</span>
+                            <RichText text={opt} style={{ fontSize: '9.5pt', color: '#334155' }} />
                           </div>
                           {badge}
                         </div>

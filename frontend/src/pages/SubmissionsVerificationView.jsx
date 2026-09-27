@@ -28,11 +28,9 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
             const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
             const objectionsCount = (sub.objections || []).length;
 
-            const otBase = import.meta.env.VITE_OT_URL || (
-              window.location.origin.includes('localhost')
-                ? 'http://localhost:5174'
-                : `${window.location.origin.replace('bics-portal', 'ot-bics').replace('bicsportal', 'otbicsexam')}`
-            );
+            const otBase = window.location.origin.includes('localhost')
+              ? 'http://localhost:5174/terminal'
+              : `${window.location.origin}/terminal`;
 
             return (
               <div
@@ -147,7 +145,7 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                     {vStatus === 'released' ? (
                       <button
                         className="cf-btn-primary"
-                        onClick={() => { window.location.href = `${otBase}/submissions/${sub.id || sub._id}`; }}
+                        onClick={() => { window.location.href = `${otBase}/verification/${sub.id || sub._id}`; }}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
