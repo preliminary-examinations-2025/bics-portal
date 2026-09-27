@@ -2543,6 +2543,82 @@ int main() {
     }
   };
 
+  // Synchronize data fetching whenever active view or user session updates
+  useEffect(() => {
+    if (!user) return;
+    const userId = user.id || user._id;
+
+    if (user.role === 'student') {
+      fetchStudentProfile();
+
+      switch (view) {
+        case 'verification':
+          if (userId) fetchSubmittedTestsList(userId);
+          break;
+        case 'tests':
+        case 'onlinetest':
+          fetchStudentActiveTests();
+          break;
+        case 'lectures':
+          fetchVideoLectures();
+          break;
+        case 'materials':
+          fetchCourseMaterials();
+          break;
+        case 'submissions':
+          if (userId) fetchStudentSubmissions(userId);
+          break;
+        case 'contact':
+          if (userId) fetchStudentTickets(userId);
+          break;
+        case 'announcements':
+          fetchConfig();
+          break;
+        default:
+          break;
+      }
+    } else if (user.role === 'admin') {
+      switch (view) {
+        case 'admin':
+          fetchConfig();
+          break;
+        case 'admin_candidates':
+          fetchCandidates();
+          break;
+        case 'admin_attendance':
+          fetchAdminTests();
+          break;
+        case 'admin_coursework':
+          fetchVideoLectures();
+          fetchCourseMaterials();
+          break;
+        case 'admin_tests':
+          fetchAdminTests();
+          break;
+        case 'admin_logs':
+          fetchSystemLogs();
+          break;
+        case 'admin_proctoring':
+          fetchLiveSubmissions();
+          break;
+        case 'admin_tickets':
+          fetchAdminTickets();
+          break;
+        case 'admin_submissions':
+          fetchAdminSubmissions();
+          break;
+        case 'admin_objections':
+          fetchAdminObjections();
+          break;
+        case 'admin_recyclebin':
+          fetchRecycleBinItems();
+          break;
+        default:
+          break;
+      }
+    }
+  }, [view, user]);
+
   const handleRestoreRecycleItem = async (itemId) => {
     try {
       const res = await fetch(`${API_BASE}/admin/recycle-bin/restore/${itemId}`, { method: 'POST' });
