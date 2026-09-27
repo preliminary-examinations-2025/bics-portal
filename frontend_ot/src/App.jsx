@@ -628,22 +628,20 @@ export default function App() {
     const path = window.location.pathname;
     const searchParams = new URLSearchParams(window.location.search);
     
-    // Check if route is for submission verification (e.g. /submissions/6a92..., /submission/6a92..., /submissions?id=6a92...)
+    // Check if route is for submission verification (e.g. /verification/6a92..., /submissions/6a92..., /submission/6a92...)
     let subId = null;
-    if (path.startsWith('/submissions/') || path.startsWith('/submission/')) {
+    if (path.includes('/verification/') || path.includes('/submissions/') || path.includes('/submission/')) {
       const parts = path.split('/').filter(Boolean);
-      if (parts.length >= 2 && parts[1]) {
-        subId = parts[1];
+      const verifIdx = parts.findIndex(p => p === 'verification' || p === 'submissions' || p === 'submission');
+      if (verifIdx !== -1 && parts[verifIdx + 1]) {
+        subId = parts[verifIdx + 1];
       }
     }
     if (!subId) {
       subId = searchParams.get('submissionId') || searchParams.get('id');
-      if (path.startsWith('/submissions') && !subId) {
-        subId = searchParams.get('id') || searchParams.get('submissionId');
-      }
     }
 
-    if (path.startsWith('/submissions') || path.startsWith('/submission') || (subId && !searchParams.get('token'))) {
+    if (path.includes('/verification') || path.includes('/submissions') || path.includes('/submission') || (subId && !searchParams.get('token'))) {
       if (!subId) {
         setVerifyError("Invalid Submission Link. Missing examination submission reference.");
         setLoading(false);

@@ -1,1 +1,7 @@
-/*    /index.html   200
+# Proxy OT Terminal requests to the separate OT deployment site
+/terminal/*  https://otbicsexam.netlify.app/:splat  200
+
+# Client-side React Router rewrites for Main Portal
+/main/*      /index.html                           200
+/*           /index.html                           200
+
