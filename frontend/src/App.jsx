@@ -270,11 +270,13 @@ export default function App() {
         return;
       }
     } else {
-      // 1. When logged in, if wrong path, invalid view, or unauthorized path, redirect to /main/home
+      // 1. When logged in, if wrong path, invalid view, or unauthorized path, redirect to role default page
       if (nextView === 'not_found' || nextView === 'login' || !isViewAllowed(nextView)) {
-        if (location.pathname !== '/home') {
-          navigate('/home', { replace: true });
-          setViewState('announcements');
+        const defaultPath = user.role === 'admin' ? '/admin/dashboard' : '/home';
+        const defaultView = user.role === 'admin' ? 'admin' : 'announcements';
+        if (location.pathname !== defaultPath) {
+          navigate(defaultPath, { replace: true });
+          setViewState(defaultView);
           return;
         }
       }
@@ -2927,7 +2929,7 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'announcements'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin'].includes(targetView);
     }
     
     if (user.role === 'student') {
