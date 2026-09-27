@@ -19,6 +19,22 @@ const API_BASE = import.meta.env.VITE_API_BASE || (() => {
 
 const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
 
+const getReturnUrl = (targetPath = '/coursework/online-tests') => {
+  const isLocal = window.location.hostname === 'localhost' || 
+                  window.location.hostname === '127.0.0.1' || 
+                  window.location.hostname.startsWith('192.168.') || 
+                  window.location.hostname.startsWith('10.') || 
+                  window.location.hostname.startsWith('172.');
+  const base = import.meta.env.VITE_DASHBOARD_URL || (
+    isLocal
+      ? 'http://localhost:5173'
+      : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
+  );
+  const cleanBase = base.replace(/\/+$/, '');
+  const cleanPath = targetPath.startsWith('/') ? targetPath : `/${targetPath}`;
+  return `${cleanBase}${cleanPath}`;
+};
+
 // Automatically attach apiSecret query parameter to all frontend_ot backend API requests
 if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_patched) {
   window.__bics_ot_fetch_patched = true;
@@ -670,12 +686,7 @@ export default function App() {
       setKickoutCount(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
-            window.location.origin.includes('localhost')
-              ? 'http://localhost:5173/'
-              : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
-          );
-          window.location.href = dashboardUrl;
+          window.location.href = getReturnUrl('/coursework/online-tests');
           return 0;
         }
         return prev - 1;
@@ -718,12 +729,7 @@ export default function App() {
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(err => console.warn(err));
       }
-      const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
-        window.location.origin.includes('localhost')
-          ? 'http://localhost:5173/'
-          : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
-      );
-      window.location.href = dashboardUrl;
+      window.location.href = getReturnUrl('/coursework/online-tests');
     }, 7000);
 
     return () => {
@@ -2099,12 +2105,7 @@ export default function App() {
             <button className="cf-btn-secondary" style={{ padding: '6px 20px', fontSize: '9pt' }} onClick={() => {
               if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
               if (micStream) micStream.getTracks().forEach(t => t.stop());
-              const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
-                window.location.origin.includes('localhost')
-                  ? 'http://localhost:5173/'
-                  : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
-              );
-              window.location.href = dashboardUrl;
+              window.location.href = getReturnUrl('/coursework/online-tests');
             }}>
               Cancel
             </button>
@@ -4255,11 +4256,7 @@ export default function App() {
 
   // VIEW: Evaluated Answer Sheet Verification Review (Long vertically scrollable paper)
   if (flow === 'verification_review') {
-    const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
-      window.location.origin.includes('localhost')
-        ? 'http://localhost:5173/'
-        : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
-    );
+    const dashboardUrl = getReturnUrl('/submissions/verification');
 
     const questions = test?.questions || [];
     const answers = submission?.answers || [];
