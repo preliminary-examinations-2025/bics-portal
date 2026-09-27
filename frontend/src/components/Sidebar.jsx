@@ -75,6 +75,9 @@ export default function Sidebar({
             <button className={`sidebar-item ${view === 'admin_submissions' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_submissions'); setIsMobileSidebarOpen(false); fetchAdminSubmissions && fetchAdminSubmissions(); }}>
               <Layers size={16} /> Submissions Tracker
             </button>
+            <button className={`sidebar-item ${view === 'admin_counterfoil' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_counterfoil'); setIsMobileSidebarOpen(false); }}>
+              <CheckCircle size={16} style={{ color: '#0284c7' }} /> Counterfoil Approvals
+            </button>
             <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
               <ClipboardList size={16} /> Tests Manager
             </button>
@@ -159,6 +162,9 @@ export default function Sidebar({
                 </button>
                 <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user && fetchSubmittedTestsList) fetchSubmittedTestsList(user.id || user._id); }}>
                   <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
+                </button>
+                <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
+                  <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
                 </button>
               </div>
             )}

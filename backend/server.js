@@ -351,6 +351,7 @@ const initialDB = {
         endSemFeedbackActive: false,
         exitFormActive: false,
         hallTicketDownloadActive: true,
+        counterfoilActive: true,
         hallTicketUrl: '/public/textbooks/CS_Introduction_Textbook.pdf',
         timetableNotice: 'Mid semester test for BICS 2026 will be held in mid-August',
         examType: 'midsem',
@@ -455,6 +456,7 @@ const ConfigSchema = new mongoose.Schema({
     endSemFeedbackActive: { type: Boolean, default: false },
     exitFormActive: { type: Boolean, default: false },
     hallTicketDownloadActive: { type: Boolean, default: true },
+    counterfoilActive: { type: Boolean, default: true },
     hallTicketUrl: { type: String, default: '/public/textbooks/CS_Introduction_Textbook.pdf' },
     timetableNotice: { type: String, default: 'Mid semester test for BICS 2026 will be held in mid-August' },
     examType: { type: String, default: 'midsem' }, // 'midsem' or 'endsem'
@@ -870,6 +872,27 @@ const ClassroomSubmissionSchema = new mongoose.Schema({
 }, { versionKey: false });
 const ClassroomSubmissionModel = mongoose.model('ClassroomSubmission', ClassroomSubmissionSchema, 'classroom_submissions');
 
+const CounterfoilSubmissionSchema = new mongoose.Schema({
+    studentId: { type: String, required: true },
+    studentName: { type: String, required: true },
+    courseCode: { type: String, required: true },
+    courseName: { type: String, required: true },
+    examType: { type: String, enum: ['midsem', 'endsem'], required: true },
+    examinationName: { type: String, required: true },
+    questionMarks: [{
+        questionNo: Number,
+        obtainedMarks: Number,
+        maxMarks: Number
+    }],
+    totalObtained: Number,
+    totalMax: Number,
+    status: { type: String, enum: ['pending_approval', 'approved', 'rejected'], default: 'pending_approval' },
+    adminRemarks: String,
+    submittedAt: { type: Date, default: Date.now },
+    approvedAt: Date
+}, { versionKey: false });
+const CounterfoilSubmissionModel = mongoose.model('CounterfoilSubmission', CounterfoilSubmissionSchema, 'counterfoil_submissions');
+
 const GOOGLE_CLASSROOM_WEBHOOK_KEY = process.env.GOOGLE_CLASSROOM_WEBHOOK_KEY || "bics_classroom_secret_key_2026";
 
 
@@ -1016,6 +1039,7 @@ const authorizeApiRequest = (req, res, next) => {
         fullPath === '/api/system-config' || relativePath === '/system-config' ||
         fullPath.startsWith('/api/candidate/generate-hallticket') || relativePath.startsWith('/candidate/generate-hallticket') ||
         fullPath.startsWith('/api/tests/submission-verification') || relativePath.startsWith('/tests/submission-verification') ||
+        fullPath.startsWith('/api/counterfoil') || relativePath.startsWith('/counterfoil') ||
         fullPath === '/api/log-client-error' || relativePath === '/log-client-error';
 
     if (isWhitelisted) {
@@ -1154,7 +1178,7 @@ app.get('/api/config', async (req, res) => {
 
 // 3. Update System Configuration (Admin Only)
 app.post('/api/admin/config', async (req, res) => {
-    const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, timetable, timetableNotice, announcements, hallTicketUrl, examType, classTests } = req.body;
+    const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, counterfoilActive, timetable, timetableNotice, announcements, hallTicketUrl, examType, classTests } = req.body;
 
     if (useMongo) {
         try {
@@ -1168,6 +1192,7 @@ app.post('/api/admin/config', async (req, res) => {
             if (endSemFeedbackActive !== undefined) conf.endSemFeedbackActive = endSemFeedbackActive;
             if (exitFormActive !== undefined) conf.exitFormActive = exitFormActive;
             if (hallTicketDownloadActive !== undefined) conf.hallTicketDownloadActive = hallTicketDownloadActive;
+            if (counterfoilActive !== undefined) conf.counterfoilActive = counterfoilActive;
             if (timetableNotice !== undefined) conf.timetableNotice = timetableNotice;
             if (hallTicketUrl !== undefined) conf.hallTicketUrl = hallTicketUrl;
             if (examType !== undefined) conf.examType = examType;
@@ -1197,6 +1222,7 @@ app.post('/api/admin/config', async (req, res) => {
         if (endSemFeedbackActive !== undefined) db.config.endSemFeedbackActive = endSemFeedbackActive;
         if (exitFormActive !== undefined) db.config.exitFormActive = exitFormActive;
         if (hallTicketDownloadActive !== undefined) db.config.hallTicketDownloadActive = hallTicketDownloadActive;
+        if (counterfoilActive !== undefined) db.config.counterfoilActive = counterfoilActive;
         if (timetable !== undefined) db.config.timetable = timetable;
         if (timetableNotice !== undefined) db.config.timetableNotice = timetableNotice;
         if (announcements !== undefined) db.config.announcements = announcements;
@@ -4860,6 +4886,213 @@ app.delete('/api/admin/submissions/:id', async (req, res) => {
         return res.json({ success: true });
     } catch (e) {
         console.error(e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// --- Counterfoil Marks Entry & Admin Approval Endpoints ---
+
+// 1. Get student's counterfoil submissions
+app.get('/api/counterfoil/my-submissions/:studentId', async (req, res) => {
+    const { studentId } = req.params;
+    try {
+        if (useMongo) {
+            const submissions = await CounterfoilSubmissionModel.find({ 
+                studentId: new RegExp(`^${studentId.trim()}$`, 'i') 
+            }).sort({ submittedAt: -1 });
+            return res.json(submissions);
+        } else {
+            const db = getJSONData();
+            db.counterfoilSubmissions = db.counterfoilSubmissions || [];
+            const submissions = db.counterfoilSubmissions.filter(s => 
+                s.studentId && s.studentId.trim().toUpperCase() === studentId.trim().toUpperCase()
+            );
+            return res.json(submissions);
+        }
+    } catch (e) {
+        console.error("Counterfoil fetch error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 2. Submit or update student counterfoil
+app.post('/api/counterfoil/submit', async (req, res) => {
+    const { studentId, studentName, courseCode, courseName, examType, examinationName, questionMarks } = req.body;
+    if (!studentId || !courseCode || !examType || !questionMarks || !Array.isArray(questionMarks)) {
+        return res.status(400).json({ error: "Missing required counterfoil fields." });
+    }
+
+    const sId = studentId.trim().toUpperCase();
+    const cCode = courseCode.trim().toUpperCase();
+
+    let totalObtained = 0;
+    let totalMax = 0;
+    questionMarks.forEach(q => {
+        totalObtained += Number(q.obtainedMarks || 0);
+        totalMax += Number(q.maxMarks || 0);
+    });
+
+    try {
+        let submission;
+        if (useMongo) {
+            submission = await CounterfoilSubmissionModel.findOne({
+                studentId: sId,
+                courseCode: cCode,
+                examType
+            });
+
+            if (submission) {
+                if (submission.status === 'approved') {
+                    return res.status(400).json({ error: "Counterfoil for this course has already been approved by admin and cannot be modified." });
+                }
+                submission.studentName = studentName || submission.studentName;
+                submission.courseName = courseName || submission.courseName;
+                submission.examinationName = examinationName || submission.examinationName;
+                submission.questionMarks = questionMarks;
+                submission.totalObtained = totalObtained;
+                submission.totalMax = totalMax;
+                submission.status = 'pending_approval';
+                submission.adminRemarks = '';
+                submission.submittedAt = new Date();
+                await submission.save();
+            } else {
+                submission = new CounterfoilSubmissionModel({
+                    studentId: sId,
+                    studentName: studentName || "Candidate",
+                    courseCode: cCode,
+                    courseName: courseName || cCode,
+                    examType,
+                    examinationName: examinationName || (examType === 'midsem' ? 'Mid Semester Examination 2026' : 'End Semester Examination 2026'),
+                    questionMarks,
+                    totalObtained,
+                    totalMax,
+                    status: 'pending_approval',
+                    submittedAt: new Date()
+                });
+                await submission.save();
+            }
+        } else {
+            const db = getJSONData();
+            db.counterfoilSubmissions = db.counterfoilSubmissions || [];
+            const idx = db.counterfoilSubmissions.findIndex(s => s.studentId === sId && s.courseCode === cCode && s.examType === examType);
+            if (idx !== -1) {
+                if (db.counterfoilSubmissions[idx].status === 'approved') {
+                    return res.status(400).json({ error: "Counterfoil for this course has already been approved by admin and cannot be modified." });
+                }
+                db.counterfoilSubmissions[idx].studentName = studentName || db.counterfoilSubmissions[idx].studentName;
+                db.counterfoilSubmissions[idx].courseName = courseName || db.counterfoilSubmissions[idx].courseName;
+                db.counterfoilSubmissions[idx].examinationName = examinationName || db.counterfoilSubmissions[idx].examinationName;
+                db.counterfoilSubmissions[idx].questionMarks = questionMarks;
+                db.counterfoilSubmissions[idx].totalObtained = totalObtained;
+                db.counterfoilSubmissions[idx].totalMax = totalMax;
+                db.counterfoilSubmissions[idx].status = 'pending_approval';
+                db.counterfoilSubmissions[idx].adminRemarks = '';
+                db.counterfoilSubmissions[idx].submittedAt = new Date().toISOString();
+                submission = db.counterfoilSubmissions[idx];
+            } else {
+                submission = {
+                    _id: "counterfoil_" + Date.now(),
+                    studentId: sId,
+                    studentName: studentName || "Candidate",
+                    courseCode: cCode,
+                    courseName: courseName || cCode,
+                    examType,
+                    examinationName: examinationName || (examType === 'midsem' ? 'Mid Semester Examination 2026' : 'End Semester Examination 2026'),
+                    questionMarks,
+                    totalObtained,
+                    totalMax,
+                    status: 'pending_approval',
+                    submittedAt: new Date().toISOString()
+                };
+                db.counterfoilSubmissions.push(submission);
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            sId,
+            'COUNTERFOIL_SUBMITTED',
+            `Student ${sId} submitted counterfoil for ${cCode} (${examType}): ${totalObtained}/${totalMax}`,
+            'info'
+        );
+
+        return res.json({ success: true, submission });
+    } catch (e) {
+        console.error("Counterfoil submit error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 3. Admin: list all counterfoil submissions
+app.get('/api/admin/counterfoil/list', async (req, res) => {
+    try {
+        if (useMongo) {
+            const submissions = await CounterfoilSubmissionModel.find().sort({ submittedAt: -1 });
+            return res.json(submissions);
+        } else {
+            const db = getJSONData();
+            db.counterfoilSubmissions = db.counterfoilSubmissions || [];
+            return res.json(db.counterfoilSubmissions);
+        }
+    } catch (e) {
+        console.error("Admin counterfoil list error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Admin: approve or reject counterfoil submission
+app.post('/api/admin/counterfoil/action/:id', async (req, res) => {
+    const { id } = req.params;
+    const { status, adminRemarks } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ error: "Invalid status parameter. Must be 'approved' or 'rejected'." });
+    }
+
+    try {
+        let submission;
+        if (useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                submission = await CounterfoilSubmissionModel.findById(id);
+            }
+            if (!submission) {
+                submission = await CounterfoilSubmissionModel.findOne({ _id: id });
+            }
+            if (!submission) {
+                return res.status(404).json({ error: "Counterfoil submission not found." });
+            }
+            submission.status = status;
+            submission.adminRemarks = adminRemarks || '';
+            if (status === 'approved') {
+                submission.approvedAt = new Date();
+            }
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.counterfoilSubmissions = db.counterfoilSubmissions || [];
+            const idx = db.counterfoilSubmissions.findIndex(s => String(s._id) === String(id) || String(s.id) === String(id));
+            if (idx === -1) {
+                return res.status(404).json({ error: "Counterfoil submission not found." });
+            }
+            db.counterfoilSubmissions[idx].status = status;
+            db.counterfoilSubmissions[idx].adminRemarks = adminRemarks || '';
+            if (status === 'approved') {
+                db.counterfoilSubmissions[idx].approvedAt = new Date().toISOString();
+            }
+            submission = db.counterfoilSubmissions[idx];
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            'admin',
+            'COUNTERFOIL_ACTION',
+            `Admin marked counterfoil ${id} as ${status.toUpperCase()}. Remarks: "${adminRemarks || 'N/A'}"`,
+            'info'
+        );
+
+        return res.json({ success: true, submission });
+    } catch (e) {
+        console.error("Admin counterfoil action error:", e);
         return res.status(500).json({ error: e.message });
     }
 });

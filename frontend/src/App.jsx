@@ -16,6 +16,7 @@ import OnlineTestsView from './pages/OnlineTestsView';
 import SubmissionsView from './pages/SubmissionsView';
 import HallTicketView from './pages/HallTicketView';
 import SubmissionsVerificationView from './pages/SubmissionsVerificationView';
+import CounterfoilView from './pages/CounterfoilView';
 import SupportTicketView from './pages/SupportTicketView';
 import CourseFeedbackView from './pages/CourseFeedbackView';
 import StudentCoC from './pages/StudentCoC';
@@ -33,6 +34,7 @@ import AdminSubmissions from './pages/admin/AdminSubmissions';
 import AdminObjections from './pages/admin/AdminObjections';
 import AdminRecycleBin from './pages/admin/AdminRecycleBin';
 import AdminAttendance from './pages/admin/AdminAttendance';
+import AdminCounterfoilView from './pages/admin/AdminCounterfoilView';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
@@ -164,6 +166,8 @@ export default function App() {
       '/coursework/online-tests': 'tests',
       '/submissions/classroom': 'submissions',
       '/submissions/verification': 'verification',
+      '/submissions/counterfoil': 'counterfoil',
+      '/main/submissions/counterfoil': 'counterfoil',
       '/examination/schedule': 'schedule',
       '/examination/hall-ticket': 'hallticket',
       '/support/ticket': 'contact',
@@ -180,7 +184,8 @@ export default function App() {
       '/admin/submissions': 'admin_submissions',
       '/admin/tests': 'admin_tests',
       '/admin/objections': 'admin_objections',
-      '/admin/recyclebin': 'admin_recyclebin'
+      '/admin/recyclebin': 'admin_recyclebin',
+      '/admin/counterfoil': 'admin_counterfoil'
     };
     const matched = pathToView[location.pathname];
     return matched !== undefined ? matched : 'not_found';
@@ -199,6 +204,7 @@ export default function App() {
     onlinetest: '/coursework/online-tests',
     submissions: '/submissions/classroom',
     verification: '/submissions/verification',
+    counterfoil: '/submissions/counterfoil',
     schedule: '/examination/schedule',
     hallticket: '/examination/hall-ticket',
     contact: '/support/ticket',
@@ -215,7 +221,8 @@ export default function App() {
     admin_submissions: '/admin/submissions',
     admin_tests: '/admin/tests',
     admin_objections: '/admin/objections',
-    admin_recyclebin: '/admin/recyclebin'
+    admin_recyclebin: '/admin/recyclebin',
+    admin_counterfoil: '/admin/counterfoil'
   };
 
   const setView = (newView) => {
@@ -241,6 +248,8 @@ export default function App() {
       '/coursework/online-tests': 'tests',
       '/submissions/classroom': 'submissions',
       '/submissions/verification': 'verification',
+      '/submissions/counterfoil': 'counterfoil',
+      '/main/submissions/counterfoil': 'counterfoil',
       '/examination/schedule': 'schedule',
       '/examination/hall-ticket': 'hallticket',
       '/support/ticket': 'contact',
@@ -257,7 +266,8 @@ export default function App() {
       '/admin/submissions': 'admin_submissions',
       '/admin/tests': 'admin_tests',
       '/admin/objections': 'admin_objections',
-      '/admin/recyclebin': 'admin_recyclebin'
+      '/admin/recyclebin': 'admin_recyclebin',
+      '/admin/counterfoil': 'admin_counterfoil'
     };
     const matched = pathToView[location.pathname];
     const nextView = matched !== undefined ? matched : 'not_found';
@@ -3011,11 +3021,11 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil'].includes(targetView);
     }
     
     if (user.role === 'student') {
-      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
+      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     
     return false;
@@ -3106,6 +3116,9 @@ int main() {
                   <button className={`sidebar-item ${view === 'admin_submissions' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_submissions'); setIsMobileSidebarOpen(false); fetchAdminSubmissions(); }}>
                     <Layers size={16} /> Submissions Tracker
                   </button>
+                  <button className={`sidebar-item ${view === 'admin_counterfoil' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_counterfoil'); setIsMobileSidebarOpen(false); }}>
+                    <CheckCircle size={16} style={{ color: '#0284c7' }} /> Counterfoil Approvals
+                  </button>
                   <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
                     <ClipboardList size={16} /> Tests Manager
                   </button>
@@ -3190,6 +3203,9 @@ int main() {
                       </button>
                       <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user) fetchSubmittedTestsList(user.id || user._id); }}>
                         <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
+                      </button>
+                      <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
+                        <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
                       </button>
                     </div>
                   )}
@@ -3415,6 +3431,14 @@ int main() {
                 <SubmissionsVerificationView
                   view={view}
                   submittedTestsList={submittedTestsList}
+                />
+              )}
+
+              {view === 'counterfoil' && (
+                <CounterfoilView
+                  user={user}
+                  studentProfile={studentProfile}
+                  systemConfig={systemConfig}
                 />
               )}
 
@@ -3680,6 +3704,14 @@ int main() {
                   showSubmissionModal={showSubmissionModal}
                   editingSubmission={editingSubmission}
                   saveAdminSubmission={saveAdminSubmission}
+                />
+              )}
+
+              {view === 'admin_counterfoil' && (
+                <AdminCounterfoilView
+                  systemConfig={systemConfig}
+                  setSystemConfig={setSystemConfig}
+                  handleToggleSetting={handleToggleSetting}
                 />
               )}
 

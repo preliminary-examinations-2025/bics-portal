@@ -1,5 +1,5 @@
-import React from 'react';
-import { RefreshCw, Plus, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { RefreshCw, Plus, ExternalLink, CheckCircle, XCircle } from 'lucide-react';
 import { API_BASE } from '../../config';
 
 export default function AdminSubmissions({
@@ -367,6 +367,9 @@ export default function AdminSubmissions({
         </div>
       </div>
 
+      {/* COUNTERFOIL MARKS APPROVALS SECTION */}
+      <CounterfoilApprovalsCard />
+
       {/* MANUAL ADD/EDIT MODAL */}
       {showSubmissionModal && editingSubmission && (
         <div style={{
@@ -556,6 +559,175 @@ export default function AdminSubmissions({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CounterfoilApprovalsCard() {
+  const [counterfoils, setCounterfoils] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [actionRemarks, setActionRemarks] = useState({});
+  const [processingId, setProcessingId] = useState(null);
+  const [msg, setMsg] = useState({ type: '', text: '' });
+
+  const fetchCounterfoils = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/admin/counterfoil/list`);
+      if (res.ok) {
+        const data = await res.json();
+        setCounterfoils(data || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCounterfoils();
+  }, []);
+
+  const handleAction = async (id, status) => {
+    const remarks = actionRemarks[id] || '';
+    try {
+      setProcessingId(id);
+      setMsg({ type: '', text: '' });
+      const res = await fetch(`${API_BASE}/admin/counterfoil/action/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, adminRemarks: remarks })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMsg({ type: 'success', text: `Counterfoil ${status === 'approved' ? 'Approved' : 'Rejected'} successfully!` });
+        fetchCounterfoils();
+      } else {
+        setMsg({ type: 'error', text: data.error || 'Failed to update status.' });
+      }
+    } catch (e) {
+      setMsg({ type: 'error', text: 'Server connection error.' });
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  return (
+    <div className="cf-card" style={{ marginTop: '25px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
+        <div>
+          <h2 style={{ fontSize: '14pt', color: '#002147', margin: 0 }}>Candidate Counterfoil Marks Approvals</h2>
+          <span style={{ fontSize: '8.5pt', color: '#64748b' }}>Approve or reject candidate self-reported MST / ESE marks counterfoils</span>
+        </div>
+        <button className="cf-btn-secondary" onClick={fetchCounterfoils} disabled={loading}>
+          <RefreshCw size={14} style={{ marginRight: '6px' }} /> Refresh List
+        </button>
+      </div>
+
+      {msg.text && (
+        <div className={`cf-alert ${msg.type === 'error' ? 'cf-alert-error' : 'cf-alert-success'}`} style={{ marginBottom: '15px' }}>
+          {msg.text}
+        </div>
+      )}
+
+      <div style={{ overflowX: 'auto' }}>
+        <table className="cf-table">
+          <thead>
+            <tr>
+              <th>Candidate &amp; Student ID</th>
+              <th>Course</th>
+              <th>Exam Type</th>
+              <th>Question Marks Breakdown</th>
+              <th>Total Score</th>
+              <th>Status</th>
+              <th>Admin Action &amp; Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan="7" style={{ textAlign: 'center', padding: '20px' }}>Loading counterfoil submissions...</td>
+              </tr>
+            ) : counterfoils.length === 0 ? (
+              <tr>
+                <td colSpan="7" style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>No candidate counterfoil submissions found.</td>
+              </tr>
+            ) : (
+              counterfoils.map(cf => (
+                <tr key={cf._id || cf.id}>
+                  <td>
+                    <strong>{cf.studentName}</strong>
+                    <div style={{ fontFamily: 'Fira Code, monospace', fontSize: '8pt', color: '#0284c7' }}>{cf.studentId}</div>
+                  </td>
+                  <td>
+                    <strong>{cf.courseCode}</strong>
+                    <div style={{ fontSize: '8pt', color: '#64748b' }}>{cf.courseName}</div>
+                  </td>
+                  <td>
+                    <span style={{ fontSize: '8pt', fontWeight: 'bold', textTransform: 'uppercase', color: cf.examType === 'midsem' ? '#0284c7' : '#0369a1', backgroundColor: '#f0f9ff', padding: '2px 6px', borderRadius: '4px' }}>
+                      {cf.examType === 'midsem' ? 'MST (Midsem)' : 'ESE (Endsem)'}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      {cf.questionMarks?.map(q => (
+                        <span key={q.questionNo} style={{ fontSize: '7.5pt', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '1px 5px', borderRadius: '3px' }}>
+                          Q{q.questionNo}: <strong>{q.obtainedMarks}</strong>/{q.maxMarks}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <strong style={{ fontSize: '10pt', color: '#0f172a' }}>{cf.totalObtained} / {cf.totalMax}</strong>
+                  </td>
+                  <td>
+                    {cf.status === 'approved' && (
+                      <span className="status-badge" style={{ backgroundColor: '#d1fae5', color: '#047857', border: '1px solid #a7f3d0' }}>✓ Approved</span>
+                    )}
+                    {cf.status === 'pending_approval' && (
+                      <span className="status-badge" style={{ backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>⏳ Pending</span>
+                    )}
+                    {cf.status === 'rejected' && (
+                      <span className="status-badge" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}>✕ Rejected</span>
+                    )}
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <input
+                        type="text"
+                        placeholder="Admin remarks..."
+                        disabled={processingId === cf._id}
+                        value={actionRemarks[cf._id] !== undefined ? actionRemarks[cf._id] : (cf.adminRemarks || '')}
+                        onChange={e => setActionRemarks({ ...actionRemarks, [cf._id]: e.target.value })}
+                        style={{ fontSize: '8pt', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                      />
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          disabled={processingId === cf._id || cf.status === 'approved'}
+                          onClick={() => handleAction(cf._id, 'approved')}
+                          className="cf-btn-primary"
+                          style={{ padding: '2px 8px', fontSize: '8pt', backgroundColor: '#0284c7' }}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          disabled={processingId === cf._id}
+                          onClick={() => handleAction(cf._id, 'rejected')}
+                          className="cf-btn-secondary"
+                          style={{ padding: '2px 8px', fontSize: '8pt', color: '#b91c1c', borderColor: '#fca5a5' }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

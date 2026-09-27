@@ -81,6 +81,14 @@ export default function AdminDashboard({
             </label>
             <span style={{ fontWeight: 'bold', fontSize: '9.5pt' }}>Online Practice &amp; Exam Module Active</span>
           </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <label className="switch">
+              <input type="checkbox" checked={systemConfig ? (systemConfig.counterfoilActive !== false) : true} onChange={e => handleToggleSetting('counterfoilActive', e.target.checked)} />
+              <span className="slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', fontSize: '9.5pt' }}>Counterfoil Marks Entry Active</span>
+          </div>
         </div>
       </div>
 
