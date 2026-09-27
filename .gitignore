@@ -33,3 +33,9 @@ yarn-error.log*
 # Local uploads
 backend/public/uploads/
 backend/temp_runs/
+
+# Sensitive Quiz Payloads & Deploy Scripts
+backend/*_payload.js
+backend/create_quiz*.js
+backend/deploy_all_local.js
+
