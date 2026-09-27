@@ -745,20 +745,24 @@ export default function App() {
     }
   };
 
-  const fetchStudentSubmissions = async (studentId) => {
+  const [submissionsLoading, setSubmissionsLoading] = useState(false);
+
+  const fetchStudentSubmissions = async (paramStudentId) => {
+    const rawId = studentProfile?.studentId || user?.studentId || (user?.username !== 'admin' ? user?.username : null) || paramStudentId;
+    if (!rawId || rawId === 'STU1001' || rawId === 'admin') return;
+    const studentId = rawId;
+    setSubmissionsLoading(true);
     setLoadingMessage("Synchronizing Classroom Submissions...");
     try {
       const res = await fetch(`${API_BASE}/student/submissions/${studentId}`);
       if (res.ok) {
         const data = await res.json();
-        console.log("DEBUG: Loaded Student Submissions:", data);
-        setStudentSubmissions(data || []);
+        setStudentSubmissions(Array.isArray(data) ? data : []);
       }
       
       // Fetch corresponding QR verification code details
-      const lookupId = studentProfile?.studentId || user?.studentId || studentId;
       const semType = systemConfig?.examType === 'endsem' ? 'end' : 'mid';
-      const qrRes = await fetch(`${API_BASE}/candidate/ledger-qr-data/${lookupId}?type=${semType}`);
+      const qrRes = await fetch(`${API_BASE}/candidate/ledger-qr-data/${studentId}?type=${semType}`);
       if (qrRes.ok) {
         const qrData = await qrRes.json();
         setLedgerQrData(qrData);
@@ -766,6 +770,7 @@ export default function App() {
     } catch (e) {
       console.error("Error fetching student submissions:", e);
     } finally {
+      setSubmissionsLoading(false);
       setLoadingMessage('');
     }
   };
@@ -2566,7 +2571,7 @@ int main() {
           fetchCourseMaterials();
           break;
         case 'submissions':
-          if (userId) fetchStudentSubmissions(userId);
+          fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || userId);
           break;
         case 'contact':
           if (userId) fetchStudentTickets(userId);
@@ -3362,6 +3367,7 @@ int main() {
 
               {view === 'submissions' && (
                 <SubmissionsView
+                  submissionsLoading={submissionsLoading}
                   ledgerQrData={ledgerQrData}
                   fetchStudentSubmissions={fetchStudentSubmissions}
                   studentProfile={studentProfile}

@@ -1,7 +1,8 @@
 import React from 'react';
-import { RefreshCw, Printer, ExternalLink } from 'lucide-react';
+import { RefreshCw, Printer, ExternalLink, Loader2 } from 'lucide-react';
 
 export default function SubmissionsView({
+  submissionsLoading,
   ledgerQrData,
   fetchStudentSubmissions,
   studentProfile,
@@ -78,7 +79,7 @@ export default function SubmissionsView({
             <button 
               className="cf-btn-secondary" 
               onClick={() => {
-                fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
+                fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username);
               }}
               style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
@@ -153,7 +154,17 @@ export default function SubmissionsView({
       </div>
 
       {/* Dynamic Overall Statistics Segment */}
-      {(() => {
+      {submissionsLoading && (!studentSubmissions || studentSubmissions.length === 0) ? (
+        <div className="cf-card" style={{ padding: '50px 20px', textAlign: 'center', margin: '20px 0' }}>
+          <Loader2 className="spinner" size={32} style={{ color: '#3b5998', marginBottom: '12px' }} />
+          <h3 style={{ fontSize: '11pt', color: '#002147', fontWeight: 'bold', margin: '0 0 6px 0' }}>
+            Synchronizing Classroom Submissions
+          </h3>
+          <p style={{ fontSize: '9pt', color: '#64748b', margin: 0 }}>
+            Fetching real-time submission records from Google Classroom ledger...
+          </p>
+        </div>
+      ) : (() => {
         const filteredList = studentSubmissions.filter(sub => {
           if (activeSubmissionTab === 'all') return true;
           return sub.type === activeSubmissionTab;

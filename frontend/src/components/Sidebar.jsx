@@ -144,7 +144,7 @@ export default function Sidebar({
             </button>
              {dropdowns.submissions && (
               <div className="dropdown-container">
-                <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions && fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001"); }}>
+                <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions && fetchStudentSubmissions(); }}>
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block' }}>
                     <rect x="2" y="3" width="20" height="18" rx="2" />
                     <rect x="4" y="5" width="16" height="14" rx="1" />
