@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Clock, AlertTriangle, ShieldAlert } from 'lucide-react';
 
-const API_BASE = 'http://127.0.0.1:5000';
+const API_BASE = 'https://bics-portal.onrender.com';
 
 const STANDARD_COURSES = [
   { code: 'R526CS01T', name: 'Introduction to Computer Science' },
