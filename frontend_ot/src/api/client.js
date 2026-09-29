@@ -1,4 +1,8 @@
-export const API_BASE = import.meta.env.VITE_API_BASE || (() => {
+export const API_BASE = (() => {
+  const envBase = import.meta.env.VITE_API_BASE;
+  if (envBase && !envBase.includes('onrender.com')) {
+    return envBase;
+  }
   const isLocal = typeof window !== 'undefined' && (
     window.location.hostname === 'localhost' || 
     window.location.hostname === '127.0.0.1' || 
@@ -8,7 +12,9 @@ export const API_BASE = import.meta.env.VITE_API_BASE || (() => {
   );
   return isLocal 
     ? `http://127.0.0.1:5000/api` 
-    : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api`;
+    : (typeof window !== 'undefined' 
+        ? `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api` 
+        : '/api');
 })();
 
 export const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
