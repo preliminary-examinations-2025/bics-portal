@@ -2512,6 +2512,17 @@ app.get('/api/candidate/ledger-qr-data/:id', async (req, res) => {
     }
 });
 
+// Helper for safely building candidate query filter without triggering Mongoose CastError on ObjectId
+const buildCandidateQueryFilter = (candidateIdInput) => {
+    if (!candidateIdInput) return null;
+    const strVal = candidateIdInput.toString().trim();
+    if (!strVal || strVal === 'admin') return null;
+    if (mongoose.Types.ObjectId.isValid(strVal)) {
+        return { $or: [{ candidateId: new mongoose.Types.ObjectId(strVal) }, { studentId: strVal }] };
+    }
+    return { studentId: strVal };
+};
+
 // 1. Get active tests for student dashboard (Strips answer keys for security)
 app.get('/api/tests/active', async (req, res) => {
     const { candidateId } = req.query;
@@ -2545,13 +2556,11 @@ app.get('/api/tests/active', async (req, res) => {
             const tObj = { ...t };
             const testId = tObj.id || tObj._id;
             let submissionStatus = null;
-            if (candidateId) {
+            if (candidateId && candidateId !== 'admin') {
                 try {
                     if (useMongo) {
-                        const isValidCandObjId = mongoose.Types.ObjectId.isValid(candidateId);
+                        const candFilter = buildCandidateQueryFilter(candidateId);
                         const isValidTestObjId = mongoose.Types.ObjectId.isValid(testId.toString());
-                        const candConditions = [{ candidateId: candidateId.toString() }, { studentId: candidateId.toString() }];
-                        if (isValidCandObjId) candConditions.push({ candidateId: new mongoose.Types.ObjectId(candidateId) });
 
                         const testConditions = [];
                         if (isValidTestObjId) {
@@ -2559,10 +2568,10 @@ app.get('/api/tests/active', async (req, res) => {
                             testConditions.push({ testId: testId.toString() });
                         }
 
-                        if (testConditions.length > 0) {
+                        if (candFilter && testConditions.length > 0) {
                             const sub = await TestSubmissionModel.findOne({
                                 $and: [
-                                    { $or: candConditions },
+                                    candFilter,
                                     { $or: testConditions }
                                 ]
                             }).sort({ startedAt: -1 });
@@ -2612,8 +2621,10 @@ app.get('/api/tests/submitted', async (req, res) => {
     try {
         let submissions = [];
         if (useMongo) {
-            const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
-            submissions = await TestSubmissionModel.find({ candidateId: queryCandidateId });
+            const candFilter = buildCandidateQueryFilter(candidateId);
+            if (candFilter) {
+                submissions = await TestSubmissionModel.find(candFilter);
+            }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
@@ -2729,14 +2740,16 @@ app.post('/api/tests/start/:id', async (req, res) => {
 
         let submission = null;
         if (useMongo) {
-            const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
+            const candFilter = buildCandidateQueryFilter(candidateId);
             const queryTestId = mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id;
-            submission = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId });
+            if (candFilter) {
+                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: queryTestId });
+            }
             if (submission) {
                 return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
             }
             submission = new TestSubmissionModel({
-                candidateId,
+                candidateId: mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : undefined,
                 candidateName,
                 studentId,
                 testId: id,
@@ -2793,9 +2806,11 @@ app.post('/api/tests/generate-token', async (req, res) => {
         // Verify if candidate has already completed/submitted this test
         let submission = null;
         if (useMongo) {
-            const queryCandidateId = mongoose.Types.ObjectId.isValid(candidateId) ? new mongoose.Types.ObjectId(candidateId) : candidateId;
+            const candFilter = buildCandidateQueryFilter(candidateId);
             const queryTestId = mongoose.Types.ObjectId.isValid(testId) ? new mongoose.Types.ObjectId(testId) : testId;
-            submission = await TestSubmissionModel.findOne({ candidateId: queryCandidateId, testId: queryTestId });
+            if (candFilter) {
+                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: queryTestId });
+            }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
