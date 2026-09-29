@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
   Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck,
-  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid, Calculator, Wrench
+  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -445,40 +445,6 @@ export default function App() {
   const [runResults, setRunResults] = useState(null);
   const [compileError, setCompileError] = useState(null);
   const [consoleTab, setConsoleTab] = useState('testcase'); // 'testcase' or 'result'
-
-  // Examination Tools Modal States
-  const [showToolsModal, setShowToolsModal] = useState(false);
-  const [activeToolTab, setActiveToolTab] = useState('calculator'); // 'calculator' | 'meante'
-  const [calcDisplay, setCalcDisplay] = useState('');
-  const [calcResult, setCalcResult] = useState('');
-
-  const evaluateScientificMath = (expr) => {
-    if (!expr || !expr.trim()) return '';
-    try {
-      let sanitized = expr
-        .replace(/×/g, '*')
-        .replace(/÷/g, '/')
-        .replace(/π/g, 'Math.PI')
-        .replace(/\be\b/g, 'Math.E')
-        .replace(/\bsin\(/g, 'Math.sin(')
-        .replace(/\bcos\(/g, 'Math.cos(')
-        .replace(/\btan\(/g, 'Math.tan(')
-        .replace(/\bsqrt\(/g, 'Math.sqrt(')
-        .replace(/\blog\(/g, 'Math.log10(')
-        .replace(/\bln\(/g, 'Math.log(')
-        .replace(/\^/g, '**');
-
-      const res = Function(`"use strict"; return (${sanitized})`)();
-      if (typeof res === 'number') {
-        if (isNaN(res)) return 'Error';
-        if (!isFinite(res)) return 'Infinity';
-        return Number(res.toFixed(8)).toString();
-      }
-      return String(res);
-    } catch (err) {
-      return 'Error';
-    }
-  };
 
   // Custom Modal dialog system (replaces browser alert/confirm to prevent fullscreen loss)
   const [customModal, setCustomModal] = useState({
@@ -2220,58 +2186,32 @@ export default function App() {
             <span>{formatTimer(examTimeLeft)} remaining</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
             <button
-              type="button"
-              onClick={() => setShowToolsModal(true)}
+              className="cf-btn-primary"
+              disabled={submittingExam || examTimeLeft > 300}
+              title={examTimeLeft > 300 ? `Manual submission will unlock in the final 5 minutes (${formatTimer(examTimeLeft - 300)} left)` : "Finalize and submit your test"}
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
+                borderColor: (submittingExam || examTimeLeft > 300) ? '#cbd5e1' : '#ef4444',
+                color: (submittingExam || examTimeLeft > 300) ? '#94a3b8' : '#ef4444',
+                background: (submittingExam || examTimeLeft > 300) ? '#f8fafc' : 'transparent',
+                fontWeight: 'bold',
                 padding: '6px 14px',
                 fontSize: '9pt',
-                fontWeight: 'bold',
-                backgroundColor: '#ffffff',
-                border: '1px solid #3b5998',
-                color: '#3b5998',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                transition: 'all 0.15s ease'
+                cursor: (submittingExam || examTimeLeft > 300) ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease'
               }}
-              title="Open Examination Utility Tools (Scientific Calculator)"
+              onClick={handleManualSubmitExam}
             >
-              <Calculator size={15} style={{ color: '#3b5998' }} />
-              <span>Tools</span>
+              {examTimeLeft > 300
+                ? `Submit (Available in ${Math.ceil((examTimeLeft - 300) / 60)}m)`
+                : (submittingExam ? "Submitting..." : "Finalize & Submit Test")}
             </button>
-
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
-              <button
-                className="cf-btn-primary"
-                disabled={submittingExam || examTimeLeft > 300}
-                title={examTimeLeft > 300 ? `Manual submission will unlock in the final 5 minutes (${formatTimer(examTimeLeft - 300)} left)` : "Finalize and submit your test"}
-                style={{
-                  borderColor: (submittingExam || examTimeLeft > 300) ? '#cbd5e1' : '#ef4444',
-                  color: (submittingExam || examTimeLeft > 300) ? '#94a3b8' : '#ef4444',
-                  background: (submittingExam || examTimeLeft > 300) ? '#f8fafc' : 'transparent',
-                  fontWeight: 'bold',
-                  padding: '6px 14px',
-                  fontSize: '9pt',
-                  cursor: (submittingExam || examTimeLeft > 300) ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s ease'
-                }}
-                onClick={handleManualSubmitExam}
-              >
-                {examTimeLeft > 300
-                  ? `Submit (Available in ${Math.ceil((examTimeLeft - 300) / 60)}m)`
-                  : (submittingExam ? "Submitting..." : "Finalize & Submit Test")}
-              </button>
-              {examTimeLeft > 300 && (
-                <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
-                  Submission unlocks at 05:00
-                </span>
-              )}
-            </div>
+            {examTimeLeft > 300 && (
+              <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
+                Submission unlocks at 05:00
+              </span>
+            )}
           </div>
         </div>
 
@@ -3609,230 +3549,6 @@ export default function App() {
               >
                 I Understand, Return to Test
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* EXAMINATION UTILITY TOOLS MODAL (Scientific Calculator & Meante Tool) */}
-        {showToolsModal && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(15, 23, 42, 0.65)',
-              zIndex: 20000,
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              padding: '20px'
-            }}
-            onClick={() => setShowToolsModal(false)}
-          >
-            <div
-              style={{
-                backgroundColor: '#ffffff',
-                borderRadius: '8px',
-                width: '100%',
-                maxWidth: '420px',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                border: '1px solid #cbd5e1',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Modal Header */}
-              <div style={{
-                backgroundColor: '#002147',
-                color: '#ffffff',
-                padding: '12px 18px',
-                display: 'flex',
-                justify: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Wrench size={18} style={{ color: '#38bdf8' }} />
-                  <h3 style={{ margin: 0, fontSize: '11pt', fontWeight: 'bold', color: '#ffffff' }}>
-                    Examination Utility Tools
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setShowToolsModal(false)}
-                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0 }}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              {/* Tool Navigation Tabs */}
-              <div style={{ display: 'flex', borderBottom: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}>
-                <button
-                  onClick={() => setActiveToolTab('calculator')}
-                  style={{
-                    flex: 1,
-                    padding: '10px',
-                    fontSize: '9pt',
-                    fontWeight: 'bold',
-                    border: 'none',
-                    borderBottom: activeToolTab === 'calculator' ? '2px solid #3b5998' : '2px solid transparent',
-                    backgroundColor: activeToolTab === 'calculator' ? '#ffffff' : 'transparent',
-                    color: activeToolTab === 'calculator' ? '#3b5998' : '#64748b',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <Calculator size={14} />
-                  <span>Scientific Calculator</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveToolTab('meante')}
-                  style={{
-                    flex: 1,
-                    padding: '10px',
-                    fontSize: '9pt',
-                    fontWeight: 'bold',
-                    border: 'none',
-                    borderBottom: activeToolTab === 'meante' ? '2px solid #3b5998' : '2px solid transparent',
-                    backgroundColor: activeToolTab === 'meante' ? '#ffffff' : 'transparent',
-                    color: activeToolTab === 'meante' ? '#3b5998' : '#94a3b8',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <span>Meante</span>
-                  <span style={{ fontSize: '7.5pt', backgroundColor: '#e2e8f0', color: '#64748b', padding: '1px 6px', borderRadius: '10px' }}>Disabled</span>
-                </button>
-              </div>
-
-              {/* Tool Body */}
-              <div style={{ padding: '16px' }}>
-                {activeToolTab === 'calculator' && (
-                  <div>
-                    {/* Screen */}
-                    <div style={{
-                      backgroundColor: '#0f172a',
-                      color: '#38bdf8',
-                      fontFamily: 'Consolas, monospace',
-                      borderRadius: '6px',
-                      padding: '10px 14px',
-                      marginBottom: '12px',
-                      boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.5)',
-                      textAlign: 'right'
-                    }}>
-                      <div style={{ fontSize: '8.5pt', color: '#94a3b8', minHeight: '16px', wordBreak: 'break-all' }}>
-                        {calcDisplay || '0'}
-                      </div>
-                      <div style={{ fontSize: '16pt', fontWeight: 'bold', color: '#ffffff', minHeight: '26px', wordBreak: 'break-all' }}>
-                        {calcResult || (calcDisplay ? evaluateScientificMath(calcDisplay) : '0')}
-                      </div>
-                    </div>
-
-                    {/* Calculator Buttons Grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' }}>
-                      {[
-                        'sin(', 'cos(', 'tan(', '(', ')',
-                        'sqrt(', 'log(', 'ln(', '^', 'C',
-                        '7', '8', '9', '/', 'DEL',
-                        '4', '5', '6', '*', 'π',
-                        '1', '2', '3', '-', 'e',
-                        '0', '.', '=', '+'
-                      ].map((btn, bIdx) => {
-                        const isOp = ['/', '*', '-', '+', '^'].includes(btn);
-                        const isFn = ['sin(', 'cos(', 'tan(', 'sqrt(', 'log(', 'ln('].includes(btn);
-                        const isEq = btn === '=';
-                        const isAction = ['C', 'DEL'].includes(btn);
-
-                        let bg = '#f1f5f9';
-                        let fg = '#1e293b';
-                        let border = '#cbd5e1';
-
-                        if (isEq) { bg = '#3b5998'; fg = '#ffffff'; border = '#2d4373'; }
-                        else if (isAction) { bg = '#fee2e2'; fg = '#991b1b'; border = '#fca5a5'; }
-                        else if (isFn) { bg = '#e0f2fe'; fg = '#0369a1'; border = '#bae6fd'; }
-                        else if (isOp) { bg = '#ffedd5'; fg = '#c2410c'; border = '#fed7aa'; }
-
-                        return (
-                          <button
-                            key={bIdx}
-                            style={{
-                              gridColumn: btn === '0' ? 'span 2' : 'span 1',
-                              padding: '8px 0',
-                              fontSize: '9pt',
-                              fontWeight: 'bold',
-                              fontFamily: 'Consolas, monospace',
-                              backgroundColor: bg,
-                              color: fg,
-                              border: `1px solid ${border}`,
-                              borderRadius: '4px',
-                              cursor: 'pointer'
-                            }}
-                            onClick={() => {
-                              if (btn === 'C') {
-                                setCalcDisplay('');
-                                setCalcResult('');
-                              } else if (btn === 'DEL') {
-                                setCalcDisplay(prev => prev.slice(0, -1));
-                              } else if (btn === '=') {
-                                const res = evaluateScientificMath(calcDisplay);
-                                setCalcResult(res);
-                              } else {
-                                setCalcDisplay(prev => prev + btn);
-                              }
-                            }}
-                          >
-                            {btn}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {activeToolTab === 'meante' && (
-                  <div style={{
-                    padding: '24px 16px',
-                    textAlign: 'center',
-                    backgroundColor: '#f8fafc',
-                    border: '1px dashed #cbd5e1',
-                    borderRadius: '6px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}>
-                    <Wrench size={32} style={{ color: '#94a3b8' }} />
-                    <h4 style={{ margin: 0, color: '#475569', fontSize: '10.5pt', fontWeight: 'bold' }}>
-                      Meante Statistical Tool
-                    </h4>
-                    <span style={{ fontSize: '8.5pt', color: '#64748b', maxWidth: '280px', lineHeight: '1.5' }}>
-                      Meante advanced statistical and analytical workspace is currently under development for future examinations.
-                    </span>
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '3px 10px',
-                      fontSize: '8pt',
-                      fontWeight: 'bold',
-                      backgroundColor: '#e2e8f0',
-                      color: '#475569',
-                      borderRadius: '12px',
-                      marginTop: '4px'
-                    }}>
-                      Tool Status: Disabled (Coming Soon)
-                    </span>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         )}
