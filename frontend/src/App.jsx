@@ -22,6 +22,7 @@ import CourseFeedbackView from './pages/CourseFeedbackView';
 import StudentCoC from './pages/StudentCoC';
 import ExitFormView from './pages/ExitFormView';
 import ChangePassword from './pages/ChangePassword';
+import StudentObjectionsView from './pages/StudentObjectionsView';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminCandidates from './pages/admin/AdminCandidates';
@@ -166,10 +167,13 @@ export default function App() {
       '/coursework/online-tests': 'tests',
       '/submissions/classroom': 'submissions',
       '/submissions/verification': 'verification',
+      '/submissions/objections': 'objections',
       '/submissions/counterfoil': 'counterfoil',
       '/main/submissions/counterfoil': 'counterfoil',
       '/examination/schedule': 'schedule',
       '/examination/hall-ticket': 'hallticket',
+      '/examination/objections': 'objections',
+      '/examination/counterfoil': 'counterfoil',
       '/support/ticket': 'contact',
       '/support/feedback/general': 'contact',
       '/support/feedback': 'midsem',
@@ -204,7 +208,8 @@ export default function App() {
     onlinetest: '/coursework/online-tests',
     submissions: '/submissions/classroom',
     verification: '/submissions/verification',
-    counterfoil: '/submissions/counterfoil',
+    objections: '/examination/objections',
+    counterfoil: '/examination/counterfoil',
     schedule: '/examination/schedule',
     hallticket: '/examination/hall-ticket',
     contact: '/support/ticket',
@@ -248,10 +253,13 @@ export default function App() {
       '/coursework/online-tests': 'tests',
       '/submissions/classroom': 'submissions',
       '/submissions/verification': 'verification',
+      '/submissions/objections': 'objections',
       '/submissions/counterfoil': 'counterfoil',
       '/main/submissions/counterfoil': 'counterfoil',
       '/examination/schedule': 'schedule',
       '/examination/hall-ticket': 'hallticket',
+      '/examination/objections': 'objections',
+      '/examination/counterfoil': 'counterfoil',
       '/support/ticket': 'contact',
       '/support/feedback/general': 'contact',
       '/support/feedback': 'midsem',
@@ -919,6 +927,24 @@ export default function App() {
 
   // Admin Objections states
   const [adminObjectionsList, setAdminObjectionsList] = useState([]);
+  const [studentObjectionsList, setStudentObjectionsList] = useState([]);
+
+  const fetchStudentObjections = async (candId) => {
+    const targetId = candId || (user?.id || user?._id);
+    if (!targetId) return;
+    try {
+      const res = await fetch(`${API_BASE}/tests/objections/student?candidateId=${targetId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStudentObjectionsList(Array.isArray(data) ? data : []);
+      } else {
+        setStudentObjectionsList([]);
+      }
+    } catch (err) {
+      console.error("Failed to fetch candidate objections:", err);
+      setStudentObjectionsList([]);
+    }
+  };
   const [adminObjectionsFilter, setAdminObjectionsFilter] = useState('all');
   const [adminObjectionModal, setAdminObjectionModal] = useState({
     isOpen: false,
@@ -3043,7 +3069,7 @@ int main() {
     }
     
     if (user.role === 'student') {
-      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
+      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     
     return false;
@@ -3105,183 +3131,44 @@ int main() {
       {/* DASHBOARD CONTAINER */}
       <div className="app-container">
         {/* SIDEBAR */}
-        {user && !(view === 'onlinetest' || view === 'onlinetest_setup' || view === 'login') && (
-          <aside className={`app-sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
-            <nav className="sidebar-menu">
-              {user.role === 'admin' ? (
-                <>
-                  <button className={`sidebar-item ${view === 'admin' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin'); setIsMobileSidebarOpen(false); }}>
-                    <Settings size={16} /> Portal Settings
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_candidates' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_candidates'); setIsMobileSidebarOpen(false); }}>
-                    <Users size={16} /> Candidates
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_attendance' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_attendance'); setIsMobileSidebarOpen(false); fetchCandidates(); }}>
-                    <FileText size={16} /> Examination Attendance
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_coursework' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_coursework'); setIsMobileSidebarOpen(false); }}>
-                    <BookOpen size={16} /> Coursework
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs(); }}>
-                    <Activity size={16} /> System Logs
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_proctoring' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_proctoring'); setIsMobileSidebarOpen(false); fetchLiveSubmissions(); }}>
-                    <Video size={16} /> Live Proctoring
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_tickets' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tickets'); setIsMobileSidebarOpen(false); fetchAdminTickets(); }}>
-                    <Ticket size={16} /> Tickets
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_submissions' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_submissions'); setIsMobileSidebarOpen(false); fetchAdminSubmissions(); }}>
-                    <Layers size={16} /> Submissions Tracker
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_counterfoil' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_counterfoil'); setIsMobileSidebarOpen(false); }}>
-                    <CheckCircle size={16} style={{ color: '#0284c7' }} /> Counterfoil Approvals
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
-                    <ClipboardList size={16} /> Tests Manager
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_objections' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_objections'); setIsMobileSidebarOpen(false); fetchAdminObjections(); }}>
-                    <Flag size={16} style={{ color: '#b45309' }} /> Examination Objections
-                    {adminObjectionsList.filter(o => o.status === 'pending').length > 0 && (
-                      <span style={{ marginLeft: 'auto', backgroundColor: '#ef4444', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
-                        {adminObjectionsList.filter(o => o.status === 'pending').length}
-                      </span>
-                    )}
-                  </button>
-                  <button className={`sidebar-item ${view === 'admin_recyclebin' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_recyclebin'); setIsMobileSidebarOpen(false); fetchRecycleBinItems(); }}>
-                    <Trash2 size={16} style={{ color: '#ef4444' }} /> Recycle Bin (24h)
-                    {recycleBinItems.length > 0 && (
-                      <span style={{ marginLeft: 'auto', backgroundColor: '#64748b', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
-                        {recycleBinItems.length}
-                      </span>
-                    )}
-                  </button>
-                </>
-              ) : (
-                <>
-                  {/* Candidate Side Navigation Menu items */}
-                  <button className={`sidebar-item ${view === 'announcements' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('announcements'); setIsMobileSidebarOpen(false); }}>
-                    <Bell size={16} /> Announcements
-                  </button>
- 
-                  <div className="sidebar-category">Student Related</div>
-                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, student: !dropdowns.student})}>
-                    Menu Links {dropdowns.student ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  {dropdowns.student && (
-                    <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'register' ? 'active' : ''}`} onClick={() => { setView('register'); setIsMobileSidebarOpen(false); }}>
-                        <Upload size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Course Registration
-                      </button>
-                      <button className={`dropdown-item ${view === 'info' ? 'active' : ''}`} onClick={() => { setView('info'); setIsMobileSidebarOpen(false); }}>
-                        <User size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Student Information
-                      </button>
-                      <button className={`dropdown-item ${view === 'conduct' ? 'active' : ''}`} onClick={() => { setView('conduct'); setIsMobileSidebarOpen(false); }}>
-                        <ShieldAlert size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Code of Conduct
-                      </button>
-                    </div>
-                  )}
- 
-                  <div className="sidebar-category">CourseWork</div>
-                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, coursework: !dropdowns.coursework})}>
-                    Menu Links {dropdowns.coursework ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  {dropdowns.coursework && (
-                    <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'lectures' ? 'active' : ''}`} onClick={() => { setView('lectures'); setIsMobileSidebarOpen(false); }}>
-                        <Video size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Lectures
-                      </button>
-                      <button className={`dropdown-item ${view === 'materials' ? 'active' : ''}`} onClick={() => { setView('materials'); setIsMobileSidebarOpen(false); }}>
-                        <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Materials
-                      </button>
-                      <button className={`dropdown-item ${view === 'tests' ? 'active' : ''}`} onClick={() => { setView('tests'); setIsMobileSidebarOpen(false); }}>
-                        <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Online Tests
-                      </button>
-                    </div>
-                  )}
- 
-                  <div className="sidebar-category">Submissions</div>
-                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, submissions: !dropdowns.submissions})}>
-                    Menu Links {dropdowns.submissions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                   {dropdowns.submissions && (
-                    <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'submissions' ? 'active' : ''}`} onClick={() => { setView('submissions'); setIsMobileSidebarOpen(false); fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001"); }}>
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block' }}>
-                          <rect x="2" y="3" width="20" height="18" rx="2" />
-                          <rect x="4" y="5" width="16" height="14" rx="1" />
-                          <circle cx="12" cy="10" r="2" />
-                          <path d="M9.5 16.5a2.5 2.5 0 0 1 5 0" />
-                          <circle cx="8" cy="11.5" r="1.5" />
-                          <path d="M6 16.5a2 2 0 0 1 3-1.5" />
-                          <circle cx="16" cy="11.5" r="1.5" />
-                          <path d="M15 15a2 2 0 0 1 3 1.5" />
-                          <rect x="14.5" y="16.5" width="3" height="1" rx="0.5" />
-                        </svg> Classroom
-                      </button>
-                      <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user) fetchSubmittedTestsList(user.id || user._id); }}>
-                        <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
-                      </button>
-                      <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
-                        <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
-                      </button>
-                    </div>
-                  )}
- 
-                  <div className="sidebar-category">Examination</div>
-                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, exam: !dropdowns.exam})}>
-                    Menu Links {dropdowns.exam ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  {dropdowns.exam && (
-                    <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'schedule' ? 'active' : ''}`} onClick={() => { setView('schedule'); setIsMobileSidebarOpen(false); }}>
-                        <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Schedule
-                      </button>
-                      <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess(''); }}>
-                        <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket
-                      </button>
-                    </div>
-                  )}
- 
-                  <div className="sidebar-category">Feedback</div>
-                  <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, feedback: !dropdowns.feedback})}>
-                    Menu Links {dropdowns.feedback ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  {dropdowns.feedback && (
-                    <div className="dropdown-container">
-                      <button className={`dropdown-item ${view === 'contact' ? 'active' : ''}`} onClick={() => { setView('contact'); setContactSuccess(''); setContactError(''); setContactSubView('form'); setIsMobileSidebarOpen(false); if (user) fetchStudentTickets(user.id || user._id); }}>
-                        <Mail size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                        <span>Support Helpdesk</span>
-                      </button>
-                      <button className={`dropdown-item ${view === 'midsem' ? 'active' : ''}`} onClick={() => { setView('midsem'); setFeedbackType('mid'); setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
-                        <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                        <span>Mid Sem Feedback {systemConfig && !systemConfig.midSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
-                      </button>
-                      <button className={`dropdown-item ${view === 'endsem' ? 'active' : ''}`} onClick={() => { setView('endsem'); setFeedbackType('end'); setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
-                        <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                        <span>End Sem Feedback {systemConfig && !systemConfig.endSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
-                      </button>
-                    </div>
-                  )}
- 
-                  <div className="sidebar-category">Exit Program</div>
-                  <button className={`sidebar-item ${view === 'exit' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('exit'); setExitSuccess(''); setIsMobileSidebarOpen(false); }}>
-                    <GraduationCap size={16} /> Exit Form
-                  </button>
-                </>
-              )}
- 
-              <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1', justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); setPwdError(''); setPwdMessage(''); setChangePasswordCodeSent(false); setChangePasswordEmailCode(''); generateChangePasswordCaptcha(); }}>
-                <Key size={16} /> Change Password
-              </button>
- 
-              <button className="sidebar-item" style={{ color: '#e11d48', justifyContent: 'flex-start', gap: '8px' }} onClick={() => setShowLogoutModal(true)}>
-                <LogOut size={16} /> Sign Out
-              </button>
-
-            </nav>
-          </aside>
-        )}
+        <Sidebar
+          user={user}
+          view={view}
+          setView={setView}
+          isMobileSidebarOpen={isMobileSidebarOpen}
+          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+          dropdowns={dropdowns}
+          setDropdowns={setDropdowns}
+          studentProfile={studentProfile}
+          systemConfig={systemConfig}
+          adminObjectionsList={adminObjectionsList}
+          studentObjectionsList={studentObjectionsList}
+          recycleBinItems={recycleBinItems}
+          fetchCandidates={fetchCandidates}
+          fetchSystemLogs={fetchSystemLogs}
+          fetchLiveSubmissions={fetchLiveSubmissions}
+          fetchAdminTickets={fetchAdminTickets}
+          fetchAdminSubmissions={fetchAdminSubmissions}
+          fetchAdminObjections={fetchAdminObjections}
+          fetchRecycleBinItems={fetchRecycleBinItems}
+          fetchStudentSubmissions={fetchStudentSubmissions}
+          fetchSubmittedTestsList={fetchSubmittedTestsList}
+          fetchStudentObjections={fetchStudentObjections}
+          fetchStudentTickets={fetchStudentTickets}
+          setConsentSuccess={setConsentSuccess}
+          setContactSuccess={setContactSuccess}
+          setContactError={setContactError}
+          setContactSubView={setContactSubView}
+          setFeedbackType={setFeedbackType}
+          setFeedbackSuccess={setFeedbackSuccess}
+          setExitSuccess={setExitSuccess}
+          setPwdError={setPwdError}
+          setPwdMessage={setPwdMessage}
+          setChangePasswordCodeSent={setChangePasswordCodeSent}
+          setChangePasswordEmailCode={setChangePasswordEmailCode}
+          generateChangePasswordCaptcha={generateChangePasswordCaptcha}
+          setShowLogoutModal={setShowLogoutModal}
+        />
 
         {/* CONTENT PANEL */}
         <main className="app-content" style={view === 'onlinetest' ? { padding: 0, margin: 0, minHeight: '100vh', width: '100%', maxWidth: '100%', border: 'none', backgroundColor: '#f8fafc' } : {}}>
@@ -3457,6 +3344,15 @@ int main() {
                   user={user}
                   studentProfile={studentProfile}
                   systemConfig={systemConfig}
+                />
+              )}
+
+              {view === 'objections' && (
+                <StudentObjectionsView
+                  user={user}
+                  studentObjectionsList={studentObjectionsList}
+                  fetchStudentObjections={fetchStudentObjections}
+                  setView={setView}
                 />
               )}
 

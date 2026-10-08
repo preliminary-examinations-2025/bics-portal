@@ -591,10 +591,12 @@ const TestSubmissionSchema = new mongoose.Schema({
         resolutionFeedback: String
     },
     objections: [{
+        objectionId: String,
         questionId: String,
         questionIndex: Number,
         reason: String,
         details: String,
+        attachments: [String],
         status: { type: String, default: 'pending' },
         raisedAt: { type: Date, default: Date.now },
         createdAt: { type: Date, default: Date.now },
@@ -621,6 +623,16 @@ const RecycleBinSchema = new mongoose.Schema({
 });
 RecycleBinSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // MongoDB TTL Index
 const RecycleBinModel = mongoose.model('RecycleBinV2', RecycleBinSchema, 'recycle_bin_v2');
+
+function generateObjectionId() {
+    const year = new Date().getFullYear();
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 5; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return `OBJ-${year}-${code}`;
+}
 
 function calculateSubmissionScore(submission, test) {
     if (!test || !submission) return submission;
@@ -3948,7 +3960,7 @@ app.get('/api/tests/submission-verification/:id', async (req, res) => {
 // 10c. Candidate Raise Objection on a specific question
 app.post('/api/tests/objection/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
-    const { questionId, questionIndex, reason, details } = req.body;
+    const { questionId, questionIndex, reason, details, attachments } = req.body;
 
     if (!questionId && questionIndex === undefined) {
         return res.status(400).json({ success: false, error: "Question reference is required." });
@@ -3983,15 +3995,20 @@ app.post('/api/tests/objection/:submissionId', async (req, res) => {
             }
         }
 
+        const generatedId = generateObjectionId();
+        const validAttachments = Array.isArray(attachments) ? attachments.filter(a => typeof a === 'string' && a.trim() !== '') : [];
+
         if (useMongo) {
             submission.objections = submission.objections || [];
             submission.objections = submission.objections.filter(o => o.questionIndex !== Number(questionIndex));
             
             const newObj = {
+                objectionId: generatedId,
                 questionId: String(questionId || ''),
                 questionIndex: Number(questionIndex || 0),
                 reason: reason.trim(),
                 details: details.trim(),
+                attachments: validAttachments,
                 status: 'pending',
                 raisedAt: new Date()
             };
@@ -4004,10 +4021,12 @@ app.post('/api/tests/objection/:submissionId', async (req, res) => {
             submission.objections = submission.objections.filter(o => o.questionIndex !== Number(questionIndex));
 
             const newObj = {
+                objectionId: generatedId,
                 questionId: String(questionId || ''),
                 questionIndex: Number(questionIndex || 0),
                 reason: reason.trim(),
                 details: details.trim(),
+                attachments: validAttachments,
                 status: 'pending',
                 raisedAt: new Date()
             };
@@ -4015,8 +4034,8 @@ app.post('/api/tests/objection/:submissionId', async (req, res) => {
             saveJSONData(db);
         }
 
-        await logSystemAction(submission.candidateName || 'Candidate', 'OBJECTION_RAISED', `Candidate raised objection for Question #${Number(questionIndex) + 1} on submission ${submissionId}: ${reason}`, 'info');
-        return res.json({ success: true, message: "Objection submitted successfully.", objections: submission.objections });
+        await logSystemAction(submission.candidateName || 'Candidate', 'OBJECTION_RAISED', `Candidate raised objection ${generatedId} for Question #${Number(questionIndex) + 1} on submission ${submissionId}: ${reason}`, 'info');
+        return res.json({ success: true, message: "Objection submitted successfully.", objectionId: generatedId, objections: submission.objections });
     } catch (err) {
         console.error("Failed to submit objection:", err);
         return res.status(500).json({ success: false, error: err.message });
@@ -4183,22 +4202,97 @@ app.post('/api/admin/tests/reevaluate-all/:testId', async (req, res) => {
     }
 });
 
+const ensureObjectionIdsSaved = async (submissionsList) => {
+    try {
+        if (useMongo) {
+            for (const sub of submissionsList) {
+                let hasChanges = false;
+                if (Array.isArray(sub.objections)) {
+                    sub.objections.forEach(obj => {
+                        if (!obj.objectionId) {
+                            const yr = new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear();
+                            obj.objectionId = `OBJ-${yr}-${Number(obj.questionIndex || 0) + 1}`;
+                            hasChanges = true;
+                        }
+                    });
+                }
+                if (hasChanges && sub._id) {
+                    await TestSubmissionModel.updateOne(
+                        { _id: sub._id },
+                        { $set: { objections: sub.objections } }
+                    );
+                }
+            }
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            let dbModified = false;
+
+            db.testSubmissions.forEach(sub => {
+                if (Array.isArray(sub.objections)) {
+                    sub.objections.forEach(obj => {
+                        if (!obj.objectionId) {
+                            const yr = new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear();
+                            obj.objectionId = `OBJ-${yr}-${Number(obj.questionIndex || 0) + 1}`;
+                            dbModified = true;
+                        }
+                    });
+                }
+            });
+
+            if (dbModified) {
+                saveJSONData(db);
+            }
+        }
+    } catch (err) {
+        console.error("Failed to auto-migrate missing objectionIds:", err);
+    }
+};
+
 // 10e. Admin Get All Objections
 app.get('/api/admin/objections', async (req, res) => {
     try {
         let submissions = [];
         if (useMongo) {
-            submissions = await TestSubmissionModel.find({ "objections.0": { $exists: true } }).lean();
+            submissions = await TestSubmissionModel.find({ "objections.0": { $exists: true } });
+            await ensureObjectionIdsSaved(submissions);
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
             submissions = db.testSubmissions.filter(s => s.objections && s.objections.length > 0);
+            await ensureObjectionIdsSaved(submissions);
         }
 
         const allObjections = [];
-        submissions.forEach(sub => {
+        await Promise.all(submissions.map(async (sub) => {
+            let test = null;
+            if (useMongo) {
+                test = await TestConfigModel.findById(sub.testId).lean();
+            } else {
+                const db = getJSONData();
+                test = (db.tests || []).find(t => String(t.id || t._id) === String(sub.testId));
+            }
+
             (sub.objections || []).forEach(obj => {
+                let targetAns = (sub.answers || []).find(a => String(a.questionId) === String(obj.questionId));
+                if (!targetAns && sub.answers && sub.answers[obj.questionIndex]) {
+                    targetAns = sub.answers[obj.questionIndex];
+                }
+
+                let targetQuest = null;
+                if (test && test.questions) {
+                    targetQuest = test.questions.find(q => String(q.id || q._id) === String(obj.questionId)) || test.questions[obj.questionIndex];
+                }
+                if (!targetQuest && targetAns) {
+                    targetQuest = {
+                        title: targetAns.questionTitle || targetAns.title || `Question #${(obj.questionIndex || 0) + 1}`,
+                        description: targetAns.questionDescription || targetAns.questionText || targetAns.description || targetAns.problemStatement || '',
+                        type: targetAns.type || (targetAns.submittedCode ? 'coding' : 'mcq')
+                    };
+                }
+
                 allObjections.push({
+                    objectionId: obj.objectionId || `OBJ-${new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear()}-${String(obj.questionIndex + 1)}`,
                     submissionId: sub._id || sub.id,
                     candidateId: sub.candidateId,
                     candidateName: sub.candidateName,
@@ -4210,20 +4304,104 @@ app.get('/api/admin/objections', async (req, res) => {
                     questionId: obj.questionId,
                     reason: obj.reason || 'General Grievance',
                     details: obj.details || obj.studentComment || obj.description || '',
+                    attachments: obj.attachments || [],
                     status: obj.status || 'pending',
                     raisedAt: obj.raisedAt || obj.createdAt || sub.submittedAt || new Date(),
                     adminRemarks: obj.adminRemarks || obj.resolutionNote || '',
                     resolvedMarks: (obj.resolvedMarks !== undefined && obj.resolvedMarks !== null) ? obj.resolvedMarks : null,
                     resolvedAt: obj.resolvedAt || null,
-                    submittedAnswer: sub.answers ? sub.answers[obj.questionIndex] : null
+                    submittedAnswer: targetAns || null,
+                    targetQuestion: targetQuest || null,
+                    questionPoints: Number(targetQuest?.points || targetAns?.maxPoints || 10)
                 });
             });
-        });
+        }));
 
         allObjections.sort((a, b) => new Date(b.raisedAt) - new Date(a.raisedAt));
         return res.json(allObjections);
     } catch (err) {
         console.error("Failed to fetch admin objections:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// 10e. Get Candidate Objections List (Student view)
+app.get('/api/tests/objections/student', async (req, res) => {
+    const { candidateId } = req.query;
+    if (!candidateId) {
+        return res.status(400).json({ error: "candidateId is required" });
+    }
+
+    try {
+        let submissions = [];
+        if (useMongo) {
+            const candFilter = buildCandidateQueryFilter(candidateId);
+            if (candFilter) {
+                submissions = await TestSubmissionModel.find({ ...candFilter, "objections.0": { $exists: true } });
+                await ensureObjectionIdsSaved(submissions);
+            }
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submissions = db.testSubmissions.filter(s => s.candidateId && s.candidateId.toString() === candidateId.toString() && s.objections && s.objections.length > 0);
+            await ensureObjectionIdsSaved(submissions);
+        }
+
+        const studentObjections = [];
+        await Promise.all(submissions.map(async (sub) => {
+            let test = null;
+            if (useMongo) {
+                test = await TestConfigModel.findById(sub.testId).lean();
+            } else {
+                const db = getJSONData();
+                test = (db.tests || []).find(t => String(t.id || t._id) === String(sub.testId));
+            }
+
+            (sub.objections || []).forEach(obj => {
+                let targetAns = (sub.answers || []).find(a => String(a.questionId) === String(obj.questionId));
+                if (!targetAns && sub.answers && sub.answers[obj.questionIndex]) {
+                    targetAns = sub.answers[obj.questionIndex];
+                }
+
+                let targetQuest = null;
+                if (test && test.questions) {
+                    targetQuest = test.questions.find(q => String(q.id || q._id) === String(obj.questionId)) || test.questions[obj.questionIndex];
+                }
+                if (!targetQuest && targetAns) {
+                    targetQuest = {
+                        title: targetAns.questionTitle || targetAns.title || `Question #${(obj.questionIndex || 0) + 1}`,
+                        description: targetAns.questionDescription || targetAns.questionText || targetAns.description || targetAns.problemStatement || '',
+                        type: targetAns.type || (targetAns.submittedCode ? 'coding' : 'mcq')
+                    };
+                }
+
+                studentObjections.push({
+                    objectionId: obj.objectionId || `OBJ-${new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear()}-${String(obj.questionIndex + 1)}`,
+                    submissionId: sub._id || sub.id,
+                    testId: sub.testId,
+                    testTitle: sub.testTitle,
+                    submittedAt: sub.submittedAt,
+                    questionIndex: obj.questionIndex,
+                    questionId: obj.questionId,
+                    reason: obj.reason || 'General Grievance',
+                    details: obj.details || obj.studentComment || obj.description || '',
+                    attachments: obj.attachments || [],
+                    status: obj.status || 'pending',
+                    raisedAt: obj.raisedAt || obj.createdAt || sub.submittedAt || new Date(),
+                    adminRemarks: obj.adminRemarks || obj.resolutionNote || '',
+                    resolvedMarks: (obj.resolvedMarks !== undefined && obj.resolvedMarks !== null) ? obj.resolvedMarks : null,
+                    resolvedAt: obj.resolvedAt || null,
+                    submittedAnswer: targetAns || null,
+                    targetQuestion: targetQuest || null,
+                    questionPoints: Number(targetQuest?.points || targetAns?.maxPoints || 10)
+                });
+            });
+        }));
+
+        studentObjections.sort((a, b) => new Date(b.raisedAt) - new Date(a.raisedAt));
+        return res.json(studentObjections);
+    } catch (err) {
+        console.error("Failed to fetch candidate objections:", err);
         return res.status(500).json({ error: err.message });
     }
 });
@@ -4436,6 +4614,8 @@ const runLocalGpp = async (sourceCode, testCases, timeLimitMs = 2000) => {
                         }
                     });
                     results.push({
+                        testcaseId: tc.testcaseId || tc.testCaseId || tc.id || tc._id || (20260101 + i),
+                        id: tc.id || tc._id || tc.testcaseId || (20260101 + i),
                         input: tc.input,
                         expectedOutput: tc.output || tc.expectedOutput,
                         actualOutput: res.stdout,

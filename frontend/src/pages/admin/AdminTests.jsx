@@ -1,6 +1,7 @@
 import React from 'react';
 import { ClipboardList, ShieldAlert, FileEdit, Plus, Loader2, Lock, Check, Upload, HelpCircle, GraduationCap, AlertTriangle, X } from 'lucide-react';
 import RichText from '../../components/RichText';
+import Editor from '@monaco-editor/react';
 import { API_BASE } from '../../config';
 
 export default function AdminTests({
@@ -1386,20 +1387,21 @@ export default function AdminTests({
                                   <span className="cf-label" style={{ display: 'block', fontWeight: 'bold', fontSize: '9pt' }}>
                                     Candidate Submitted Source Code:
                                   </span>
-                                  <pre style={{
-                                    backgroundColor: '#1e1e1e',
-                                    color: '#d4d4d4',
-                                    fontFamily: 'Consolas, monospace',
-                                    fontSize: '8.5pt',
-                                    padding: '12px',
-                                    borderRadius: '4px',
-                                    overflowX: 'auto',
-                                    maxHeight: '300px',
-                                    margin: 0,
-                                    whiteSpace: 'pre-wrap'
-                                  }}>
-                                    {ans.submittedCode || '// No code submitted'}
-                                  </pre>
+                                  <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                                    <Editor
+                                      height="240px"
+                                      language={ans.selectedLanguage || 'cpp'}
+                                      theme="vs-light"
+                                      value={ans.submittedCode || '// No code submitted'}
+                                      options={{
+                                        readOnly: true,
+                                        minimap: { enabled: false },
+                                        fontSize: 12,
+                                        lineNumbers: 'on',
+                                        automaticLayout: true
+                                      }}
+                                    />
+                                  </div>
 
                                   {/* Autograder Verification Status */}
                                   <div style={{ marginTop: '10px', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#f1f5f9' }}>
@@ -1439,7 +1441,18 @@ export default function AdminTests({
                                     {!codingEvaluationResults[ans.questionId]?.isRunning && codingEvaluationResults[ans.questionId]?.results && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                         {codingEvaluationResults[ans.questionId].results.map((res, rIdx) => {
-                                          const isPassed = res.status === 'Accepted';
+                                          const tcId = questionConfig?.testCases?.[rIdx]?._id || questionConfig?.testCases?.[rIdx]?.id || (20260101 + rIdx);
+                                          const isPassed = res.status === 'Passed' || res.passed === true;
+                                          const rawInp = res.input ?? res.sampleInput ?? questionConfig?.testCases?.[rIdx]?.input ?? questionConfig?.testCases?.[rIdx]?.sampleInput ?? '';
+                                          const rawExp = res.expectedOutput ?? res.output ?? res.sampleOutput ?? questionConfig?.testCases?.[rIdx]?.output ?? questionConfig?.testCases?.[rIdx]?.expectedOutput ?? '';
+                                          const rawAct = res.actualOutput ?? res.stdout ?? res.userOutput ?? '';
+
+                                          const fmt = (v) => {
+                                            if (v === undefined || v === null || String(v).trim() === '') return '(empty)';
+                                            const str = String(v).replace(/\r\n/g, ' ').replace(/\n/g, ' ').trim();
+                                            return str.length > 30 ? str.substring(0, 30) + '...' : str;
+                                          };
+
                                           return (
                                             <div key={rIdx} style={{ fontSize: '8.5pt', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
                                               <div style={{
@@ -1453,15 +1466,15 @@ export default function AdminTests({
                                               }}>
                                                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
                                                   {isPassed ? <Check size={14} /> : <X size={14} />}
-                                                  <span>Test Case #{rIdx + 1} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
+                                                  <span>Testcase #{tcId} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
                                                 </span>
                                                 <span style={{ fontSize: '8pt', color: '#64748b' }}>Points: {questionConfig?.testCases?.[rIdx]?.points || 0}</span>
                                               </div>
                                               <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '8pt', color: '#475569', fontFamily: 'monospace' }}>
-                                                <div><strong>Input:</strong> <code>{res.input || '(empty)'}</code></div>
-                                                <div><strong>Expected Output:</strong> <code>{res.expectedOutput || '(empty)'}</code></div>
-                                                <div><strong>Candidate Output:</strong> <code style={{ color: isPassed ? '#166534' : '#991b1b' }}>{res.actualOutput || '(empty)'}</code></div>
-                                                {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code>{res.stderr}</code></div>}
+                                                <div><strong>Input:</strong> <code title={String(rawInp || '(empty)')}>{fmt(rawInp)}</code></div>
+                                                <div><strong>Expected Output:</strong> <code title={String(rawExp || '(empty)')}>{fmt(rawExp)}</code></div>
+                                                <div><strong>Candidate Output:</strong> <code title={String(rawAct || '(empty)')} style={{ color: isPassed ? '#166534' : '#991b1b' }}>{fmt(rawAct)}</code></div>
+                                                {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code>{fmt(res.stderr)}</code></div>}
                                               </div>
                                             </div>
                                           );

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
   Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck,
-  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid
+  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid, Copy, Paperclip, CheckCircle, Upload
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -480,10 +480,126 @@ export default function App() {
     questionId: '',
     reason: 'Testcase evaluation discrepancy',
     details: '',
+    attachments: [],
+    uploadingAttachment: false,
     submitting: false,
     error: '',
-    success: ''
+    success: '',
+    submittedObjectionId: null,
+    copiedId: false
   });
+
+  const handleCloseObjectionModal = () => {
+    setObjectionModal({
+      isOpen: false,
+      questionIndex: null,
+      questionId: '',
+      reason: 'Testcase evaluation discrepancy',
+      details: '',
+      attachments: [],
+      uploadingAttachment: false,
+      submitting: false,
+      error: '',
+      success: '',
+      submittedObjectionId: null,
+      copiedId: false
+    });
+  };
+
+  const handleCopyObjectionId = (objId) => {
+    if (!objId) return;
+    try {
+      navigator.clipboard.writeText(objId);
+      setObjectionModal(prev => ({ ...prev, copiedId: true }));
+      setTimeout(() => {
+        setObjectionModal(prev => ({ ...prev, copiedId: false }));
+      }, 5000);
+    } catch (e) {
+      console.error("Clipboard copy failed:", e);
+    }
+  };
+
+  const handleObjectionFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setObjectionModal(prev => ({ ...prev, uploadingAttachment: true }));
+    const formData = new FormData();
+    formData.append('imageFile', file);
+    try {
+      const res = await fetch(`${API_BASE}/admin/upload-image`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.url) {
+        setObjectionModal(prev => ({
+          ...prev,
+          uploadingAttachment: false,
+          attachments: [...(prev.attachments || []), data.url]
+        }));
+      } else {
+        alert(data.error || "Failed to upload supporting document.");
+        setObjectionModal(prev => ({ ...prev, uploadingAttachment: false }));
+      }
+    } catch (err) {
+      console.error(err);
+      setObjectionModal(prev => ({ ...prev, uploadingAttachment: false }));
+    }
+  };
+
+  const handleSubmitObjection = async () => {
+    if (!objectionModal.details.trim()) {
+      setObjectionModal(prev => ({ ...prev, error: 'Please provide detailed remarks explaining your grievance.' }));
+      return;
+    }
+
+    setObjectionModal(prev => ({ ...prev, submitting: true, error: '' }));
+    try {
+      const res = await fetch(`${API_BASE}/tests/objection/${submission.id || submission._id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionId: objectionModal.questionId,
+          questionIndex: objectionModal.questionIndex,
+          reason: objectionModal.reason,
+          details: objectionModal.details,
+          attachments: objectionModal.attachments || []
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setObjectionModal(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to submit objection.' }));
+        return;
+      }
+
+      setSubmission(prev => ({
+        ...prev,
+        objections: data.objections || [
+          ...(prev.objections || []).filter(o => o.questionIndex !== objectionModal.questionIndex),
+          {
+            objectionId: data.objectionId || `OBJ-${new Date().getFullYear()}-8F3A1`,
+            questionId: String(objectionModal.questionId),
+            questionIndex: Number(objectionModal.questionIndex),
+            reason: objectionModal.reason,
+            details: objectionModal.details,
+            attachments: objectionModal.attachments || [],
+            status: 'pending',
+            raisedAt: new Date()
+          }
+        ]
+      }));
+
+      setObjectionModal(prev => ({
+        ...prev,
+        submitting: false,
+        submittedObjectionId: data.objectionId || `OBJ-${new Date().getFullYear()}-8F3A1`,
+        success: 'Objection submitted successfully! Your grievance has been recorded for committee review.'
+      }));
+    } catch (err) {
+      console.error(err);
+      setObjectionModal(prev => ({ ...prev, submitting: false, error: 'Network error while submitting objection.' }));
+    }
+  };
   const [webDevPreviewTabs, setWebDevPreviewTabs] = useState({}); // { [qIndex]: 'html' | 'css' | 'js' | 'preview' }
 
   // DOM Refs
@@ -761,73 +877,6 @@ export default function App() {
       error: '',
       success: ''
     });
-  };
-
-  const handleCloseObjectionModal = () => {
-    setObjectionModal({
-      isOpen: false,
-      questionIndex: null,
-      questionId: '',
-      reason: 'Testcase evaluation discrepancy',
-      details: '',
-      submitting: false,
-      error: '',
-      success: ''
-    });
-  };
-
-  const handleSubmitObjection = async () => {
-    if (!objectionModal.details.trim()) {
-      setObjectionModal(prev => ({ ...prev, error: 'Please provide detailed remarks explaining your grievance.' }));
-      return;
-    }
-
-    setObjectionModal(prev => ({ ...prev, submitting: true, error: '' }));
-    try {
-      const res = await fetch(`${API_BASE}/tests/objection/${submission.id || submission._id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          questionId: objectionModal.questionId,
-          questionIndex: objectionModal.questionIndex,
-          reason: objectionModal.reason,
-          details: objectionModal.details
-        })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setObjectionModal(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to submit objection.' }));
-        return;
-      }
-
-      setSubmission(prev => ({
-        ...prev,
-        objections: data.objections || [
-          ...(prev.objections || []).filter(o => o.questionIndex !== objectionModal.questionIndex),
-          {
-            questionId: String(objectionModal.questionId),
-            questionIndex: Number(objectionModal.questionIndex),
-            reason: objectionModal.reason,
-            details: objectionModal.details,
-            status: 'pending',
-            raisedAt: new Date()
-          }
-        ]
-      }));
-
-      setObjectionModal(prev => ({
-        ...prev,
-        submitting: false,
-        success: 'Objection submitted successfully! The academic evaluation committee will review your remarks.'
-      }));
-
-      setTimeout(() => {
-        handleCloseObjectionModal();
-      }, 1600);
-    } catch (err) {
-      console.error(err);
-      setObjectionModal(prev => ({ ...prev, submitting: false, error: 'Network error while submitting objection.' }));
-    }
   };
 
   const verifyExamToken = async (tokenStr) => {
@@ -3290,7 +3339,9 @@ export default function App() {
                                   {runResults.map((res, rIdx) => {
                                     const isPassed = res.status === 'Accepted';
                                     const activeQuest = test?.questions?.[selectedQuestionIndex];
-                                    const isSample = activeQuest?.testCases?.[rIdx]?.isSample;
+                                    const tcObj = activeQuest?.testCases?.[rIdx];
+                                    const tcId = res.testcaseId || res.testCaseId || res.id || res._id || tcObj?.testcaseId || tcObj?.id || tcObj?._id || (20260101 + rIdx);
+                                    const isSample = tcObj?.isSample;
                                     return (
                                       <div key={rIdx} style={{
                                         border: '1px solid #cbd5e1',
@@ -3319,7 +3370,7 @@ export default function App() {
                                             ) : (
                                               <X size={14} style={{ color: '#b91c1c' }} />
                                             )}
-                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - Test Case {rIdx + 1} ({isSample ? 'Sample' : 'Hidden'})</span>
+                                            <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - Testcase #{tcId} ({isSample ? 'Sample' : 'Hidden'})</span>
                                           </span>
                                         </div>
                                         {isSample && (
@@ -5013,76 +5064,242 @@ export default function App() {
                 </button>
               </div>
 
-              {objectionModal.error && (
-                <div style={{
-                  color: '#dc2626',
-                  backgroundColor: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  borderRadius: '4px',
-                  padding: '8px 12px',
-                  fontSize: '9pt',
-                  fontWeight: '500'
-                }}>
-                  {objectionModal.error}
+              {objectionModal.submittedObjectionId ? (
+                /* POST-SUBMISSION SUCCESS VIEW */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center', textAlign: 'center', padding: '10px 5px' }}>
+                  <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '50%', padding: '12px', display: 'inline-flex' }}>
+                    <CheckCircle size={32} style={{ color: '#166534' }} />
+                  </div>
+
+                  <div>
+                    <h4 style={{ fontSize: '12.5pt', color: '#002147', fontWeight: 'bold', margin: '0 0 6px 0' }}>
+                      Objection Logged Successfully
+                    </h4>
+                    <p style={{ fontSize: '9pt', color: '#475569', margin: 0, lineHeight: 1.5 }}>
+                      Your academic grievance has been recorded for Question #{objectionModal.questionIndex !== null ? objectionModal.questionIndex + 1 : ''}. The evaluation panel will review your submitted rationale.
+                    </p>
+                  </div>
+
+                  {/* Objection ID Copy Pill */}
+                  <div style={{
+                    width: '100%',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '14px 16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <div style={{ fontSize: '8pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Reference Objection ID
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ fontSize: '13pt', fontWeight: 'bold', fontFamily: 'monospace', color: '#002147', letterSpacing: '1px' }}>
+                        {objectionModal.submittedObjectionId}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyObjectionId(objectionModal.submittedObjectionId)}
+                        title="Copy Objection ID to Clipboard"
+                        style={{
+                          background: objectionModal.copiedId ? '#dcfce7' : '#ffffff',
+                          border: `1px solid ${objectionModal.copiedId ? '#86efac' : '#cbd5e1'}`,
+                          borderRadius: '6px',
+                          padding: '5px 10px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '8.5pt',
+                          fontWeight: 'bold',
+                          color: objectionModal.copiedId ? '#15803d' : '#334155',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {objectionModal.copiedId ? <Check size={14} style={{ color: '#16a34a' }} /> : <Copy size={14} />}
+                        <span>{objectionModal.copiedId ? 'Copied!' : 'Copy ID'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', width: '100%', marginTop: '5px' }}>
+                    <button
+                      type="button"
+                      onClick={handleCloseObjectionModal}
+                      style={{
+                        flex: 1,
+                        padding: '9px 16px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        backgroundColor: '#ffffff',
+                        color: '#475569',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Close Window
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleCloseObjectionModal();
+                        window.location.href = getReturnUrl('/examination/objections');
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '9px 16px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        backgroundColor: '#002147',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <span>View My Objections</span>
+                      <ExternalLink size={14} />
+                    </button>
+                  </div>
                 </div>
+              ) : (
+                /* OBJECTION FORM VIEW */
+                <>
+                  {objectionModal.error && (
+                    <div style={{
+                      color: '#dc2626',
+                      backgroundColor: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      borderRadius: '4px',
+                      padding: '8px 12px',
+                      fontSize: '9pt',
+                      fontWeight: '500'
+                    }}>
+                      {objectionModal.error}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                        Select Objection Category:
+                      </label>
+                      <select
+                        value={objectionModal.reason}
+                        onChange={(e) => setObjectionModal(prev => ({ ...prev, reason: e.target.value }))}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt' }}
+                      >
+                        <option value="Testcase evaluation discrepancy">Testcase evaluation discrepancy / Hidden testcase error</option>
+                        <option value="MCQ answer key discrepancy">MCQ answer key discrepancy / Alternate correct option</option>
+                        <option value="Partial marks allocation request">Partial marks allocation request</option>
+                        <option value="Compiler runtime or format discrepancy">Compiler runtime or output format discrepancy</option>
+                        <option value="Other grievance">Other academic grievance</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                        Detailed Remarks & Explanation:
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={objectionModal.details}
+                        onChange={(e) => setObjectionModal(prev => ({ ...prev, details: e.target.value }))}
+                        placeholder="Provide clear technical rationale why your answer or logic deserves credit..."
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', resize: 'vertical' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                        Supporting Proof / Documents (Optional):
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <label style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 14px',
+                          backgroundColor: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '4px',
+                          fontSize: '8.5pt',
+                          color: '#334155',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}>
+                          <Paperclip size={14} style={{ color: '#0284c7' }} />
+                          <span>{objectionModal.uploadingAttachment ? 'Uploading...' : 'Attach Image / PDF / Doc'}</span>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf,.doc,.docx,.txt"
+                            onChange={handleObjectionFileUpload}
+                            disabled={objectionModal.uploadingAttachment}
+                            style={{ display: 'none' }}
+                          />
+                        </label>
+                      </div>
+
+                      {Array.isArray(objectionModal.attachments) && objectionModal.attachments.length > 0 && (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+                          {objectionModal.attachments.map((att, aIdx) => (
+                            <div 
+                              key={aIdx} 
+                              style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '6px', 
+                                backgroundColor: '#f0fdf4', 
+                                border: '1px solid #bbf7d0', 
+                                borderRadius: '4px', 
+                                padding: '3px 8px', 
+                                fontSize: '8pt', 
+                                color: '#166534' 
+                              }}
+                            >
+                              <Paperclip size={12} />
+                              <span>Attachment #{aIdx + 1}</span>
+                              <button 
+                                type="button" 
+                                onClick={() => setObjectionModal(prev => ({ ...prev, attachments: prev.attachments.filter((_, i) => i !== aIdx) }))}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#991b1b', display: 'inline-flex' }}
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                    <button
+                      className="cf-btn-secondary"
+                      onClick={handleCloseObjectionModal}
+                      disabled={objectionModal.submitting}
+                      style={{ padding: '7px 16px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', fontFamily: 'verdana, arial, sans-serif' }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="cf-btn-primary"
+                      onClick={handleSubmitObjection}
+                      disabled={objectionModal.submitting}
+                      style={{ padding: '7px 18px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#0f172a', border: '1px solid #64748b', fontWeight: '600', fontFamily: 'verdana, arial, sans-serif' }}
+                    >
+                      {objectionModal.submitting ? 'Submitting...' : 'Submit Grievance'}
+                    </button>
+                  </div>
+                </>
               )}
-
-              {objectionModal.success && (
-                <div className="cf-alert cf-alert-success" style={{ fontSize: '8.5pt' }}>
-                  {objectionModal.success}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
-                    Select Objection Category:
-                  </label>
-                  <select
-                    value={objectionModal.reason}
-                    onChange={(e) => setObjectionModal(prev => ({ ...prev, reason: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt' }}
-                  >
-                    <option value="Testcase evaluation discrepancy">Testcase evaluation discrepancy / Hidden testcase error</option>
-                    <option value="MCQ answer key discrepancy">MCQ answer key discrepancy / Alternate correct option</option>
-                    <option value="Partial marks allocation request">Partial marks allocation request</option>
-                    <option value="Compiler runtime or format discrepancy">Compiler runtime or output format discrepancy</option>
-                    <option value="Other grievance">Other academic grievance</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
-                    Detailed Remarks & Explanation:
-                  </label>
-                  <textarea
-                    rows={4}
-                    value={objectionModal.details}
-                    onChange={(e) => setObjectionModal(prev => ({ ...prev, details: e.target.value }))}
-                    placeholder="Provide clear technical rationale why your answer or logic deserves credit..."
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', resize: 'vertical' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                <button
-                  className="cf-btn-secondary"
-                  onClick={handleCloseObjectionModal}
-                  disabled={objectionModal.submitting}
-                  style={{ padding: '7px 16px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #cbd5e1', fontFamily: 'verdana, arial, sans-serif' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="cf-btn-primary"
-                  onClick={handleSubmitObjection}
-                  disabled={objectionModal.submitting}
-                  style={{ padding: '7px 18px', fontSize: '8.5pt', backgroundColor: '#ffffff', color: '#0f172a', border: '1px solid #64748b', fontWeight: '600', fontFamily: 'verdana, arial, sans-serif' }}
-                >
-                  {objectionModal.submitting ? 'Submitting...' : 'Submit Grievance'}
-                </button>
-              </div>
             </div>
           </div>
         )}

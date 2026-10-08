@@ -3,7 +3,7 @@ import {
   Settings, Users, FileText, BookOpen, Activity, Video, Ticket, 
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
-  GraduationCap, Key, LogOut
+  GraduationCap, Key, LogOut, Wrench
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -17,6 +17,7 @@ export default function Sidebar({
   studentProfile,
   systemConfig,
   adminObjectionsList = [],
+  studentObjectionsList = [],
   recycleBinItems = [],
   fetchCandidates,
   fetchSystemLogs,
@@ -27,6 +28,7 @@ export default function Sidebar({
   fetchRecycleBinItems,
   fetchStudentSubmissions,
   fetchSubmittedTestsList,
+  fetchStudentObjections,
   fetchStudentTickets,
   setConsentSuccess,
   setContactSuccess,
@@ -123,6 +125,25 @@ export default function Sidebar({
               </div>
             )}
 
+            {/* Workspace Tools Section (Disabled Coming Soon) */}
+            <div className="sidebar-category">Workspace Tools</div>
+            <button 
+              className="sidebar-item" 
+              disabled 
+              style={{ 
+                opacity: 0.6, 
+                cursor: 'not-allowed', 
+                color: '#94a3b8', 
+                justifyContent: 'flex-start', 
+                gap: '8px', 
+                backgroundColor: 'transparent',
+                border: 'none',
+                width: '100%'
+              }}
+            >
+              <Wrench size={16} /> Coming Soon ...
+            </button>
+
             <div className="sidebar-category">CourseWork</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, coursework: !dropdowns.coursework})}>
               Menu Links {dropdowns.coursework ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -163,9 +184,6 @@ export default function Sidebar({
                 <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user && fetchSubmittedTestsList) fetchSubmittedTestsList(user.id || user._id); }}>
                   <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
                 </button>
-                <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
-                  <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
-                </button>
               </div>
             )}
 
@@ -180,6 +198,17 @@ export default function Sidebar({
                 </button>
                 <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess && setConsentSuccess(''); }}>
                   <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket
+                </button>
+                <button className={`dropdown-item ${view === 'objections' ? 'active' : ''}`} onClick={() => { setView('objections'); setIsMobileSidebarOpen(false); if (user && fetchStudentObjections) fetchStudentObjections(user.id || user._id); }}>
+                  <Flag size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: '#b45309' }} /> Objections
+                  {studentObjectionsList.filter(o => o.status === 'pending').length > 0 && (
+                    <span style={{ marginLeft: 'auto', backgroundColor: '#f59e0b', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                      {studentObjectionsList.filter(o => o.status === 'pending').length}
+                    </span>
+                  )}
+                </button>
+                <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
+                  <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
                 </button>
               </div>
             )}
