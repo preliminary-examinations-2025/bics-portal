@@ -174,7 +174,7 @@ export default function AdminTickets({
           <div className="cf-card" style={{ width: '90%', maxWidth: '600px', padding: '20px', border: '1px solid #b9c9fe', boxShadow: 'none', backgroundColor: '#fff', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>Ticket Details & Resolution</span>
-              <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedAdminTicket(null)}>✕</button>
+              <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedAdminTicket(null)}>Close</button>
             </div>
 
             <div style={{ borderBottom: '1px solid var(--cf-border)', paddingBottom: '15px', marginBottom: '15px' }}>

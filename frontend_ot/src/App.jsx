@@ -4710,15 +4710,15 @@ export default function App() {
                       if (isCandidateChoice && isOfficialCorrect) {
                         borderColor = '#22c55e';
                         bgColor = '#f0fdf4';
-                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>✓ Your Choice (Correct)</span>;
+                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>Your Choice (Correct)</span>;
                       } else if (isCandidateChoice && !isOfficialCorrect) {
                         borderColor = '#ef4444';
                         bgColor = '#fef2f2';
-                        badge = <span style={{ color: '#991b1b', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '4px' }}>✗ Your Selection (Incorrect)</span>;
+                        badge = <span style={{ color: '#991b1b', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '4px' }}>Your Selection (Incorrect)</span>;
                       } else if (isOfficialCorrect) {
                         borderColor = '#22c55e';
                         bgColor = '#f0fdf4';
-                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key</span>;
+                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>Official Answer Key</span>;
                       }
 
                       return (
@@ -4808,7 +4808,7 @@ export default function App() {
                               
                               const pointsScored = tcRes.scoredPoints !== undefined ? Number(tcRes.scoredPoints) : (isPassed ? Number(tc.points || 15) : 0);
                               const maxPoints = tc.points !== undefined ? Number(tc.points) : (tcRes.points !== undefined ? Number(tcRes.points) : 15);
-                              const displayVerdict = tcRes.status ? (isPassed ? `✓ ${tcRes.status}` : `✗ ${tcRes.status}`) : (isPassed ? '✓ Accepted (Passed)' : '✗ Failed / Mismatch');
+                              const displayVerdict = tcRes.status ? (isPassed ? `${tcRes.status}` : `${tcRes.status}`) : (isPassed ? 'Accepted (Passed)' : 'Failed / Mismatch');
 
                               const expectedVal = tc.output !== undefined && tc.output !== null ? tc.output : (tcRes.expectedOutput || '');
                               const actualVal = tcRes.actualOutput !== undefined && tcRes.actualOutput !== null && tcRes.actualOutput !== ''
@@ -5410,7 +5410,7 @@ export default function App() {
                       
                       {/* Critical warning message against closures/refreshes */}
                       <p style={{ fontSize: '10pt', color: '#ef4444', lineHeight: 1.6, marginBottom: '20px', fontWeight: 'bold', backgroundColor: '#fef2f2', padding: '10px', borderRadius: '4px', border: '1px solid #fca5a5' }}>
-                        ⚠️ Do not close this tab or refresh the browser. Refreshing or closing this tab while sync is in progress will interrupt the session upload.
+                        Do not close this tab or refresh the browser. Refreshing or closing this tab while sync is in progress will interrupt the session upload.
                       </p>
 
                       {/* Sync Progress Indicator */}

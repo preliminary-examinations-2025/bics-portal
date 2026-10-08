@@ -4,6 +4,8 @@ import RichText from '../../components/RichText';
 import { API_BASE } from '../../config';
 
 export default function AdminTests({
+  showModalAlert,
+  showModalConfirm,
   systemConfig,
   adminMessage,
   adminError,
@@ -59,6 +61,15 @@ export default function AdminTests({
   runAdminCodeVerification,
   view
 }) {
+  const triggerAlert = (title, msg) => {
+    if (showModalAlert) showModalAlert(title, msg);
+    else alert(`${title}: ${msg}`);
+  };
+
+  const triggerConfirm = (title, msg, onConfirm) => {
+    if (showModalConfirm) showModalConfirm(title, msg, onConfirm);
+    else if (window.confirm(msg)) onConfirm();
+  };
   return (
     <div>
               <h2 style={{ fontSize: '18pt', color: '#002147', marginBottom: '20px' }}>Exam &amp; Tests Manager</h2>
@@ -126,10 +137,10 @@ export default function AdminTests({
                                       if (data.success) {
                                         fetchAdminTests();
                                       } else {
-                                        alert(data.error || "Failed to update verification status.");
+                                        triggerAlert("Verification Status Error", data.error || "Failed to update verification status.");
                                       }
                                     } catch (err) {
-                                      alert("Network Error: Unable to contact API server.");
+                                      triggerAlert("Network Error", "Unable to contact API server.");
                                     }
                                   }}
                                   style={{
@@ -170,10 +181,10 @@ export default function AdminTests({
                                         fetchAdminTests();
                                         fetchStudentActiveTests();
                                       } else {
-                                        alert(data.error || "Failed to toggle display status.");
+                                        triggerAlert("Display Error", data.error || "Failed to toggle display status.");
                                       }
                                     } catch (e) {
-                                      alert("Network Error: Unable to contact API server.");
+                                      triggerAlert("Network Error", "Unable to contact API server.");
                                     }
                                   }}
                                 >
@@ -185,6 +196,36 @@ export default function AdminTests({
                                   onClick={() => handleEditTest(t)}
                                 >
                                   Edit Config
+                                </button>
+                                <button
+                                  className="cf-btn-secondary"
+                                  style={{ padding: '3px 8px', fontSize: '8pt', color: '#1d4ed8', borderColor: '#bfdbfe', backgroundColor: '#eff6ff', cursor: 'pointer' }}
+                                  onClick={() => {
+                                    triggerConfirm(
+                                      "Bulk Re-evaluation",
+                                      `Re-evaluate all candidate submissions for "${t.title}" based on current answer keys and bonus rules?`,
+                                      async () => {
+                                        try {
+                                          const res = await fetch(`${API_BASE}/admin/tests/reevaluate-all/${t.id || t._id}`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' }
+                                          });
+                                          const data = await res.json();
+                                          if (data.success) {
+                                            triggerAlert("Re-evaluation Complete", data.message || `Bulk re-evaluated ${data.count} submissions successfully.`);
+                                            fetchAdminTests();
+                                            if (fetchExamSubmissions) fetchExamSubmissions(t.id || t._id);
+                                          } else {
+                                            triggerAlert("Re-evaluation Failed", data.error || "Failed to bulk re-evaluate submissions.");
+                                          }
+                                        } catch (e) {
+                                          triggerAlert("Network Error", "Failed to connect to server.");
+                                        }
+                                      }
+                                    );
+                                  }}
+                                >
+                                  Re-evaluate All
                                 </button>
                                 <button
                                   className="cf-btn-secondary"
@@ -445,6 +486,22 @@ export default function AdminTests({
                                     setNewExamQuestions(updated);
                                   }}
                                 />
+                              </div>
+                              <div className="cf-input-group" style={{ display: 'flex', alignItems: 'center', paddingTop: '18px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '8.5pt', fontWeight: 'bold', color: '#1d4ed8', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '6px 10px', borderRadius: '4px', width: '100%' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!newExamQuestions[editingQuestionIdx]?.grantBonusToAll}
+                                    onChange={e => {
+                                      const updated = [...newExamQuestions];
+                                      updated[editingQuestionIdx].grantBonusToAll = e.target.checked;
+                                      updated[editingQuestionIdx].isBonus = e.target.checked;
+                                      setNewExamQuestions(updated);
+                                    }}
+                                    style={{ width: '15px', height: '15px', cursor: 'pointer' }}
+                                  />
+                                  <span>Bonus Marks (Give Full Points to All)</span>
+                                </label>
                               </div>
                             </div>
 
@@ -1059,9 +1116,27 @@ export default function AdminTests({
                                 style={{ padding: '3px 8px', fontSize: '8pt' }}
                                 onClick={() => {
                                   setSelectedExamSubmission(s);
+                                  const relatedTest = adminTests.find(t => (t.id || t._id) === s.testId);
                                   const initialScores = {};
                                   s.answers?.forEach(ans => {
-                                    initialScores[ans.questionId] = ans.score || 0;
+                                    if (ans.isManuallyGraded && ans.score !== undefined && ans.score !== null) {
+                                      initialScores[ans.questionId] = Number(ans.score);
+                                    } else {
+                                      const q = relatedTest?.questions?.find(quest => quest.id === ans.questionId);
+                                      if (q) {
+                                        if (q.grantBonusToAll || q.isBonus) {
+                                          initialScores[ans.questionId] = Number(q.points || 0);
+                                        } else if (ans.type === 'mcq' && ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(q.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                                          initialScores[ans.questionId] = Number(q.points || 0);
+                                        } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
+                                          initialScores[ans.questionId] = Number(ans.score);
+                                        } else {
+                                          initialScores[ans.questionId] = 0;
+                                        }
+                                      } else {
+                                        initialScores[ans.questionId] = Number(ans.score || 0);
+                                      }
+                                    }
                                   });
                                   setAdminGradingAnswers(initialScores);
                                   setAdminGradingCodingScore(s.evaluation?.codingScore || 0);
@@ -1084,41 +1159,105 @@ export default function AdminTests({
               {/* DETAILED CANDIDATE EVALUATION MODAL */}
               {selectedExamSubmission && (() => {
                 const testConfig = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
+                const rawTotalScore = Object.values(adminGradingAnswers).reduce((sum, v) => sum + (Number(v) || 0), 0);
+                const maxTestMarks = testConfig?.marks || selectedExamSubmission.totalScore || selectedExamSubmission.evaluation?.totalScore || 100;
+                const currentTotalScore = Math.min(rawTotalScore, maxTestMarks);
+
                 return (
-                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>
-                    <div className="cf-card" style={{ width: '85%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', padding: '20px', border: '1px solid #b9c9fe', backgroundColor: '#fff' }}>
-                      <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Grade Exam Sheet: {selectedExamSubmission.candidateName} ({selectedExamSubmission.studentId})</span>
-                        <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedExamSubmission(null)}></button>
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000, padding: '20px' }}>
+                    <div className="cf-card" style={{ width: '90%', maxWidth: '950px', maxHeight: '92vh', overflowY: 'auto', padding: '24px', border: '1px solid #b9c9fe', backgroundColor: '#fff', borderRadius: '8px' }}>
+                      
+                      {/* Modal Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #e2e8f0', paddingBottom: '14px', marginBottom: '20px' }}>
+                        <div>
+                          <h3 style={{ fontSize: '13pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
+                            Candidate Evaluation &amp; Grade Sheet
+                          </h3>
+                          <div style={{ fontSize: '9.5pt', color: '#475569', marginTop: '3px' }}>
+                            Student: <strong>{selectedExamSubmission.candidateName}</strong> ({selectedExamSubmission.studentId})
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                            <span style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8', padding: '6px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '10pt' }}>
+                              Total: {currentTotalScore} / {maxTestMarks} pts
+                            </span>
+                            {rawTotalScore > maxTestMarks && (
+                              <span style={{ fontSize: '7.5pt', color: '#b45309', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', padding: '2px 8px', borderRadius: '4px', marginTop: '4px' }}>
+                                Notice: Sum of questions ({rawTotalScore} pts) exceeds max test marks ({maxTestMarks} pts). Final score will be capped at {maxTestMarks} pts.
+                              </span>
+                            )}
+                          </div>
+                          <button className="cf-btn-secondary" style={{ padding: '4px 12px', fontSize: '9pt', cursor: 'pointer' }} onClick={() => setSelectedExamSubmission(null)}>
+                            Close
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px', alignItems: 'center' }}>
+                      {/* Proctoring & Test Info Banner */}
+                      <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px', alignItems: 'center', backgroundColor: '#f8fafc', borderColor: '#cbd5e1' }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <strong>Title:</strong> {selectedExamSubmission.testTitle}
+                          <strong>Test Title:</strong> {selectedExamSubmission.testTitle || testConfig?.title}
                         </span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <AlertTriangle size={15} style={{ color: '#d97706' }} />
+                          <AlertTriangle size={15} style={{ color: (Number(selectedExamSubmission.proctoringLog?.fullscreenExits || 0) + Number(selectedExamSubmission.proctoringLog?.tabSwitches || 0)) > 1 ? '#be123c' : '#d97706' }} />
                           <span>Fullscreen Exits: <strong>{selectedExamSubmission.proctoringLog?.fullscreenExits || 0}</strong> • Tab Switches: <strong>{selectedExamSubmission.proctoringLog?.tabSwitches || 0}</strong></span>
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
+                      {/* Answer Sheets List */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', marginBottom: '25px' }}>
                         <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', borderBottom: '2px solid #3b5998', paddingBottom: '6px', margin: 0 }}>
-                          Candidate Answer Sheets (Full Details)
+                          Itemized Question Evaluation ({selectedExamSubmission.answers?.length || 0} Questions)
                         </h4>
 
                         {selectedExamSubmission.answers?.map((ans, idx) => {
                           const questionConfig = testConfig?.questions?.[idx] || testConfig?.questions?.find(q => q.id === ans.questionId);
-                          
+                          const maxPts = Number(questionConfig?.points || 0);
+                          const isBonusQuestion = Boolean(questionConfig?.grantBonusToAll || questionConfig?.isBonus);
+
+                          let calculatedAutoScore = 0;
+                          if (isBonusQuestion) {
+                            calculatedAutoScore = maxPts;
+                          } else if (ans.type === 'mcq' && questionConfig) {
+                            if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(questionConfig.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                              calculatedAutoScore = maxPts;
+                            } else {
+                              calculatedAutoScore = 0;
+                            }
+                          } else if (ans.type === 'coding' && questionConfig) {
+                            if (ans.testCaseResults && ans.testCaseResults.length > 0) {
+                              calculatedAutoScore = ans.testCaseResults.reduce((sum, tc) => {
+                                const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' ? (tc.points || 0) : 0));
+                                return sum + pts;
+                              }, 0);
+                            } else {
+                              calculatedAutoScore = Number(ans.score || 0);
+                            }
+                          } else {
+                            calculatedAutoScore = Number(ans.score || 0);
+                          }
+                          calculatedAutoScore = Math.max(0, Math.min(calculatedAutoScore, maxPts));
+
                           return (
-                            <div key={idx} style={{ padding: '15px', border: '1px solid #cbd5e1', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px' }}>
-                                <h5 style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', margin: 0 }}>
-                                  Question {idx + 1}: {ans.type?.toUpperCase()}
+                            <div key={idx} style={{ padding: '16px', border: '1px solid #cbd5e1', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                                <h5 style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span>Question {idx + 1}: {ans.type?.toUpperCase()}</span>
+                                  {isBonusQuestion && (
+                                    <span style={{ fontSize: '7.5pt', backgroundColor: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                      BONUS QUESTION (+{maxPts} pts)
+                                    </span>
+                                  )}
                                 </h5>
-                                <span style={{ fontSize: '8pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
-                                  Points: {questionConfig?.points || 0}
-                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '8pt', backgroundColor: calculatedAutoScore > 0 ? '#dcfce7' : '#f1f5f9', color: calculatedAutoScore > 0 ? '#15803d' : '#475569', border: `1px solid ${calculatedAutoScore > 0 ? '#86efac' : '#cbd5e1'}`, padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                    Auto Grade: {calculatedAutoScore} / {maxPts} pts
+                                  </span>
+                                  <span style={{ fontSize: '8.5pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 10px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                    Max Points: {maxPts}
+                                  </span>
+                                </div>
                               </div>
 
                               {/* Question Title & Description */}
@@ -1134,12 +1273,12 @@ export default function AdminTests({
                                 />
                               )}
 
-                              {/* Render image if present */}
+                              {/* Question Image */}
                               {questionConfig?.imageUrl && (
                                 <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px', backgroundColor: '#fff', textAlign: 'center', marginBottom: '10px' }}>
                                   <img
                                     src={questionConfig.imageUrl}
-                                    alt="Question Layout/Diagram"
+                                    alt="Question Diagram"
                                     style={{ maxWidth: '100%', maxHeight: '200px', objectFit: 'contain' }}
                                   />
                                 </div>
@@ -1193,10 +1332,46 @@ export default function AdminTests({
                                       </div>
                                     );
                                   })}
+
+                                  {/* Itemized Score Input for MCQ */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px', backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Question Score:</span>
+                                    <input
+                                      type="number"
+                                      className="cf-input"
+                                      style={{ width: '80px', padding: '4px 8px', fontWeight: 'bold', color: '#002147' }}
+                                      min={0}
+                                      max={maxPts}
+                                      value={adminGradingAnswers[ans.questionId] ?? 0}
+                                      onChange={(e) => {
+                                        const val = Math.max(0, Math.min(Number(e.target.value || 0), maxPts));
+                                        setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
+                                      }}
+                                    />
+                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {maxPts} points</span>
+                                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0 }}
+                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: calculatedAutoScore }))}
+                                      >
+                                        Reset Auto ({calculatedAutoScore} pts)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#b45309', backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}
+                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }))}
+                                      >
+                                        Full Points ({maxPts} pts)
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
                               )}
 
-                              {/* Coding Workspace Submitted Answers */}
+                              {/* Coding Answers Display */}
                               {ans.type === 'coding' && (
                                 <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                   <span className="cf-label" style={{ display: 'block', fontWeight: 'bold', fontSize: '9pt' }}>
@@ -1217,7 +1392,7 @@ export default function AdminTests({
                                     {ans.submittedCode || '// No code submitted'}
                                   </pre>
 
-                                  {/* Code Run/Compilation Verification Results */}
+                                  {/* Autograder Verification Status */}
                                   <div style={{ marginTop: '10px', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#f1f5f9' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                       <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Autograder Verification Status:</span>
@@ -1269,7 +1444,7 @@ export default function AdminTests({
                                               }}>
                                                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
                                                   {isPassed ? <Check size={14} /> : <X size={14} />}
-                                                  <span>Test Case 2026{String((testConfig?.questions?.findIndex(q => q.id === ans.questionId) !== -1 ? (testConfig?.questions?.findIndex(q => q.id === ans.questionId) + 1) : 1)).padStart(2, '0')}{String(rIdx + 1).padStart(2, '0')} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
+                                                  <span>Test Case #{rIdx + 1} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
                                                 </span>
                                                 <span style={{ fontSize: '8pt', color: '#64748b' }}>Points: {questionConfig?.testCases?.[rIdx]?.points || 0}</span>
                                               </div>
@@ -1290,19 +1465,40 @@ export default function AdminTests({
                                     )}
                                   </div>
 
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
-                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Score:</span>
+                                  {/* Itemized Score Input for Coding */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px', backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Question Score:</span>
                                     <input
                                       type="number"
                                       className="cf-input"
-                                      style={{ width: '80px', padding: '4px 8px' }}
+                                      style={{ width: '80px', padding: '4px 8px', fontWeight: 'bold', color: '#002147' }}
+                                      min={0}
+                                      max={maxPts}
                                       value={adminGradingAnswers[ans.questionId] ?? 0}
                                       onChange={(e) => {
-                                        const val = Number(e.target.value || 0);
+                                        const val = Math.max(0, Math.min(Number(e.target.value || 0), maxPts));
                                         setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
                                       }}
                                     />
-                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {questionConfig?.points || 0} points</span>
+                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {maxPts} points</span>
+                                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0 }}
+                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: calculatedAutoScore }))}
+                                      >
+                                        Reset Auto ({calculatedAutoScore} pts)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#b45309', backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}
+                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }))}
+                                      >
+                                        Full Points ({maxPts} pts)
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -1398,20 +1594,22 @@ export default function AdminTests({
                                     </div>
                                   )}
 
-                                  {/* Points input */}
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px' }}>
-                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Score:</span>
+                                  {/* Itemized Score Input for Web */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Question Score:</span>
                                     <input
                                       type="number"
                                       className="cf-input"
                                       style={{ width: '80px', padding: '4px 8px' }}
+                                      min={0}
+                                      max={maxPts}
                                       value={adminGradingAnswers[ans.questionId] ?? 0}
                                       onChange={(e) => {
-                                        const val = Number(e.target.value || 0);
+                                        const val = Math.max(0, Math.min(Number(e.target.value || 0), maxPts));
                                         setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
                                       }}
                                     />
-                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {questionConfig?.points || 0} points (Manual Grade)</span>
+                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {maxPts} points</span>
                                   </div>
                                 </div>
                               )}
@@ -1421,15 +1619,15 @@ export default function AdminTests({
                       </div>
 
                     {/* Grading Form */}
-                    <form onSubmit={handleSaveEvaluation} style={{ borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
+                    <form onSubmit={handleSaveEvaluation} style={{ borderTop: '2px solid #cbd5e1', paddingTop: '18px' }}>
                       
                       {/* Contested Re-evaluation Info */}
                       {selectedExamSubmission.reevaluation?.applied && (
                         <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fef3c7', padding: '15px', borderRadius: '6px', marginBottom: '20px', fontSize: '9pt', display: 'flex', flexDirection: 'column', gap: '10px', lineHeight: '1.5' }}>
                           <h5 style={{ fontWeight: 'bold', color: '#b45309', fontSize: '9.5pt', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <ShieldAlert size={16} />
-                                    <span>ACTIVE RE-EVALUATION CLAIM FILED</span>
-                                  </h5>
+                            <ShieldAlert size={16} />
+                            <span>ACTIVE RE-EVALUATION CLAIM FILED</span>
+                          </h5>
                           
                           {selectedExamSubmission.reevaluation.complainedQuestions?.length > 0 && (
                             <div>
@@ -1494,35 +1692,17 @@ export default function AdminTests({
 
                       <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <FileEdit size={16} />
-                        <span>Score Sheet Evaluation</span>
+                        <span>Score Sheet Finalization</span>
                       </h4>
                       
                       <div className="cf-form-grid" style={{ gridTemplateColumns: '1fr 2fr', gap: '15px', marginBottom: '15px' }}>
                         <div className="cf-input-group">
-                          <label className="cf-label">Scored Coding Marks</label>
-                          <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', padding: '6px 0' }}>
-                            {Object.entries(adminGradingAnswers).reduce((sum, [qId, score]) => {
-                              const ans = selectedExamSubmission.answers?.find(a => a.questionId === qId);
-                              return (ans && ans.type === 'coding') ? sum + Number(score || 0) : sum;
-                            }, 0)} marks (Auto-summed)
+                          <label className="cf-label">Total Evaluated Score</label>
+                          <div style={{ fontSize: '14pt', fontWeight: 'bold', color: '#10b981', padding: '6px 0' }}>
+                            {currentTotalScore} / {maxTestMarks} pts
                           </div>
-                          <span style={{ fontSize: '7.5pt', color: '#888', marginTop: '3px' }}>
-                            MCQ Score auto-graded: <strong>{(() => {
-                               const relatedTest = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
-                               if (!relatedTest || !selectedExamSubmission.answers) return selectedExamSubmission.evaluation?.mcqScore || 0;
-                               let score = 0;
-                               selectedExamSubmission.answers.forEach(ans => {
-                                 const q = relatedTest.questions?.find(quest => quest.id === ans.questionId);
-                                 if (q && q.type === 'mcq') {
-                                   if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
-                                     if (Number(q.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                                       score += Number(q.points || 0);
-                                     }
-                                   }
-                                 }
-                               });
-                               return score;
-                             })()}</strong>
+                          <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
+                            Auto-calculated live total across all itemized questions
                           </span>
                         </div>
                         <div className="cf-input-group">
@@ -1543,7 +1723,7 @@ export default function AdminTests({
                           Cancel
                         </button>
                         <button type="submit" className="cf-btn-primary">
-                          Save Candidate Evaluation
+                          Save &amp; Finalize Evaluation
                         </button>
                       </div>
                     </form>

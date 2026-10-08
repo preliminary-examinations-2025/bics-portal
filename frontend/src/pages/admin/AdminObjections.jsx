@@ -212,7 +212,7 @@ export default function AdminObjections({
                 onClick={() => setAdminObjectionModal(prev => ({ ...prev, isOpen: false }))}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '12pt', fontWeight: 'bold' }}
               >
-                ✕
+                Close
               </button>
             </div>
 
@@ -286,11 +286,12 @@ export default function AdminObjections({
 
                 <div>
                   <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
-                    Revised Question Marks:
+                    Revised Question Marks: <span style={{ color: '#1d4ed8', fontWeight: 'bold' }}>(Max: {adminObjectionModal.objection.questionPoints !== undefined ? adminObjectionModal.objection.questionPoints : '10'} pts)</span>
                   </label>
                   <input
                     type="number"
                     min="0"
+                    max={adminObjectionModal.objection.questionPoints !== undefined ? adminObjectionModal.objection.questionPoints : 100}
                     step="1"
                     value={adminObjectionModal.revisedMarks}
                     onChange={e => setAdminObjectionModal(prev => ({ ...prev, revisedMarks: Number(e.target.value || 0) }))}

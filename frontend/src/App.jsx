@@ -1814,9 +1814,21 @@ int main() {
   };
 
   const fetchExamSubmissions = async (testId) => {
+    const targetId = testId || 'all';
     setLoadingMessage("Fetching exam submission details...");
     try {
-      const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
+      const res = await fetch(`${API_BASE}/admin/tests/submissions/${targetId}`);
+      if (!res.ok) {
+        console.warn(`[Submissions Fetch] Response returned status ${res.status}`);
+        setAdminExamSubmissions([]);
+        return;
+      }
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.warn('[Submissions Fetch] Response is not JSON format');
+        setAdminExamSubmissions([]);
+        return;
+      }
       const data = await res.json();
       if (Array.isArray(data)) {
         setAdminExamSubmissions(data);
@@ -1865,13 +1877,14 @@ int main() {
 
       return {
         ...ans,
-        score: (ans.type === 'coding' || ans.type === 'web') ? Number(adminGradingAnswers[ans.questionId] || 0) : ans.score,
+        score: adminGradingAnswers[ans.questionId] !== undefined ? Number(adminGradingAnswers[ans.questionId]) : ans.score,
         testCaseResults: updatedTestCaseResults || ans.testCaseResults
       };
     });
 
     try {
-      const res = await fetch(`${API_BASE}/admin/tests/evaluate/${selectedExamSubmission.id || selectedExamSubmission._id}`, {
+      const targetSubId = selectedExamSubmission.id || selectedExamSubmission._id;
+      const res = await fetch(`${API_BASE}/admin/tests/evaluate/${targetSubId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1885,7 +1898,8 @@ int main() {
       const data = await res.json();
       if (data.success) {
         showModalAlert("Evaluation Saved", "Candidate sheet evaluation has been saved successfully! Status marked as evaluated.");
-        fetchExamSubmissions(selectedExamSubmission.testId);
+        fetchExamSubmissions(selectedExamSubmission.testId || 'all');
+        if (fetchAdminTests) fetchAdminTests();
         setSelectedExamSubmission(null);
         setAdminGradingCodingScore(0);
         setAdminGradingFeedback('');
@@ -2532,6 +2546,10 @@ int main() {
         setTimeout(() => {
           setAdminObjectionModal(prev => ({ ...prev, isOpen: false }));
           fetchAdminObjections();
+          if (adminObjectionModal.objection?.testId && fetchExamSubmissions) {
+            fetchExamSubmissions(adminObjectionModal.objection.testId);
+          }
+          if (fetchStudentActiveTests) fetchStudentActiveTests();
         }, 1000);
       } else {
         setAdminObjectionModal(prev => ({ ...prev, submitting: false, error: data.error || 'Failed to resolve objection.' }));
@@ -3581,6 +3599,8 @@ int main() {
 
               {view === 'admin_tests' && systemConfig && (
                 <AdminTests
+                  showModalAlert={showModalAlert}
+                  showModalConfirm={showModalConfirm}
                   systemConfig={systemConfig}
                   adminMessage={adminMessage}
                   adminError={adminError}

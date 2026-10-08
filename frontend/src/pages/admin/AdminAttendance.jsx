@@ -252,7 +252,7 @@ export default function AdminAttendance({
                   <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '14px 16px', marginBottom: '16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                       <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                        📅 Timetable Schedule Details (Auto-Fetched & Editable)
+                        Timetable Schedule Details (Auto-Fetched & Editable)
                       </span>
                       <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
                         Matched: <strong>{selectedCourseCode}</strong>
@@ -402,7 +402,7 @@ export default function AdminAttendance({
                   {isLab && (
                     <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '6px', padding: '12px 16px' }}>
                       <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#166534', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        🔬 Lab Examination Sheet Type:
+                        Lab Examination Sheet Type:
                       </div>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         {[

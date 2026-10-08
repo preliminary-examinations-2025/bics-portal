@@ -620,33 +620,98 @@ const RecycleBinSchema = new mongoose.Schema({
 RecycleBinSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // MongoDB TTL Index
 const RecycleBinModel = mongoose.model('RecycleBinV2', RecycleBinSchema, 'recycle_bin_v2');
 
-function recalculateMCQScore(submission, test) {
-    if (!test || !submission) return;
-    let mcqPoints = 0;
+function calculateSubmissionScore(submission, test) {
+    if (!test || !submission) return submission;
+    
     submission.answers = submission.answers || [];
+    let mcqPoints = 0;
+    let codingPoints = 0;
+    let webPoints = 0;
+
+    const questionMap = new Map();
+    (test.questions || []).forEach((q, idx) => {
+        const key = q.id ? String(q.id) : (q._id ? String(q._id) : String(idx));
+        questionMap.set(key, q);
+    });
+
     submission.answers.forEach((ans, index) => {
         let quest = null;
         if (ans.questionId && String(ans.questionId) !== 'undefined') {
-            quest = test.questions.find(q => (q.id && String(q.id) === String(ans.questionId)) || (q._id && String(q._id) === String(ans.questionId)));
+            quest = questionMap.get(String(ans.questionId));
         }
         if (!quest && test.questions && test.questions[index]) {
             quest = test.questions[index];
         }
-        if (quest && quest.type === 'mcq') {
-            if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
-                if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                    ans.score = Number(quest.points || 0);
-                    mcqPoints += Number(quest.points || 0);
+
+        const qPoints = Number(quest?.points || ans.maxPoints || 0);
+
+        // 1. Check Bonus Question Rules
+        if (quest && (quest.isBonus || quest.grantBonusToAll || quest.isBonusQuestion)) {
+            ans.score = qPoints;
+            ans.isBonusAwarded = true;
+        } 
+        // 2. MCQ Automated Scoring (if not manually overridden or objection resolved)
+        else if (quest && quest.type === 'mcq') {
+            if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
+                if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
+                    if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                        ans.score = qPoints;
+                    } else {
+                        ans.score = 0;
+                    }
                 } else {
                     ans.score = 0;
                 }
-            } else {
-                ans.score = 0;
             }
         }
+        // 3. Coding Automated Scoring (if testCaseResults exist and not manually graded)
+        else if (quest && quest.type === 'coding') {
+            if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
+                if (ans.testCaseResults && ans.testCaseResults.length > 0) {
+                    let tcPoints = 0;
+                    ans.testCaseResults.forEach(tc => {
+                        const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' ? (tc.points || 0) : 0));
+                        tcPoints += pts;
+                    });
+                    ans.score = tcPoints;
+                } else if (ans.score === undefined || ans.score === null) {
+                    ans.score = 0;
+                }
+            }
+        }
+
+        // Strict per-question boundary guard (0 <= ans.score <= qPoints)
+        ans.score = Math.max(0, Math.min(Number(ans.score || 0), qPoints));
+
+        // Accumulate by type
+        if (quest?.type === 'coding') {
+            codingPoints += ans.score;
+        } else if (quest?.type === 'web') {
+            webPoints += ans.score;
+        } else {
+            mcqPoints += ans.score;
+        }
     });
+
+    const rawTotal = mcqPoints + codingPoints + webPoints;
+    const testMaxMarks = Number(test.marks || 100);
+    const finalTotal = Math.min(rawTotal, testMaxMarks);
+
+    submission.score = finalTotal;
+    submission.totalScore = finalTotal;
+
     submission.evaluation = submission.evaluation || {};
     submission.evaluation.mcqScore = mcqPoints;
+    submission.evaluation.codingScore = codingPoints + webPoints;
+    submission.evaluation.webScore = webPoints;
+    submission.evaluation.totalScore = finalTotal;
+    submission.evaluation.score = finalTotal;
+
+    return submission;
+}
+
+function recalculateMCQScore(submission, test) {
+    return calculateSubmissionScore(submission, test);
 }
 
 function calculateCodingScoreFast(submission, test) {
@@ -3569,42 +3634,50 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
     const { testId } = req.params;
     try {
         let subs = [];
-        let test = null;
         if (useMongo) {
-            if (!mongoose.Types.ObjectId.isValid(testId)) {
-                return res.status(400).json({ error: "Invalid test ObjectId format." });
+            if (!testId || testId === 'all') {
+                subs = await TestSubmissionModel.find({ isDeleted: { $ne: true } }).sort({ startedAt: -1 });
+            } else if (mongoose.Types.ObjectId.isValid(testId)) {
+                subs = await TestSubmissionModel.find({
+                    $or: [{ testId: new mongoose.Types.ObjectId(testId) }, { testId: String(testId) }],
+                    isDeleted: { $ne: true }
+                }).sort({ startedAt: -1 });
+            } else {
+                subs = await TestSubmissionModel.find({ testId: String(testId), isDeleted: { $ne: true } }).sort({ startedAt: -1 });
             }
-            test = await TestConfigModel.findById(testId);
-            if (!test) {
-                return res.status(404).json({ error: "Test configuration not found." });
-            }
-            subs = await TestSubmissionModel.find({ testId: test._id, isDeleted: { $ne: true } }).sort({ startedAt: -1 });
 
-            // Auto-heal MCQ scores dynamically
-            if (test) {
-                for (let sub of subs) {
-                    try {
-                        recalculateMCQScore(sub, test);
-                    } catch (err) {
-                        console.error("MCQ score recalculation warning:", err);
+            // Auto-heal dynamic scores against test configs
+            const allTests = await TestConfigModel.find({});
+            for (let sub of subs) {
+                try {
+                    const matchingTest = allTests.find(t => String(t._id || t.id) === String(sub.testId));
+                    if (matchingTest) {
+                        calculateSubmissionScore(sub, matchingTest);
                     }
+                } catch (err) {
+                    console.error("Score recalculation warning:", err);
                 }
             }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            subs = db.testSubmissions.filter(s => s.testId === testId);
-            test = db.tests.find(t => t.id === testId || t._id === testId);
-            if (test) {
-                subs.forEach(sub => {
-                    try {
-                        recalculateMCQScore(sub, test);
-                    } catch (err) {
-                        console.error("MCQ score recalculation warning:", err);
-                    }
-                });
-                saveJSONData(db);
+            if (!testId || testId === 'all') {
+                subs = db.testSubmissions.filter(s => !s.isDeleted);
+            } else {
+                subs = db.testSubmissions.filter(s => String(s.testId) === String(testId) && !s.isDeleted);
             }
+            const allTests = db.tests || [];
+            subs.forEach(sub => {
+                const matchingTest = allTests.find(t => String(t.id || t._id) === String(sub.testId));
+                if (matchingTest) {
+                    try {
+                        calculateSubmissionScore(sub, matchingTest);
+                    } catch (err) {
+                        console.error("Score recalculation warning:", err);
+                    }
+                }
+            });
+            saveJSONData(db);
         }
         return res.json(subs || []);
     } catch (e) {
@@ -3613,25 +3686,44 @@ app.get('/api/admin/tests/submissions/:testId', async (req, res) => {
     }
 });
 
-// 9. Save manual grading score and feedback for coding tasks (Admin only)
+// 9. Save manual grading score and feedback for coding/MCQ/web tasks (Admin only)
 app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
     const { codingScore, feedback, reevaluationStatus, resolutionFeedback, answers } = req.body;
 
     try {
         let submission = null;
+        let test = null;
+
         if (useMongo) {
-            submission = await TestSubmissionModel.findById(submissionId);
+            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+                submission = await TestSubmissionModel.findById(submissionId);
+            }
+            if (!submission) {
+                submission = await TestSubmissionModel.findOne({ id: submissionId });
+            }
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
+            test = await TestConfigModel.findById(submission.testId);
+            if (!test) {
+                test = await TestConfigModel.findOne({ id: submission.testId });
+            }
+
             if (answers && Array.isArray(answers)) {
-                submission.answers = answers;
+                answers.forEach(item => {
+                    const existingAns = (submission.answers || []).find(a => String(a.questionId) === String(item.questionId));
+                    if (existingAns && item.score !== undefined && !isNaN(item.score)) {
+                        const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
+                        const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
+                        existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
+                        existingAns.isManuallyGraded = true;
+                    }
+                });
             }
-            const test = await TestConfigModel.findById(submission.testId);
+
             if (test) {
-                recalculateMCQScore(submission, test);
+                calculateSubmissionScore(submission, test);
             }
-            submission.evaluation.codingScore = Number(codingScore || 0);
             submission.evaluation.feedback = feedback || '';
             submission.evaluation.evaluatedAt = new Date();
             submission.status = 'evaluated';
@@ -3653,17 +3745,26 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            submission = db.testSubmissions.find(s => String(s.id || s._id) === String(submissionId));
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
+            test = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
+
             if (answers && Array.isArray(answers)) {
-                submission.answers = answers;
+                answers.forEach(item => {
+                    const existingAns = (submission.answers || []).find(a => String(a.questionId) === String(item.questionId));
+                    if (existingAns && item.score !== undefined && !isNaN(item.score)) {
+                        const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
+                        const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
+                        existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
+                        existingAns.isManuallyGraded = true;
+                    }
+                });
             }
-            const test = db.tests.find(t => t.id === submission.testId || t._id === submission.testId);
+
             if (test) {
-                recalculateMCQScore(submission, test);
+                calculateSubmissionScore(submission, test);
             }
-            submission.evaluation.codingScore = Number(codingScore || 0);
             submission.evaluation.feedback = feedback || '';
             submission.evaluation.evaluatedAt = new Date();
             submission.status = 'evaluated';
@@ -3678,7 +3779,7 @@ app.post('/api/admin/tests/evaluate/:submissionId', async (req, res) => {
 
             saveJSONData(db);
         }
-        await logSystemAction('admin', 'STUDENT_EVALUATED', `Evaluated exam submission ID: ${submissionId} for student "${submission?.candidateName || 'Unknown'}" (Coding: ${codingScore} marks)`, 'info');
+        await logSystemAction('admin', 'STUDENT_EVALUATED', `Evaluated exam submission ID: ${submissionId} for student "${submission?.candidateName || 'Unknown'}"`, 'info');
         return res.json({ success: true, submission });
     } catch (e) {
         await logSystemAction('admin', 'TECHNICAL_ERROR', `Failed to save candidate evaluation details: ${e.message || e}`, 'error');
@@ -3920,9 +4021,13 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
 
     try {
         let submission = null;
+        let test = null;
+
         if (useMongo) {
             submission = await TestSubmissionModel.findById(submissionId);
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+
+            test = await TestConfigModel.findById(submission.testId);
 
             submission.objections = submission.objections || [];
             const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex) || (questionId && String(o.questionId) === String(questionId)));
@@ -3931,9 +4036,8 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             obj.status = status; // 'resolved' or 'rejected'
             obj.adminRemarks = adminRemarks || '';
             obj.resolvedAt = new Date();
-            if (revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
-                obj.resolvedMarks = Number(revisedMarks);
-                
+
+            if (status === 'resolved' && revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
                 let targetAnswer = null;
                 if (obj.questionId) {
                     targetAnswer = (submission.answers || []).find(a => String(a.questionId) === String(obj.questionId));
@@ -3941,33 +4045,28 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
                 if (!targetAnswer && submission.answers && submission.answers[questionIndex]) {
                     targetAnswer = submission.answers[questionIndex];
                 }
-                if (targetAnswer) {
-                    targetAnswer.score = Number(revisedMarks);
+
+                const quest = test?.questions?.find(q => String(q.id || q._id) === String(obj.questionId || (targetAnswer && targetAnswer.questionId))) || test?.questions?.[questionIndex];
+                const maxPts = Number(quest?.points || targetAnswer?.maxPoints || 100);
+
+                if (Number(revisedMarks) > maxPts) {
+                    return res.status(400).json({ success: false, error: `Revised marks (${revisedMarks}) cannot exceed maximum question marks (${maxPts}).` });
+                }
+                if (Number(revisedMarks) < 0) {
+                    return res.status(400).json({ success: false, error: `Revised marks cannot be negative.` });
                 }
 
-                let totalCoding = 0;
-                let totalMCQ = 0;
-                let hasCodingInAnswers = false;
-                let hasMCQInAnswers = false;
-                (submission.answers || []).forEach(a => {
-                    if (a.type === 'coding' || a.type === 'web') {
-                        totalCoding += (Number(a.score) || 0);
-                        hasCodingInAnswers = true;
-                    } else {
-                        totalMCQ += (Number(a.score) || 0);
-                        hasMCQInAnswers = true;
-                    }
-                });
-                submission.evaluation = submission.evaluation || {};
-                if (hasCodingInAnswers) {
-                    submission.evaluation.codingScore = totalCoding;
+                obj.resolvedMarks = Number(revisedMarks);
+                if (targetAnswer) {
+                    targetAnswer.score = Number(revisedMarks);
+                    targetAnswer.isObjectionResolved = true;
                 }
-                if (hasMCQInAnswers) {
-                    submission.evaluation.mcqScore = totalMCQ;
+
+                if (test) {
+                    calculateSubmissionScore(submission, test);
                 }
-                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + (submission.evaluation.codingScore || 0);
-                submission.evaluation.score = submission.evaluation.totalScore;
             }
+
             submission.markModified('objections');
             submission.markModified('answers');
             submission.markModified('evaluation');
@@ -3978,6 +4077,8 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
 
+            test = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
+
             submission.objections = submission.objections || [];
             const obj = submission.objections.find(o => o.questionIndex === Number(questionIndex) || (questionId && String(o.questionId) === String(questionId)));
             if (!obj) return res.status(404).json({ success: false, error: "Objection not found." });
@@ -3985,9 +4086,8 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
             obj.status = status;
             obj.adminRemarks = adminRemarks || '';
             obj.resolvedAt = new Date();
-            if (revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
-                obj.resolvedMarks = Number(revisedMarks);
-                
+
+            if (status === 'resolved' && revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
                 let targetAnswer = null;
                 if (obj.questionId) {
                     targetAnswer = (submission.answers || []).find(a => String(a.questionId) === String(obj.questionId));
@@ -3995,33 +4095,28 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
                 if (!targetAnswer && submission.answers && submission.answers[questionIndex]) {
                     targetAnswer = submission.answers[questionIndex];
                 }
-                if (targetAnswer) {
-                    targetAnswer.score = Number(revisedMarks);
+
+                const quest = test?.questions?.find(q => String(q.id || q._id) === String(obj.questionId || (targetAnswer && targetAnswer.questionId))) || test?.questions?.[questionIndex];
+                const maxPts = Number(quest?.points || targetAnswer?.maxPoints || 100);
+
+                if (Number(revisedMarks) > maxPts) {
+                    return res.status(400).json({ success: false, error: `Revised marks (${revisedMarks}) cannot exceed maximum question marks (${maxPts}).` });
+                }
+                if (Number(revisedMarks) < 0) {
+                    return res.status(400).json({ success: false, error: `Revised marks cannot be negative.` });
                 }
 
-                let totalCoding = 0;
-                let totalMCQ = 0;
-                let hasCodingInAnswers = false;
-                let hasMCQInAnswers = false;
-                (submission.answers || []).forEach(a => {
-                    if (a.type === 'coding' || a.type === 'web') {
-                        totalCoding += (Number(a.score) || 0);
-                        hasCodingInAnswers = true;
-                    } else {
-                        totalMCQ += (Number(a.score) || 0);
-                        hasMCQInAnswers = true;
-                    }
-                });
-                submission.evaluation = submission.evaluation || {};
-                if (hasCodingInAnswers) {
-                    submission.evaluation.codingScore = totalCoding;
+                obj.resolvedMarks = Number(revisedMarks);
+                if (targetAnswer) {
+                    targetAnswer.score = Number(revisedMarks);
+                    targetAnswer.isObjectionResolved = true;
                 }
-                if (hasMCQInAnswers) {
-                    submission.evaluation.mcqScore = totalMCQ;
+
+                if (test) {
+                    calculateSubmissionScore(submission, test);
                 }
-                submission.evaluation.totalScore = (submission.evaluation.mcqScore || 0) + (submission.evaluation.codingScore || 0);
-                submission.evaluation.score = submission.evaluation.totalScore;
             }
+
             saveJSONData(db);
         }
 
@@ -4029,6 +4124,49 @@ app.post('/api/admin/tests/objection/resolve', async (req, res) => {
         return res.json({ success: true, message: `Objection marked as ${status}.`, submission });
     } catch (err) {
         console.error("Failed to resolve objection:", err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 10d-2. Admin Bulk Re-evaluate Submissions for a Test Configuration
+app.post('/api/admin/tests/reevaluate-all/:testId', async (req, res) => {
+    const { testId } = req.params;
+    try {
+        let test = null;
+        let subs = [];
+        let updatedCount = 0;
+
+        if (useMongo) {
+            test = await TestConfigModel.findById(testId);
+            if (!test) return res.status(404).json({ success: false, error: "Test configuration not found." });
+
+            subs = await TestSubmissionModel.find({ testId: testId });
+            for (let sub of subs) {
+                calculateSubmissionScore(sub, test);
+                sub.markModified('answers');
+                sub.markModified('evaluation');
+                await sub.save();
+                updatedCount++;
+            }
+        } else {
+            const db = getJSONData();
+            db.tests = db.tests || [];
+            db.testSubmissions = db.testSubmissions || [];
+            test = db.tests.find(t => String(t.id || t._id) === String(testId));
+            if (!test) return res.status(404).json({ success: false, error: "Test configuration not found." });
+
+            subs = db.testSubmissions.filter(s => String(s.testId) === String(testId));
+            subs.forEach(sub => {
+                calculateSubmissionScore(sub, test);
+                updatedCount++;
+            });
+            saveJSONData(db);
+        }
+
+        await logSystemAction('admin', 'BULK_REEVALUATION', `Bulk re-evaluated ${updatedCount} submissions for test "${test.title}"`, 'info');
+        return res.json({ success: true, count: updatedCount, message: `Bulk re-evaluated ${updatedCount} candidate submissions successfully.` });
+    } catch (err) {
+        console.error("Failed to bulk re-evaluate submissions:", err);
         return res.status(500).json({ success: false, error: err.message });
     }
 });

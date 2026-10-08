@@ -16,7 +16,7 @@ export default function StudentCoC() {
         <li>Sharing login credentials or letting third parties access your BICS portal is a critical violation of student conduct.</li>
       </ul>
 
-      <div className="cf-form-section">⏳ Section 2: Engagement &amp; Timelines</div>
+      <div className="cf-form-section">Section 2: Engagement &amp; Timelines</div>
       <ul style={{ paddingLeft: '20px', marginBottom: '20px', fontSize: '9pt', lineHeight: '1.8', color: '#444' }}>
         <li>Candidates are expected to watch all video lecture modules and read the associated textbook chapters in the sequence provided.</li>
         <li>Assignments must be submitted before the deadlines specified. Requests for extensions require valid medical documentation and admin approval.</li>

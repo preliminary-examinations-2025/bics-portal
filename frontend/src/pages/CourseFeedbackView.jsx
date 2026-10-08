@@ -344,7 +344,7 @@ export default function CourseFeedbackView({
                               transition: 'all 0.15s'
                             }}
                           >
-                            {opt === 'Yes' ? '✓ Yes' : '✗ No'}
+                            {opt === 'Yes' ? 'Yes' : 'No'}
                           </button>
                         );
                       })}

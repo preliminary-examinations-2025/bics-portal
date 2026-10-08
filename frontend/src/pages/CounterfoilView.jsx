@@ -596,7 +596,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
                             </td>
                             <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: '8pt' }}>
                               {currentVal !== '' && currentVal !== undefined ? (
-                                <span style={{ color: '#047857', fontWeight: 'bold' }}>✓ Recorded</span>
+                                <span style={{ color: '#047857', fontWeight: 'bold' }}>Recorded</span>
                               ) : (
                                 <span style={{ color: '#94a3b8' }}>Pending</span>
                               )}

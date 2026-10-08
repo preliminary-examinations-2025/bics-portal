@@ -170,7 +170,7 @@ export default function AdminCounterfoilView({ systemConfig, setSystemConfig, ha
               cursor: 'pointer'
             }}
           >
-            ⏳ Pending ({pendingCount})
+            Pending ({pendingCount})
           </button>
 
           <button
@@ -186,7 +186,7 @@ export default function AdminCounterfoilView({ systemConfig, setSystemConfig, ha
               cursor: 'pointer'
             }}
           >
-            ✓ Approved ({approvedCount})
+            Approved ({approvedCount})
           </button>
 
           <button
@@ -202,7 +202,7 @@ export default function AdminCounterfoilView({ systemConfig, setSystemConfig, ha
               cursor: 'pointer'
             }}
           >
-            ✕ Rejected ({rejectedCount})
+            Rejected ({rejectedCount})
           </button>
         </div>
 
@@ -304,13 +304,13 @@ export default function AdminCounterfoilView({ systemConfig, setSystemConfig, ha
                     </td>
                     <td>
                       {cf.status === 'approved' && (
-                        <span className="status-badge" style={{ backgroundColor: '#d1fae5', color: '#047857', border: '1px solid #a7f3d0' }}>✓ Approved</span>
+                        <span className="status-badge" style={{ backgroundColor: '#d1fae5', color: '#047857', border: '1px solid #a7f3d0' }}>Approved</span>
                       )}
                       {cf.status === 'pending_approval' && (
-                        <span className="status-badge" style={{ backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>⏳ Pending</span>
+                        <span className="status-badge" style={{ backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>Pending</span>
                       )}
                       {cf.status === 'rejected' && (
-                        <span className="status-badge" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}>✕ Rejected</span>
+                        <span className="status-badge" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}>Rejected</span>
                       )}
                     </td>
                     <td>
