@@ -26,7 +26,16 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
             const totalMax = Number(st.marks || 0);
             let totalScored = 0;
             if (sub.answers && Array.isArray(sub.answers) && sub.answers.length > 0) {
-              totalScored = sub.answers.reduce((sum, a) => sum + Number(a.score || 0), 0);
+              totalScored = sub.answers.reduce((sum, a, idx) => {
+                const resObj = (sub.objections || []).find(o => 
+                  (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+                  (o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId)))
+                );
+                const aScore = (resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null) 
+                  ? Number(resObj.resolvedMarks) 
+                  : Number(a.score || 0);
+                return sum + aScore;
+              }, 0);
             } else if (sub.totalScore !== undefined && sub.totalScore !== null) {
               totalScored = Number(sub.totalScore);
             } else if (sub.evaluation?.totalScore !== undefined && sub.evaluation?.totalScore !== null) {

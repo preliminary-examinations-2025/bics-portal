@@ -540,6 +540,8 @@ const AnswerSchema = new mongoose.Schema({
     submittedCss: String, // for Web Coding (CSS)
     submittedJs: String, // for Web Coding (JS)
     score: { type: Number, default: 0 }, // Scored marks for this question
+    isObjectionResolved: { type: Boolean, default: false },
+    isManuallyGraded: { type: Boolean, default: false },
     testCaseResults: [{
         status: String,
         points: Number,
@@ -645,8 +647,18 @@ function calculateSubmissionScore(submission, test) {
 
         const qPoints = Number(quest?.points || ans.maxPoints || 0);
 
+        // Check if an objection was resolved for this question
+        const resolvedObj = (submission.objections || []).find(o => 
+            (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+            (o.questionIndex === index || (o.questionId && String(o.questionId) === String(ans.questionId)))
+        );
+
+        if (resolvedObj && resolvedObj.resolvedMarks !== undefined && resolvedObj.resolvedMarks !== null && !isNaN(resolvedObj.resolvedMarks)) {
+            ans.score = Number(resolvedObj.resolvedMarks);
+            ans.isObjectionResolved = true;
+        }
         // 1. Check Bonus Question Rules
-        if (quest && (quest.isBonus || quest.grantBonusToAll || quest.isBonusQuestion)) {
+        else if (quest && (quest.isBonus || quest.grantBonusToAll || quest.isBonusQuestion)) {
             ans.score = qPoints;
             ans.isBonusAwarded = true;
         } 

@@ -1106,7 +1106,18 @@ export default function AdminTests({
                               </span>
                             </td>
                             <td style={{ fontWeight: 'bold' }}>
-                               {s.totalScore !== undefined && s.totalScore !== null ? Number(s.totalScore) : (s.evaluation?.totalScore !== undefined && s.evaluation?.totalScore !== null ? Number(s.evaluation.totalScore) : (s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`))}
+                              {(() => {
+                                if (s.answers && Array.isArray(s.answers) && s.answers.length > 0) {
+                                  return s.answers.reduce((sum, a, idx) => {
+                                    const resObj = (s.objections || []).find(o => 
+                                      (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+                                      (o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId)))
+                                    );
+                                    return sum + ((resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null) ? Number(resObj.resolvedMarks) : Number(a.score || 0));
+                                  }, 0);
+                                }
+                                return s.totalScore !== undefined && s.totalScore !== null ? Number(s.totalScore) : (s.evaluation?.totalScore !== undefined && s.evaluation?.totalScore !== null ? Number(s.evaluation.totalScore) : (s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`));
+                              })()}
                             </td>
                             <td>
                               <button
