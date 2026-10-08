@@ -1106,9 +1106,7 @@ export default function AdminTests({
                               </span>
                             </td>
                             <td style={{ fontWeight: 'bold' }}>
-                              {s.status === 'evaluated'
-                                ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0))
-                                : `${s.evaluation?.mcqScore || 0} (MCQ)`}
+                               {s.totalScore !== undefined && s.totalScore !== null ? Number(s.totalScore) : (s.evaluation?.totalScore !== undefined && s.evaluation?.totalScore !== null ? Number(s.evaluation.totalScore) : (s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`))}
                             </td>
                             <td>
                               <button

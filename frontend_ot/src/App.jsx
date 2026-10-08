@@ -4718,7 +4718,7 @@ export default function App() {
                       } else if (isOfficialCorrect) {
                         borderColor = '#22c55e';
                         bgColor = '#f0fdf4';
-                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>Official Answer Key</span>;
+                        badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key</span>;
                       }
 
                       return (

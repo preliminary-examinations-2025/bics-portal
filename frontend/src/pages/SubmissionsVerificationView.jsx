@@ -23,8 +23,22 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
             const sub = st.submission || {};
             const vStatus = st.verificationStatus || (st.answersReleased ? 'released' : 'not_released');
             const isReleased = (vStatus === 'released' || vStatus === 'closed');
-            const totalScored = Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0);
             const totalMax = Number(st.marks || 0);
+            let totalScored = 0;
+            if (sub.answers && Array.isArray(sub.answers) && sub.answers.length > 0) {
+              totalScored = sub.answers.reduce((sum, a) => sum + Number(a.score || 0), 0);
+            } else if (sub.totalScore !== undefined && sub.totalScore !== null) {
+              totalScored = Number(sub.totalScore);
+            } else if (sub.evaluation?.totalScore !== undefined && sub.evaluation?.totalScore !== null) {
+              totalScored = Number(sub.evaluation.totalScore);
+            } else if (sub.score !== undefined && sub.score !== null) {
+              totalScored = Number(sub.score);
+            } else {
+              totalScored = Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0);
+            }
+            if (totalMax > 0) {
+              totalScored = Math.min(totalScored, totalMax);
+            }
             const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
             const objectionsCount = (sub.objections || []).length;
 
