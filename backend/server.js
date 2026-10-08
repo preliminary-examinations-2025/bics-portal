@@ -4287,7 +4287,7 @@ app.get('/api/admin/objections', async (req, res) => {
                     targetQuest = {
                         title: targetAns.questionTitle || targetAns.title || `Question #${(obj.questionIndex || 0) + 1}`,
                         description: targetAns.questionDescription || targetAns.questionText || targetAns.description || targetAns.problemStatement || '',
-                        type: targetAns.type || (targetAns.submittedCode ? 'coding' : 'mcq')
+                        type: targetQuest?.type || targetAns?.type || (targetAns?.submittedHtml !== undefined || targetAns?.submittedCss !== undefined || targetAns?.submittedJs !== undefined ? 'web' : (targetAns?.submittedCode ? 'coding' : 'mcq'))
                     };
                 }
 
@@ -4371,7 +4371,7 @@ app.get('/api/tests/objections/student', async (req, res) => {
                     targetQuest = {
                         title: targetAns.questionTitle || targetAns.title || `Question #${(obj.questionIndex || 0) + 1}`,
                         description: targetAns.questionDescription || targetAns.questionText || targetAns.description || targetAns.problemStatement || '',
-                        type: targetAns.type || (targetAns.submittedCode ? 'coding' : 'mcq')
+                        type: targetQuest?.type || targetAns?.type || (targetAns?.submittedHtml !== undefined || targetAns?.submittedCss !== undefined || targetAns?.submittedJs !== undefined ? 'web' : (targetAns?.submittedCode ? 'coding' : 'mcq'))
                     };
                 }
 

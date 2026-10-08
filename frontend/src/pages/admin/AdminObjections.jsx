@@ -335,11 +335,19 @@ export default function AdminObjections({
               const qDesc = q?.description || q?.questionText || q?.problemStatement || q?.text || ans?.questionDescription || ans?.questionText || '';
 
               const isWeb = q?.type === 'web' || ans?.type === 'web' || q?.playgroundLanguage === 'web' ||
-                            ans?.submittedHtml !== undefined || ans?.submittedCss !== undefined || ans?.submittedJs !== undefined ||
-                            (qTitle && qTitle.toLowerCase().includes('web design')) ||
-                            (qDesc && (qDesc.toLowerCase().includes('html') || qDesc.toLowerCase().includes('responsive card')));
+                            ans?.submittedHtml !== undefined || ans?.submittedCss !== undefined || ans?.submittedJs !== undefined;
 
-              const qType = isWeb ? 'web' : (q?.type || ans?.type || (ans.submittedCode ? 'coding' : 'mcq'));
+              const rawType = q?.type || ans?.type;
+              let qType = rawType;
+              if (isWeb) {
+                qType = 'web';
+              } else if (!qType) {
+                if (ans?.selectedOptionIndex !== undefined || (Array.isArray(q?.options) && q.options.length > 0)) {
+                  qType = 'mcq';
+                } else {
+                  qType = 'coding';
+                }
+              }
 
               if (qType === 'mcq') {
                 return (
