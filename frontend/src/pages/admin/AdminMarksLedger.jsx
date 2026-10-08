@@ -10,8 +10,10 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
   const [selectedCourseCode, setSelectedCourseCode] = useState('R526CS01T');
   const [activeTab, setActiveTab] = useState('ta'); // 'ta', 'mst', 'ese', 'consolidated', 'master'
   const [ledgerData, setLedgerData] = useState(null);
-  const [availableTests, setAvailableTests] = useState([]);
-  const [selectedTestId, setSelectedTestId] = useState('');
+  const [availableMstTests, setAvailableMstTests] = useState([]);
+  const [availableEseTests, setAvailableEseTests] = useState([]);
+  const [selectedMstTestId, setSelectedMstTestId] = useState('');
+  const [selectedEseTestId, setSelectedEseTestId] = useState('');
   const [masterTranscripts, setMasterTranscripts] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -35,11 +37,13 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
 
   const fetchAvailableTests = async (courseCode) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/marks-ledger/available-tests?currentCourseCode=${courseCode}`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setAvailableTests(data);
-      }
+      const resMst = await fetch(`${API_BASE}/admin/marks-ledger/available-tests?currentCourseCode=${courseCode}&targetExam=mst`);
+      const dataMst = await resMst.json();
+      if (Array.isArray(dataMst)) setAvailableMstTests(dataMst);
+
+      const resEse = await fetch(`${API_BASE}/admin/marks-ledger/available-tests?currentCourseCode=${courseCode}&targetExam=ese`);
+      const dataEse = await resEse.json();
+      if (Array.isArray(dataEse)) setAvailableEseTests(dataEse);
     } catch (e) {
       console.error("Failed to load available tests:", e);
     }
@@ -53,7 +57,8 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
       const data = await res.json();
       if (data && data.studentMarks) {
         setLedgerData(data);
-        setSelectedTestId(data.linkedOnlineTestId || '');
+        setSelectedMstTestId(data.linkedMstOnlineTestId || data.linkedOnlineTestId || '');
+        setSelectedEseTestId(data.linkedEseOnlineTestId || '');
       } else {
         setMessage({ type: 'danger', text: data.error || "Failed to load course ledger data." });
       }
@@ -176,7 +181,8 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          linkedOnlineTestId: selectedTestId,
+          linkedMstOnlineTestId: selectedMstTestId,
+          linkedEseOnlineTestId: selectedEseTestId,
           studentMarks: ledgerData.studentMarks
         })
       });
@@ -196,17 +202,20 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
     }
   };
 
-  // Link Online Test & Optionally Sync Online Scores
-  const handleLinkTest = async (syncScores = false) => {
+  // Link Online Test & Optionally Sync Online Scores for Lab MST (40m) or ESE (100m)
+  const handleLinkTest = async (targetExam = 'mst', syncScores = false) => {
     setLinking(true);
     setMessage({ type: '', text: '' });
+
+    const testId = targetExam === 'mst' ? selectedMstTestId : selectedEseTestId;
 
     try {
       const res = await fetch(`${API_BASE}/admin/marks-ledger/link-test/${selectedCourseCode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          testId: selectedTestId,
+          testId,
+          targetExam,
           syncOnlineScores: syncScores
         })
       });
@@ -315,8 +324,9 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: ledgerData?.isLocked ? '#94a3b8' : '#059669',
-                borderColor: ledgerData?.isLocked ? '#cbd5e1' : '#047857'
+                backgroundColor: ledgerData?.isLocked ? '#94a3b8' : '#002147',
+                color: '#ffffff',
+                borderColor: ledgerData?.isLocked ? '#cbd5e1' : '#002147'
               }}
             >
               <Save size={14} /> {saving ? 'Saving...' : 'Save All Changes'}
@@ -340,7 +350,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
             <select
               value={selectedCourseCode}
               onChange={(e) => setSelectedCourseCode(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '9.5pt', fontWeight: 'bold', color: '#002147' }}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', backgroundColor: '#fff' }}
             >
               {courses.map(c => (
                 <option key={c.code} value={c.code}>
@@ -350,62 +360,116 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
             </select>
           </div>
 
-          {/* Assigned Online Exam Selection (Excludes tests assigned elsewhere) */}
-          <div>
-            <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>
-              Assign Online Exam (Auto-Sync Scores):
-            </label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <select
-                value={selectedTestId}
-                onChange={(e) => setSelectedTestId(e.target.value)}
-                disabled={ledgerData?.isLocked}
-                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
-              >
-                <option value="">-- No Online Test Linked --</option>
-                {selectedTestId && !availableTests.find(t => t.id === selectedTestId) && (
-                  <option value={selectedTestId}>Currently Assigned Test (#{selectedTestId.slice(-6)})</option>
-                )}
-                {availableTests.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.title} ({t.marks} Marks)
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                className="cf-btn-secondary"
-                onClick={() => handleLinkTest(false)}
-                disabled={linking || ledgerData?.isLocked}
-                style={{ fontSize: '8pt', padding: '6px 10px', whiteSpace: 'nowrap' }}
-              >
-                <LinkIcon size={13} /> Link
-              </button>
-
-              <button
-                type="button"
-                className="cf-btn-primary"
-                onClick={() => handleLinkTest(true)}
-                disabled={linking || !selectedTestId || ledgerData?.isLocked}
-                style={{ fontSize: '8pt', padding: '6px 10px', whiteSpace: 'nowrap', backgroundColor: '#0284c7' }}
-              >
-                Sync Scores
-              </button>
+          {/* Online Exam Linking Section (Lab Courses Only) */}
+          {isTheory ? (
+            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 14px', fontSize: '8.5pt', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertTriangle size={18} style={{ color: '#0284c7', flexShrink: 0 }} />
+              <div>
+                <strong style={{ color: '#002147' }}>Theory Course Evaluation:</strong> Online test linking is not used for Theory courses. Evaluation is based on TA (20m), Written MST Counterfoil (30m), and Written ESE Counterfoil (50m).
+              </div>
             </div>
-            <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '3px' }}>
-              * Tests already assigned to another course are automatically excluded.
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
+              {/* Lab MST Online Exam (40m Max) */}
+              <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px' }}>
+                <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Assign Lab MST Online Exam (40m Max):
+                </label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <select
+                    value={selectedMstTestId}
+                    onChange={(e) => setSelectedMstTestId(e.target.value)}
+                    disabled={ledgerData?.isLocked}
+                    style={{ flex: 1, padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', backgroundColor: '#fff' }}
+                  >
+                    <option value="">-- No MST Online Test Linked --</option>
+                    {selectedMstTestId && !availableMstTests.find(t => t.id === selectedMstTestId) && (
+                      <option value={selectedMstTestId}>Assigned Test (#{selectedMstTestId.slice(-6)})</option>
+                    )}
+                    {availableMstTests.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.title} ({t.marks} Marks)
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    className="cf-btn-secondary"
+                    onClick={() => handleLinkTest('mst', false)}
+                    disabled={linking || ledgerData?.isLocked}
+                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap' }}
+                  >
+                    <LinkIcon size={12} /> Link
+                  </button>
+
+                  <button
+                    type="button"
+                    className="cf-btn-primary"
+                    onClick={() => handleLinkTest('mst', true)}
+                    disabled={linking || !selectedMstTestId || ledgerData?.isLocked}
+                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap', backgroundColor: '#0284c7', color: '#fff', borderColor: '#0284c7' }}
+                  >
+                    Sync Scores
+                  </button>
+                </div>
+              </div>
+
+              {/* Lab ESE Online Exam (100m Max) */}
+              <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px' }}>
+                <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                  Assign Lab ESE Online Exam (100m Max):
+                </label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <select
+                    value={selectedEseTestId}
+                    onChange={(e) => setSelectedEseTestId(e.target.value)}
+                    disabled={ledgerData?.isLocked}
+                    style={{ flex: 1, padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', backgroundColor: '#fff' }}
+                  >
+                    <option value="">-- No ESE Online Test Linked --</option>
+                    {selectedEseTestId && !availableEseTests.find(t => t.id === selectedEseTestId) && (
+                      <option value={selectedEseTestId}>Assigned Test (#{selectedEseTestId.slice(-6)})</option>
+                    )}
+                    {availableEseTests.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.title} ({t.marks} Marks)
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    className="cf-btn-secondary"
+                    onClick={() => handleLinkTest('ese', false)}
+                    disabled={linking || ledgerData?.isLocked}
+                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap' }}
+                  >
+                    <LinkIcon size={12} /> Link
+                  </button>
+
+                  <button
+                    type="button"
+                    className="cf-btn-primary"
+                    onClick={() => handleLinkTest('ese', true)}
+                    disabled={linking || !selectedEseTestId || ledgerData?.isLocked}
+                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap', backgroundColor: '#0369a1', color: '#fff', borderColor: '#0369a1' }}
+                  >
+                    Sync Scores
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Course Info Pill */}
-        <div style={{ backgroundColor: isTheory ? '#f0f9ff' : '#f0fdf4', border: `1px solid ${isTheory ? '#bae6fd' : '#bbf7d0'}`, borderRadius: '6px', padding: '10px 14px', marginTop: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 14px', marginTop: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <strong style={{ color: isTheory ? '#0369a1' : '#15803d', fontSize: '9.5pt' }}>
+            <strong style={{ color: '#002147', fontSize: '9.5pt' }}>
               {currentCourse.code} — {currentCourse.name}
             </strong>
-            <span style={{ marginLeft: '10px', backgroundColor: isTheory ? '#e0f2fe' : '#dcfce7', color: isTheory ? '#0369a1' : '#166534', padding: '2px 8px', borderRadius: '4px', fontSize: '8pt', fontWeight: 'bold' }}>
+            <span style={{ marginLeft: '10px', backgroundColor: isTheory ? '#f1f5f9' : '#f0fdf4', color: isTheory ? '#334155' : '#166534', border: `1px solid ${isTheory ? '#cbd5e1' : '#bbf7d0'}`, padding: '2px 8px', borderRadius: '4px', fontSize: '8pt', fontWeight: 'bold' }}>
               {isTheory ? 'THEORY COURSE (20% TA | 30% MST | 50% ESE)' : 'LAB COURSE (40% TA | 20% MST | 40% ESE)'}
             </span>
           </div>
@@ -431,7 +495,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`cf-btn-${isActive ? 'primary' : 'secondary'}`}
+              className="cf-btn-secondary"
               style={{
                 padding: '8px 16px',
                 fontSize: '8.5pt',
@@ -439,11 +503,14 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: isActive ? '#002147' : undefined,
-                borderColor: isActive ? '#002147' : undefined
+                backgroundColor: isActive ? '#002147' : '#ffffff',
+                color: isActive ? '#ffffff' : '#475569',
+                borderColor: isActive ? '#002147' : '#cbd5e1',
+                boxShadow: isActive ? '0 2px 4px rgba(0, 33, 71, 0.12)' : 'none',
+                transition: 'all 0.15s ease'
               }}
             >
-              <Icon size={14} />
+              <Icon size={14} style={{ color: isActive ? '#ffffff' : '#64748b' }} />
               <span>{tab.label}</span>
             </button>
           );

@@ -987,6 +987,8 @@ const AcademicMarksLedgerSchema = new mongoose.Schema({
     courseName: { type: String, required: true },
     courseType: { type: String, enum: ['theory', 'lab'], required: true },
     linkedOnlineTestId: { type: String, default: '' },
+    linkedMstOnlineTestId: { type: String, default: '' },
+    linkedEseOnlineTestId: { type: String, default: '' },
     isLocked: { type: Boolean, default: false },
     lockedAt: Date,
     lockedBy: String,
@@ -5584,6 +5586,8 @@ app.get('/api/admin/marks-ledger/courses', async (req, res) => {
             return {
                 ...c,
                 linkedOnlineTestId: l?.linkedOnlineTestId || '',
+                linkedMstOnlineTestId: l?.linkedMstOnlineTestId || '',
+                linkedEseOnlineTestId: l?.linkedEseOnlineTestId || '',
                 isLocked: l?.isLocked || false,
                 studentCount: l?.studentMarks?.length || 0,
                 updatedAt: l?.updatedAt || null
@@ -5597,10 +5601,10 @@ app.get('/api/admin/marks-ledger/courses', async (req, res) => {
     }
 });
 
-// 2. Get Available Online Tests (Excludes test IDs already linked to any course)
+// 2. Get Available Online Tests (Excludes test IDs already linked to any course/component)
 app.get('/api/admin/marks-ledger/available-tests', async (req, res) => {
     try {
-        const { currentCourseCode } = req.query;
+        const { currentCourseCode, targetExam } = req.query;
         let ledgers = [];
         let tests = [];
 
@@ -5613,12 +5617,19 @@ app.get('/api/admin/marks-ledger/available-tests', async (req, res) => {
             tests = db.tests || [];
         }
 
-        // Gather all linked test IDs across OTHER courses
-        const assignedTestIds = new Set(
-            ledgers
-                .filter(l => l.linkedOnlineTestId && l.courseCode !== currentCourseCode)
-                .map(l => String(l.linkedOnlineTestId))
-        );
+        // Gather all linked test IDs across all courses and components
+        const assignedTestIds = new Set();
+        ledgers.forEach(l => {
+            if (l.linkedOnlineTestId) assignedTestIds.add(String(l.linkedOnlineTestId));
+            
+            // If checking for current course, allow selecting currently assigned test for that specific target exam
+            if (l.courseCode !== currentCourseCode || targetExam !== 'mst') {
+                if (l.linkedMstOnlineTestId) assignedTestIds.add(String(l.linkedMstOnlineTestId));
+            }
+            if (l.courseCode !== currentCourseCode || targetExam !== 'ese') {
+                if (l.linkedEseOnlineTestId) assignedTestIds.add(String(l.linkedEseOnlineTestId));
+            }
+        });
 
         // Filter tests to available ones
         const available = tests
@@ -5727,6 +5738,8 @@ app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
             courseName: courseDef.name,
             courseType: courseDef.type,
             linkedOnlineTestId: ledger?.linkedOnlineTestId || '',
+            linkedMstOnlineTestId: ledger?.linkedMstOnlineTestId || '',
+            linkedEseOnlineTestId: ledger?.linkedEseOnlineTestId || '',
             isLocked: ledger?.isLocked || false,
             lockedAt: ledger?.lockedAt || null,
             lockedBy: ledger?.lockedBy || '',
@@ -5743,7 +5756,7 @@ app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
 // 4. Save Course Marks Ledger
 app.post('/api/admin/marks-ledger/save/:courseCode', async (req, res) => {
     const { courseCode } = req.params;
-    const { studentMarks, linkedOnlineTestId } = req.body;
+    const { studentMarks, linkedOnlineTestId, linkedMstOnlineTestId, linkedEseOnlineTestId } = req.body;
 
     const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
 
@@ -5758,6 +5771,8 @@ app.post('/api/admin/marks-ledger/save/:courseCode', async (req, res) => {
                     courseName: courseDef.name,
                     courseType: courseDef.type,
                     linkedOnlineTestId: linkedOnlineTestId || '',
+                    linkedMstOnlineTestId: linkedMstOnlineTestId || '',
+                    linkedEseOnlineTestId: linkedEseOnlineTestId || '',
                     studentMarks: recalculated
                 });
             } else {
@@ -5765,6 +5780,8 @@ app.post('/api/admin/marks-ledger/save/:courseCode', async (req, res) => {
                     return res.status(403).json({ error: "This course marks ledger is locked by administration and cannot be modified." });
                 }
                 if (linkedOnlineTestId !== undefined) ledger.linkedOnlineTestId = linkedOnlineTestId;
+                if (linkedMstOnlineTestId !== undefined) ledger.linkedMstOnlineTestId = linkedMstOnlineTestId;
+                if (linkedEseOnlineTestId !== undefined) ledger.linkedEseOnlineTestId = linkedEseOnlineTestId;
                 ledger.studentMarks = recalculated;
             }
             await ledger.save();
@@ -5780,6 +5797,8 @@ app.post('/api/admin/marks-ledger/save/:courseCode', async (req, res) => {
                 courseName: courseDef.name,
                 courseType: courseDef.type,
                 linkedOnlineTestId: linkedOnlineTestId !== undefined ? linkedOnlineTestId : (db.academicMarksLedgers[idx]?.linkedOnlineTestId || ''),
+                linkedMstOnlineTestId: linkedMstOnlineTestId !== undefined ? linkedMstOnlineTestId : (db.academicMarksLedgers[idx]?.linkedMstOnlineTestId || ''),
+                linkedEseOnlineTestId: linkedEseOnlineTestId !== undefined ? linkedEseOnlineTestId : (db.academicMarksLedgers[idx]?.linkedEseOnlineTestId || ''),
                 isLocked: db.academicMarksLedgers[idx]?.isLocked || false,
                 studentMarks: recalculated,
                 updatedAt: new Date().toISOString()
@@ -5800,15 +5819,18 @@ app.post('/api/admin/marks-ledger/save/:courseCode', async (req, res) => {
     }
 });
 
-// 5. Link Online Test to Course & Sync Scores
+// 5. Link Online Test to Course & Sync Scores (Lab Courses Only)
 app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
     const { courseCode } = req.params;
-    const { testId, syncOnlineScores } = req.body;
+    const { testId, targetExam = 'mst', syncOnlineScores } = req.body; // targetExam: 'mst' (40m) or 'ese' (100m)
 
     const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
 
+    if (courseDef.type !== 'lab') {
+        return res.status(400).json({ error: "Online test linking applies strictly to Lab Courses (MST Online - 40m, ESE Online - 100m). Theory courses are evaluated via Written Counterfoil & TA." });
+    }
+
     try {
-        // Ensure test is not linked to another course
         let allLedgers = [];
         let submissions = [];
 
@@ -5825,9 +5847,26 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
             }
         }
 
-        const conflict = allLedgers.find(l => String(l.linkedOnlineTestId) === String(testId) && l.courseCode !== courseCode);
-        if (conflict && testId) {
-            return res.status(400).json({ error: `Test ID ${testId} is already assigned to course ${conflict.courseCode} (${conflict.courseName}) and cannot be reused.` });
+        // Check if test is assigned elsewhere
+        if (testId) {
+            const conflict = allLedgers.find(l => {
+                const sameCourse = l.courseCode === courseCode;
+                if (!sameCourse) {
+                    return String(l.linkedOnlineTestId) === String(testId) ||
+                           String(l.linkedMstOnlineTestId) === String(testId) ||
+                           String(l.linkedEseOnlineTestId) === String(testId);
+                } else {
+                    if (targetExam === 'mst') {
+                        return String(l.linkedEseOnlineTestId) === String(testId);
+                    } else {
+                        return String(l.linkedMstOnlineTestId) === String(testId);
+                    }
+                }
+            });
+
+            if (conflict) {
+                return res.status(400).json({ error: `Test ID ${testId} is already assigned to course ${conflict.courseCode} (${conflict.courseName}) and cannot be reused.` });
+            }
         }
 
         let ledger = null;
@@ -5838,10 +5877,12 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
                     courseType: courseDef.type,
-                    linkedOnlineTestId: testId || ''
+                    linkedMstOnlineTestId: targetExam === 'mst' ? (testId || '') : '',
+                    linkedEseOnlineTestId: targetExam === 'ese' ? (testId || '') : ''
                 });
             } else {
-                ledger.linkedOnlineTestId = testId || '';
+                if (targetExam === 'mst') ledger.linkedMstOnlineTestId = testId || '';
+                else ledger.linkedEseOnlineTestId = testId || '';
             }
         } else {
             const db = getJSONData();
@@ -5852,17 +5893,19 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
                     courseType: courseDef.type,
-                    linkedOnlineTestId: testId || '',
+                    linkedMstOnlineTestId: targetExam === 'mst' ? (testId || '') : '',
+                    linkedEseOnlineTestId: targetExam === 'ese' ? (testId || '') : '',
                     studentMarks: []
                 };
                 db.academicMarksLedgers.push(ledger);
             } else {
-                db.academicMarksLedgers[idx].linkedOnlineTestId = testId || '';
+                if (targetExam === 'mst') db.academicMarksLedgers[idx].linkedMstOnlineTestId = testId || '';
+                else db.academicMarksLedgers[idx].linkedEseOnlineTestId = testId || '';
                 ledger = db.academicMarksLedgers[idx];
             }
         }
 
-        // Optionally sync online scores into mstOnline / eseOnline if Lab course
+        // Sync online scores if requested
         if (syncOnlineScores && testId && submissions.length > 0) {
             const subMap = new Map();
             submissions.forEach(s => subMap.set(String(s.candidateId), s));
@@ -5872,11 +5915,16 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
                 if (s) {
                     const totalScored = Number(s.totalScore || s.evaluation?.totalScore || s.score || 0);
                     const totalMax = Number(s.evaluation?.totalMaxMarks || 100);
-                    // Scale score out of 40 for mstOnline or out of 100 for eseOnline
-                    const normalized40 = Math.round(((totalScored / totalMax) * 40) * 100) / 100;
-                    const normalized100 = Math.round(((totalScored / totalMax) * 100) * 100) / 100;
-                    m.mstOnline = normalized40;
-                    m.eseOnline = normalized100;
+                    
+                    if (targetExam === 'mst') {
+                        // MST Online Exam is scaled out of 40 marks
+                        const normalized40 = Math.round(((totalScored / totalMax) * 40) * 100) / 100;
+                        m.mstOnline = Math.min(40, normalized40);
+                    } else if (targetExam === 'ese') {
+                        // ESE Online Exam is scaled out of 100 marks
+                        const normalized100 = Math.round(((totalScored / totalMax) * 100) * 100) / 100;
+                        m.eseOnline = Math.min(100, normalized100);
+                    }
                 }
                 return calculateMarksLedgerEntry(m, courseDef.type);
             });
@@ -5889,8 +5937,14 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
             saveJSONData(db);
         }
 
-        await logSystemAction('admin', 'TEST_LINKED', `Linked online test ${testId} to course ${courseCode}`, 'info');
-        return res.json({ success: true, message: `Online test assigned to course ${courseCode} successfully.`, linkedOnlineTestId: testId });
+        const examLabel = targetExam === 'mst' ? 'Lab MST Online (40m max)' : 'Lab ESE Online (100m max)';
+        await logSystemAction('admin', 'TEST_LINKED', `Linked online test ${testId} to ${examLabel} for course ${courseCode}`, 'info');
+        return res.json({ 
+            success: true, 
+            message: testId ? `Successfully linked online test to ${examLabel} for course ${courseCode}.` : `Unlinked online test from ${examLabel} for course ${courseCode}.`,
+            targetExam,
+            testId
+        });
     } catch (e) {
         console.error("Failed to link online test:", e);
         return res.status(500).json({ error: e.message });
