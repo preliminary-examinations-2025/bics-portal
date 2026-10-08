@@ -5617,29 +5617,39 @@ app.get('/api/admin/marks-ledger/available-tests', async (req, res) => {
             tests = db.tests || [];
         }
 
-        // Gather all linked test IDs across all courses and components
+        // Gather all linked test IDs across all OTHER courses and components
         const assignedTestIds = new Set();
         ledgers.forEach(l => {
-            if (l.linkedOnlineTestId) assignedTestIds.add(String(l.linkedOnlineTestId));
-            
-            // If checking for current course, allow selecting currently assigned test for that specific target exam
-            if (l.courseCode !== currentCourseCode || targetExam !== 'mst') {
+            if (l.courseCode !== currentCourseCode) {
+                if (l.linkedOnlineTestId) assignedTestIds.add(String(l.linkedOnlineTestId));
                 if (l.linkedMstOnlineTestId) assignedTestIds.add(String(l.linkedMstOnlineTestId));
-            }
-            if (l.courseCode !== currentCourseCode || targetExam !== 'ese') {
                 if (l.linkedEseOnlineTestId) assignedTestIds.add(String(l.linkedEseOnlineTestId));
+            } else {
+                // For the current course, only exclude the test assigned to the OTHER exam component
+                if (targetExam === 'mst' && l.linkedEseOnlineTestId) {
+                    assignedTestIds.add(String(l.linkedEseOnlineTestId));
+                }
+                if (targetExam === 'ese' && l.linkedMstOnlineTestId) {
+                    assignedTestIds.add(String(l.linkedMstOnlineTestId));
+                }
             }
         });
 
-        // Filter tests to available ones
-        const available = tests
-            .filter(t => !assignedTestIds.has(String(t._id || t.id)))
-            .map(t => ({
-                id: String(t._id || t.id),
-                title: t.title,
-                marks: t.marks || t.totalMarks || 100,
-                courseCode: t.courseCode || ''
-            }));
+        // Deduplicate tests by ID and filter available ones
+        const seenIds = new Set();
+        const available = [];
+        for (let t of tests) {
+            const tid = String(t._id || t.id);
+            if (!assignedTestIds.has(tid) && !seenIds.has(tid)) {
+                seenIds.add(tid);
+                available.push({
+                    id: tid,
+                    title: t.title,
+                    marks: t.marks || t.totalMarks || 100,
+                    courseCode: t.courseCode || ''
+                });
+            }
+        }
 
         return res.json(available);
     } catch (e) {
@@ -5877,10 +5887,12 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
                     courseType: courseDef.type,
+                    linkedOnlineTestId: '',
                     linkedMstOnlineTestId: targetExam === 'mst' ? (testId || '') : '',
                     linkedEseOnlineTestId: targetExam === 'ese' ? (testId || '') : ''
                 });
             } else {
+                ledger.linkedOnlineTestId = '';
                 if (targetExam === 'mst') ledger.linkedMstOnlineTestId = testId || '';
                 else ledger.linkedEseOnlineTestId = testId || '';
             }
@@ -5893,12 +5905,14 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
                     courseType: courseDef.type,
+                    linkedOnlineTestId: '',
                     linkedMstOnlineTestId: targetExam === 'mst' ? (testId || '') : '',
                     linkedEseOnlineTestId: targetExam === 'ese' ? (testId || '') : '',
                     studentMarks: []
                 };
                 db.academicMarksLedgers.push(ledger);
             } else {
+                db.academicMarksLedgers[idx].linkedOnlineTestId = '';
                 if (targetExam === 'mst') db.academicMarksLedgers[idx].linkedMstOnlineTestId = testId || '';
                 else db.academicMarksLedgers[idx].linkedEseOnlineTestId = testId || '';
                 ledger = db.academicMarksLedgers[idx];

@@ -203,11 +203,11 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
   };
 
   // Link Online Test & Optionally Sync Online Scores for Lab MST (40m) or ESE (100m)
-  const handleLinkTest = async (targetExam = 'mst', syncScores = false) => {
+  const handleLinkTest = async (targetExam = 'mst', syncScores = false, overrideTestId = null) => {
     setLinking(true);
     setMessage({ type: '', text: '' });
 
-    const testId = targetExam === 'mst' ? selectedMstTestId : selectedEseTestId;
+    const testId = overrideTestId !== null ? overrideTestId : (targetExam === 'mst' ? selectedMstTestId : selectedEseTestId);
 
     try {
       const res = await fetch(`${API_BASE}/admin/marks-ledger/link-test/${selectedCourseCode}`, {
@@ -222,6 +222,8 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
       const data = await res.json();
       if (data.success) {
         setMessage({ type: 'success', text: data.message });
+        if (targetExam === 'mst') setSelectedMstTestId(testId);
+        else setSelectedEseTestId(testId);
         fetchCourseLedger(selectedCourseCode);
         fetchAvailableTests(selectedCourseCode);
       } else {
@@ -275,7 +277,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
       <div className="cf-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h2 style={{ fontSize: '16pt', color: '#002147', margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h2 style={{ fontSize: '16pt', color: '#0f172a', margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <GraduationCap size={22} style={{ color: '#059669' }} /> Academic Course Marks Ledger &amp; Evaluation System
             </h2>
             <div style={{ fontSize: '9pt', color: '#64748b' }}>
@@ -285,29 +287,44 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
-              className="cf-btn-secondary"
+              type="button"
               onClick={() => {
                 fetchCourseLedger(selectedCourseCode);
                 fetchAvailableTests(selectedCourseCode);
                 fetchMasterTranscripts();
               }}
-              style={{ fontSize: '8.5pt', padding: '6px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              style={{
+                fontSize: '8.5pt',
+                padding: '6px 14px',
+                fontWeight: '500',
+                borderRadius: '6px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: '#ffffff',
+                color: '#334155',
+                border: '1px solid #cbd5e1',
+                cursor: 'pointer'
+              }}
             >
-              <RefreshCw size={14} /> Refresh Data
+              <RefreshCw size={14} style={{ color: '#475569' }} /> Refresh Data
             </button>
 
             <button
-              className={ledgerData?.isLocked ? "cf-btn-secondary" : "cf-btn-primary"}
+              type="button"
               onClick={toggleLock}
               style={{
                 fontSize: '8.5pt',
                 padding: '6px 14px',
+                fontWeight: '500',
+                borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: ledgerData?.isLocked ? '#fee2e2' : undefined,
-                color: ledgerData?.isLocked ? '#b91c1c' : undefined,
-                borderColor: ledgerData?.isLocked ? '#fca5a5' : undefined
+                backgroundColor: ledgerData?.isLocked ? '#fef2f2' : '#ffffff',
+                color: ledgerData?.isLocked ? '#b91c1c' : '#334155',
+                border: `1px solid ${ledgerData?.isLocked ? '#fca5a5' : '#cbd5e1'}`,
+                cursor: 'pointer'
               }}
             >
               {ledgerData?.isLocked ? <Lock size={14} /> : <Unlock size={14} />}
@@ -315,21 +332,25 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
             </button>
 
             <button
-              className="cf-btn-primary"
+              type="button"
               onClick={saveLedger}
               disabled={saving || ledgerData?.isLocked}
               style={{
                 fontSize: '8.5pt',
                 padding: '6px 16px',
+                fontWeight: '600',
+                borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: ledgerData?.isLocked ? '#94a3b8' : '#002147',
-                color: '#ffffff',
-                borderColor: ledgerData?.isLocked ? '#cbd5e1' : '#002147'
+                backgroundColor: (saving || ledgerData?.isLocked) ? '#f8fafc' : '#f0fdf4',
+                color: (saving || ledgerData?.isLocked) ? '#64748b' : '#15803d',
+                border: `1px solid ${(saving || ledgerData?.isLocked) ? '#cbd5e1' : '#86efac'}`,
+                cursor: (saving || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
               }}
             >
-              <Save size={14} /> {saving ? 'Saving...' : 'Save All Changes'}
+              <Save size={14} style={{ color: (saving || ledgerData?.isLocked) ? '#64748b' : '#15803d' }} />
+              <span>{saving ? 'Saving...' : 'Save All Changes'}</span>
             </button>
           </div>
         </div>
@@ -350,7 +371,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
             <select
               value={selectedCourseCode}
               onChange={(e) => setSelectedCourseCode(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', backgroundColor: '#fff' }}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '9.5pt', fontWeight: 'bold', color: '#0f172a', backgroundColor: '#fff' }}
             >
               {courses.map(c => (
                 <option key={c.code} value={c.code}>
@@ -365,7 +386,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
             <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 14px', fontSize: '8.5pt', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <AlertTriangle size={18} style={{ color: '#0284c7', flexShrink: 0 }} />
               <div>
-                <strong style={{ color: '#002147' }}>Theory Course Evaluation:</strong> Online test linking is not used for Theory courses. Evaluation is based on TA (20m), Written MST Counterfoil (30m), and Written ESE Counterfoil (50m).
+                <strong style={{ color: '#0f172a' }}>Theory Course Evaluation:</strong> Online test linking is not used for Theory courses. Evaluation is based on TA (20m), Written MST Counterfoil (30m), and Written ESE Counterfoil (50m).
               </div>
             </div>
           ) : (
@@ -383,9 +404,6 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                     style={{ flex: 1, padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', backgroundColor: '#fff' }}
                   >
                     <option value="">-- No MST Online Test Linked --</option>
-                    {selectedMstTestId && !availableMstTests.find(t => t.id === selectedMstTestId) && (
-                      <option value={selectedMstTestId}>Assigned Test (#{selectedMstTestId.slice(-6)})</option>
-                    )}
                     {availableMstTests.map(t => (
                       <option key={t.id} value={t.id}>
                         {t.title} ({t.marks} Marks)
@@ -393,22 +411,61 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                     ))}
                   </select>
 
-                  <button
-                    type="button"
-                    className="cf-btn-secondary"
-                    onClick={() => handleLinkTest('mst', false)}
-                    disabled={linking || ledgerData?.isLocked}
-                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap' }}
-                  >
-                    <LinkIcon size={12} /> Link
-                  </button>
+                  {selectedMstTestId ? (
+                    <button
+                      type="button"
+                      onClick={() => handleLinkTest('mst', false, '')}
+                      disabled={linking || ledgerData?.isLocked}
+                      style={{
+                        fontSize: '7.5pt',
+                        padding: '5px 10px',
+                        fontWeight: '500',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: (linking || ledgerData?.isLocked) ? '#f8fafc' : '#fff1f2',
+                        color: (linking || ledgerData?.isLocked) ? '#64748b' : '#e11d48',
+                        border: `1px solid ${(linking || ledgerData?.isLocked) ? '#cbd5e1' : '#fecdd3'}`,
+                        cursor: (linking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Unlink / Undo
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleLinkTest('mst', false)}
+                      disabled={linking || ledgerData?.isLocked}
+                      style={{
+                        fontSize: '7.5pt',
+                        padding: '5px 10px',
+                        fontWeight: '500',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: '#ffffff',
+                        color: (linking || ledgerData?.isLocked) ? '#64748b' : '#334155',
+                        border: `1px solid ${(linking || ledgerData?.isLocked) ? '#e2e8f0' : '#cbd5e1'}`,
+                        cursor: (linking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <LinkIcon size={12} /> Link
+                    </button>
+                  )}
 
                   <button
                     type="button"
-                    className="cf-btn-primary"
                     onClick={() => handleLinkTest('mst', true)}
                     disabled={linking || !selectedMstTestId || ledgerData?.isLocked}
-                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap', backgroundColor: '#0284c7', color: '#fff', borderColor: '#0284c7' }}
+                    style={{
+                      fontSize: '7.5pt',
+                      padding: '5px 10px',
+                      fontWeight: '600',
+                      borderRadius: '4px',
+                      whiteSpace: 'nowrap',
+                      backgroundColor: (linking || !selectedMstTestId || ledgerData?.isLocked) ? '#f8fafc' : '#f0f9ff',
+                      color: (linking || !selectedMstTestId || ledgerData?.isLocked) ? '#64748b' : '#0284c7',
+                      border: `1px solid ${(linking || !selectedMstTestId || ledgerData?.isLocked) ? '#cbd5e1' : '#7dd3fc'}`,
+                      cursor: (linking || !selectedMstTestId || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                    }}
                   >
                     Sync Scores
                   </button>
@@ -428,9 +485,6 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                     style={{ flex: 1, padding: '6px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', backgroundColor: '#fff' }}
                   >
                     <option value="">-- No ESE Online Test Linked --</option>
-                    {selectedEseTestId && !availableEseTests.find(t => t.id === selectedEseTestId) && (
-                      <option value={selectedEseTestId}>Assigned Test (#{selectedEseTestId.slice(-6)})</option>
-                    )}
                     {availableEseTests.map(t => (
                       <option key={t.id} value={t.id}>
                         {t.title} ({t.marks} Marks)
@@ -438,22 +492,61 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                     ))}
                   </select>
 
-                  <button
-                    type="button"
-                    className="cf-btn-secondary"
-                    onClick={() => handleLinkTest('ese', false)}
-                    disabled={linking || ledgerData?.isLocked}
-                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap' }}
-                  >
-                    <LinkIcon size={12} /> Link
-                  </button>
+                  {selectedEseTestId ? (
+                    <button
+                      type="button"
+                      onClick={() => handleLinkTest('ese', false, '')}
+                      disabled={linking || ledgerData?.isLocked}
+                      style={{
+                        fontSize: '7.5pt',
+                        padding: '5px 10px',
+                        fontWeight: '500',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: (linking || ledgerData?.isLocked) ? '#f8fafc' : '#fff1f2',
+                        color: (linking || ledgerData?.isLocked) ? '#64748b' : '#e11d48',
+                        border: `1px solid ${(linking || ledgerData?.isLocked) ? '#cbd5e1' : '#fecdd3'}`,
+                        cursor: (linking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Unlink / Undo
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleLinkTest('ese', false)}
+                      disabled={linking || ledgerData?.isLocked}
+                      style={{
+                        fontSize: '7.5pt',
+                        padding: '5px 10px',
+                        fontWeight: '500',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap',
+                        backgroundColor: '#ffffff',
+                        color: (linking || ledgerData?.isLocked) ? '#64748b' : '#334155',
+                        border: `1px solid ${(linking || ledgerData?.isLocked) ? '#e2e8f0' : '#cbd5e1'}`,
+                        cursor: (linking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <LinkIcon size={12} /> Link
+                    </button>
+                  )}
 
                   <button
                     type="button"
-                    className="cf-btn-primary"
                     onClick={() => handleLinkTest('ese', true)}
                     disabled={linking || !selectedEseTestId || ledgerData?.isLocked}
-                    style={{ fontSize: '7.5pt', padding: '4px 8px', whiteSpace: 'nowrap', backgroundColor: '#0369a1', color: '#fff', borderColor: '#0369a1' }}
+                    style={{
+                      fontSize: '7.5pt',
+                      padding: '5px 10px',
+                      fontWeight: '600',
+                      borderRadius: '4px',
+                      whiteSpace: 'nowrap',
+                      backgroundColor: (linking || !selectedEseTestId || ledgerData?.isLocked) ? '#f8fafc' : '#f0f9ff',
+                      color: (linking || !selectedEseTestId || ledgerData?.isLocked) ? '#64748b' : '#0369a1',
+                      border: `1px solid ${(linking || !selectedEseTestId || ledgerData?.isLocked) ? '#cbd5e1' : '#7dd3fc'}`,
+                      cursor: (linking || !selectedEseTestId || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                    }}
                   >
                     Sync Scores
                   </button>
@@ -466,7 +559,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         {/* Course Info Pill */}
         <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 14px', marginTop: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <strong style={{ color: '#002147', fontSize: '9.5pt' }}>
+            <strong style={{ color: '#0f172a', fontSize: '9.5pt' }}>
               {currentCourse.code} — {currentCourse.name}
             </strong>
             <span style={{ marginLeft: '10px', backgroundColor: isTheory ? '#f1f5f9' : '#f0fdf4', color: isTheory ? '#334155' : '#166534', border: `1px solid ${isTheory ? '#cbd5e1' : '#bbf7d0'}`, padding: '2px 8px', borderRadius: '4px', fontSize: '8pt', fontWeight: 'bold' }}>
@@ -494,23 +587,25 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
           return (
             <button
               key={tab.id}
+              type="button"
               onClick={() => setActiveTab(tab.id)}
-              className="cf-btn-secondary"
               style={{
                 padding: '8px 16px',
                 fontSize: '8.5pt',
-                fontWeight: 'bold',
+                fontWeight: isActive ? 'bold' : 'normal',
+                borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: isActive ? '#002147' : '#ffffff',
-                color: isActive ? '#ffffff' : '#475569',
-                borderColor: isActive ? '#002147' : '#cbd5e1',
-                boxShadow: isActive ? '0 2px 4px rgba(0, 33, 71, 0.12)' : 'none',
+                backgroundColor: isActive ? '#f0f9ff' : '#ffffff',
+                color: isActive ? '#0369a1' : '#475569',
+                border: `1px solid ${isActive ? '#7dd3fc' : '#cbd5e1'}`,
+                boxShadow: isActive ? '0 1px 2px rgba(0, 0, 0, 0.05)' : 'none',
+                cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
             >
-              <Icon size={14} style={{ color: isActive ? '#ffffff' : '#64748b' }} />
+              <Icon size={14} style={{ color: isActive ? '#0369a1' : '#64748b' }} />
               <span>{tab.label}</span>
             </button>
           );
@@ -522,7 +617,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         <div className="cf-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h3 style={{ fontSize: '12pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
+              <h3 style={{ fontSize: '12pt', color: '#0f172a', margin: 0, fontWeight: 'bold' }}>
                 Teacher Assessment (TA) Components
               </h3>
               <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '2px' }}>
@@ -570,7 +665,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
               <tbody>
                 {filteredStudents.map((sm) => (
                   <tr key={sm.studentId}>
-                    <td style={{ fontWeight: 'bold', color: '#002147', fontFamily: 'monospace' }}>{sm.studentId}</td>
+                    <td style={{ fontWeight: 'bold', color: '#0f172a', fontFamily: 'monospace' }}>{sm.studentId}</td>
                     <td style={{ fontWeight: '600' }}>{sm.studentName}</td>
                     {isTheory ? (
                       <>
@@ -679,7 +774,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         <div className="cf-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h3 style={{ fontSize: '12pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
+              <h3 style={{ fontSize: '12pt', color: '#0f172a', margin: 0, fontWeight: 'bold' }}>
                 Mid Semester Exam (MST) Evaluation &amp; Counterfoil Sync
               </h3>
               <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '2px' }}>
@@ -722,7 +817,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
               <tbody>
                 {filteredStudents.map((sm) => (
                   <tr key={sm.studentId}>
-                    <td style={{ fontWeight: 'bold', color: '#002147', fontFamily: 'monospace' }}>{sm.studentId}</td>
+                    <td style={{ fontWeight: 'bold', color: '#0f172a', fontFamily: 'monospace' }}>{sm.studentId}</td>
                     <td style={{ fontWeight: '600' }}>{sm.studentName}</td>
                     <td>
                       <input
@@ -798,7 +893,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         <div className="cf-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h3 style={{ fontSize: '12pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
+              <h3 style={{ fontSize: '12pt', color: '#0f172a', margin: 0, fontWeight: 'bold' }}>
                 End Semester Exam (ESE) Evaluation &amp; Counterfoil Sync
               </h3>
               <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '2px' }}>
@@ -841,7 +936,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
               <tbody>
                 {filteredStudents.map((sm) => (
                   <tr key={sm.studentId}>
-                    <td style={{ fontWeight: 'bold', color: '#002147', fontFamily: 'monospace' }}>{sm.studentId}</td>
+                    <td style={{ fontWeight: 'bold', color: '#0f172a', fontFamily: 'monospace' }}>{sm.studentId}</td>
                     <td style={{ fontWeight: '600' }}>{sm.studentName}</td>
                     <td>
                       <input
@@ -917,7 +1012,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         <div className="cf-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h3 style={{ fontSize: '12pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
+              <h3 style={{ fontSize: '12pt', color: '#0f172a', margin: 0, fontWeight: 'bold' }}>
                 Consolidated Course Evaluation &amp; Letter Grade Sheet (100 Marks)
               </h3>
               <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '2px' }}>
@@ -955,12 +1050,12 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
               <tbody>
                 {filteredStudents.map((sm) => (
                   <tr key={sm.studentId}>
-                    <td style={{ fontWeight: 'bold', color: '#002147', fontFamily: 'monospace' }}>{sm.studentId}</td>
+                    <td style={{ fontWeight: 'bold', color: '#0f172a', fontFamily: 'monospace' }}>{sm.studentId}</td>
                     <td style={{ fontWeight: '600' }}>{sm.studentName}</td>
                     <td style={{ fontWeight: 'bold', color: '#059669' }}>{sm.totalTa}</td>
                     <td style={{ fontWeight: 'bold', color: '#0284c7' }}>{sm.scaledMst}</td>
                     <td style={{ fontWeight: 'bold', color: '#b45309' }}>{sm.scaledEse}</td>
-                    <td style={{ fontWeight: 'bold', fontSize: '10.5pt', color: '#002147' }}>{sm.finalScore} / 100</td>
+                    <td style={{ fontWeight: 'bold', fontSize: '10.5pt', color: '#0f172a' }}>{sm.finalScore} / 100</td>
                     <td>
                       <span style={{
                         fontSize: '8.5pt',
@@ -1000,7 +1095,7 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
         <div className="cf-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
             <div>
-              <h3 style={{ fontSize: '12pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
+              <h3 style={{ fontSize: '12pt', color: '#0f172a', margin: 0, fontWeight: 'bold' }}>
                 Master Transcripts &amp; Academic Grade Sheet (All Students × Courses)
               </h3>
               <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '2px' }}>
@@ -1042,13 +1137,13 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                 <tbody>
                   {masterTranscripts.transcripts.map((tr) => (
                     <tr key={tr.studentId}>
-                      <td style={{ fontWeight: 'bold', color: '#002147', fontFamily: 'monospace' }}>{tr.studentId}</td>
+                      <td style={{ fontWeight: 'bold', color: '#0f172a', fontFamily: 'monospace' }}>{tr.studentId}</td>
                       <td style={{ fontWeight: '600' }}>{tr.studentName}</td>
                       {masterTranscripts.courses.map(c => {
                         const sc = tr.courseScores?.[c.code] || { finalScore: 0, grade: 'FF', gradePoint: 0 };
                         return (
                           <td key={c.code}>
-                            <div style={{ fontWeight: 'bold', color: '#002147' }}>{sc.finalScore} / 100</div>
+                            <div style={{ fontWeight: 'bold', color: '#0f172a' }}>{sc.finalScore} / 100</div>
                             <span style={{
                               fontSize: '7.5pt',
                               fontWeight: 'bold',
