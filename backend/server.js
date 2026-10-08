@@ -5496,6 +5496,45 @@ app.post('/api/admin/counterfoil/action/:id', async (req, res) => {
 // ACADEMIC COURSE MARKS LEDGER & GRADING APIS
 // ==========================================
 
+function getSubmissionScore(sub) {
+    if (!sub) return 0;
+    if (sub.score !== undefined && sub.score !== null && !isNaN(sub.score)) return Number(sub.score);
+    if (sub.totalScore !== undefined && sub.totalScore !== null && !isNaN(sub.totalScore)) return Number(sub.totalScore);
+    if (sub.evaluation) {
+        if (sub.evaluation.score !== undefined && sub.evaluation.score !== null && !isNaN(sub.evaluation.score)) return Number(sub.evaluation.score);
+        if (sub.evaluation.totalScore !== undefined && sub.evaluation.totalScore !== null && !isNaN(sub.evaluation.totalScore)) return Number(sub.evaluation.totalScore);
+        const mcq = Number(sub.evaluation.mcqScore || 0);
+        const coding = Number(sub.evaluation.codingScore || 0);
+        const web = Number(sub.evaluation.webScore || 0);
+        if (mcq > 0 || coding > 0 || web > 0) return mcq + coding + web;
+    }
+    if (Array.isArray(sub.answers) && sub.answers.length > 0) {
+        let sum = 0;
+        sub.answers.forEach(a => { sum += Number(a.score || 0); });
+        return sum;
+    }
+    return 0;
+}
+
+function buildSubmissionMap(submissions) {
+    const map = new Map();
+    (submissions || []).forEach(sub => {
+        if (sub.candidateId) map.set(String(sub.candidateId), sub);
+        if (sub.studentId) map.set(String(sub.studentId), sub);
+        if (sub.candidateName) map.set(String(sub.candidateName).toLowerCase().trim(), sub);
+    });
+    return map;
+}
+
+function findSubmissionForStudent(cand, existingSm, subMap) {
+    if (!subMap) return null;
+    const sId = String(cand?.studentId || cand?.registrationData?.studentId || cand?.rollNo || cand?._id || existingSm?.studentId || '');
+    const candId = String(cand?._id || cand?.id || '');
+    const candName = String(cand?.name || cand?.registrationData?.preferredName || cand?.registrationData?.fullName || existingSm?.studentName || '').toLowerCase().trim();
+
+    return subMap.get(sId) || subMap.get(candId) || subMap.get(candName) || null;
+}
+
 const DEFAULT_ACADEMIC_COURSES = [
     { code: "R526CS01T", name: "Introduction to Computer Science", type: "theory" },
     { code: "R526CS02T", name: "Programming Fundamentals with C++", type: "theory" },
@@ -5658,7 +5697,7 @@ app.get('/api/admin/marks-ledger/available-tests', async (req, res) => {
     }
 });
 
-// 3. Get Course Marks Ledger (Auto-fetches Counterfoil Written Marks)
+// 3. Get Course Marks Ledger (Auto-fetches Counterfoil Written Marks & Linked Online Test Scores)
 app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
     const { courseCode } = req.params;
     const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
@@ -5683,6 +5722,43 @@ app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
         const existingMap = new Map();
         if (ledger && Array.isArray(ledger.studentMarks)) {
             ledger.studentMarks.forEach(sm => existingMap.set(String(sm.studentId), sm));
+        }
+
+        const linkedMstId = ledger?.linkedMstOnlineTestId || ledger?.linkedOnlineTestId || '';
+        const linkedEseId = ledger?.linkedEseOnlineTestId || '';
+
+        let mstSubMap = null;
+        let mstTestMax = 40;
+        if (linkedMstId) {
+            let mstSubmissions = [];
+            let mstTest = null;
+            if (useMongo) {
+                mstSubmissions = await TestSubmissionModel.find({ testId: linkedMstId }).lean();
+                mstTest = await TestConfigModel.findById(linkedMstId).lean();
+            } else {
+                const db = getJSONData();
+                mstSubmissions = (db.testSubmissions || []).filter(s => String(s.testId) === String(linkedMstId));
+                mstTest = (db.tests || []).find(t => String(t.id || t._id) === String(linkedMstId));
+            }
+            mstSubMap = buildSubmissionMap(mstSubmissions);
+            if (mstTest) mstTestMax = Number(mstTest.marks || mstTest.totalMarks || 40);
+        }
+
+        let eseSubMap = null;
+        let eseTestMax = 100;
+        if (linkedEseId) {
+            let eseSubmissions = [];
+            let eseTest = null;
+            if (useMongo) {
+                eseSubmissions = await TestSubmissionModel.find({ testId: linkedEseId }).lean();
+                eseTest = await TestConfigModel.findById(linkedEseId).lean();
+            } else {
+                const db = getJSONData();
+                eseSubmissions = (db.testSubmissions || []).filter(s => String(s.testId) === String(linkedEseId));
+                eseTest = (db.tests || []).find(t => String(t.id || t._id) === String(linkedEseId));
+            }
+            eseSubMap = buildSubmissionMap(eseSubmissions);
+            if (eseTest) eseTestMax = Number(eseTest.marks || eseTest.totalMarks || 100);
         }
 
         // Map candidates to studentMarks array
@@ -5717,6 +5793,26 @@ app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
                 }
             }
 
+            // Auto-fetch Online MST score if test is linked
+            let mstOnline = Number(existing.mstOnline || 0);
+            if (mstSubMap) {
+                const mstSub = findSubmissionForStudent(cand, existing, mstSubMap);
+                if (mstSub) {
+                    const rawScored = getSubmissionScore(mstSub);
+                    mstOnline = Math.min(40, Math.round(((rawScored / mstTestMax) * 40) * 100) / 100);
+                }
+            }
+
+            // Auto-fetch Online ESE score if test is linked
+            let eseOnline = Number(existing.eseOnline || 0);
+            if (eseSubMap) {
+                const eseSub = findSubmissionForStudent(cand, existing, eseSubMap);
+                if (eseSub) {
+                    const rawScored = getSubmissionScore(eseSub);
+                    eseOnline = Math.min(100, Math.round(((rawScored / eseTestMax) * 100) * 100) / 100);
+                }
+            }
+
             const rawEntry = {
                 studentId: sId,
                 studentName: sName,
@@ -5731,12 +5827,12 @@ app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
 
                 mstWritten,
                 mstWrittenStatus,
-                mstOnline: Number(existing.mstOnline || 0),
+                mstOnline,
                 mstViva: Number(existing.mstViva || 0),
 
                 eseWritten,
                 eseWrittenStatus,
-                eseOnline: Number(existing.eseOnline || 0),
+                eseOnline,
                 eseViva: Number(existing.eseViva || 0)
             };
 
@@ -5843,17 +5939,20 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
     try {
         let allLedgers = [];
         let submissions = [];
+        let testObj = null;
 
         if (useMongo) {
             allLedgers = await AcademicMarksLedgerModel.find().lean();
             if (testId) {
                 submissions = await TestSubmissionModel.find({ testId }).lean();
+                testObj = await TestConfigModel.findById(testId).lean();
             }
         } else {
             const db = getJSONData();
             allLedgers = db.academicMarksLedgers || [];
             if (testId) {
                 submissions = (db.testSubmissions || []).filter(s => String(s.testId) === String(testId));
+                testObj = (db.tests || []).find(t => String(t.id || t._id) === String(testId));
             }
         }
 
@@ -5919,25 +6018,21 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
             }
         }
 
-        // Sync online scores if requested
-        if (syncOnlineScores && testId && submissions.length > 0) {
-            const subMap = new Map();
-            submissions.forEach(s => subMap.set(String(s.candidateId), s));
+        // Sync online scores if test is linked (defaults to true unless explicitly false)
+        if (syncOnlineScores !== false && testId && submissions.length > 0) {
+            const testMaxMarks = Number(testObj?.marks || testObj?.totalMarks || (targetExam === 'mst' ? 40 : 100));
+            const subMap = buildSubmissionMap(submissions);
 
             ledger.studentMarks = (ledger.studentMarks || []).map(m => {
-                const s = subMap.get(String(m.studentId));
-                if (s) {
-                    const totalScored = Number(s.totalScore || s.evaluation?.totalScore || s.score || 0);
-                    const totalMax = Number(s.evaluation?.totalMaxMarks || 100);
-                    
+                const sub = findSubmissionForStudent(m, m, subMap);
+                if (sub) {
+                    const rawScored = getSubmissionScore(sub);
                     if (targetExam === 'mst') {
                         // MST Online Exam is scaled out of 40 marks
-                        const normalized40 = Math.round(((totalScored / totalMax) * 40) * 100) / 100;
-                        m.mstOnline = Math.min(40, normalized40);
+                        m.mstOnline = Math.min(40, Math.round(((rawScored / testMaxMarks) * 40) * 100) / 100);
                     } else if (targetExam === 'ese') {
                         // ESE Online Exam is scaled out of 100 marks
-                        const normalized100 = Math.round(((totalScored / totalMax) * 100) * 100) / 100;
-                        m.eseOnline = Math.min(100, normalized100);
+                        m.eseOnline = Math.min(100, Math.round(((rawScored / testMaxMarks) * 100) * 100) / 100);
                     }
                 }
                 return calculateMarksLedgerEntry(m, courseDef.type);
@@ -5955,7 +6050,7 @@ app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
         await logSystemAction('admin', 'TEST_LINKED', `Linked online test ${testId} to ${examLabel} for course ${courseCode}`, 'info');
         return res.json({ 
             success: true, 
-            message: testId ? `Successfully linked online test to ${examLabel} for course ${courseCode}.` : `Unlinked online test from ${examLabel} for course ${courseCode}.`,
+            message: testId ? `Successfully linked online test and synced scores for ${examLabel} in ${courseCode}.` : `Unlinked online test from ${examLabel} for course ${courseCode}.`,
             targetExam,
             testId
         });

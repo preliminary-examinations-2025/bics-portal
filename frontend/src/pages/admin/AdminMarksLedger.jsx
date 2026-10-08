@@ -433,8 +433,8 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => handleLinkTest('mst', false)}
-                      disabled={linking || ledgerData?.isLocked}
+                      onClick={() => handleLinkTest('mst', true)}
+                      disabled={linking || !selectedMstTestId || ledgerData?.isLocked}
                       style={{
                         fontSize: '7.5pt',
                         padding: '5px 10px',
@@ -442,9 +442,9 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                         borderRadius: '4px',
                         whiteSpace: 'nowrap',
                         backgroundColor: '#ffffff',
-                        color: (linking || ledgerData?.isLocked) ? '#64748b' : '#334155',
-                        border: `1px solid ${(linking || ledgerData?.isLocked) ? '#e2e8f0' : '#cbd5e1'}`,
-                        cursor: (linking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                        color: (linking || !selectedMstTestId || ledgerData?.isLocked) ? '#64748b' : '#334155',
+                        border: `1px solid ${(linking || !selectedMstTestId || ledgerData?.isLocked) ? '#e2e8f0' : '#cbd5e1'}`,
+                        cursor: (linking || !selectedMstTestId || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
                       }}
                     >
                       <LinkIcon size={12} /> Link
@@ -514,8 +514,8 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => handleLinkTest('ese', false)}
-                      disabled={linking || ledgerData?.isLocked}
+                      onClick={() => handleLinkTest('ese', true)}
+                      disabled={linking || !selectedEseTestId || ledgerData?.isLocked}
                       style={{
                         fontSize: '7.5pt',
                         padding: '5px 10px',
@@ -523,9 +523,9 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                         borderRadius: '4px',
                         whiteSpace: 'nowrap',
                         backgroundColor: '#ffffff',
-                        color: (linking || ledgerData?.isLocked) ? '#64748b' : '#334155',
-                        border: `1px solid ${(linking || ledgerData?.isLocked) ? '#e2e8f0' : '#cbd5e1'}`,
-                        cursor: (linking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
+                        color: (linking || !selectedEseTestId || ledgerData?.isLocked) ? '#64748b' : '#334155',
+                        border: `1px solid ${(linking || !selectedEseTestId || ledgerData?.isLocked) ? '#e2e8f0' : '#cbd5e1'}`,
+                        cursor: (linking || !selectedEseTestId || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
                       }}
                     >
                       <LinkIcon size={12} /> Link
