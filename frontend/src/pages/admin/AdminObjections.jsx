@@ -334,20 +334,14 @@ export default function AdminObjections({
               const qTitle = q?.title || `Question #${Number(obj.questionIndex || 0) + 1}`;
               const qDesc = q?.description || q?.questionText || q?.problemStatement || q?.text || ans?.questionDescription || ans?.questionText || '';
 
-              const isWeb = q?.type === 'web' || ans?.type === 'web' || q?.playgroundLanguage === 'web' ||
-                            ans?.submittedHtml !== undefined || ans?.submittedCss !== undefined || ans?.submittedJs !== undefined;
+              const hasWebCode = (typeof ans?.submittedHtml === 'string' && ans.submittedHtml.trim() !== '') ||
+                                 (typeof ans?.submittedCss === 'string' && ans.submittedCss.trim() !== '') ||
+                                 (typeof ans?.submittedJs === 'string' && ans.submittedJs.trim() !== '');
 
-              const rawType = q?.type || ans?.type;
-              let qType = rawType;
-              if (isWeb) {
-                qType = 'web';
-              } else if (!qType) {
-                if (ans?.selectedOptionIndex !== undefined || (Array.isArray(q?.options) && q.options.length > 0)) {
-                  qType = 'mcq';
-                } else {
-                  qType = 'coding';
-                }
-              }
+              const isWeb = q?.type === 'web' || ans?.type === 'web' || q?.playgroundLanguage === 'web' || hasWebCode;
+              const isMcq = q?.type === 'mcq' || ans?.type === 'mcq' || ans?.selectedOptionIndex !== undefined || (Array.isArray(q?.options) && q.options.length > 0);
+
+              const qType = isWeb ? 'web' : (isMcq ? 'mcq' : 'coding');
 
               if (qType === 'mcq') {
                 return (
