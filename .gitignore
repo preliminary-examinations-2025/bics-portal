@@ -39,3 +39,6 @@ backend/*_payload.js
 backend/create_quiz*.js
 backend/deploy_all_local.js
 
+# Temporary Scratch Files
+scratch/
+

@@ -982,6 +982,54 @@ const CounterfoilSubmissionSchema = new mongoose.Schema({
 }, { versionKey: false });
 const CounterfoilSubmissionModel = mongoose.model('CounterfoilSubmission', CounterfoilSubmissionSchema, 'counterfoil_submissions');
 
+const AcademicMarksLedgerSchema = new mongoose.Schema({
+    courseCode: { type: String, required: true, unique: true },
+    courseName: { type: String, required: true },
+    courseType: { type: String, enum: ['theory', 'lab'], required: true },
+    linkedOnlineTestId: { type: String, default: '' },
+    isLocked: { type: Boolean, default: false },
+    lockedAt: Date,
+    lockedBy: String,
+    studentMarks: [{
+        studentId: { type: String, required: true },
+        studentName: { type: String, required: true },
+        rollNo: String,
+        
+        // TA Components
+        taAssignment: { type: Number, default: 0 },
+        taClassTest: { type: Number, default: 0 },
+        taQuiz: { type: Number, default: 0 },
+        taIdeation: { type: Number, default: 0 },
+        
+        taPracticalEval: { type: Number, default: 0 },
+        taLabQuiz: { type: Number, default: 0 },
+        taProject: { type: Number, default: 0 },
+        
+        // MST Components
+        mstWritten: { type: Number, default: 0 },
+        mstWrittenStatus: { type: String, enum: ['approved', 'pending_approval', 'manual'], default: 'manual' },
+        mstOnline: { type: Number, default: 0 },
+        mstViva: { type: Number, default: 0 },
+        
+        // ESE Components
+        eseWritten: { type: Number, default: 0 },
+        eseWrittenStatus: { type: String, enum: ['approved', 'pending_approval', 'manual'], default: 'manual' },
+        eseOnline: { type: Number, default: 0 },
+        eseViva: { type: Number, default: 0 },
+        
+        // Computed Results
+        totalTa: { type: Number, default: 0 },
+        scaledMst: { type: Number, default: 0 },
+        scaledEse: { type: Number, default: 0 },
+        finalScore: { type: Number, default: 0 },
+        grade: { type: String, default: 'FF' },
+        gradePoint: { type: Number, default: 0 },
+        status: { type: String, enum: ['PASS', 'FAIL'], default: 'FAIL' }
+    }]
+}, { versionKey: false, timestamps: true });
+
+const AcademicMarksLedgerModel = mongoose.model('AcademicMarksLedger', AcademicMarksLedgerSchema, 'academic_marks_ledgers');
+
 const GOOGLE_CLASSROOM_WEBHOOK_KEY = process.env.GOOGLE_CLASSROOM_WEBHOOK_KEY || "bics_classroom_secret_key_2026";
 
 
@@ -5438,6 +5486,536 @@ app.post('/api/admin/counterfoil/action/:id', async (req, res) => {
         return res.json({ success: true, submission });
     } catch (e) {
         console.error("Admin counterfoil action error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// ==========================================
+// ACADEMIC COURSE MARKS LEDGER & GRADING APIS
+// ==========================================
+
+const DEFAULT_ACADEMIC_COURSES = [
+    { code: "R526CS01T", name: "Introduction to Computer Science", type: "theory" },
+    { code: "R526CS02T", name: "Programming Fundamentals with C++", type: "theory" },
+    { code: "R526CS03T", name: "Basics of Web Development", type: "theory" },
+    { code: "R526CS04T", name: "Mathematical Thinking", type: "theory" },
+    { code: "R526CS02L", name: "Programming Fundamentals with C++ Lab", type: "lab" },
+    { code: "R526CS03L", name: "Basics of Web Development Lab", type: "lab" }
+];
+
+function calculateMarksLedgerEntry(m, type) {
+    const isTheory = type === 'theory';
+
+    // 1. Teacher Assessment (TA) Computation
+    let totalTa = 0;
+    if (isTheory) {
+        totalTa = Number(m.taAssignment || 0) + Number(m.taClassTest || 0) + Number(m.taQuiz || 0) + Number(m.taIdeation || 0);
+        totalTa = Math.min(20, Math.max(0, totalTa));
+    } else {
+        totalTa = Number(m.taPracticalEval || 0) + Number(m.taLabQuiz || 0) + Number(m.taProject || 0);
+        totalTa = Math.min(40, Math.max(0, totalTa));
+    }
+
+    // 2. Mid Semester Test (MST) Computation
+    let scaledMst = 0;
+    let rawMst = 0;
+    const wMst = Math.min(40, Math.max(0, Number(m.mstWritten || 0)));
+    if (isTheory) {
+        scaledMst = (wMst / 40) * 30;
+    } else {
+        const oMst = Math.min(40, Math.max(0, Number(m.mstOnline || 0)));
+        const vMst = Math.min(20, Math.max(0, Number(m.mstViva || 0)));
+        rawMst = wMst + oMst + vMst;
+        scaledMst = (rawMst / 100) * 20;
+    }
+
+    // 3. End Semester Exam (ESE) Computation
+    let scaledEse = 0;
+    let rawEse = 0;
+    const wEse = Math.min(100, Math.max(0, Number(m.eseWritten || 0)));
+    if (isTheory) {
+        scaledEse = (wEse / 100) * 50;
+    } else {
+        const oEse = Math.min(100, Math.max(0, Number(m.eseOnline || 0)));
+        const vEse = Math.min(40, Math.max(0, Number(m.eseViva || 0)));
+        rawEse = wEse + oEse + vEse;
+        scaledEse = (rawEse / 240) * 40;
+    }
+
+    // 4. Final Consolidated Score & Letter Grade Computation (100 Marks Max)
+    const finalScore = Math.round((totalTa + scaledMst + scaledEse) * 100) / 100;
+
+    let grade = 'FF';
+    let gradePoint = 0;
+    let status = 'FAIL';
+
+    if (finalScore >= 91) { grade = 'AA'; gradePoint = 10; status = 'PASS'; }
+    else if (finalScore >= 81) { grade = 'AB'; gradePoint = 9; status = 'PASS'; }
+    else if (finalScore >= 71) { grade = 'BB'; gradePoint = 8; status = 'PASS'; }
+    else if (finalScore >= 65) { grade = 'CC'; gradePoint = 7; status = 'PASS'; }
+    else if (finalScore >= 60) { grade = 'DD'; gradePoint = 6; status = 'PASS'; }
+    else { grade = 'FF'; gradePoint = 0; status = 'FAIL'; }
+
+    return {
+        ...m,
+        totalTa: Math.round(totalTa * 100) / 100,
+        scaledMst: Math.round(scaledMst * 100) / 100,
+        scaledEse: Math.round(scaledEse * 100) / 100,
+        finalScore,
+        grade,
+        gradePoint,
+        status
+    };
+}
+
+// 1. Get Course List & Status
+app.get('/api/admin/marks-ledger/courses', async (req, res) => {
+    try {
+        let ledgers = [];
+        if (useMongo) {
+            ledgers = await AcademicMarksLedgerModel.find().lean();
+        } else {
+            const db = getJSONData();
+            ledgers = db.academicMarksLedgers || [];
+        }
+
+        const courses = DEFAULT_ACADEMIC_COURSES.map(c => {
+            const l = ledgers.find(l => l.courseCode === c.code);
+            return {
+                ...c,
+                linkedOnlineTestId: l?.linkedOnlineTestId || '',
+                isLocked: l?.isLocked || false,
+                studentCount: l?.studentMarks?.length || 0,
+                updatedAt: l?.updatedAt || null
+            };
+        });
+
+        return res.json(courses);
+    } catch (e) {
+        console.error("Failed to list marks ledger courses:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 2. Get Available Online Tests (Excludes test IDs already linked to any course)
+app.get('/api/admin/marks-ledger/available-tests', async (req, res) => {
+    try {
+        const { currentCourseCode } = req.query;
+        let ledgers = [];
+        let tests = [];
+
+        if (useMongo) {
+            ledgers = await AcademicMarksLedgerModel.find().lean();
+            tests = await TestConfigModel.find().lean();
+        } else {
+            const db = getJSONData();
+            ledgers = db.academicMarksLedgers || [];
+            tests = db.tests || [];
+        }
+
+        // Gather all linked test IDs across OTHER courses
+        const assignedTestIds = new Set(
+            ledgers
+                .filter(l => l.linkedOnlineTestId && l.courseCode !== currentCourseCode)
+                .map(l => String(l.linkedOnlineTestId))
+        );
+
+        // Filter tests to available ones
+        const available = tests
+            .filter(t => !assignedTestIds.has(String(t._id || t.id)))
+            .map(t => ({
+                id: String(t._id || t.id),
+                title: t.title,
+                marks: t.marks || t.totalMarks || 100,
+                courseCode: t.courseCode || ''
+            }));
+
+        return res.json(available);
+    } catch (e) {
+        console.error("Failed to list available online tests:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 3. Get Course Marks Ledger (Auto-fetches Counterfoil Written Marks)
+app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
+    const { courseCode } = req.params;
+    const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+
+    try {
+        let ledger = null;
+        let candidates = [];
+        let counterfoils = [];
+
+        if (useMongo) {
+            ledger = await AcademicMarksLedgerModel.findOne({ courseCode }).lean();
+            candidates = await CandidateModel.find().lean();
+            counterfoils = await CounterfoilSubmissionModel.find({ courseCode }).lean();
+        } else {
+            const db = getJSONData();
+            db.academicMarksLedgers = db.academicMarksLedgers || [];
+            ledger = db.academicMarksLedgers.find(l => l.courseCode === courseCode);
+            candidates = db.candidates || [];
+            counterfoils = (db.counterfoilSubmissions || []).filter(s => s.courseCode === courseCode);
+        }
+
+        const existingMap = new Map();
+        if (ledger && Array.isArray(ledger.studentMarks)) {
+            ledger.studentMarks.forEach(sm => existingMap.set(String(sm.studentId), sm));
+        }
+
+        // Map candidates to studentMarks array
+        const studentMarks = candidates.map(cand => {
+            const sId = String(cand.studentId || cand.registrationData?.studentId || cand._id);
+            const sName = cand.name || cand.registrationData?.fullName || 'Candidate';
+            const rollNo = cand.rollNo || cand.studentId || '';
+
+            const existing = existingMap.get(sId) || {};
+
+            // Auto-fetch Written MST (Midsem) counterfoil
+            const mstCf = counterfoils.find(c => String(c.studentId) === sId && (c.examType === 'midsem' || c.examinationName?.toLowerCase().includes('mid')));
+            let mstWritten = existing.mstWritten ?? (mstCf ? Number(mstCf.totalObtained || 0) : 0);
+            let mstWrittenStatus = existing.mstWrittenStatus;
+            if (!mstWrittenStatus) {
+                if (mstCf) {
+                    mstWrittenStatus = mstCf.status === 'approved' ? 'approved' : 'pending_approval';
+                } else {
+                    mstWrittenStatus = 'manual';
+                }
+            }
+
+            // Auto-fetch Written ESE (Endsem) counterfoil
+            const eseCf = counterfoils.find(c => String(c.studentId) === sId && (c.examType === 'endsem' || c.examinationName?.toLowerCase().includes('end')));
+            let eseWritten = existing.eseWritten ?? (eseCf ? Number(eseCf.totalObtained || 0) : 0);
+            let eseWrittenStatus = existing.eseWrittenStatus;
+            if (!eseWrittenStatus) {
+                if (eseCf) {
+                    eseWrittenStatus = eseCf.status === 'approved' ? 'approved' : 'pending_approval';
+                } else {
+                    eseWrittenStatus = 'manual';
+                }
+            }
+
+            const rawEntry = {
+                studentId: sId,
+                studentName: sName,
+                rollNo,
+                taAssignment: Number(existing.taAssignment || 0),
+                taClassTest: Number(existing.taClassTest || 0),
+                taQuiz: Number(existing.taQuiz || 0),
+                taIdeation: Number(existing.taIdeation || 0),
+                taPracticalEval: Number(existing.taPracticalEval || 0),
+                taLabQuiz: Number(existing.taLabQuiz || 0),
+                taProject: Number(existing.taProject || 0),
+
+                mstWritten,
+                mstWrittenStatus,
+                mstOnline: Number(existing.mstOnline || 0),
+                mstViva: Number(existing.mstViva || 0),
+
+                eseWritten,
+                eseWrittenStatus,
+                eseOnline: Number(existing.eseOnline || 0),
+                eseViva: Number(existing.eseViva || 0)
+            };
+
+            return calculateMarksLedgerEntry(rawEntry, courseDef.type);
+        });
+
+        const fullLedger = {
+            courseCode: courseDef.code,
+            courseName: courseDef.name,
+            courseType: courseDef.type,
+            linkedOnlineTestId: ledger?.linkedOnlineTestId || '',
+            isLocked: ledger?.isLocked || false,
+            lockedAt: ledger?.lockedAt || null,
+            lockedBy: ledger?.lockedBy || '',
+            studentMarks
+        };
+
+        return res.json(fullLedger);
+    } catch (e) {
+        console.error("Failed to fetch course marks ledger:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Save Course Marks Ledger
+app.post('/api/admin/marks-ledger/save/:courseCode', async (req, res) => {
+    const { courseCode } = req.params;
+    const { studentMarks, linkedOnlineTestId } = req.body;
+
+    const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+
+    try {
+        const recalculated = (studentMarks || []).map(m => calculateMarksLedgerEntry(m, courseDef.type));
+
+        if (useMongo) {
+            let ledger = await AcademicMarksLedgerModel.findOne({ courseCode });
+            if (!ledger) {
+                ledger = new AcademicMarksLedgerModel({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    linkedOnlineTestId: linkedOnlineTestId || '',
+                    studentMarks: recalculated
+                });
+            } else {
+                if (ledger.isLocked) {
+                    return res.status(403).json({ error: "This course marks ledger is locked by administration and cannot be modified." });
+                }
+                if (linkedOnlineTestId !== undefined) ledger.linkedOnlineTestId = linkedOnlineTestId;
+                ledger.studentMarks = recalculated;
+            }
+            await ledger.save();
+        } else {
+            const db = getJSONData();
+            db.academicMarksLedgers = db.academicMarksLedgers || [];
+            const idx = db.academicMarksLedgers.findIndex(l => l.courseCode === courseCode);
+            if (idx !== -1 && db.academicMarksLedgers[idx].isLocked) {
+                return res.status(403).json({ error: "This course marks ledger is locked by administration and cannot be modified." });
+            }
+            const record = {
+                courseCode: courseDef.code,
+                courseName: courseDef.name,
+                courseType: courseDef.type,
+                linkedOnlineTestId: linkedOnlineTestId !== undefined ? linkedOnlineTestId : (db.academicMarksLedgers[idx]?.linkedOnlineTestId || ''),
+                isLocked: db.academicMarksLedgers[idx]?.isLocked || false,
+                studentMarks: recalculated,
+                updatedAt: new Date().toISOString()
+            };
+            if (idx !== -1) {
+                db.academicMarksLedgers[idx] = record;
+            } else {
+                db.academicMarksLedgers.push(record);
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction('admin', 'MARKS_LEDGER_SAVED', `Admin updated marks ledger for course ${courseCode}`, 'info');
+        return res.json({ success: true, message: `Marks ledger for ${courseCode} saved successfully.` });
+    } catch (e) {
+        console.error("Failed to save marks ledger:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 5. Link Online Test to Course & Sync Scores
+app.post('/api/admin/marks-ledger/link-test/:courseCode', async (req, res) => {
+    const { courseCode } = req.params;
+    const { testId, syncOnlineScores } = req.body;
+
+    const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+
+    try {
+        // Ensure test is not linked to another course
+        let allLedgers = [];
+        let submissions = [];
+
+        if (useMongo) {
+            allLedgers = await AcademicMarksLedgerModel.find().lean();
+            if (testId) {
+                submissions = await TestSubmissionModel.find({ testId }).lean();
+            }
+        } else {
+            const db = getJSONData();
+            allLedgers = db.academicMarksLedgers || [];
+            if (testId) {
+                submissions = (db.testSubmissions || []).filter(s => String(s.testId) === String(testId));
+            }
+        }
+
+        const conflict = allLedgers.find(l => String(l.linkedOnlineTestId) === String(testId) && l.courseCode !== courseCode);
+        if (conflict && testId) {
+            return res.status(400).json({ error: `Test ID ${testId} is already assigned to course ${conflict.courseCode} (${conflict.courseName}) and cannot be reused.` });
+        }
+
+        let ledger = null;
+        if (useMongo) {
+            ledger = await AcademicMarksLedgerModel.findOne({ courseCode });
+            if (!ledger) {
+                ledger = new AcademicMarksLedgerModel({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    linkedOnlineTestId: testId || ''
+                });
+            } else {
+                ledger.linkedOnlineTestId = testId || '';
+            }
+        } else {
+            const db = getJSONData();
+            db.academicMarksLedgers = db.academicMarksLedgers || [];
+            let idx = db.academicMarksLedgers.findIndex(l => l.courseCode === courseCode);
+            if (idx === -1) {
+                ledger = {
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    linkedOnlineTestId: testId || '',
+                    studentMarks: []
+                };
+                db.academicMarksLedgers.push(ledger);
+            } else {
+                db.academicMarksLedgers[idx].linkedOnlineTestId = testId || '';
+                ledger = db.academicMarksLedgers[idx];
+            }
+        }
+
+        // Optionally sync online scores into mstOnline / eseOnline if Lab course
+        if (syncOnlineScores && testId && submissions.length > 0) {
+            const subMap = new Map();
+            submissions.forEach(s => subMap.set(String(s.candidateId), s));
+
+            ledger.studentMarks = (ledger.studentMarks || []).map(m => {
+                const s = subMap.get(String(m.studentId));
+                if (s) {
+                    const totalScored = Number(s.totalScore || s.evaluation?.totalScore || s.score || 0);
+                    const totalMax = Number(s.evaluation?.totalMaxMarks || 100);
+                    // Scale score out of 40 for mstOnline or out of 100 for eseOnline
+                    const normalized40 = Math.round(((totalScored / totalMax) * 40) * 100) / 100;
+                    const normalized100 = Math.round(((totalScored / totalMax) * 100) * 100) / 100;
+                    m.mstOnline = normalized40;
+                    m.eseOnline = normalized100;
+                }
+                return calculateMarksLedgerEntry(m, courseDef.type);
+            });
+        }
+
+        if (useMongo) {
+            await ledger.save();
+        } else {
+            const db = getJSONData();
+            saveJSONData(db);
+        }
+
+        await logSystemAction('admin', 'TEST_LINKED', `Linked online test ${testId} to course ${courseCode}`, 'info');
+        return res.json({ success: true, message: `Online test assigned to course ${courseCode} successfully.`, linkedOnlineTestId: testId });
+    } catch (e) {
+        console.error("Failed to link online test:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 6. Toggle Lock Status
+app.post('/api/admin/marks-ledger/toggle-lock/:courseCode', async (req, res) => {
+    const { courseCode } = req.params;
+
+    try {
+        let isLocked = false;
+        if (useMongo) {
+            let ledger = await AcademicMarksLedgerModel.findOne({ courseCode });
+            if (!ledger) {
+                const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+                ledger = new AcademicMarksLedgerModel({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    isLocked: true,
+                    lockedAt: new Date(),
+                    lockedBy: 'admin'
+                });
+            } else {
+                ledger.isLocked = !ledger.isLocked;
+                ledger.lockedAt = ledger.isLocked ? new Date() : null;
+                ledger.lockedBy = ledger.isLocked ? 'admin' : '';
+            }
+            await ledger.save();
+            isLocked = ledger.isLocked;
+        } else {
+            const db = getJSONData();
+            db.academicMarksLedgers = db.academicMarksLedgers || [];
+            let idx = db.academicMarksLedgers.findIndex(l => l.courseCode === courseCode);
+            if (idx === -1) {
+                const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+                db.academicMarksLedgers.push({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    isLocked: true,
+                    lockedAt: new Date().toISOString(),
+                    studentMarks: []
+                });
+                isLocked = true;
+            } else {
+                db.academicMarksLedgers[idx].isLocked = !db.academicMarksLedgers[idx].isLocked;
+                isLocked = db.academicMarksLedgers[idx].isLocked;
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction('admin', 'LEDGER_LOCK_TOGGLED', `Admin set lock status to ${isLocked} for course ${courseCode}`, 'info');
+        return res.json({ success: true, isLocked, message: `Course ${courseCode} is now ${isLocked ? 'locked' : 'unlocked'}.` });
+    } catch (e) {
+        console.error("Failed to toggle ledger lock:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 7. Get Master Transcripts Grid (All Students * All Courses)
+app.get('/api/admin/marks-ledger/master-transcripts', async (req, res) => {
+    try {
+        let candidates = [];
+        let ledgers = [];
+
+        if (useMongo) {
+            candidates = await CandidateModel.find().lean();
+            ledgers = await AcademicMarksLedgerModel.find().lean();
+        } else {
+            const db = getJSONData();
+            candidates = db.candidates || [];
+            ledgers = db.academicMarksLedgers || [];
+        }
+
+        const courseDefs = DEFAULT_ACADEMIC_COURSES;
+        const masterRows = candidates.map(cand => {
+            const sId = String(cand.studentId || cand.registrationData?.studentId || cand._id);
+            const sName = cand.name || cand.registrationData?.fullName || 'Candidate';
+            const rollNo = cand.rollNo || cand.studentId || '';
+
+            const courseScores = {};
+            let totalGradePoints = 0;
+            let countCourses = 0;
+
+            courseDefs.forEach(c => {
+                const ledger = ledgers.find(l => l.courseCode === c.code);
+                const sm = (ledger?.studentMarks || []).find(m => String(m.studentId) === sId);
+                if (sm) {
+                    courseScores[c.code] = {
+                        finalScore: sm.finalScore,
+                        grade: sm.grade,
+                        gradePoint: sm.gradePoint,
+                        status: sm.status
+                    };
+                    totalGradePoints += Number(sm.gradePoint || 0);
+                    countCourses++;
+                } else {
+                    courseScores[c.code] = {
+                        finalScore: 0,
+                        grade: 'FF',
+                        gradePoint: 0,
+                        status: 'FAIL'
+                    };
+                }
+            });
+
+            const cgpa = countCourses > 0 ? Math.round((totalGradePoints / countCourses) * 100) / 100 : 0;
+
+            return {
+                studentId: sId,
+                studentName: sName,
+                rollNo,
+                courseScores,
+                cgpa
+            };
+        });
+
+        return res.json({
+            courses: courseDefs,
+            transcripts: masterRows
+        });
+    } catch (e) {
+        console.error("Failed to generate master transcripts:", e);
         return res.status(500).json({ error: e.message });
     }
 });

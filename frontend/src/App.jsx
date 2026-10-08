@@ -36,6 +36,7 @@ import AdminObjections from './pages/admin/AdminObjections';
 import AdminRecycleBin from './pages/admin/AdminRecycleBin';
 import AdminAttendance from './pages/admin/AdminAttendance';
 import AdminCounterfoilView from './pages/admin/AdminCounterfoilView';
+import AdminMarksLedger from './pages/admin/AdminMarksLedger';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
@@ -189,7 +190,8 @@ export default function App() {
       '/admin/tests': 'admin_tests',
       '/admin/objections': 'admin_objections',
       '/admin/recyclebin': 'admin_recyclebin',
-      '/admin/counterfoil': 'admin_counterfoil'
+      '/admin/counterfoil': 'admin_counterfoil',
+      '/admin/marks-ledger': 'admin_marks_ledger'
     };
     const matched = pathToView[location.pathname];
     return matched !== undefined ? matched : 'not_found';
@@ -227,7 +229,8 @@ export default function App() {
     admin_tests: '/admin/tests',
     admin_objections: '/admin/objections',
     admin_recyclebin: '/admin/recyclebin',
-    admin_counterfoil: '/admin/counterfoil'
+    admin_counterfoil: '/admin/counterfoil',
+    admin_marks_ledger: '/admin/marks-ledger'
   };
 
   const setView = (newView) => {
@@ -275,7 +278,8 @@ export default function App() {
       '/admin/tests': 'admin_tests',
       '/admin/objections': 'admin_objections',
       '/admin/recyclebin': 'admin_recyclebin',
-      '/admin/counterfoil': 'admin_counterfoil'
+      '/admin/counterfoil': 'admin_counterfoil',
+      '/admin/marks-ledger': 'admin_marks_ledger'
     };
     const matched = pathToView[location.pathname];
     const nextView = matched !== undefined ? matched : 'not_found';
@@ -3065,7 +3069,7 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger'].includes(targetView);
     }
     
     if (user.role === 'student') {
@@ -3628,6 +3632,12 @@ int main() {
                   systemConfig={systemConfig}
                   setSystemConfig={setSystemConfig}
                   handleToggleSetting={handleToggleSetting}
+                />
+              )}
+
+              {view === 'admin_marks_ledger' && (
+                <AdminMarksLedger
+                  apiSecret={API_ACCESS_SECRET}
                 />
               )}
 

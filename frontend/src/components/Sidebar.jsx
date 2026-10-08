@@ -80,6 +80,9 @@ export default function Sidebar({
             <button className={`sidebar-item ${view === 'admin_counterfoil' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_counterfoil'); setIsMobileSidebarOpen(false); }}>
               <CheckCircle size={16} style={{ color: '#0284c7' }} /> Counterfoil Approvals
             </button>
+            <button className={`sidebar-item ${view === 'admin_marks_ledger' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_marks_ledger'); setIsMobileSidebarOpen(false); }}>
+              <GraduationCap size={16} style={{ color: '#10b981' }} /> Academic Marks Ledger
+            </button>
             <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
               <ClipboardList size={16} /> Tests Manager
             </button>
