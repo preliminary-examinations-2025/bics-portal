@@ -5478,6 +5478,59 @@ app.post('/api/admin/counterfoil/action/:id', async (req, res) => {
             saveJSONData(db);
         }
 
+        // Auto-sync approved/rejected counterfoil status and score to academic marks ledger
+        try {
+            const cCode = submission.courseCode;
+            const sId = submission.studentId;
+            const examType = submission.examType;
+
+            if (useMongo) {
+                const ledger = await AcademicMarksLedgerModel.findOne({ courseCode: cCode });
+                if (ledger && Array.isArray(ledger.studentMarks)) {
+                    let updated = false;
+                    ledger.studentMarks.forEach(m => {
+                        if (String(m.studentId).toUpperCase().trim() === String(sId).toUpperCase().trim()) {
+                            if (examType === 'midsem') {
+                                m.mstWritten = Number(submission.totalObtained || 0);
+                                m.mstWrittenStatus = status;
+                            } else if (examType === 'endsem') {
+                                m.eseWritten = Number(submission.totalObtained || 0);
+                                m.eseWrittenStatus = status;
+                            }
+                            const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === cCode) || { type: cCode.endsWith('L') ? 'lab' : 'theory' };
+                            const recalculated = calculateMarksLedgerEntry(m, courseDef.type);
+                            Object.assign(m, recalculated);
+                            updated = true;
+                        }
+                    });
+                    if (updated) await ledger.save();
+                }
+            } else {
+                const db = getJSONData();
+                db.academicMarksLedgers = db.academicMarksLedgers || [];
+                const ledgerIdx = db.academicMarksLedgers.findIndex(l => l.courseCode === cCode);
+                if (ledgerIdx !== -1 && Array.isArray(db.academicMarksLedgers[ledgerIdx].studentMarks)) {
+                    const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === cCode) || { type: cCode.endsWith('L') ? 'lab' : 'theory' };
+                    db.academicMarksLedgers[ledgerIdx].studentMarks.forEach(m => {
+                        if (String(m.studentId).toUpperCase().trim() === String(sId).toUpperCase().trim()) {
+                            if (examType === 'midsem') {
+                                m.mstWritten = Number(submission.totalObtained || 0);
+                                m.mstWrittenStatus = status;
+                            } else if (examType === 'endsem') {
+                                m.eseWritten = Number(submission.totalObtained || 0);
+                                m.eseWrittenStatus = status;
+                            }
+                            const recalculated = calculateMarksLedgerEntry(m, courseDef.type);
+                            Object.assign(m, recalculated);
+                        }
+                    });
+                    saveJSONData(db);
+                }
+            }
+        } catch (syncErr) {
+            console.error("Failed to auto-sync counterfoil action to marks ledger:", syncErr);
+        }
+
         await logSystemAction(
             'admin',
             'COUNTERFOIL_ACTION',
@@ -5533,6 +5586,29 @@ function findSubmissionForStudent(cand, existingSm, subMap) {
     const candName = String(cand?.name || cand?.registrationData?.preferredName || cand?.registrationData?.fullName || existingSm?.studentName || '').toLowerCase().trim();
 
     return subMap.get(sId) || subMap.get(candId) || subMap.get(candName) || null;
+}
+
+function findCounterfoilForStudent(cand, existingSm, counterfoils, examType) {
+    if (!Array.isArray(counterfoils) || counterfoils.length === 0) return null;
+
+    const sId = String(cand?.studentId || cand?.registrationData?.studentId || cand?.rollNo || cand?._id || existingSm?.studentId || '').toUpperCase().trim();
+    const candId = String(cand?._id || cand?.id || '').toUpperCase().trim();
+    const candName = String(cand?.name || cand?.registrationData?.preferredName || cand?.registrationData?.fullName || existingSm?.studentName || '').toLowerCase().trim();
+
+    return counterfoils.find(c => {
+        const isExamMatch = c.examType === examType || 
+            (examType === 'midsem' && c.examinationName?.toLowerCase().includes('mid')) ||
+            (examType === 'endsem' && c.examinationName?.toLowerCase().includes('end'));
+        if (!isExamMatch) return false;
+
+        const cfStudentId = String(c.studentId || '').toUpperCase().trim();
+        const cfName = String(c.studentName || '').toLowerCase().trim();
+
+        return (
+            (cfStudentId && (cfStudentId === sId || cfStudentId === candId)) ||
+            (cfName && candName && cfName === candName)
+        );
+    }) || null;
 }
 
 const DEFAULT_ACADEMIC_COURSES = [
@@ -5770,27 +5846,21 @@ app.get('/api/admin/marks-ledger/ledger/:courseCode', async (req, res) => {
             const existing = existingMap.get(sId) || {};
 
             // Auto-fetch Written MST (Midsem) counterfoil
-            const mstCf = counterfoils.find(c => String(c.studentId) === sId && (c.examType === 'midsem' || c.examinationName?.toLowerCase().includes('mid')));
-            let mstWritten = existing.mstWritten ?? (mstCf ? Number(mstCf.totalObtained || 0) : 0);
-            let mstWrittenStatus = existing.mstWrittenStatus;
-            if (!mstWrittenStatus) {
-                if (mstCf) {
-                    mstWrittenStatus = mstCf.status === 'approved' ? 'approved' : 'pending_approval';
-                } else {
-                    mstWrittenStatus = 'manual';
-                }
+            const mstCf = findCounterfoilForStudent(cand, existing, counterfoils, 'midsem');
+            let mstWritten = Number(existing.mstWritten || 0);
+            let mstWrittenStatus = existing.mstWrittenStatus || 'manual';
+            if (mstCf) {
+                mstWritten = Number(mstCf.totalObtained || 0);
+                mstWrittenStatus = mstCf.status === 'approved' ? 'approved' : (mstCf.status === 'rejected' ? 'rejected' : 'pending_approval');
             }
 
             // Auto-fetch Written ESE (Endsem) counterfoil
-            const eseCf = counterfoils.find(c => String(c.studentId) === sId && (c.examType === 'endsem' || c.examinationName?.toLowerCase().includes('end')));
-            let eseWritten = existing.eseWritten ?? (eseCf ? Number(eseCf.totalObtained || 0) : 0);
-            let eseWrittenStatus = existing.eseWrittenStatus;
-            if (!eseWrittenStatus) {
-                if (eseCf) {
-                    eseWrittenStatus = eseCf.status === 'approved' ? 'approved' : 'pending_approval';
-                } else {
-                    eseWrittenStatus = 'manual';
-                }
+            const eseCf = findCounterfoilForStudent(cand, existing, counterfoils, 'endsem');
+            let eseWritten = Number(existing.eseWritten || 0);
+            let eseWrittenStatus = existing.eseWrittenStatus || 'manual';
+            if (eseCf) {
+                eseWritten = Number(eseCf.totalObtained || 0);
+                eseWrittenStatus = eseCf.status === 'approved' ? 'approved' : (eseCf.status === 'rejected' ? 'rejected' : 'pending_approval');
             }
 
             // Auto-fetch Online MST score if test is linked
