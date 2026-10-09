@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldAlert, Camera, Mic, Maximize, AlertTriangle, CheckSquare, Info, Award, Loader2, ArrowRight, Play,
   Check, X, Lock, Eye, Clock, Flag, BookOpen, FileText, Send, HelpCircle, ChevronDown, ExternalLink, ShieldCheck,
-  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid, Copy, Paperclip, CheckCircle, Upload
+  Laptop, Smartphone, Tablet, Terminal, Code, Layers, FileCode, Maximize2, RotateCw, Grid, Copy, Paperclip, CheckCircle, Upload, Printer
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -399,9 +399,26 @@ export default function App() {
   const [test, setTest] = useState(null);
   const [submission, setSubmission] = useState(null);
 
-  // Flow views: verify_login, lobby_loading, guidelines_setup, active_exam, finished
+  // Flow views: verify_login, lobby_loading, guidelines_setup, active_exam, finished, eirf_form
   const [flow, setFlow] = useState('verify_login'); 
   const [lobbyMessage, setLobbyMessage] = useState('');
+
+  // EIRF Form State
+  const [eirfDetails, setEirfDetails] = useState(null);
+  const [eirfPrimaryCause, setEirfPrimaryCause] = useState('FULLSCREEN_EXIT');
+  const [eirfExplanation, setEirfExplanation] = useState('');
+  const [eirfTargetedQ1, setEirfTargetedQ1] = useState('');
+  const [eirfTargetedQ2, setEirfTargetedQ2] = useState('');
+  const [eirfFileContent, setEirfFileContent] = useState('');
+  const [eirfFileName, setEirfFileName] = useState('');
+  const [submittingEirf, setSubmittingEirf] = useState(false);
+  const [eirfSuccessMessage, setEirfSuccessMessage] = useState('');
+  const [eirfErrorMessage, setEirfErrorMessage] = useState('');
+  const [eirfTimeLeft, setEirfTimeLeft] = useState('');
+
+  // Proctoring Duration Tracking Refs
+  const fsExitStartTimeRef = useRef(null);
+  const tabExitStartTimeRef = useRef(null);
 
   // Proctoring setup calibration states
   const [webcamGranted, setWebcamGranted] = useState(false);
@@ -766,11 +783,52 @@ export default function App() {
     }
   };
 
-  // 1. Initial Load: Parse path and query parameters for test or verification route
+  const loadEirfDetails = async (subId) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}`);
+      const data = await res.json();
+      if (!res.ok || data.error || data.isExpired) {
+        setVerifyError(data.error || "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.");
+        document.title = "EIRF - Link Closed / Unavailable | BICS Portal";
+        setLoading(false);
+        return;
+      }
+      setEirfDetails(data);
+      setFlow('eirf_form');
+      const eTitle = data.testTitle || 'BICS Examination';
+      document.title = `Emergency Incident Report Form (EIRF) - ${eTitle} | BICS Portal`;
+    } catch (err) {
+      console.error("Error loading EIRF details:", err);
+      setVerifyError("The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.");
+      document.title = "EIRF - Link Closed / Unavailable | BICS Portal";
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 1. Initial Load: Parse path and query parameters for test, verification, or EIRF route
   useEffect(() => {
     const path = window.location.pathname;
     const searchParams = new URLSearchParams(window.location.search);
     
+    // Check if route is for EIRF filing (e.g. /terminal/eirf/:submissionId or /eirf/:submissionId)
+    if (path.includes('/eirf/') || path.includes('/terminal/eirf/')) {
+      const parts = path.split('/').filter(Boolean);
+      const eirfIdx = parts.findIndex(p => p === 'eirf');
+      let eirfSubId = null;
+      if (eirfIdx !== -1 && parts[eirfIdx + 1]) {
+        eirfSubId = parts[eirfIdx + 1];
+      }
+      if (!eirfSubId) {
+        eirfSubId = searchParams.get('submissionId') || searchParams.get('id');
+      }
+      if (eirfSubId) {
+        loadEirfDetails(eirfSubId);
+        return;
+      }
+    }
+
     // Check if route is for submission verification (e.g. /verification/6a92..., /submissions/6a92..., /submission/6a92...)
     let subId = null;
     if (path.includes('/verification/') || path.includes('/submissions/') || path.includes('/submission/')) {
@@ -805,31 +863,24 @@ export default function App() {
     verifyExamToken(parsedToken);
   }, []);
 
-  // Auto-kickout timer when verifyError is active
-  useEffect(() => {
-    if (!verifyError) return;
-    
-    const timer = setInterval(() => {
-      setKickoutCount(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          window.location.href = getReturnUrl('/coursework/online-tests');
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [verifyError]);
-
   // Dynamically update browser tab title based on route and examination/verification state
   useEffect(() => {
+    const isEirfRoute = window.location.pathname.includes('/eirf') || flow === 'eirf_form';
     const isSubmissionsRoute = window.location.pathname.startsWith('/submissions') || 
                                window.location.pathname.startsWith('/submission') || 
                                flow === 'verification_review';
 
-    if (isSubmissionsRoute) {
+    if (verifyError) {
+      document.title = "Server Error";
+      return;
+    }
+
+    if (isEirfRoute) {
+      const eTitle = eirfDetails?.testTitle || test?.title;
+      document.title = eTitle
+        ? `Emergency Incident Report Form (EIRF) - ${eTitle} | BICS Portal`
+        : "Emergency Incident Report Form (EIRF) | BICS Portal";
+    } else if (isSubmissionsRoute) {
       if (test?.title) {
         document.title = `Answer Sheet Verification - ${test.title} | BICS Portal`;
       } else {
@@ -842,7 +893,7 @@ export default function App() {
         document.title = "Online Examination Terminal - BICS Portal";
       }
     }
-  }, [flow, test?.title]);
+  }, [flow, test, eirfDetails, verifyError]);
 
   // Auto-redirect timer when flow === 'finished' (keeps fullscreen until redirection)
   useEffect(() => {
@@ -1002,7 +1053,19 @@ export default function App() {
     if (total >= 3) {
       if (!isAutoSubmittedRef.current) {
         isAutoSubmittedRef.current = true;
-        autoSubmitExam(proctoringWarnings);
+        const newFS = fullscreenExits > lastLoggedWarnings.current.fullscreenExits;
+        const newTab = tabSwitches > lastLoggedWarnings.current.tabSwitches;
+        const finalEventType = newFS ? 'FULLSCREEN_EXIT' : 'TAB_SWITCH';
+        const finalMsg = newFS 
+          ? `Candidate exited fullscreen mode. Total warnings: 3 / 3 (Auto-Submission Triggered)`
+          : `Candidate switched tab or lost focus. Total warnings: 3 / 3 (Auto-Submission Triggered)`;
+        
+        lastLoggedWarnings.current.fullscreenExits = fullscreenExits;
+        lastLoggedWarnings.current.tabSwitches = tabSwitches;
+
+        syncProctoringLogs(proctoringWarnings, finalEventType, finalMsg).finally(() => {
+          autoSubmitExam(proctoringWarnings);
+        });
       }
       return;
     }
@@ -1023,33 +1086,48 @@ export default function App() {
     }
   }, [proctoringWarnings, flow]);
 
-  // Check Fullscreen state
+  // Check Fullscreen state with duration tracking
   useEffect(() => {
     const onFSChange = () => {
       const fs = !!document.fullscreenElement;
       setIsFullscreen(fs);
       
-      if (flow === 'active_exam' && !fs) {
-        setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
+      if (flow === 'active_exam') {
+        if (!fs) {
+          fsExitStartTimeRef.current = Date.now();
+          setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
+        } else if (fsExitStartTimeRef.current) {
+          const startTime = fsExitStartTimeRef.current;
+          const endTime = Date.now();
+          const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
+          fsExitStartTimeRef.current = null;
+          syncProctoringLogs(
+            proctoringWarnings,
+            'FULLSCREEN_EXIT',
+            `Candidate exited fullscreen mode for ${durationSeconds} seconds.`,
+            startTime,
+            endTime,
+            durationSeconds
+          );
+        }
       }
     };
 
     document.addEventListener('fullscreenchange', onFSChange);
     return () => document.removeEventListener('fullscreenchange', onFSChange);
-  }, [flow]);
+  }, [flow, proctoringWarnings]);
 
-  // Check Window Focus state
+  // Check Window Focus state with duration tracking
   useEffect(() => {
     const onBlur = () => {
       setIsFocused(false);
-      // Wait a fraction of a second to check if the new focused element is the preview iframe!
       setTimeout(() => {
         const active = document.activeElement;
         if (active && (active.id === 'web-sandbox-preview' || active.tagName === 'IFRAME')) {
-          // The user clicked inside the visual preview sandbox iframe, this is normal behavior!
           return;
         }
         if (flow === 'active_exam') {
+          tabExitStartTimeRef.current = Date.now();
           setProctoringWarnings(prev => ({ ...prev, tabSwitches: prev.tabSwitches + 1 }));
         }
       }, 100);
@@ -1057,6 +1135,20 @@ export default function App() {
     
     const onFocus = () => {
       setIsFocused(true);
+      if (flow === 'active_exam' && tabExitStartTimeRef.current) {
+        const startTime = tabExitStartTimeRef.current;
+        const endTime = Date.now();
+        const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
+        tabExitStartTimeRef.current = null;
+        syncProctoringLogs(
+          proctoringWarnings,
+          'TAB_SWITCH',
+          `Candidate switched tab or lost focus for ${durationSeconds} seconds.`,
+          startTime,
+          endTime,
+          durationSeconds
+        );
+      }
     };
 
     window.addEventListener('blur', onBlur);
@@ -1065,7 +1157,7 @@ export default function App() {
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('focus', onFocus);
     };
-  }, [flow]);
+  }, [flow, proctoringWarnings]);
 
   // Start active exam and transition (Calls backend to register submission only when Start Test is clicked)
   const handleStartExam = async () => {
@@ -1733,12 +1825,46 @@ export default function App() {
     finalizeExamSubmission(examAnswers, warningsObj, 'auto-submitted');
   };
 
+  const downloadEirfBackupFile = (subObj, candObj, answersArr, pWarnings) => {
+    try {
+      const subId = subObj?._id || subObj?.id || 'submission';
+      const payloadData = {
+        submissionId: subId,
+        studentId: candObj?.studentId || subObj?.studentId || 'Candidate',
+        candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
+        testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
+        answers: answersArr || [],
+        proctoringLog: pWarnings || {},
+        generatedAt: new Date().toISOString()
+      };
+
+      const payloadJsonStr = JSON.stringify(payloadData, null, 2);
+      const blob = new Blob([payloadJsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `EIRF_PAYLOAD_${subId}.eirf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to generate .eirf backup payload file:", err);
+    }
+  };
+
   const finalizeExamSubmission = async (answersList, warningsObj, statusVal) => {
     setSubmittingExam(true);
     const subId = submission?._id || submission?.id;
     if (!subId) {
       setSubmittingExam(false);
       return;
+    }
+
+    // Auto-generate .eirf payload file on network drop or proctoring warning triggers
+    const hasWarnings = (warningsObj?.fullscreenExits || 0) > 0 || (warningsObj?.tabSwitches || 0) > 0 || statusVal === 'auto-submitted' || !isOnline;
+    if (hasWarnings) {
+      downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
     }
 
     if (!isOnline) {
@@ -1895,77 +2021,25 @@ export default function App() {
     );
   }
 
-  // VIEW: Error / Direct Access unauthorized gateway landing page
+  // VIEW: Server Error / Unauthorized access template copied directly from FORBIDDEN_HTML_PAGE in backend/server.js
   if (verifyError) {
+    document.title = "Server Error";
+
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f1f5f9' }}>
-        <header className="app-header">
-          <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
-            <span className="pixel-logo">Online Test BICS Terminal</span>
-          </div>
-          <div className="header-right">
-            <img src="/logo.png" alt="Portal Logo" className="pe-logo" style={{ height: '34px' }} />
-          </div>
-        </header>
-        
-        <div style={{ display: 'flex', flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: '40px 20px' }}>
-          <div className="cf-card" style={{ maxWidth: '650px', width: '100%', padding: '0', border: '1px solid #cbd5e1', backgroundColor: '#fff', overflow: 'hidden', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.05)' }}>
-            
-            {/* Header banner */}
-            <div style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #cbd5e1', padding: '15px 25px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <ShieldAlert size={24} style={{ color: '#be123c' }} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <h3 style={{ fontSize: '10.5pt', color: '#be123c', fontWeight: 'bold', margin: 0 }}>UNAUTHORIZED PORTAL ACCESS</h3>
-                <span style={{ fontSize: '7.5pt', color: '#64748b', fontFamily: 'monospace' }}>You are not authorized to access this (STATUS_CODE: 403_ACCESS_FORBIDDEN)</span>
-              </div>
-            </div>
-
-            {/* Error Body */}
-            <div style={{ padding: '25px' }}>
-              <div style={{ borderLeft: '4px solid #ef4444', backgroundColor: '#fef2f2', padding: '12px 15px', color: '#991b1b', fontSize: '9pt', borderRadius: '4px', marginBottom: '20px', lineHeight: '1.5' }}>
-                <strong>Access Blocked:</strong> {verifyError}
-              </div>
-
-              <h4 style={{ fontSize: '9.5pt', color: '#002147', fontWeight: 'bold', margin: '0 0 10px 0' }}>Why did this happen?</h4>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '8.5pt', color: '#475569', lineHeight: '1.5', marginBottom: '20px' }}>
-                <p>
-                  1. <strong>Token Missing or Expired</strong>: The secure authentication hand-shake link is only valid for 120 seconds. If you refresh the page or manually copy-paste the URL, the link is discarded automatically for integrity protection.
-                </p>
-                <p>
-                  2. <strong>No Direct Access permitted</strong>: Candidates are prohibited from accessing the proctoring client playground workspace directly without logging into their main student dashboard account first.
-                </p>
-                <p>
-                  3. <strong>Malpractice Lockout</strong>: If you have already started or submitted this examination, re-entrance tokens are blocked by the database session gate.
-                </p>
-              </div>
-
-              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
-                <h5 style={{ fontSize: '8.5pt', color: '#64748b', fontWeight: 'bold', margin: '0 0 6px 0', textTransform: 'uppercase' }}>Gateway Connection Log:</h5>
-                <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '10px 12px', fontFamily: 'monospace', fontSize: '8pt', color: '#334155', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div>GATEWAY_IP: 127.0.0.1 (Local Client)</div>
-                  <div>SECURE_TUNNEL: ACTIVE (BICS_SECURE_TUNNEL_v2.0)</div>
-                  <div>SESSION_LOG: PROCTORING_PENDING_DISCARDED</div>
-                </div>
-              </div>
-
-              {/* Redirection Progress Indicator */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '15px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', marginTop: '25px' }}>
-                <Loader2 className="spinner" size={24} style={{ color: '#1e40af' }} />
-                <div style={{ textAlign: 'left' }}>
-                  <h5 style={{ fontSize: '9pt', fontWeight: 'bold', color: '#1e40af', margin: '0 0 2px 0' }}>Automatic Portal Redirection</h5>
-                  <p style={{ fontSize: '8.5pt', color: '#1e3a8a', margin: 0 }}>
-                    Transferring session back to candidate dashboard homepage in <strong>{kickoutCount} seconds</strong>...
-                  </p>
-                </div>
-              </div>
-            </div>
-
+      <div style={{ margin: 0, padding: 0, width: '100%', minHeight: '100vh', backgroundColor: '#e6e6e6', fontFamily: 'Arial, "Segoe UI", sans-serif', boxSizing: 'border-box' }}>
+        <div className="header-bar" style={{ backgroundColor: '#505050', color: '#ffffff', fontSize: '20px', fontWeight: 'normal', padding: '10px 20px' }}>
+          Server Error
+        </div>
+        <div className="main-container" style={{ margin: '15px 20px', backgroundColor: '#ffffff', border: '1px solid #d4d4d4', padding: '12px' }}>
+          <div className="error-card" style={{ border: '1px solid #dcdcdc', padding: '12px 16px', backgroundColor: '#ffffff' }}>
+            <h1 className="error-title" style={{ color: '#cc0000', fontSize: '16px', fontWeight: 'bold', margin: '0 0 6px 0' }}>
+              403 - Forbidden: Access is denied.
+            </h1>
+            <p className="error-message" style={{ color: '#000000', fontSize: '13px', fontWeight: 'bold', margin: 0 }}>
+              {verifyError}
+            </p>
           </div>
         </div>
-        
-        <CenteredFooter />
       </div>
     );
   }
@@ -4312,6 +4386,345 @@ export default function App() {
             </p>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // VIEW: Emergency Incident Report Form (EIRF) Filing Terminal
+  if (flow === 'eirf_form') {
+    const isExpired = eirfDetails?.isExpired;
+    const existingReport = eirfDetails?.existingReport;
+
+    const handleEirfFileUpload = (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setEirfFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setEirfFileContent(event.target.result);
+      };
+      reader.readAsText(file);
+    };
+
+    const handleEirfSubmit = async () => {
+      if (!eirfExplanation.trim() || eirfExplanation.trim().length < 20) {
+        setEirfErrorMessage("Please provide a detailed explanation statement (at least 20 characters) describing the incident.");
+        return;
+      }
+
+      setSubmittingEirf(true);
+      setEirfErrorMessage('');
+      setEirfSuccessMessage('');
+
+      try {
+        const subId = eirfDetails.submissionId;
+        const res = await fetch(`${API_BASE}/test/eirf/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            submissionId: subId,
+            primaryCause: eirfPrimaryCause,
+            detailedExplanation: eirfExplanation,
+            technicalContext: {
+              browser: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+              q1: eirfTargetedQ1,
+              q2: eirfTargetedQ2
+            },
+            additionalAnswers: {
+              q1: eirfTargetedQ1,
+              q2: eirfTargetedQ2
+            },
+            encryptedPayload: eirfFileContent || undefined,
+            encryptedPayloadFile: eirfFileContent || undefined,
+            payloadFileName: eirfFileName || 'local_backup.eirf'
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          setEirfErrorMessage(data.error || "Failed to submit EIRF report.");
+          setSubmittingEirf(false);
+          return;
+        }
+
+        setEirfSuccessMessage(`EIRF Incident Report filed successfully! Report Ref: ${data.reportId}. Your report is pending committee review.`);
+        loadEirfDetails(subId);
+      } catch (err) {
+        console.error("EIRF Submit error:", err);
+        setEirfErrorMessage("Network error while submitting report. Please try again.");
+      } finally {
+        setSubmittingEirf(false);
+      }
+    };
+
+    return (
+      <div style={{ backgroundColor: '#f8fafc', minHeight: '100vh', padding: '30px 20px', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
+        <div style={{ maxWidth: '850px', width: '100%', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', padding: '30px' }}>
+          {/* Header Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '20px', marginBottom: '25px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <ShieldAlert size={32} style={{ color: '#0284c7' }} />
+              <div>
+                <h2 style={{ fontSize: '16pt', fontWeight: 'bold', color: '#002147', margin: 0 }}>Emergency Incident Report Form (EIRF)</h2>
+                <span style={{ fontSize: '9pt', color: '#64748b' }}>BICS Examination Integrity & Proctoring Telemetry Verification</span>
+              </div>
+            </div>
+            <span style={{ fontSize: '8.5pt', backgroundColor: '#f0f9ff', color: '#0284c7', padding: '4px 10px', borderRadius: '4px', border: '1px solid #bae6fd', fontWeight: 'bold' }}>
+              Official Filing Link
+            </span>
+          </div>
+
+          {/* Submission Info Bar */}
+          <div style={{ backgroundColor: '#f8fafc', padding: '15px 20px', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '25px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', fontSize: '9pt' }}>
+            <div>
+              <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Candidate Name</span>
+              <strong style={{ color: '#334155' }}>{eirfDetails.candidateName}</strong>
+            </div>
+            <div>
+              <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Student ID</span>
+              <strong style={{ color: '#334155' }}>{eirfDetails.studentId}</strong>
+            </div>
+            <div>
+              <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Examination</span>
+              <strong style={{ color: '#334155' }}>{eirfDetails.testTitle}</strong>
+            </div>
+            <div>
+              <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Filing Window Expiry</span>
+              <strong style={{ color: isExpired ? '#dc2626' : '#d97706' }}>
+                {isExpired ? 'Filing Expired (24h Limit Passed)' : new Date(eirfDetails.expiresAt).toLocaleString()}
+              </strong>
+            </div>
+          </div>
+
+          {/* Telemetry Alert Summary */}
+          <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', padding: '15px 20px', marginBottom: '25px' }}>
+            <h4 style={{ fontSize: '10pt', fontWeight: 'bold', color: '#b45309', margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <AlertTriangle size={16} /> Recorded Telemetry Incident Flags
+            </h4>
+            <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '9pt', color: '#78350f', lineHeight: 1.6 }}>
+              {(eirfDetails.flaggedReasons || []).map((reason, rIdx) => (
+                <li key={rIdx}>{reason}</li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Success Banner */}
+          {eirfSuccessMessage && (
+            <div style={{ backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857', padding: '15px', borderRadius: '6px', marginBottom: '20px', fontSize: '9.5pt', fontWeight: 'bold' }}>
+              {eirfSuccessMessage}
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {eirfErrorMessage && (
+            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '15px', borderRadius: '6px', marginBottom: '20px', fontSize: '9.5pt' }}>
+              {eirfErrorMessage}
+            </div>
+          )}
+
+          {/* If Already Submitted */}
+          {existingReport ? (
+            <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '20px' }}>
+              <style>{`
+                @media print {
+                  body * { visibility: hidden; }
+                  .eirf-print-area, .eirf-print-area * { visibility: visible; }
+                  .eirf-print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
+                  .no-print { display: none !important; }
+                }
+              `}</style>
+              <div className="eirf-print-area">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
+                  <strong style={{ fontSize: '11pt', color: '#002147' }}>Filed Incident Report Ref: {existingReport.reportId}</strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="no-print"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        backgroundColor: '#f0f9ff',
+                        color: '#0284c7',
+                        border: '1px solid #bae6fd',
+                        padding: '5px 12px',
+                        borderRadius: '6px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Printer size={14} /> Print Confirmation (PDF)
+                    </button>
+                    <span style={{
+                      fontSize: '8.5pt',
+                      fontWeight: 'bold',
+                      padding: '4px 10px',
+                      borderRadius: '12px',
+                      backgroundColor: existingReport.status === 'approved' ? '#ecfdf5' : (existingReport.status === 'rejected' ? '#fef2f2' : '#fffbeb'),
+                      color: existingReport.status === 'approved' ? '#047857' : (existingReport.status === 'rejected' ? '#b91c1c' : '#b45309'),
+                      border: `1px solid ${existingReport.status === 'approved' ? '#a7f3d0' : (existingReport.status === 'rejected' ? '#fecaca' : '#fde68a')}`
+                    }}>
+                      Status: {(existingReport.status || 'pending_review').toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ fontSize: '9pt', color: '#334155', lineHeight: 1.6 }}>
+                  <p style={{ margin: '0 0 6px 0' }}><strong>Primary Cause:</strong> {existingReport.primaryCause}</p>
+                  <p style={{ margin: '0 0 6px 0' }}>
+                    <strong>Filed At:</strong> {(() => {
+                      const dVal = existingReport.filedAt || existingReport.submittedAt || existingReport.createdAt;
+                      return dVal ? new Date(dVal).toLocaleString() : 'N/A';
+                    })()}
+                  </p>
+                  <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0', marginTop: '10px' }}>
+                    <strong>Candidate Written Explanation:</strong>
+                    <p style={{ margin: '4px 0 0 0', color: '#475569' }}>{existingReport.detailedExplanation}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : isExpired ? (
+            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '20px', textAlign: 'center', color: '#b91c1c' }}>
+              <strong style={{ fontSize: '11pt', display: 'block', marginBottom: '6px' }}>Incident Report Filing Window Expired</strong>
+              <p style={{ fontSize: '9pt', margin: 0 }}>The 24-hour deadline for submitting your official Emergency Incident Report Form has passed. Please contact your examination department or course instructor.</p>
+            </div>
+          ) : (
+            /* Active Form Filing */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Cause Radio Selector */}
+              <div>
+                <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '8px' }}>
+                  1. Select Primary Trigger / Cause of Incident
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
+                  {[
+                    { id: 'FULLSCREEN_EXIT', label: 'Fullscreen Exit (>5s)' },
+                    { id: 'TAB_SWITCH', label: 'Tab Switch / Focus Loss (>5s)' },
+                    { id: 'NETWORK_OFFLINE', label: 'Network Offline / Emergency Payload' },
+                    { id: 'SYSTEM_POPUP', label: 'OS Notification / System Pop-up' }
+                  ].map(option => (
+                    <label key={option.id} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '12px',
+                      borderRadius: '6px',
+                      border: `1px solid ${eirfPrimaryCause === option.id ? '#0284c7' : '#cbd5e1'}`,
+                      backgroundColor: eirfPrimaryCause === option.id ? '#f0f9ff' : '#ffffff',
+                      cursor: 'pointer',
+                      fontSize: '9pt',
+                      fontWeight: eirfPrimaryCause === option.id ? 'bold' : 'normal',
+                      color: eirfPrimaryCause === option.id ? '#0284c7' : '#334155'
+                    }}>
+                      <input
+                        type="radio"
+                        name="eirfCause"
+                        value={option.id}
+                        checked={eirfPrimaryCause === option.id}
+                        onChange={e => setEirfPrimaryCause(e.target.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Detailed Statement Textarea */}
+              <div>
+                <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                  2. Detailed Incident Explanation Statement (Required)
+                </label>
+                <textarea
+                  rows={4}
+                  className="cf-input"
+                  style={{ width: '100%', fontSize: '9pt', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                  placeholder="Provide a step-by-step description explaining why the proctoring warning triggered..."
+                  value={eirfExplanation}
+                  onChange={e => setEirfExplanation(e.target.value)}
+                />
+                <span style={{ fontSize: '8pt', color: '#64748b' }}>Minimum 20 characters required.</span>
+              </div>
+
+              {/* Targeted Questions */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                    3. Which background application, shortcut key, or OS event caused the trigger?
+                  </label>
+                  <input
+                    type="text"
+                    className="cf-input"
+                    style={{ width: '100%', fontSize: '9pt', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                    placeholder="e.g. Antivirus notification popup, Alt+Tab keypress, Wi-Fi router reboot"
+                    value={eirfTargetedQ1}
+                    onChange={e => setEirfTargetedQ1(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
+                    4. Were there any technical environment issues affecting your local device or network?
+                  </label>
+                  <input
+                    type="text"
+                    className="cf-input"
+                    style={{ width: '100%', fontSize: '9pt', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                    placeholder="e.g. Power outage, browser freeze, loss of internet connectivity"
+                    value={eirfTargetedQ2}
+                    onChange={e => setEirfTargetedQ2(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Encrypted File Upload Box */}
+              <div>
+                <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                  5. Upload Encrypted Backup File (.eirf) (If generated during submission)
+                </label>
+                <div style={{ border: '2px dashed #cbd5e1', borderRadius: '6px', padding: '20px', textAlign: 'center', backgroundColor: '#f8fafc' }}>
+                  <input
+                    type="file"
+                    accept=".eirf,.json"
+                    onChange={handleEirfFileUpload}
+                    id="eirf-file-input"
+                    style={{ display: 'none' }}
+                  />
+                  <label htmlFor="eirf-file-input" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', backgroundColor: '#ffffff', padding: '8px 16px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '9pt', fontWeight: 'bold', color: '#0284c7' }}>
+                    <Upload size={16} /> Choose .eirf File
+                  </label>
+                  {eirfFileName && (
+                    <div style={{ fontSize: '8.5pt', color: '#059669', fontWeight: 'bold', marginTop: '10px' }}>
+                      Selected File: {eirfFileName} ({eirfFileContent.length} bytes loaded)
+                    </div>
+                  )}
+                  <p style={{ fontSize: '8pt', color: '#64748b', margin: '8px 0 0 0' }}>
+                    If an encrypted backup payload (.eirf) was auto-downloaded on your computer during emergency submit, attach it here for server cross-verification.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                <button
+                  className="cf-btn-primary"
+                  disabled={submittingEirf}
+                  onClick={handleEirfSubmit}
+                  style={{ backgroundColor: '#0284c7', borderColor: '#0284c7', padding: '10px 24px', fontSize: '9.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                >
+                  {submittingEirf ? (
+                    <>
+                      <Loader2 className="cf-spinner" size={16} /> Submitting Report...
+                    </>
+                  ) : (
+                    'Submit Emergency Incident Report'
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

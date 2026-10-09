@@ -59,9 +59,33 @@ export default function OnlineTestsView({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
                     <h4 style={{ fontSize: '12pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test.title}</h4>
                     {(test.submissionStatus && test.submissionStatus !== 'started') && (
-                      <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                        <CheckCircle size={10} /> Completed
-                      </span>
+                      <>
+                        <span style={{ fontSize: '8pt', backgroundColor: '#10b981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <CheckCircle size={10} /> Completed
+                        </span>
+                        {test.eirfStatus === 'approved' ? (
+                          <span 
+                            style={{ fontSize: '8pt', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            title="Emergency Incident Report Form (EIRF) reviewed and approved by committee."
+                          >
+                            <CheckCircle size={10} style={{ color: '#10b981' }} /> EIRF Approved
+                          </span>
+                        ) : test.eirfStatus === 'rejected' ? (
+                          <span 
+                            style={{ fontSize: '8pt', backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            title="Emergency Incident Report Form (EIRF) reviewed and rejected by committee."
+                          >
+                            <AlertTriangle size={10} style={{ color: '#dc2626' }} /> EIRF Rejected
+                          </span>
+                        ) : (test.hasEirfFlag || (test.eirfStatus && test.eirfStatus !== 'none')) ? (
+                          <span 
+                            style={{ fontSize: '8pt', backgroundColor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                            title="Proctoring telemetry alert recorded (>5s). Check your registered email for your official EIRF filing link."
+                          >
+                            <AlertTriangle size={10} style={{ color: '#d97706' }} /> EIRF Review Pending
+                          </span>
+                        ) : null}
+                      </>
                     )}
                     {isFuture && (
                       <span style={{ fontSize: '8pt', backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>

@@ -747,23 +747,60 @@ export default function App() {
     }
   };
 
-  const fetchLiveSubmissions = async () => {
-    setLoadingMessage("Loading live exam streams...");
+  const fetchLiveSubmissions = async (targetTestId = null) => {
     try {
-      let allSubs = [];
-      for (let test of adminTests) {
-        const testId = test.id || test._id;
-        const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
-        if (res.ok) {
-          const subs = await res.json();
-          allSubs = [...allSubs, ...subs];
+      let testsToQuery = Array.isArray(adminTests) ? adminTests : [];
+      if (testsToQuery.length === 0) {
+        try {
+          const tRes = await fetch(`${API_BASE}/admin/tests`);
+          if (tRes.ok) {
+            const fetchedTests = await tRes.json();
+            if (Array.isArray(fetchedTests)) {
+              testsToQuery = fetchedTests;
+              setAdminTests(fetchedTests);
+            }
+          }
+        } catch (tErr) {
+          console.error("Error auto-fetching admin tests for proctoring:", tErr);
         }
       }
-      setLiveSubmissions(allSubs);
+
+      let allSubs = [];
+      const filterList = targetTestId
+        ? testsToQuery.filter(t => String(t.id || t._id) === String(targetTestId))
+        : testsToQuery;
+
+      if (targetTestId && filterList.length === 0) {
+        const res = await fetch(`${API_BASE}/admin/tests/submissions/${targetTestId}`);
+        if (res.ok) {
+          const subs = await res.json();
+          if (Array.isArray(subs)) allSubs = subs;
+        }
+      } else {
+        const queryList = filterList.length > 0 ? filterList : testsToQuery;
+        for (let test of queryList) {
+          const testId = test.id || test._id;
+          if (!testId) continue;
+          const res = await fetch(`${API_BASE}/admin/tests/submissions/${testId}`);
+          if (res.ok) {
+            const subs = await res.json();
+            if (Array.isArray(subs)) {
+              allSubs = [...allSubs, ...subs];
+            }
+          }
+        }
+      }
+
+      setLiveSubmissions(prev => {
+        const currentList = Array.isArray(prev) ? prev : [];
+        if (targetTestId) {
+          const remaining = currentList.filter(s => String(s.testId) !== String(targetTestId));
+          return [...remaining, ...allSubs];
+        }
+        return allSubs;
+      });
     } catch (e) {
       console.error("Error fetching live submissions:", e);
-    } finally {
-      setLoadingMessage('');
     }
   };
 

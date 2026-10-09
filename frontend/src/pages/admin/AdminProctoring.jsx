@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { RefreshCw, Video } from 'lucide-react';
 import StudentProctorDashboard from '../../components/StudentProctorDashboard';
 
@@ -12,6 +12,18 @@ export default function AdminProctoring({
   setSelectedProctorStudent,
   liveSubmissions
 }) {
+  // Automatically fetch candidate list whenever an exam is selected or view is rendered
+  useEffect(() => {
+    if (fetchLiveSubmissions) {
+      if (selectedProctorTest) {
+        const tId = selectedProctorTest.id || selectedProctorTest._id;
+        fetchLiveSubmissions(tId);
+      } else {
+        fetchLiveSubmissions();
+      }
+    }
+  }, [selectedProctorTest]);
+
   return (
     <div>
       {/* TOP HEADER SECTION */}
@@ -19,7 +31,7 @@ export default function AdminProctoring({
         <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Live Exam Proctoring Terminal</h2>
         <button
           className="cf-btn-secondary"
-          onClick={fetchLiveSubmissions}
+          onClick={() => fetchLiveSubmissions && fetchLiveSubmissions()}
           style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '8.5pt', margin: 0 }}
         >
           <RefreshCw size={14} /> Refresh Lists
@@ -45,9 +57,13 @@ export default function AdminProctoring({
             style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
             value={selectedProctorTest ? (selectedProctorTest.id || selectedProctorTest._id) : ''}
             onChange={e => {
-              const found = adminTests.find(t => (t.id || t._id) === e.target.value);
+              const val = e.target.value;
+              const found = (Array.isArray(adminTests) ? adminTests : []).find(t => (t.id || t._id) === val);
               setSelectedProctorTest(found || null);
               setSelectedProctorStudent(null);
+              if (fetchLiveSubmissions) {
+                fetchLiveSubmissions(val || null);
+              }
             }}
           >
             <option value="">-- Choose Live Access Exam --</option>
@@ -64,7 +80,7 @@ export default function AdminProctoring({
             style={{ fontSize: '9pt', padding: '6px 10px', height: '34px' }}
             value={selectedProctorStudent ? (selectedProctorStudent.id || selectedProctorStudent._id) : ''}
             onChange={e => {
-              const found = liveSubmissions.find(s => (s.id || s._id) === e.target.value);
+              const found = (Array.isArray(liveSubmissions) ? liveSubmissions : []).find(s => (s.id || s._id) === e.target.value);
               setSelectedProctorStudent(found || null);
             }}
             disabled={!selectedProctorTest}
@@ -72,7 +88,8 @@ export default function AdminProctoring({
             <option value="">{selectedProctorTest ? "-- Choose Student Support --" : "-- Select an Exam First --"}</option>
             {selectedProctorTest && (() => {
               const tId = selectedProctorTest.id || selectedProctorTest._id;
-              const testStudents = liveSubmissions.filter(s => s.testId === tId);
+              const currentSubs = Array.isArray(liveSubmissions) ? liveSubmissions : [];
+              const testStudents = currentSubs.filter(s => String(s.testId) === String(tId));
               return testStudents.map(sub => {
                 const subId = sub.id || sub._id;
                 const isActive = sub.status === 'started';

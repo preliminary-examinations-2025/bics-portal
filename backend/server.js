@@ -58,10 +58,10 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
 }
 
 // Helper to stream file buffers to Cloudinary
-const uploadToCloudinary = (fileBuffer, folder) => {
+const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto') => {
     return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-            { folder: folder, resource_type: 'auto' },
+            { folder: folder, resource_type: resourceType },
             (error, result) => {
                 if (error) return reject(error);
                 resolve(result.secure_url);
@@ -95,7 +95,7 @@ if (transporter) {
 const sendVerificationEmail = async (toEmail, name, code) => {
     // 1. Try EmailJS (HTTPS API - Ideal for Render Free Tier)
     const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
-    const ejsTemplateId = process.env.EMAILJS_TEMPLATE_ID;
+    const ejsTemplateId = process.env.EMAILJS_OTP_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID;
     const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
     const ejsPrivateKey = process.env.EMAILJS_PRIVATE_KEY; // Optional but recommended for server-side auth
 
@@ -570,10 +570,15 @@ const TestSubmissionSchema = new mongoose.Schema({
         webcamStatus: { type: String, default: 'active' },
         events: [{
             timestamp: { type: Date, default: Date.now },
-            type: { type: String }, // "TAB_SWITCH", "FULLSCREEN_EXIT", "WEBCAM_LOST", "MIC_MUTED", "MIC_UNMUTED", "CAM_GRANTED", "CAM_DENIED"
+            startTime: Date,
+            endTime: Date,
+            durationSeconds: { type: Number, default: 0 },
+            type: { type: String }, // "TAB_SWITCH", "FULLSCREEN_EXIT", "WEBCAM_LOST", "MIC_MUTED", "MIC_UNMUTED", "CAM_GRANTED", "CAM_DENIED", "NETWORK_OFFLINE", "EMERGENCY_SUBMISSION"
             details: String
         }]
     },
+    hasEirfFlag: { type: Boolean, default: false },
+    eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },
     answers: [AnswerSchema],
     evaluation: {
         mcqScore: { type: Number, default: 0 },
@@ -608,6 +613,53 @@ const TestSubmissionSchema = new mongoose.Schema({
 });
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
 
+// Emergency Incident Report Form (EIRF) Schema & Model
+const EIRFReportSchema = new mongoose.Schema({
+    reportId: { type: String, required: true, unique: true },
+    submissionId: { type: String, required: true, index: true },
+    candidateId: { type: String, required: true },
+    studentId: { type: String, required: true },
+    candidateName: { type: String, default: 'Candidate' },
+    testId: { type: String, required: true },
+    testTitle: { type: String, default: 'Online Examination' },
+    
+    // Incident Telemetry
+    proctoringLogSnapshot: mongoose.Schema.Types.Mixed,
+    flaggedReasons: [String], // e.g. ["Fullscreen exit > 5s (12s)", "Tab switch > 5s (18s)"]
+    
+    // Candidate Questionnaire Answers
+    primaryCause: { type: String, required: true },
+    detailedExplanation: { type: String, required: true },
+    technicalContext: {
+        browser: String,
+        os: String,
+        networkType: String,
+        openedApp: String
+    },
+    additionalAnswers: mongoose.Schema.Types.Mixed,
+    
+    // Encrypted Payload Verification Results
+    encryptedPayloadUploaded: { type: Boolean, default: false },
+    payloadFileName: String,
+    payloadUrl: String,
+    decryptedPayloadSnapshot: mongoose.Schema.Types.Mixed,
+    verificationStatus: { type: String, enum: ['VERIFIED_MATCH', 'DISCREPANCY_FLAGGED', 'PAYLOAD_MISSING', 'DECRYPTION_FAILED'], default: 'VERIFIED_MATCH' },
+    verificationDetails: {
+        answersMatch: Boolean,
+        clientHashMatch: Boolean,
+        discrepancies: [String]
+    },
+    
+    // Status & Life Cycle
+    status: { type: String, enum: ['pending_review', 'approved', 'rejected', 'expired'], default: 'pending_review' },
+    adminRemarks: { type: String, default: '' },
+    submittedAt: { type: Date, default: Date.now },
+    expiresAt: Date,
+    reviewedAt: Date,
+    reviewedBy: String
+}, { versionKey: false, timestamps: true });
+const EIRFReportModel = mongoose.model('EIRFReport', EIRFReportSchema, 'eirf_reports');
+
 // 24-Hour Recycle Bin Schema & Model
 const RecycleBinSchema = new mongoose.Schema({
     entityType: { type: String, required: true }, // 'TestConfig', 'TestSubmission', etc.
@@ -633,6 +685,139 @@ function generateObjectionId() {
     }
     return `OBJ-${year}-${code}`;
 }
+
+function generateEirfReportId() {
+    const year = new Date().getFullYear();
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 5; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return `EIRF-${year}-${code}`;
+}
+
+const API_ACCESS_SECRET = process.env.API_ACCESS_SECRET || 'bics_secret_key_2026';
+
+function encryptEirfPayload(payloadObj, studentId, submissionId) {
+    const jsonStr = JSON.stringify(payloadObj);
+    const key = crypto.pbkdf2Sync(String(submissionId) + API_ACCESS_SECRET + String(studentId), 'bics_salt_2026', 100000, 32, 'sha256');
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let encrypted = cipher.update(jsonStr, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
+    return JSON.stringify({
+        version: '1.0',
+        iv: iv.toString('hex'),
+        authTag,
+        data: encrypted
+    });
+}
+
+function decryptEirfPayload(encryptedJsonStr, studentId, submissionId) {
+    if (!encryptedJsonStr) return null;
+    try {
+        let rawStr = encryptedJsonStr;
+        if (typeof encryptedJsonStr === 'object') {
+            rawStr = JSON.stringify(encryptedJsonStr);
+        }
+
+        let parsed = null;
+        try {
+            parsed = JSON.parse(rawStr);
+        } catch (e1) {
+            try {
+                const decoded = Buffer.from(rawStr, 'base64').toString('utf8');
+                parsed = JSON.parse(decoded);
+            } catch (e2) {
+                console.error("EIRF Payload JSON parse error:", e1.message);
+                return null;
+            }
+        }
+
+        if (!parsed) return null;
+
+        // Direct unencrypted payload object (.eirf JSON backup containing studentId/answers/submissionId)
+        if (parsed.submissionId || parsed.answers || parsed.proctoringLog) {
+            return parsed;
+        }
+
+        // AES-256-GCM Encrypted payload format ({ iv, authTag, data })
+        if (parsed.iv && parsed.authTag && parsed.data) {
+            const { iv, authTag, data } = parsed;
+            const key = crypto.pbkdf2Sync(String(submissionId) + API_ACCESS_SECRET + String(studentId), 'bics_salt_2026', 100000, 32, 'sha256');
+            const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
+            decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+            let decrypted = decipher.update(data, 'hex', 'utf8');
+            decrypted += decipher.final('utf8');
+            return JSON.parse(decrypted);
+        }
+
+        return parsed;
+    } catch (e) {
+        console.error("EIRF Decryption/Parsing error:", e.message);
+        return null;
+    }
+}
+
+const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, submissionId) => {
+    const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
+    const ejsTemplateId = process.env.EMAILJS_EIRF_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID || 'template_4lyvmlr';
+    const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const ejsPrivateKey = process.env.EMAILJS_PRIVATE_KEY;
+
+    const isProd = process.env.NODE_ENV === 'production' || (typeof window === 'undefined' && process.env.RENDER);
+    const defaultPortalUrl = isProd ? 'https://bicsportal.netlify.app' : 'http://localhost:5174';
+    const basePortalUrl = process.env.PORTAL_URL || process.env.DASHBOARD_URL || defaultPortalUrl;
+    const cleanBase = basePortalUrl.replace(/\/+$/, '');
+
+    const eirfUrl = cleanBase.endsWith('/terminal')
+        ? `${cleanBase}/eirf/${submissionId}`
+        : `${cleanBase}/terminal/eirf/${submissionId}`;
+
+    if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
+        try {
+            const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    service_id: ejsServiceId,
+                    template_id: ejsTemplateId,
+                    user_id: ejsPublicKey,
+                    accessToken: ejsPrivateKey || undefined,
+                    template_params: {
+                        to_email: toEmail,
+                        email: toEmail,
+                        to_name: name,
+                        name: name,
+                        exam_title: examTitle,
+                        incident_timestamp: new Date().toLocaleString(),
+                        incident_summary: incidentSummary,
+                        eirf_url: eirfUrl,
+                        expiry_hours: '45 minutes'
+                    }
+                })
+            });
+            if (response.ok) {
+                console.log(`[EIRF_EMAIL]: Successfully sent EIRF filing notice to ${toEmail} via EmailJS.`);
+                return;
+            } else {
+                const text = await response.text();
+                console.error(`[EIRF_EMAIL_ERROR]: EmailJS status ${response.status}: ${text}`);
+            }
+        } catch (err) {
+            console.error(`[EIRF_EMAIL_ERROR]: EmailJS request failed:`, err.message);
+        }
+    } else {
+        console.log(`\n==================================================`);
+        console.log(`[EIRF EMAIL DISPATCH NOTICE LOGGED TO CONSOLE]`);
+        console.log(`Recipient: ${toEmail} (${name})`);
+        console.log(`Exam Title: ${examTitle}`);
+        console.log(`Summary: ${incidentSummary}`);
+        console.log(`EIRF Filing Link: ${eirfUrl}`);
+        console.log(`==================================================\n`);
+    }
+};
 
 function calculateSubmissionScore(submission, test) {
     if (!test || !submission) return submission;
@@ -2695,6 +2880,8 @@ app.get('/api/tests/active', async (req, res) => {
             const tObj = { ...t };
             const testId = tObj.id || tObj._id;
             let submissionStatus = null;
+            let subEirfStatus = 'none';
+            let subHasEirfFlag = false;
             if (candidateId && candidateId !== 'admin') {
                 try {
                     if (useMongo) {
@@ -2707,24 +2894,33 @@ app.get('/api/tests/active', async (req, res) => {
                             testConditions.push({ testId: testId.toString() });
                         }
 
+                        let foundSub = null;
                         if (candFilter && testConditions.length > 0) {
-                            const sub = await TestSubmissionModel.findOne({
+                            foundSub = await TestSubmissionModel.findOne({
                                 $and: [
                                     candFilter,
                                     { $or: testConditions }
                                 ]
                             }).sort({ startedAt: -1 });
-                            if (sub) submissionStatus = sub.status;
+                        }
+                        if (foundSub) {
+                            submissionStatus = foundSub.status;
+                            subEirfStatus = foundSub.eirfStatus || 'none';
+                            subHasEirfFlag = !!foundSub.hasEirfFlag;
                         }
                     } else {
                         const db = getJSONData();
                         db.testSubmissions = db.testSubmissions || [];
-                        const sub = db.testSubmissions.find(s => 
+                        const foundSub = db.testSubmissions.find(s => 
                             s.candidateId && s.testId &&
                             (s.candidateId.toString() === candidateId.toString() || s.studentId === candidateId.toString()) && 
                             s.testId.toString() === testId.toString()
                         );
-                        if (sub) submissionStatus = sub.status;
+                        if (foundSub) {
+                            submissionStatus = foundSub.status;
+                            subEirfStatus = foundSub.eirfStatus || 'none';
+                            subHasEirfFlag = !!foundSub.hasEirfFlag;
+                        }
                     }
                 } catch (subErr) {
                     console.error("Warning querying submissionStatus for active test:", subErr);
@@ -2740,7 +2936,9 @@ app.get('/api/tests/active', async (req, res) => {
                 endDate: tObj.endDate,
                 instructions: tObj.instructions,
                 questionsCount: (tObj.questions || []).length,
-                submissionStatus 
+                submissionStatus,
+                eirfStatus: subEirfStatus,
+                hasEirfFlag: subHasEirfFlag
             };
         }));
 
@@ -3198,6 +3396,78 @@ app.post('/api/tests/submit', async (req, res) => {
         if (status !== 'started') {
             await logSystemAction(submission?.candidateName || 'Candidate', status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', `Candidate submitted examination answers for "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'}) with status ${status || 'submitted'}`, 'info');
         }
+
+        // Evaluate EIRF flag & consolidated notice email trigger on final exam submission
+        if (status !== 'started') {
+            const fsExits = submission.proctoringLog?.fullscreenExits || 0;
+            const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
+            const totalWarnings = fsExits + tabSwitches;
+            const events = submission.proctoringLog?.events || [];
+
+            let maxFsSec = 0;
+            let maxTabSec = 0;
+            events.forEach(ev => {
+                let dur = Number(ev.durationSeconds || 0);
+                if (!dur && ev.details) {
+                    const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                    if (match && match[1]) dur = parseInt(match[1], 10);
+                }
+                if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
+                if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+            });
+
+            const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
+            const isFlagged = status === 'auto-submitted' || totalWarnings >= 1 || hasLongExit;
+
+            if (isFlagged) {
+                submission.hasEirfFlag = true;
+                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                    submission.eirfStatus = 'pending';
+                }
+
+                if (!submission.eirfNoticeEmailSent) {
+                    submission.eirfNoticeEmailSent = true;
+
+                    let recipientEmail = submission.candidateEmail;
+                    if (!recipientEmail && submission.studentId) {
+                        const cand = useMongo
+                            ? await CandidateModel.findOne({ $or: [{ studentId: submission.studentId }, { _id: submission.candidateId }] })
+                            : db.candidates.find(c => c.studentId === submission.studentId || c.id === submission.studentId);
+                        if (cand) {
+                            recipientEmail = cand.personalEmail || cand.registrationData?.personalEmail || cand.email;
+                        }
+                    }
+                    if (!recipientEmail) {
+                        recipientEmail = 'preliminaryexaminations@gmail.com';
+                    }
+
+                    // Build single consolidated incident summary for email
+                    const incidentParts = [];
+                    if (fsExits > 0) incidentParts.push(`${fsExits} Fullscreen Exit(s) (Max: ${maxFsSec}s)`);
+                    if (tabSwitches > 0) incidentParts.push(`${tabSwitches} Tab Switch(es) / Focus Loss (Max: ${maxTabSec}s)`);
+                    if (status === 'auto-submitted') incidentParts.push(`Attempt Auto-Submitted due to reaching 3 compliance warnings`);
+
+                    const consolidatedSummary = incidentParts.length > 0
+                        ? `Recorded Session Incidents: ${incidentParts.join('; ')}.`
+                        : `Proctoring alert flagged for post-exam incident review (${totalWarnings} total warnings).`;
+
+                    sendEirfNoticeEmail(
+                        recipientEmail,
+                        submission.candidateName || 'Candidate',
+                        submission.testTitle || 'BICS Examination',
+                        consolidatedSummary,
+                        submission._id || submission.id
+                    ).catch(e => console.error("EIRF single consolidated notice email error:", e));
+                }
+
+                if (useMongo && submission.save) {
+                    await submission.save();
+                } else if (!useMongo) {
+                    saveJSONData(db);
+                }
+            }
+        }
+
         return res.json({ success: true, submission });
     } catch (e) {
         console.error("DEBUG ERROR: POST /api/tests/submit failed:", e);
@@ -4477,7 +4747,7 @@ app.get('/api/admin/system-logs', async (req, res) => {
 // 12. Save Live Proctoring Event during test (Student client)
 app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
-    const { type, details } = req.body;
+    const { type, details, startTime, endTime, durationSeconds } = req.body;
     if (!type) return res.status(400).json({ error: "Event type is required." });
 
     try {
@@ -4488,7 +4758,14 @@ app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
 
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.events = submission.proctoringLog.events || [];
-            submission.proctoringLog.events.push({ type, details, timestamp: new Date() });
+            submission.proctoringLog.events.push({ 
+                type, 
+                details, 
+                timestamp: new Date(),
+                startTime: startTime || null,
+                endTime: endTime || null,
+                durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+            });
 
             if (type === 'FULLSCREEN_EXIT') {
                 submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
@@ -4496,6 +4773,15 @@ app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
                 submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
             } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
                 submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
+            }
+
+            // Flag for EIRF if duration > 5s or emergency event
+            const dur = Number(durationSeconds || 0);
+            if (dur > 5 || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION') {
+                submission.hasEirfFlag = true;
+                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                    submission.eirfStatus = 'pending';
+                }
             }
 
             await submission.save();
@@ -4507,7 +4793,14 @@ app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
 
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.events = submission.proctoringLog.events || [];
-            submission.proctoringLog.events.push({ type, details, timestamp: new Date() });
+            submission.proctoringLog.events.push({ 
+                type, 
+                details, 
+                timestamp: new Date(),
+                startTime: startTime || null,
+                endTime: endTime || null,
+                durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+            });
 
             if (type === 'FULLSCREEN_EXIT') {
                 submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
@@ -4515,6 +4808,14 @@ app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
                 submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
             } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
                 submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
+            }
+
+            const dur = Number(durationSeconds || 0);
+            if (dur > 5 || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION') {
+                submission.hasEirfFlag = true;
+                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                    submission.eirfStatus = 'pending';
+                }
             }
 
             saveJSONData(db);
@@ -5541,6 +5842,415 @@ app.post('/api/admin/counterfoil/action/:id', async (req, res) => {
         return res.json({ success: true, submission });
     } catch (e) {
         console.error("Admin counterfoil action error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// --- Emergency Incident Report Form (EIRF) Endpoints ---
+
+// 1. Get EIRF Incident Details & Breakdown by Submission ID
+app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    try {
+        let submission = null;
+        let candidate = null;
+        let testConfig = null;
+        let existingReport = null;
+
+        if (useMongo) {
+            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+                submission = await TestSubmissionModel.findById(submissionId).lean();
+            }
+            if (!submission) {
+                submission = await TestSubmissionModel.findOne({ _id: submissionId }).lean();
+            }
+            if (submission) {
+                candidate = await CandidateModel.findById(submission.candidateId).lean();
+                testConfig = await TestConfigModel.findById(submission.testId).lean();
+            }
+            existingReport = await EIRFReportModel.findOne({
+                $or: [{ submissionId: String(submissionId) }, { reportId: String(submissionId) }]
+            }).lean();
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => String(s._id || s.id) === String(submissionId));
+            if (submission) {
+                candidate = (db.candidates || []).find(c => String(c._id || c.id) === String(submission.candidateId) || c.studentId === submission.studentId);
+                testConfig = (db.tests || []).find(t => String(t._id || t.id) === String(submission.testId));
+            }
+            db.eirfReports = db.eirfReports || [];
+            existingReport = db.eirfReports.find(r => String(r.submissionId) === String(submissionId));
+        }
+
+        if (!submission) {
+            return res.status(404).json({ error: "Examination submission record not found." });
+        }
+
+        const events = submission.proctoringLog?.events || [];
+        const flaggedReasons = [];
+        let hasFullscreenFlag = false;
+        let hasTabSwitchFlag = false;
+        let hasNetworkFlag = false;
+        let maxFullscreenSeconds = 0;
+        let maxTabSwitchSeconds = 0;
+
+        events.forEach(ev => {
+            let dur = Number(ev.durationSeconds || 0);
+            if (!dur && ev.details) {
+                const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                if (match && match[1]) dur = parseInt(match[1], 10);
+            }
+            if (ev.type === 'FULLSCREEN_EXIT') {
+                if (dur > maxFullscreenSeconds) maxFullscreenSeconds = dur;
+                if (dur > 5) {
+                    hasFullscreenFlag = true;
+                    flaggedReasons.push(`Fullscreen exit duration: ${dur} seconds (exceeds 5s threshold)`);
+                }
+            } else if (ev.type === 'TAB_SWITCH') {
+                if (dur > maxTabSwitchSeconds) maxTabSwitchSeconds = dur;
+                if (dur > 5) {
+                    hasTabSwitchFlag = true;
+                    flaggedReasons.push(`Tab switch duration: ${dur} seconds (exceeds 5s threshold)`);
+                }
+            } else if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') {
+                hasNetworkFlag = true;
+                flaggedReasons.push(`Session disconnect / emergency payload trigger`);
+            }
+        });
+
+        const totalWarningsCount = (submission.proctoringLog?.fullscreenExits || 0) + (submission.proctoringLog?.tabSwitches || 0);
+        if (submission.status === 'auto-submitted' || totalWarningsCount >= 3) {
+            flaggedReasons.push(`Exam attempt auto-submitted due to reaching maximum compliance warnings (${totalWarningsCount} warnings).`);
+        }
+
+        const hasEirfFlag = Boolean(submission.hasEirfFlag || hasFullscreenFlag || hasTabSwitchFlag || hasNetworkFlag || submission.status === 'auto-submitted' || totalWarningsCount >= 3);
+
+        if (flaggedReasons.length === 0 && hasEirfFlag) {
+            flaggedReasons.push(`Proctoring alert flagged by administration for incident review.`);
+        }
+
+        const submittedAt = submission.submittedAt || submission.startedAt || new Date();
+        const expiresAt = new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
+        const isExpired = Date.now() > expiresAt.getTime();
+
+        if (isExpired) {
+            return res.status(410).json({
+                error: "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.",
+                isExpired: true,
+                expiresAt
+            });
+        }
+
+        return res.json({
+            submissionId,
+            studentId: submission.studentId || candidate?.studentId || 'Candidate',
+            candidateName: submission.candidateName || candidate?.name || 'Candidate',
+            testId: submission.testId,
+            testTitle: submission.testTitle || testConfig?.title || 'BICS Examination',
+            submittedAt,
+            expiresAt,
+            isExpired,
+            existingReport,
+            hasEirfFlag,
+            eirfNoticeEmailSent: Boolean(submission.eirfNoticeEmailSent),
+            proctoringTelemetry: {
+                fullscreenExits: submission.proctoringLog?.fullscreenExits || 0,
+                tabSwitches: submission.proctoringLog?.tabSwitches || 0,
+                events,
+                maxFullscreenSeconds,
+                maxTabSwitchSeconds
+            },
+            flaggedReasons: hasEirfFlag ? flaggedReasons : [],
+            eventFlags: {
+                fullscreen: hasFullscreenFlag || maxFullscreenSeconds > 5,
+                tabSwitch: hasTabSwitchFlag || maxTabSwitchSeconds > 5,
+                network: hasNetworkFlag
+            }
+        });
+    } catch (e) {
+        console.error("Fetch EIRF details error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 2. Submit EIRF Incident Report & Verify Encrypted Local Payload (.eirf)
+app.post('/api/test/eirf/submit', async (req, res) => {
+    const {
+        submissionId,
+        primaryCause,
+        detailedExplanation,
+        technicalContext,
+        additionalAnswers,
+        encryptedPayload,
+        encryptedPayloadFile,
+        payloadFileName,
+        eirfFileName
+    } = req.body;
+
+    if (!submissionId || !primaryCause || !detailedExplanation) {
+        return res.status(400).json({ error: "Missing required fields: submissionId, primaryCause, and detailedExplanation are required." });
+    }
+
+    try {
+        let submission = null;
+        let candidate = null;
+        let testConfig = null;
+
+        if (useMongo) {
+            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+                submission = await TestSubmissionModel.findById(submissionId);
+            }
+            if (!submission) {
+                submission = await TestSubmissionModel.findOne({ _id: submissionId });
+            }
+            if (submission) {
+                candidate = await CandidateModel.findById(submission.candidateId).lean();
+                testConfig = await TestConfigModel.findById(submission.testId).lean();
+            }
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => String(s._id || s.id) === String(submissionId));
+            if (submission) {
+                candidate = (db.candidates || []).find(c => String(c._id || c.id) === String(submission.candidateId) || c.studentId === submission.studentId);
+                testConfig = (db.tests || []).find(t => String(t._id || t.id) === String(submission.testId));
+            }
+        }
+
+        if (!submission) {
+            return res.status(404).json({ error: "Examination submission record not found." });
+        }
+
+        const studentId = submission.studentId || candidate?.studentId || 'Candidate';
+        const candidateName = submission.candidateName || candidate?.name || 'Candidate';
+        const testTitle = submission.testTitle || testConfig?.title || 'BICS Examination';
+
+        const rawPayload = encryptedPayload || encryptedPayloadFile;
+        const rawFileName = payloadFileName || eirfFileName || 'local_backup.eirf';
+
+        let verificationStatus = 'PAYLOAD_MISSING';
+        let verificationDetails = {
+            answersMatch: true,
+            clientHashMatch: true,
+            discrepancies: []
+        };
+        let decryptedData = null;
+
+        if (rawPayload) {
+            decryptedData = decryptEirfPayload(rawPayload, studentId, submissionId);
+            if (decryptedData) {
+                verificationStatus = 'VERIFIED_MATCH';
+                // Verify answer snapshot match against server recorded answers
+                if (decryptedData.answers && Array.isArray(decryptedData.answers)) {
+                    const dbAnswersMap = new Map();
+                    (submission.answers || []).forEach(a => dbAnswersMap.set(String(a.questionId), a));
+
+                    decryptedData.answers.forEach(clAns => {
+                        const dbAns = dbAnswersMap.get(String(clAns.questionId));
+                        if (!dbAns) {
+                            verificationDetails.discrepancies.push(`Question ${clAns.questionId}: Answer present in local payload but missing from server record.`);
+                            verificationStatus = 'DISCREPANCY_FLAGGED';
+                        } else if (clAns.type === 'mcq' && Number(clAns.selectedOptionIndex) !== Number(dbAns.selectedOptionIndex)) {
+                            verificationDetails.discrepancies.push(`MCQ Question ${clAns.questionId}: Local selection (${clAns.selectedOptionIndex}) differs from server saved selection (${dbAns.selectedOptionIndex}).`);
+                            verificationStatus = 'DISCREPANCY_FLAGGED';
+                        } else if (clAns.type === 'coding' && (clAns.submittedCode || '').trim() !== (dbAns.submittedCode || '').trim()) {
+                            verificationDetails.discrepancies.push(`Coding Question ${clAns.questionId}: Local code snapshot differs from server saved code.`);
+                            verificationStatus = 'DISCREPANCY_FLAGGED';
+                        }
+                    });
+                }
+                verificationDetails.answersMatch = verificationDetails.discrepancies.length === 0;
+            } else {
+                verificationStatus = 'DECRYPTION_FAILED';
+                verificationDetails.discrepancies.push('Failed to decrypt local payload using system secret key.');
+            }
+        }
+
+        let payloadUrl = '';
+        if (rawPayload && useCloudinary) {
+            try {
+                const payloadBuffer = Buffer.from(typeof rawPayload === 'string' ? rawPayload : JSON.stringify(rawPayload), 'utf8');
+                payloadUrl = await uploadToCloudinary(payloadBuffer, 'BICS_2026/eirf_payloads', 'raw');
+            } catch (cErr) {
+                console.warn("Cloudinary EIRF payload upload failed, falling back to local snapshot:", cErr.message);
+            }
+        }
+
+        const reportId = generateEirfReportId();
+        const submittedAt = submission.submittedAt || new Date();
+        const expiresAt = new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
+        if (Date.now() > expiresAt.getTime()) {
+            return res.status(410).json({ success: false, error: "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link." });
+        }
+
+        const reportData = {
+            reportId,
+            submissionId: String(submission._id || submission.id),
+            candidateId: String(submission.candidateId),
+            studentId,
+            candidateName,
+            testId: String(submission.testId),
+            testTitle,
+            proctoringLogSnapshot: {
+                fullscreenExits: submission.proctoringLog?.fullscreenExits || 0,
+                tabSwitches: submission.proctoringLog?.tabSwitches || 0,
+                events: (submission.proctoringLog?.events || []).map(ev => {
+                    const eObj = ev.toObject ? ev.toObject() : { ...ev };
+                    return {
+                        timestamp: eObj.timestamp || new Date(),
+                        startTime: eObj.startTime || null,
+                        endTime: eObj.endTime || null,
+                        durationSeconds: Number(eObj.durationSeconds || 0),
+                        type: String(eObj.type || ''),
+                        details: String(eObj.details || '')
+                    };
+                })
+            },
+            primaryCause,
+            detailedExplanation,
+            technicalContext: technicalContext || {},
+            additionalAnswers: additionalAnswers || {},
+            encryptedPayloadUploaded: !!rawPayload,
+            payloadFileName: rawFileName,
+            payloadUrl: payloadUrl || '',
+            decryptedPayloadSnapshot: decryptedData,
+            verificationStatus,
+            verificationDetails,
+            status: 'pending_review',
+            submittedAt: new Date(),
+            filedAt: new Date(),
+            expiresAt
+        };
+
+        if (useMongo) {
+            await EIRFReportModel.findOneAndUpdate(
+                { submissionId: String(submission._id || submission.id) },
+                reportData,
+                { upsert: true, new: true }
+            );
+            submission.hasEirfFlag = true;
+            submission.eirfStatus = verificationStatus === 'DISCREPANCY_FLAGGED' ? 'discrepancy' : 'pending';
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            db.eirfReports = db.eirfReports || [];
+            const idx = db.eirfReports.findIndex(r => String(r.submissionId) === String(submissionId));
+            if (idx !== -1) {
+                db.eirfReports[idx] = reportData;
+            } else {
+                db.eirfReports.push(reportData);
+            }
+            submission.hasEirfFlag = true;
+            submission.eirfStatus = verificationStatus === 'DISCREPANCY_FLAGGED' ? 'discrepancy' : 'pending';
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            studentId,
+            'EIRF_REPORT_SUBMITTED',
+            `Student ${studentId} filed Emergency Incident Report ${reportId} for test "${testTitle}". Payload Status: ${verificationStatus}`,
+            'info'
+        );
+
+        return res.json({
+            success: true,
+            message: "Emergency Incident Report submitted successfully.",
+            reportId,
+            verificationStatus
+        });
+    } catch (e) {
+        console.error("EIRF submit error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 3. Admin: List All EIRF Reports
+app.get('/api/admin/eirf/list', async (req, res) => {
+    try {
+        if (useMongo) {
+            const reports = await EIRFReportModel.find().sort({ submittedAt: -1 }).lean();
+            return res.json(reports);
+        } else {
+            const db = getJSONData();
+            db.eirfReports = db.eirfReports || [];
+            return res.json(db.eirfReports);
+        }
+    } catch (e) {
+        console.error("Admin EIRF list error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Admin: Approve or Reject EIRF Incident Report
+app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
+    const { reportId } = req.params;
+    let { status, action, adminRemarks } = req.body;
+
+    let rawStatus = (status || action || '').toLowerCase().trim();
+    if (rawStatus === 'approve') rawStatus = 'approved';
+    if (rawStatus === 'reject') rawStatus = 'rejected';
+
+    if (!['approved', 'rejected'].includes(rawStatus)) {
+        return res.status(400).json({ error: "Invalid status parameter. Must be 'approved' or 'rejected'." });
+    }
+
+    status = rawStatus;
+
+    try {
+        let report = null;
+        let submission = null;
+
+        if (useMongo) {
+            const query = mongoose.Types.ObjectId.isValid(reportId)
+                ? { $or: [{ _id: reportId }, { reportId }, { submissionId: reportId }] }
+                : { $or: [{ reportId }, { submissionId: reportId }] };
+            report = await EIRFReportModel.findOne(query);
+            if (!report) {
+                return res.status(404).json({ error: "EIRF Incident Report not found." });
+            }
+            report.status = status;
+            report.adminRemarks = adminRemarks || '';
+            report.reviewedAt = new Date();
+            report.reviewedBy = 'admin';
+            await report.save();
+
+            submission = await TestSubmissionModel.findById(report.submissionId);
+            if (submission) {
+                submission.eirfStatus = status;
+                await submission.save();
+            }
+        } else {
+            const db = getJSONData();
+            db.eirfReports = db.eirfReports || [];
+            const idx = db.eirfReports.findIndex(r => String(r.reportId) === String(reportId) || String(r._id) === String(reportId));
+            if (idx === -1) {
+                return res.status(404).json({ error: "EIRF Incident Report not found." });
+            }
+            db.eirfReports[idx].status = status;
+            db.eirfReports[idx].adminRemarks = adminRemarks || '';
+            db.eirfReports[idx].reviewedAt = new Date().toISOString();
+            db.eirfReports[idx].reviewedBy = 'admin';
+            report = db.eirfReports[idx];
+
+            db.testSubmissions = db.testSubmissions || [];
+            const subIdx = db.testSubmissions.findIndex(s => String(s._id || s.id) === String(report.submissionId));
+            if (subIdx !== -1) {
+                db.testSubmissions[subIdx].eirfStatus = status;
+            }
+            saveJSONData(db);
+        }
+
+        await logSystemAction(
+            'admin',
+            'EIRF_ACTION',
+            `Admin set EIRF Report ${reportId} status to ${status.toUpperCase()}. Remarks: "${adminRemarks || 'N/A'}"`,
+            'info'
+        );
+
+        return res.json({ success: true, report, message: `EIRF Incident Report ${reportId} marked as ${status.toUpperCase()}.` });
+    } catch (e) {
+        console.error("Admin EIRF action error:", e);
         return res.status(500).json({ error: e.message });
     }
 });
