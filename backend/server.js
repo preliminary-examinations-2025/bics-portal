@@ -773,7 +773,25 @@ function decryptEirfPayload(encryptedJsonStr, studentId, submissionId) {
     }
 }
 
-const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, submissionId) => {
+const formatISTDate = (dateVal) => {
+    try {
+        const d = dateVal ? new Date(dateVal) : new Date();
+        return d.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        }) + ' IST';
+    } catch (e) {
+        return new Date(dateVal || Date.now()).toISOString();
+    }
+};
+
+const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, submissionId, extraData = {}) => {
     const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
     const ejsTemplateId = process.env.EMAILJS_EIRF_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID || 'template_4lyvmlr';
     const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
@@ -787,6 +805,9 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
     const eirfUrl = cleanBase.endsWith('/terminal')
         ? `${cleanBase}/eirf/${submissionId}`
         : `${cleanBase}/terminal/eirf/${submissionId}`;
+
+    const nowIST = formatISTDate(new Date());
+    const deadlineIST = formatISTDate(new Date(Date.now() + 45 * 60 * 1000));
 
     if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
         try {
@@ -803,8 +824,11 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
                         email: toEmail,
                         to_name: name,
                         name: name,
+                        student_id: extraData.studentId || 'Candidate',
+                        submission_id: String(submissionId),
                         exam_title: examTitle,
-                        incident_timestamp: new Date().toLocaleString(),
+                        incident_timestamp: nowIST,
+                        expiry_deadline_ist: deadlineIST,
                         incident_summary: incidentSummary,
                         eirf_url: eirfUrl,
                         expiry_hours: '45 minutes'
@@ -825,7 +849,9 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
         console.log(`\n==================================================`);
         console.log(`[EIRF EMAIL DISPATCH NOTICE LOGGED TO CONSOLE]`);
         console.log(`Recipient: ${toEmail} (${name})`);
+        console.log(`Student ID: ${extraData.studentId || 'N/A'}`);
         console.log(`Exam Title: ${examTitle}`);
+        console.log(`Timestamp (IST): ${nowIST}`);
         console.log(`Summary: ${incidentSummary}`);
         console.log(`EIRF Filing Link: ${eirfUrl}`);
         console.log(`==================================================\n`);
@@ -3376,6 +3402,18 @@ app.post('/api/tests/submit', async (req, res) => {
                         submission.proctoringLog.fullscreenExits = proctoringLog.fullscreenExits !== undefined ? proctoringLog.fullscreenExits : submission.proctoringLog.fullscreenExits;
                         submission.proctoringLog.tabSwitches = proctoringLog.tabSwitches !== undefined ? proctoringLog.tabSwitches : submission.proctoringLog.tabSwitches;
                         submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
+
+                        if (Array.isArray(proctoringLog.events) && proctoringLog.events.length > 0) {
+                            submission.proctoringLog.events = submission.proctoringLog.events || [];
+                            const existingKeys = new Set(submission.proctoringLog.events.map(e => `${e.type}_${new Date(e.timestamp || e.startTime || Date.now()).getTime()}_${e.details || ''}`));
+                            proctoringLog.events.forEach(ev => {
+                                const k = `${ev.type}_${new Date(ev.timestamp || ev.startTime || Date.now()).getTime()}_${ev.details || ''}`;
+                                if (!existingKeys.has(k)) {
+                                    existingKeys.add(k);
+                                    submission.proctoringLog.events.push(ev);
+                                }
+                            });
+                        }
                     }
                     submission.status = status || 'submitted';
                     if (status !== 'started') {
@@ -3439,6 +3477,18 @@ app.post('/api/tests/submit', async (req, res) => {
                 submission.proctoringLog.fullscreenExits = proctoringLog.fullscreenExits !== undefined ? proctoringLog.fullscreenExits : submission.proctoringLog.fullscreenExits;
                 submission.proctoringLog.tabSwitches = proctoringLog.tabSwitches !== undefined ? proctoringLog.tabSwitches : submission.proctoringLog.tabSwitches;
                 submission.proctoringLog.webcamStatus = proctoringLog.webcamStatus !== undefined ? proctoringLog.webcamStatus : submission.proctoringLog.webcamStatus;
+
+                if (Array.isArray(proctoringLog.events) && proctoringLog.events.length > 0) {
+                    submission.proctoringLog.events = submission.proctoringLog.events || [];
+                    const existingKeys = new Set(submission.proctoringLog.events.map(e => `${e.type}_${new Date(e.timestamp || e.startTime || Date.now()).getTime()}_${e.details || ''}`));
+                    proctoringLog.events.forEach(ev => {
+                        const k = `${ev.type}_${new Date(ev.timestamp || ev.startTime || Date.now()).getTime()}_${ev.details || ''}`;
+                        if (!existingKeys.has(k)) {
+                            existingKeys.add(k);
+                            submission.proctoringLog.events.push(ev);
+                        }
+                    });
+                }
             }
             submission.status = status || 'submitted';
             if (status !== 'started') {
@@ -4835,38 +4885,52 @@ app.post('/api/tests/proctoring/event/:submissionId', async (req, res) => {
     try {
         let submission = null;
         if (useMongo) {
-            submission = await TestSubmissionModel.findById(submissionId);
-            if (!submission) return res.status(404).json({ error: "Submission not found." });
+            let retries = 5;
+            while (retries > 0) {
+                try {
+                    submission = await TestSubmissionModel.findById(submissionId);
+                    if (!submission) return res.status(404).json({ error: "Submission not found." });
 
-            submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
-            submission.proctoringLog.events = submission.proctoringLog.events || [];
-            submission.proctoringLog.events.push({ 
-                type, 
-                details, 
-                timestamp: new Date(),
-                startTime: startTime || null,
-                endTime: endTime || null,
-                durationSeconds: durationSeconds ? Number(durationSeconds) : 0
-            });
+                    submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
+                    submission.proctoringLog.events = submission.proctoringLog.events || [];
+                    submission.proctoringLog.events.push({ 
+                        type, 
+                        details, 
+                        timestamp: new Date(),
+                        startTime: startTime || null,
+                        endTime: endTime || null,
+                        durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+                    });
 
-            if (type === 'FULLSCREEN_EXIT') {
-                submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
-            } else if (type === 'TAB_SWITCH') {
-                submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
-            } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
-                submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
-            }
+                    if (type === 'FULLSCREEN_EXIT') {
+                        submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
+                    } else if (type === 'TAB_SWITCH') {
+                        submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+                    } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
+                        submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
+                    }
 
-            // Flag for EIRF if duration > 5s or emergency event
-            const dur = Number(durationSeconds || 0);
-            if (dur > 5 || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION') {
-                submission.hasEirfFlag = true;
-                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
-                    submission.eirfStatus = 'pending';
+                    // Flag for EIRF if duration > 5s or emergency event
+                    const dur = Number(durationSeconds || 0);
+                    if (dur > 5 || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION') {
+                        submission.hasEirfFlag = true;
+                        if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                            submission.eirfStatus = 'pending';
+                        }
+                    }
+
+                    await submission.save();
+                    break; // Save successful!
+                } catch (saveErr) {
+                    if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
+                        retries--;
+                        if (retries === 0) throw saveErr;
+                        await new Promise(resolve => setTimeout(resolve, 50 * (6 - retries)));
+                    } else {
+                        throw saveErr;
+                    }
                 }
             }
-
-            await submission.save();
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
@@ -5969,7 +6033,22 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
             return res.status(404).json({ error: "Examination submission record not found." });
         }
 
-        const events = submission.proctoringLog?.events || [];
+        const events = [...(submission.proctoringLog?.events || [])];
+        if (existingReport?.decryptedPayloadSnapshot?.proctoringLog?.events) {
+            (existingReport.decryptedPayloadSnapshot.proctoringLog.events || []).forEach(e => {
+                if (!events.some(ex => ex.type === e.type && String(ex.timestamp) === String(e.timestamp))) {
+                    events.push(e);
+                }
+            });
+        }
+        if (existingReport?.proctoringLogSnapshot?.events) {
+            (existingReport.proctoringLogSnapshot.events || []).forEach(e => {
+                if (!events.some(ex => ex.type === e.type && String(ex.timestamp) === String(e.timestamp))) {
+                    events.push(e);
+                }
+            });
+        }
+
         const flaggedReasons = [];
         let hasFullscreenFlag = false;
         let hasTabSwitchFlag = false;
@@ -5980,8 +6059,14 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
         events.forEach(ev => {
             let dur = Number(ev.durationSeconds || 0);
             if (!dur && ev.details) {
-                const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
-                if (match && match[1]) dur = parseInt(match[1], 10);
+                const m1 = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                const m2 = ev.details.match(/Max:\s*(\d+)s/i);
+                const m3 = ev.details.match(/after\s+(\d+)\s+seconds/i);
+                const m4 = ev.details.match(/(\d+)\s*seconds/i);
+                if (m1 && m1[1]) dur = parseInt(m1[1], 10);
+                else if (m2 && m2[1]) dur = parseInt(m2[1], 10);
+                else if (m3 && m3[1]) dur = parseInt(m3[1], 10);
+                else if (m4 && m4[1]) dur = parseInt(m4[1], 10);
             }
             if (ev.type === 'FULLSCREEN_EXIT') {
                 if (dur > maxFullscreenSeconds) maxFullscreenSeconds = dur;

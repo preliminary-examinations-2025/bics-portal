@@ -1040,6 +1040,14 @@ export default function App() {
   // Refs to track logged warnings and prevent duplicate logs or duplicate auto-submits
   const lastLoggedWarnings = useRef({ fullscreenExits: 0, tabSwitches: 0 });
   const isAutoSubmittedRef = useRef(false);
+  const proctoringEventsRef = useRef([]);
+
+  const getProctoringLogPayload = (warningsObj) => ({
+    fullscreenExits: warningsObj?.fullscreenExits || 0,
+    tabSwitches: warningsObj?.tabSwitches || 0,
+    webcamStatus: warningsObj?.webcamStatus || 'active',
+    events: proctoringEventsRef.current || []
+  });
 
   // Handle warnings changes (Alerts, logs syncing, and auto-submit)
   useEffect(() => {
@@ -1079,7 +1087,8 @@ export default function App() {
       if (newFS) {
         lastLoggedWarnings.current.fullscreenExits = fullscreenExits;
         syncProctoringLogs(proctoringWarnings, 'FULLSCREEN_EXIT', `Candidate exited fullscreen mode. Total warnings: ${total} / 3`);
-      } else if (newTab) {
+      }
+      if (newTab) {
         lastLoggedWarnings.current.tabSwitches = tabSwitches;
         syncProctoringLogs(proctoringWarnings, 'TAB_SWITCH', `Candidate switched tab or lost focus. Total warnings: ${total} / 3`);
       }
@@ -1104,7 +1113,7 @@ export default function App() {
           syncProctoringLogs(
             proctoringWarnings,
             'FULLSCREEN_EXIT',
-            `Candidate exited fullscreen mode for ${durationSeconds} seconds.`,
+            `Candidate returned to fullscreen after ${durationSeconds} seconds.`,
             startTime,
             endTime,
             durationSeconds
@@ -1143,7 +1152,7 @@ export default function App() {
         syncProctoringLogs(
           proctoringWarnings,
           'TAB_SWITCH',
-          `Candidate switched tab or lost focus for ${durationSeconds} seconds.`,
+          `Candidate returned focus after switching tabs/leaving window for ${durationSeconds} seconds.`,
           startTime,
           endTime,
           durationSeconds
@@ -1653,152 +1662,55 @@ export default function App() {
     }
   };
 
-  const logProctoringEvent = async (subObj, type, details) => {
+  const logProctoringEvent = async (subObj, type, details, startTime, endTime, durationSeconds) => {
     try {
       const targetSub = subObj || submission;
       if (!targetSub) return;
       const subId = targetSub.id || targetSub._id;
+
+      const evtObj = {
+        type,
+        details,
+        timestamp: new Date().toISOString(),
+        startTime: startTime ? new Date(startTime).toISOString() : null,
+        endTime: endTime ? new Date(endTime).toISOString() : null,
+        durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+      };
+
+      if (!proctoringEventsRef.current) proctoringEventsRef.current = [];
+      proctoringEventsRef.current.push(evtObj);
+
       await fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, details })
+        body: JSON.stringify(evtObj)
       });
     } catch (e) {
       console.error("Failed to log proctoring event:", e);
     }
   };
 
-  const handleRunCode = async () => {
-    const activeQuestion = test?.questions?.[selectedQuestionIndex];
-    if (!activeQuestion) return;
-    const allCases = activeQuestion.testCases || [];
-    if (allCases.length === 0) {
-      triggerCustomAlert("No Test Cases", "This coding question does not have any test cases configured by the administrator.");
-      return;
-    }
-
-    setIsRunningCode(true);
-    setConsoleTab('result');
-    setRunResults(null);
-    setCompileError(null);
-    logProctoringEvent(submission, 'CODE_RUN', `Ran C++ compilation for Q${selectedQuestionIndex + 1}.`);
-
-    try {
-      const res = await fetch(`${API_BASE}/tests/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceCode: draftCode,
-          testCases: allCases
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        if (data.status === 'Compilation Error') {
-          setCompileError(data.compileError || "Failed to compile C++ code.");
-          const formattedErrResults = allCases.map(tc => ({
-            status: 'Compilation Error',
-            points: Number(tc.points || 0),
-            scoredPoints: 0,
-            actualOutput: data.compileError || 'Compilation Error',
-            expectedOutput: tc.output || '',
-            input: tc.input || ''
-          }));
-          setExamAnswers(prev => {
-            const updated = [...prev];
-            const qId = activeQuestion.id;
-            const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
-            if (existingIdx !== -1) {
-              updated[existingIdx] = {
-                ...updated[existingIdx],
-                submittedCode: draftCode,
-                selectedLanguage: draftLanguage,
-                testCaseResults: formattedErrResults,
-                score: 0
-              };
-            }
-            return updated;
-          });
-        } else {
-          const rawResults = data.results || [];
-          setRunResults(rawResults);
-          const formattedResults = rawResults.map((r, rIdx) => {
-            const tc = allCases[rIdx] || {};
-            const isAccepted = r.status === 'Accepted';
-            const pts = Number(tc.points || 0);
-            const scored = isAccepted ? pts : 0;
-            return {
-              status: r.status || 'Failed',
-              points: pts,
-              scoredPoints: scored,
-              actualOutput: r.actualOutput !== undefined ? r.actualOutput : (r.stdout || ''),
-              expectedOutput: tc.output || '',
-              input: tc.input || ''
-            };
-          });
-          const questionScore = formattedResults.reduce((acc, curr) => acc + curr.scoredPoints, 0);
-
-          setExamAnswers(prev => {
-            const updated = [...prev];
-            const qId = activeQuestion.id;
-            const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
-            if (existingIdx !== -1) {
-              updated[existingIdx] = {
-                ...updated[existingIdx],
-                submittedCode: draftCode,
-                selectedLanguage: draftLanguage,
-                testCaseResults: formattedResults,
-                score: questionScore
-              };
-            } else {
-              updated.push({
-                questionId: qId,
-                type: 'coding',
-                submittedCode: draftCode,
-                selectedLanguage: draftLanguage,
-                testCaseResults: formattedResults,
-                score: questionScore
-              });
-            }
-            return updated;
-          });
-        }
-      } else {
-        setCompileError(data.error || "Execution failed. Server error.");
-      }
-    } catch (err) {
-      console.error(err);
-      setCompileError("Network error. Failed to communicate with compiler.");
-    } finally {
-      setIsRunningCode(false);
-    }
-  };
-
-  const syncProctoringLogs = async (warningsObj, eventType, eventDetails) => {
+  const syncProctoringLogs = async (warningsObj, eventType, eventDetails, startTime, endTime, durationSeconds) => {
     try {
       if (!submission) return;
       const subId = submission._id || submission.id;
+
+      if (eventType) {
+        await logProctoringEvent(submission, eventType, eventDetails, startTime, endTime, durationSeconds);
+      }
+
+      const pLogPayload = getProctoringLogPayload(warningsObj);
+
       await fetch(`${API_BASE}/tests/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           submissionId: subId,
           answers: examAnswers,
-          proctoringLog: warningsObj,
+          proctoringLog: pLogPayload,
           status: 'started'
         })
       });
-
-      if (eventType) {
-        await fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: eventType,
-            details: eventDetails
-          })
-        });
-      }
     } catch (e) {
       console.error(e);
     }
@@ -1889,6 +1801,7 @@ export default function App() {
     try {
       const subId = subObj?._id || subObj?.id || 'submission';
       const studentId = candObj?.studentId || subObj?.studentId || 'Candidate';
+      const pLogPayload = getProctoringLogPayload(pWarnings);
 
       let encryptedPayloadStr = null;
 
@@ -1901,7 +1814,7 @@ export default function App() {
             submissionId: subId,
             studentId,
             answers: answersArr || [],
-            proctoringLog: pWarnings || {}
+            proctoringLog: pLogPayload
           })
         });
         if (res.ok) {
@@ -1924,7 +1837,7 @@ export default function App() {
           candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
           testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
           answers: answersArr || [],
-          proctoringLog: pWarnings || {},
+          proctoringLog: pLogPayload,
           generatedAt: new Date().toISOString()
         };
         encryptedPayloadStr = await encryptEirfPayloadClient(payloadData, studentId, subId);
@@ -1952,6 +1865,8 @@ export default function App() {
       return;
     }
 
+    const fullPLog = getProctoringLogPayload(warningsObj);
+
     // Auto-generate .eirf payload file on network drop or proctoring warning triggers
     const hasWarnings = (warningsObj?.fullscreenExits || 0) > 0 || (warningsObj?.tabSwitches || 0) > 0 || statusVal === 'auto-submitted' || !isOnline;
     if (hasWarnings) {
@@ -1963,7 +1878,7 @@ export default function App() {
       const payload = {
         submissionId: subId,
         answers: answersList,
-        proctoringLog: warningsObj,
+        proctoringLog: fullPLog,
         status: statusVal
       };
       localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
@@ -1986,7 +1901,7 @@ export default function App() {
         body: JSON.stringify({
           submissionId: subId,
           answers: answersList,
-          proctoringLog: warningsObj,
+          proctoringLog: fullPLog,
           status: statusVal
         })
       });
@@ -2018,7 +1933,7 @@ export default function App() {
       const payload = {
         submissionId: subId,
         answers: answersList,
-        proctoringLog: warningsObj,
+        proctoringLog: fullPLog,
         status: statusVal
       };
       localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
