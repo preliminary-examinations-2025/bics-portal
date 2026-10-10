@@ -4,6 +4,11 @@
 # Proxy OT Terminal requests to the separate OT deployment site
 /terminal/*  https://otbicsexam.netlify.app/:splat        200!
 
+# Netlify Proxy Redirects for Cloudinary Media Storage (BICS_2026)
+/media/v:ver/*  https://res.cloudinary.com/dl7xqcnmr/image/upload/v:ver/BICS_2026/:splat  200!
+/media/raw/*    https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/:splat          200!
+/media/*        https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/:splat        200!
+
 # Client-side React Router rewrites for Main Portal
 /main/*      /index.html                                 200
 /*           /index.html                                 200

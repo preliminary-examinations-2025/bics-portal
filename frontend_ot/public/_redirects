@@ -1,6 +1,11 @@
 # Proxy API requests to Render backend server seamlessly
 /api/*              https://bics-portal.onrender.com/api/:splat  200!
 
+# Netlify Proxy Redirects for Cloudinary Media Storage (BICS_2026)
+/media/v:ver/*      https://res.cloudinary.com/dl7xqcnmr/image/upload/v:ver/BICS_2026/:splat  200!
+/media/raw/*        https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/:splat          200!
+/media/*            https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/:splat        200!
+
 # SPA fallback & asset rewrites for OT Terminal routes
 /terminal/assets/*  /assets/:splat                               200
 /terminal/*         /index.html                                  200

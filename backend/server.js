@@ -57,6 +57,17 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
     console.warn("--> Cloudinary credentials missing in .env. Falling back to mock URLs during registration.");
 }
 
+// Helper to convert Cloudinary URLs to Netlify /media/ proxy URLs
+const formatCloudinaryMediaUrl = (url) => {
+    if (!url || typeof url !== 'string') return url;
+    if (url.startsWith('/media/') || url.includes('.netlify.app/media/')) return url;
+    const match = url.match(/cloudinary\.com\/[^/]+\/(?:image|raw|video|auto)\/upload\/(?:v\d+\/)?(?:BICS_2026\/)?(.+)$/i);
+    if (match && match[1]) {
+        return `/media/${match[1]}`;
+    }
+    return url;
+};
+
 // Helper to stream file buffers to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto') => {
     return new Promise((resolve, reject) => {
@@ -64,7 +75,8 @@ const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto') => {
             { folder: folder, resource_type: resourceType },
             (error, result) => {
                 if (error) return reject(error);
-                resolve(result.secure_url);
+                const rawUrl = result.secure_url || result.url;
+                resolve(formatCloudinaryMediaUrl(rawUrl));
             }
         );
         stream.end(fileBuffer);
@@ -2302,20 +2314,27 @@ app.get('/api/candidate/generate-hallticket/:id', async (req, res) => {
         // Helper function to fetch remote/local image buffers
         const fetchImageBuffer = async (url) => {
             if (!url) return null;
-            if (url.includes('/public/uploads/')) {
-                const fileName = url.substring(url.indexOf('/public/uploads/') + 16);
+            let targetUrl = url;
+            if (targetUrl.startsWith('/media/')) {
+                targetUrl = `https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/${targetUrl.replace(/^\/media\//, '')}`;
+            } else if (targetUrl.includes('.netlify.app/media/')) {
+                const subPath = targetUrl.substring(targetUrl.indexOf('/media/') + 7);
+                targetUrl = `https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/${subPath}`;
+            }
+            if (targetUrl.includes('/public/uploads/')) {
+                const fileName = targetUrl.substring(targetUrl.indexOf('/public/uploads/') + 16);
                 const localPath = path.join(__dirname, 'public', 'uploads', fileName);
                 if (fs.existsSync(localPath)) {
                     try { return fs.readFileSync(localPath); } catch (e) {}
                 }
             }
             try {
-                const response = await fetch(url);
+                const response = await fetch(targetUrl);
                 if (response.ok) {
                     return Buffer.from(await response.arrayBuffer());
                 }
             } catch (e) {
-                console.error("HTTP fetch failed for URL:", url, e.message);
+                console.error("HTTP fetch failed for URL:", targetUrl, e.message);
             }
             return null;
         };
