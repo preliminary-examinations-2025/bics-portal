@@ -406,15 +406,21 @@ export default function App() {
   // EIRF Form State
   const [eirfDetails, setEirfDetails] = useState(null);
   const [eirfPrimaryCause, setEirfPrimaryCause] = useState('FULLSCREEN_EXIT');
+  const [eirfAckUnderstand, setEirfAckUnderstand] = useState('Yes');
+  const [eirfWarningCount, setEirfWarningCount] = useState('3 warnings (Auto-Submitted)');
+  const [eirfTabReason, setEirfTabReason] = useState('');
+  const [eirfFullscreenReason, setEirfFullscreenReason] = useState('');
+  const [eirfInterruptions, setEirfInterruptions] = useState([]);
+  const [eirfPeripherals, setEirfPeripherals] = useState('No, no peripherals were connected');
   const [eirfExplanation, setEirfExplanation] = useState('');
-  const [eirfTargetedQ1, setEirfTargetedQ1] = useState('');
-  const [eirfTargetedQ2, setEirfTargetedQ2] = useState('');
+  const [eirfDeclarationChecked, setEirfDeclarationChecked] = useState(false);
   const [eirfFileContent, setEirfFileContent] = useState('');
   const [eirfFileName, setEirfFileName] = useState('');
   const [submittingEirf, setSubmittingEirf] = useState(false);
   const [eirfSuccessMessage, setEirfSuccessMessage] = useState('');
   const [eirfErrorMessage, setEirfErrorMessage] = useState('');
   const [eirfTimeLeft, setEirfTimeLeft] = useState('');
+  const [isSubmitBtnHovered, setIsSubmitBtnHovered] = useState(false);
 
   // Proctoring Duration Tracking Refs
   const fsExitStartTimeRef = useRef(null);
@@ -4519,8 +4525,13 @@ export default function App() {
     };
 
     const handleEirfSubmit = async () => {
+      if (!eirfDeclarationChecked) {
+        setEirfErrorMessage("You must check the formal integrity declaration agreement box in Section 4 before submitting.");
+        return;
+      }
+
       if (!eirfExplanation.trim() || eirfExplanation.trim().length < 20) {
-        setEirfErrorMessage("Please provide a detailed explanation statement (at least 20 characters) describing the incident.");
+        setEirfErrorMessage("Please provide a detailed explanation statement in Section 4 (at least 20 characters) describing your actions during the timestamps in question.");
         return;
       }
 
@@ -4537,14 +4548,35 @@ export default function App() {
             submissionId: subId,
             primaryCause: eirfPrimaryCause,
             detailedExplanation: eirfExplanation,
+            formAnswers: {
+              section1: {
+                ackUnderstand: eirfAckUnderstand,
+                warningCount: eirfWarningCount
+              },
+              section2: {
+                tabReason: eirfTabReason,
+                fullscreenReason: eirfFullscreenReason
+              },
+              section3: {
+                interruptions: eirfInterruptions,
+                peripherals: eirfPeripherals
+              },
+              section4: {
+                explanation: eirfExplanation,
+                declarationChecked: eirfDeclarationChecked
+              }
+            },
             technicalContext: {
               browser: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-              q1: eirfTargetedQ1,
-              q2: eirfTargetedQ2
+              openedApp: eirfTabReason
             },
             additionalAnswers: {
-              q1: eirfTargetedQ1,
-              q2: eirfTargetedQ2
+              ackUnderstand: eirfAckUnderstand,
+              warningCount: eirfWarningCount,
+              tabReason: eirfTabReason,
+              fullscreenReason: eirfFullscreenReason,
+              interruptions: eirfInterruptions,
+              peripherals: eirfPeripherals
             },
             encryptedPayload: eirfFileContent || undefined,
             encryptedPayloadFile: eirfFileContent || undefined,
@@ -4704,97 +4736,243 @@ export default function App() {
             </div>
           ) : (
             /* Active Form Filing */
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Cause Radio Selector */}
-              <div>
-                <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '8px' }}>
-                  1. Select Primary Trigger / Cause of Incident
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
-                  {[
-                    { id: 'FULLSCREEN_EXIT', label: 'Fullscreen Exit (>5s)' },
-                    { id: 'TAB_SWITCH', label: 'Tab Switch / Focus Loss (>5s)' },
-                    { id: 'NETWORK_OFFLINE', label: 'Network Offline / Emergency Payload' },
-                    { id: 'SYSTEM_POPUP', label: 'OS Notification / System Pop-up' }
-                  ].map(option => (
-                    <label key={option.id} style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '12px',
-                      borderRadius: '6px',
-                      border: `1px solid ${eirfPrimaryCause === option.id ? '#0284c7' : '#cbd5e1'}`,
-                      backgroundColor: eirfPrimaryCause === option.id ? '#f0f9ff' : '#ffffff',
-                      cursor: 'pointer',
-                      fontSize: '9pt',
-                      fontWeight: eirfPrimaryCause === option.id ? 'bold' : 'normal',
-                      color: eirfPrimaryCause === option.id ? '#0284c7' : '#334155'
-                    }}>
-                      <input
-                        type="radio"
-                        name="eirfCause"
-                        value={option.id}
-                        checked={eirfPrimaryCause === option.id}
-                        onChange={e => setEirfPrimaryCause(e.target.value)}
-                      />
-                      {option.label}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+              {/* SECTION 1: Incident Acknowledgment & Confirmation */}
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
+                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 14px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                  Section 1: Incident Acknowledgment & Confirmation
+                </h3>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      • Your test was automatically submitted because you exceeded the allowed number of navigation warnings. Do you understand why this action was taken?
                     </label>
-                  ))}
+                    <div style={{ display: 'flex', gap: '15px' }}>
+                      {['Yes', 'No'].map(val => (
+                        <label key={val} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9pt', cursor: 'pointer', color: '#334155' }}>
+                          <input
+                            type="radio"
+                            name="eirfAckUnderstand"
+                            value={val}
+                            checked={eirfAckUnderstand === val}
+                            onChange={e => setEirfAckUnderstand(e.target.value)}
+                          />
+                          {val}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      • Please confirm the exact number of warning pop-ups you remember seeing on your screen before the session terminated.
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
+                      {['0 warnings', '1 warning', '2 warnings', '3 warnings (Auto-Submitted)', 'More than 3 warnings'].map(opt => (
+                        <label key={opt} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '8px 10px',
+                          borderRadius: '4px',
+                          border: `1px solid ${eirfWarningCount === opt ? '#0284c7' : '#cbd5e1'}`,
+                          backgroundColor: eirfWarningCount === opt ? '#f0f9ff' : '#ffffff',
+                          cursor: 'pointer',
+                          fontSize: '8.5pt',
+                          color: eirfWarningCount === opt ? '#0284c7' : '#334155',
+                          fontWeight: eirfWarningCount === opt ? 'bold' : 'normal'
+                        }}>
+                          <input
+                            type="radio"
+                            name="eirfWarningCount"
+                            value={opt}
+                            checked={eirfWarningCount === opt}
+                            onChange={e => setEirfWarningCount(e.target.value)}
+                          />
+                          {opt}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Detailed Statement Textarea */}
-              <div>
-                <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
-                  2. Detailed Incident Explanation Statement (Required)
-                </label>
-                <textarea
-                  rows={4}
-                  className="cf-input"
-                  style={{ width: '100%', fontSize: '9pt', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                  placeholder="Provide a step-by-step description explaining why the proctoring warning triggered..."
-                  value={eirfExplanation}
-                  onChange={e => setEirfExplanation(e.target.value)}
-                />
-                <span style={{ fontSize: '8pt', color: '#64748b' }}>Minimum 20 characters required.</span>
-              </div>
+              {/* SECTION 2: Context Behind Navigation Violations */}
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
+                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 14px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                  Section 2: Context Behind Navigation Violations
+                </h3>
 
-              {/* Targeted Questions */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                <div>
-                  <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
-                    3. Which background application, shortcut key, or OS event caused the trigger?
-                  </label>
-                  <input
-                    type="text"
-                    className="cf-input"
-                    style={{ width: '100%', fontSize: '9pt', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                    placeholder="e.g. Antivirus notification popup, Alt+Tab keypress, Wi-Fi router reboot"
-                    value={eirfTargetedQ1}
-                    onChange={e => setEirfTargetedQ1(e.target.value)}
-                  />
-                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      • Tab Switching / Focus Loss: The system detected that your browser window lost focus or that another tab/application was opened. Please specify exactly what application or browser tab you were attempting to access and why.
+                    </label>
+                    <textarea
+                      rows={3}
+                      className="cf-input"
+                      style={{ width: '100%', fontSize: '9pt', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                      placeholder="Specify application (e.g. Antivirus popup, PDF reader, IDE) and exact reason for focus loss..."
+                      value={eirfTabReason}
+                      onChange={e => setEirfTabReason(e.target.value)}
+                    />
+                  </div>
 
-                <div>
-                  <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '4px' }}>
-                    4. Were there any technical environment issues affecting your local device or network?
-                  </label>
-                  <input
-                    type="text"
-                    className="cf-input"
-                    style={{ width: '100%', fontSize: '9pt', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                    placeholder="e.g. Power outage, browser freeze, loss of internet connectivity"
-                    value={eirfTargetedQ2}
-                    onChange={e => setEirfTargetedQ2(e.target.value)}
-                  />
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      • Full-Screen Exits: You exited full-screen mode multiple times. Was this action intentional? If yes, please describe what you needed to adjust or view outside the testing window.
+                    </label>
+                    <textarea
+                      rows={3}
+                      className="cf-input"
+                      style={{ width: '100%', fontSize: '9pt', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                      placeholder="Describe why full-screen mode was exited (e.g. screen resolution adjustment, OS notification, unintentional Esc key)..."
+                      value={eirfFullscreenReason}
+                      onChange={e => setEirfFullscreenReason(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Encrypted File Upload Box */}
-              <div>
-                <label style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
-                  5. Upload Encrypted Backup File (.eirf) (If generated during submission)
-                </label>
+              {/* SECTION 3: Technical Malfunction Triage */}
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
+                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 14px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                  Section 3: Technical Malfunction Triage
+                </h3>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '8px' }}>
+                      • Hardware/OS Interruptions: Did you experience any of the following unexpected technical interruptions during your test? (Select all that apply)
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                      {[
+                        'System notifications / pop-ups (e.g. antivirus, OS updates)',
+                        'Accidental keystrokes (e.g. Alt+Tab, Windows key)',
+                        'External monitor disconnection',
+                        'Browser crash',
+                        'Mouse tracking issues',
+                        'None of the above'
+                      ].map(item => (
+                        <label key={item} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '8px 10px',
+                          borderRadius: '4px',
+                          border: `1px solid ${eirfInterruptions.includes(item) ? '#0284c7' : '#e2e8f0'}`,
+                          backgroundColor: eirfInterruptions.includes(item) ? '#f0f9ff' : '#f8fafc',
+                          cursor: 'pointer',
+                          fontSize: '8.5pt',
+                          color: '#334155'
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={eirfInterruptions.includes(item)}
+                            onChange={() => {
+                              if (item === 'None of the above') {
+                                setEirfInterruptions(['None of the above']);
+                              } else {
+                                setEirfInterruptions(prev => {
+                                  const filtered = prev.filter(i => i !== 'None of the above');
+                                  return filtered.includes(item) ? filtered.filter(i => i !== item) : [...filtered, item];
+                                });
+                              }
+                            }}
+                          />
+                          {item}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '8px' }}>
+                      • Environment Factors: Were you attempting to connect a peripheral device (like a secondary monitor, projector, or external keyboard) during the examination period?
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px' }}>
+                      {[
+                        'No, no peripherals were connected',
+                        'Yes, secondary monitor',
+                        'Yes, external keyboard / mouse',
+                        'Yes, projector or external display',
+                        'Other device'
+                      ].map(pOpt => (
+                        <label key={pOpt} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '8px 10px',
+                          borderRadius: '4px',
+                          border: `1px solid ${eirfPeripherals === pOpt ? '#0284c7' : '#cbd5e1'}`,
+                          backgroundColor: eirfPeripherals === pOpt ? '#f0f9ff' : '#ffffff',
+                          cursor: 'pointer',
+                          fontSize: '8.5pt',
+                          color: eirfPeripherals === pOpt ? '#0284c7' : '#334155',
+                          fontWeight: eirfPeripherals === pOpt ? 'bold' : 'normal'
+                        }}>
+                          <input
+                            type="radio"
+                            name="eirfPeripherals"
+                            value={pOpt}
+                            checked={eirfPeripherals === pOpt}
+                            onChange={e => setEirfPeripherals(e.target.value)}
+                          />
+                          {pOpt}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 4: Integrity Declaration & Final Statement */}
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
+                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 14px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                  Section 4: Integrity Declaration & Final Statement
+                </h3>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                      • Open Defense Explanation: If you believe these flags were triggered erroneously, please provide a detailed explanation of your actions during the timestamps in question. (Required, min 20 characters)
+                    </label>
+                    <textarea
+                      rows={4}
+                      className="cf-input"
+                      style={{ width: '100%', fontSize: '9pt', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                      placeholder="Provide your complete defense statement and details regarding your testing environment during the session..."
+                      value={eirfExplanation}
+                      onChange={e => setEirfExplanation(e.target.value)}
+                    />
+                    <span style={{ fontSize: '8pt', color: '#64748b' }}>Minimum 20 characters required.</span>
+                  </div>
+
+                  <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', padding: '12px 16px' }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '8.5pt', color: '#78350f', cursor: 'pointer', lineHeight: 1.5 }}>
+                      <input
+                        type="checkbox"
+                        checked={eirfDeclarationChecked}
+                        onChange={e => setEirfDeclarationChecked(e.target.checked)}
+                        style={{ marginTop: '2px' }}
+                      />
+                      <span>
+                        <strong>Formal Declaration:</strong> By submitting this form, I certify that my explanation is truthful and accurate. I understand that this data, along with the screen recordings and webcam logs, will be forwarded to the exam board for a final integrity review.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Upload Encrypted Payload (.eirf) */}
+              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
+                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 8px 0' }}>
+                  Attach Encrypted Local Backup (.eirf)
+                </h3>
+                <p style={{ fontSize: '8.5pt', color: '#64748b', margin: '0 0 14px 0' }}>
+                  If an encrypted payload file (.eirf) was downloaded to your device when the proctoring auto-submission triggered, please attach it below for in-memory server cross-verification.
+                </p>
                 <div style={{ border: '2px dashed #cbd5e1', borderRadius: '6px', padding: '20px', textAlign: 'center', backgroundColor: '#f8fafc' }}>
                   <input
                     type="file"
@@ -4811,23 +4989,36 @@ export default function App() {
                       Selected File: {eirfFileName} ({eirfFileContent.length} bytes loaded)
                     </div>
                   )}
-                  <p style={{ fontSize: '8pt', color: '#64748b', margin: '8px 0 0 0' }}>
-                    If an encrypted backup payload (.eirf) was auto-downloaded on your computer during emergency submit, attach it here for server cross-verification.
-                  </p>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+              {/* Submit Action Button */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '5px' }}>
                 <button
-                  className="cf-btn-primary"
+                  type="button"
                   disabled={submittingEirf}
                   onClick={handleEirfSubmit}
-                  style={{ backgroundColor: '#0284c7', borderColor: '#0284c7', padding: '10px 24px', fontSize: '9.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                  onMouseEnter={() => setIsSubmitBtnHovered(true)}
+                  onMouseLeave={() => setIsSubmitBtnHovered(false)}
+                  style={{
+                    backgroundColor: submittingEirf ? '#94a3b8' : (isSubmitBtnHovered ? '#38bdf8' : '#0284c7'),
+                    borderColor: submittingEirf ? '#94a3b8' : (isSubmitBtnHovered ? '#38bdf8' : '#0284c7'),
+                    color: '#ffffff',
+                    padding: '12px 28px',
+                    borderRadius: '6px',
+                    fontSize: '10pt',
+                    fontWeight: 'bold',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    cursor: submittingEirf ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: isSubmitBtnHovered && !submittingEirf ? '0 4px 12px rgba(56, 189, 248, 0.4)' : 'none'
+                  }}
                 >
                   {submittingEirf ? (
                     <>
-                      <Loader2 className="cf-spinner" size={16} /> Submitting Report...
+                      <Loader2 className="cf-spinner" size={18} /> Submitting Incident Report...
                     </>
                   ) : (
                     'Submit Emergency Incident Report'

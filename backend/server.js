@@ -650,6 +650,7 @@ const EIRFReportSchema = new mongoose.Schema({
         openedApp: String
     },
     additionalAnswers: mongoose.Schema.Types.Mixed,
+    formAnswers: mongoose.Schema.Types.Mixed,
     
     // Encrypted Payload Verification Results
     encryptedPayloadUploaded: { type: Boolean, default: false },
@@ -6220,17 +6221,18 @@ app.post('/api/test/eirf/generate-payload', async (req, res) => {
 
 // 2. Submit EIRF Incident Report & Verify Encrypted Local Payload (.eirf)
 app.post('/api/test/eirf/submit', async (req, res) => {
-    const {
-        submissionId,
-        primaryCause,
-        detailedExplanation,
-        technicalContext,
-        additionalAnswers,
-        encryptedPayload,
-        encryptedPayloadFile,
-        payloadFileName,
-        eirfFileName
-    } = req.body;
+        const {
+            submissionId,
+            primaryCause,
+            detailedExplanation,
+            technicalContext,
+            additionalAnswers,
+            formAnswers,
+            encryptedPayload,
+            encryptedPayloadFile,
+            payloadFileName,
+            eirfFileName
+        } = req.body;
 
     if (!submissionId || !primaryCause || !detailedExplanation) {
         return res.status(400).json({ error: "Missing required fields: submissionId, primaryCause, and detailedExplanation are required." });
@@ -6394,10 +6396,9 @@ app.post('/api/test/eirf/submit', async (req, res) => {
             detailedExplanation,
             technicalContext: technicalContext || {},
             additionalAnswers: additionalAnswers || {},
+            formAnswers: formAnswers || {},
             encryptedPayloadUploaded: !!rawPayload,
             payloadFileName: rawFileName,
-            payloadUrl: payloadUrl || '',
-            decryptedPayloadSnapshot: decryptedData,
             verificationStatus,
             verificationDetails,
             status: 'pending_review',

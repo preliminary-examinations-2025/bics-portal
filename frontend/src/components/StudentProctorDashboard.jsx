@@ -510,23 +510,78 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       </span>
                     </div>
 
-                    <div style={{ fontSize: '8.5pt', color: '#334155', marginBottom: '8px' }}>
-                      <strong>Primary Incident Cause:</strong> {eirfData.existingReport.primaryCause}
+                    <div style={{ fontSize: '8.5pt', color: '#334155', marginBottom: '12px' }}>
+                      <strong>Primary Trigger / Cause:</strong> <span style={{ color: '#0284c7', fontWeight: 'bold' }}>{eirfData.existingReport.primaryCause}</span>
                     </div>
 
-                    <div style={{ fontSize: '8.5pt', color: '#334155', marginBottom: '10px', backgroundColor: '#f8fafc', padding: '10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
-                      <strong>Candidate Statement:</strong>
-                      <p style={{ margin: '4px 0 0 0', lineHeight: 1.5 }}>{eirfData.existingReport.detailedExplanation}</p>
+                    {/* Payload Verification Match Card */}
+                    <div style={{
+                      backgroundColor: eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#f0fdf4' : (eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' ? '#fffbeb' : '#fef2f2'),
+                      border: `1px solid ${eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#bbf7d0' : (eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' ? '#fde68a' : '#fecaca')}`,
+                      borderRadius: '6px',
+                      padding: '12px 14px',
+                      marginBottom: '15px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <strong style={{ fontSize: '8.5pt', color: eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#166534' : (eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' ? '#b45309' : '#991b1b') }}>
+                          Payload Cross-Verification Status: {eirfData.existingReport.verificationStatus}
+                        </strong>
+                      </div>
+                      <p style={{ fontSize: '8pt', margin: 0, color: '#475569', lineHeight: 1.4 }}>
+                        {eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' && "Local client payload match verified against server submission telemetry."}
+                        {eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' && "Candidate did not attach an encrypted local payload file (.eirf). Verification evaluated via server telemetry."}
+                        {eirfData.existingReport.verificationStatus === 'DISCREPANCY_FLAGGED' && "Discrepancy detected between uploaded client payload and server submission record."}
+                        {eirfData.existingReport.verificationStatus === 'DECRYPTION_FAILED' && "Failed to decrypt uploaded payload file using system secret key."}
+                      </p>
+                      {eirfData.existingReport.verificationDetails?.discrepancies?.length > 0 && (
+                        <ul style={{ margin: '6px 0 0 0', paddingLeft: '18px', fontSize: '8pt', color: '#b91c1c' }}>
+                          {eirfData.existingReport.verificationDetails.discrepancies.map((dItem, dIdx) => (
+                            <li key={dIdx}>{dItem}</li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
 
-                    {eirfData.existingReport.decryptedPayloadSnapshot && (
-                      <div style={{ marginTop: '10px' }}>
-                        <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>Decrypted Encrypted Payload Forensic Match:</div>
-                        <div style={{ fontSize: '8pt', backgroundColor: '#f1f5f9', padding: '8px', borderRadius: '4px', fontFamily: 'monospace', color: '#0f172a', maxHeight: '120px', overflowY: 'auto' }}>
-                          {JSON.stringify(eirfData.existingReport.decryptedPayloadSnapshot, null, 2)}
+                    {/* Candidate Questionnaire Answers (4 Sections) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {/* Section 1 */}
+                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>1. Incident Acknowledgment & Confirmation:</strong>
+                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                          <div>• Aware why action was taken: <strong>{eirfData.existingReport.formAnswers?.section1?.ackUnderstand || eirfData.existingReport.additionalAnswers?.ackUnderstand || 'Yes'}</strong></div>
+                          <div>• Exact warnings remembered: <strong>{eirfData.existingReport.formAnswers?.section1?.warningCount || eirfData.existingReport.additionalAnswers?.warningCount || '3 warnings'}</strong></div>
                         </div>
                       </div>
-                    )}
+
+                      {/* Section 2 */}
+                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>2. Context Behind Navigation Violations:</strong>
+                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                          <div>• Tab / Focus Loss Context: <p style={{ margin: '2px 0 6px 0', color: '#475569' }}>{eirfData.existingReport.formAnswers?.section2?.tabReason || eirfData.existingReport.additionalAnswers?.tabReason || eirfData.existingReport.technicalContext?.openedApp || 'None specified'}</p></div>
+                          <div>• Full-Screen Exits Explanation: <p style={{ margin: '2px 0 0 0', color: '#475569' }}>{eirfData.existingReport.formAnswers?.section2?.fullscreenReason || eirfData.existingReport.additionalAnswers?.fullscreenReason || 'None specified'}</p></div>
+                        </div>
+                      </div>
+
+                      {/* Section 3 */}
+                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>3. Technical Malfunction Triage:</strong>
+                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                          <div>• Reported Technical Interruptions: <strong>{Array.isArray(eirfData.existingReport.formAnswers?.section3?.interruptions) ? eirfData.existingReport.formAnswers.section3.interruptions.join(', ') : (Array.isArray(eirfData.existingReport.additionalAnswers?.interruptions) ? eirfData.existingReport.additionalAnswers.interruptions.join(', ') : 'None reported')}</strong></div>
+                          <div>• Peripheral Connection Status: <strong>{eirfData.existingReport.formAnswers?.section3?.peripherals || eirfData.existingReport.additionalAnswers?.peripherals || 'No, no peripherals were connected'}</strong></div>
+                        </div>
+                      </div>
+
+                      {/* Section 4 */}
+                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>4. Integrity Declaration & Final Statement:</strong>
+                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                          <p style={{ margin: '2px 0 6px 0', color: '#475569' }}>{eirfData.existingReport.detailedExplanation || eirfData.existingReport.formAnswers?.section4?.explanation}</p>
+                          <div style={{ fontSize: '8pt', color: '#059669', fontWeight: 'bold' }}>
+                            Formal Integrity Declaration: Certified & Agreed
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Admin Decision Actions */}
