@@ -1825,21 +1825,112 @@ export default function App() {
     finalizeExamSubmission(examAnswers, warningsObj, 'auto-submitted');
   };
 
-  const downloadEirfBackupFile = (subObj, candObj, answersArr, pWarnings) => {
+  const encryptEirfPayloadClient = async (payloadObj, studentId, submissionId) => {
+    try {
+      const jsonStr = JSON.stringify(payloadObj);
+      const secret = 'bics_secret_key_2026';
+      const saltStr = 'bics_salt_2026';
+      const passphrase = String(submissionId) + secret + String(studentId);
+
+      const encoder = new TextEncoder();
+      const passphraseBytes = encoder.encode(passphrase);
+      const saltBytes = encoder.encode(saltStr);
+
+      const baseKey = await window.crypto.subtle.importKey(
+        'raw',
+        passphraseBytes,
+        'PBKDF2',
+        false,
+        ['deriveKey']
+      );
+
+      const aesKey = await window.crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: saltBytes,
+          iterations: 100000,
+          hash: 'SHA-256'
+        },
+        baseKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt']
+      );
+
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const dataBytes = encoder.encode(jsonStr);
+
+      const encryptedBuf = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, tagLength: 128 },
+        aesKey,
+        dataBytes
+      );
+
+      const encryptedBytes = new Uint8Array(encryptedBuf);
+      const tagLength = 16;
+      const ciphertextBytes = encryptedBytes.subarray(0, encryptedBytes.length - tagLength);
+      const authTagBytes = encryptedBytes.subarray(encryptedBytes.length - tagLength);
+
+      const bufToHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      return JSON.stringify({
+        version: '1.0',
+        iv: bufToHex(iv),
+        authTag: bufToHex(authTagBytes),
+        data: bufToHex(ciphertextBytes)
+      });
+    } catch (err) {
+      console.error("Client-side EIRF payload encryption error:", err);
+      return JSON.stringify(payloadObj);
+    }
+  };
+
+  const downloadEirfBackupFile = async (subObj, candObj, answersArr, pWarnings) => {
     try {
       const subId = subObj?._id || subObj?.id || 'submission';
-      const payloadData = {
-        submissionId: subId,
-        studentId: candObj?.studentId || subObj?.studentId || 'Candidate',
-        candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
-        testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
-        answers: answersArr || [],
-        proctoringLog: pWarnings || {},
-        generatedAt: new Date().toISOString()
-      };
+      const studentId = candObj?.studentId || subObj?.studentId || 'Candidate';
 
-      const payloadJsonStr = JSON.stringify(payloadData, null, 2);
-      const blob = new Blob([payloadJsonStr], { type: 'application/json' });
+      let encryptedPayloadStr = null;
+
+      // 1. Try server-side generation & encryption first if online
+      try {
+        const res = await fetch(`${API_BASE}/test/eirf/generate-payload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            submissionId: subId,
+            studentId,
+            answers: answersArr || [],
+            proctoringLog: pWarnings || {}
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.encryptedPayload) {
+            encryptedPayloadStr = typeof data.encryptedPayload === 'string'
+              ? data.encryptedPayload
+              : JSON.stringify(data.encryptedPayload);
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Server EIRF payload generation request failed, using client-side WebCrypto encryption fallback:", apiErr);
+      }
+
+      // 2. Fallback to client-side WebCrypto AES-256-GCM encryption if offline / server failed
+      if (!encryptedPayloadStr) {
+        const payloadData = {
+          submissionId: subId,
+          studentId,
+          candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
+          testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
+          answers: answersArr || [],
+          proctoringLog: pWarnings || {},
+          generatedAt: new Date().toISOString()
+        };
+        encryptedPayloadStr = await encryptEirfPayloadClient(payloadData, studentId, subId);
+      }
+
+      const blob = new Blob([encryptedPayloadStr], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

@@ -591,6 +591,7 @@ const TestSubmissionSchema = new mongoose.Schema({
     },
     hasEirfFlag: { type: Boolean, default: false },
     eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },
+    encryptedDbPayload: { type: String, default: '' },
     answers: [AnswerSchema],
     evaluation: {
         mcqScore: { type: Number, default: 0 },
@@ -3394,6 +3395,19 @@ app.post('/api/tests/submit', async (req, res) => {
                         };
                     }
 
+                    // Encrypt and save official DB payload snapshot for EIRF validation
+                    const sStudId = submission.studentId || 'Candidate';
+                    const dbPayloadSnap = {
+                        submissionId: String(submission._id || submission.id),
+                        studentId: sStudId,
+                        candidateName: submission.candidateName || 'Candidate',
+                        testTitle: submission.testTitle || 'BICS Online Examination',
+                        answers: submission.answers || [],
+                        proctoringLog: submission.proctoringLog || {},
+                        generatedAt: new Date().toISOString()
+                    };
+                    submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
+
                     await submission.save();
                     break; // Save successful!
                 } catch (saveErr) {
@@ -3444,6 +3458,19 @@ app.post('/api/tests/submit', async (req, res) => {
                     evaluatedAt: null
                 };
             }
+
+            // Encrypt and save official DB payload snapshot for EIRF validation
+            const sStudId = submission.studentId || 'Candidate';
+            const dbPayloadSnap = {
+                submissionId: String(submission._id || submission.id),
+                studentId: sStudId,
+                candidateName: submission.candidateName || 'Candidate',
+                testTitle: submission.testTitle || 'BICS Online Examination',
+                answers: submission.answers || [],
+                proctoringLog: submission.proctoringLog || {},
+                generatedAt: new Date().toISOString()
+            };
+            submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
 
             saveJSONData(db);
         }
@@ -6029,6 +6056,78 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
     }
 });
 
+// 1b. Generate & save encrypted database payload for EIRF backup (.eirf)
+app.post('/api/test/eirf/generate-payload', async (req, res) => {
+    const { submissionId, studentId: reqStudentId, answers, proctoringLog } = req.body;
+    if (!submissionId) {
+        return res.status(400).json({ error: "Submission ID is required." });
+    }
+
+    try {
+        let submission = null;
+        if (useMongo) {
+            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+                submission = await TestSubmissionModel.findById(submissionId);
+            }
+            if (!submission) {
+                submission = await TestSubmissionModel.findOne({ _id: submissionId });
+            }
+        } else {
+            const db = getJSONData();
+            submission = (db.testSubmissions || []).find(s => String(s._id || s.id) === String(submissionId));
+        }
+
+        if (!submission) {
+            return res.status(404).json({ error: "Submission not found." });
+        }
+
+        const studentId = submission.studentId || reqStudentId || 'Candidate';
+        const candidateName = submission.candidateName || 'Candidate';
+        const testTitle = submission.testTitle || 'BICS Examination';
+
+        if (answers && Array.isArray(answers) && answers.length > 0) {
+            submission.answers = answers;
+        }
+        if (proctoringLog) {
+            submission.proctoringLog = proctoringLog;
+        }
+
+        const dbPayloadObj = {
+            submissionId: String(submission._id || submission.id),
+            studentId,
+            candidateName,
+            testTitle,
+            answers: submission.answers || [],
+            proctoringLog: submission.proctoringLog || {},
+            generatedAt: new Date().toISOString()
+        };
+
+        const encryptedPayload = encryptEirfPayload(dbPayloadObj, studentId, String(submission._id || submission.id));
+        submission.encryptedDbPayload = encryptedPayload;
+
+        if (useMongo) {
+            await submission.save();
+        } else {
+            const db = getJSONData();
+            const idx = (db.testSubmissions || []).findIndex(s => String(s._id || s.id) === String(submissionId));
+            if (idx !== -1) {
+                db.testSubmissions[idx] = submission;
+                saveJSONData(db);
+            }
+        }
+
+        return res.json({
+            success: true,
+            submissionId: String(submission._id || submission.id),
+            encryptedPayload,
+            payloadFileName: `EIRF_PAYLOAD_${submission._id || submission.id}.eirf`
+        });
+    } catch (e) {
+        console.error("Generate EIRF payload error:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 // 2. Submit EIRF Incident Report & Verify Encrypted Local Payload (.eirf)
 app.post('/api/test/eirf/submit', async (req, res) => {
     const {
@@ -6091,35 +6190,74 @@ app.post('/api/test/eirf/submit', async (req, res) => {
             discrepancies: []
         };
         let decryptedData = null;
+        let dbDecryptedData = null;
 
         if (rawPayload) {
             decryptedData = decryptEirfPayload(rawPayload, studentId, submissionId);
-            if (decryptedData) {
-                verificationStatus = 'VERIFIED_MATCH';
-                // Verify answer snapshot match against server recorded answers
-                if (decryptedData.answers && Array.isArray(decryptedData.answers)) {
-                    const dbAnswersMap = new Map();
-                    (submission.answers || []).forEach(a => dbAnswersMap.set(String(a.questionId), a));
-
-                    decryptedData.answers.forEach(clAns => {
-                        const dbAns = dbAnswersMap.get(String(clAns.questionId));
-                        if (!dbAns) {
-                            verificationDetails.discrepancies.push(`Question ${clAns.questionId}: Answer present in local payload but missing from server record.`);
-                            verificationStatus = 'DISCREPANCY_FLAGGED';
-                        } else if (clAns.type === 'mcq' && Number(clAns.selectedOptionIndex) !== Number(dbAns.selectedOptionIndex)) {
-                            verificationDetails.discrepancies.push(`MCQ Question ${clAns.questionId}: Local selection (${clAns.selectedOptionIndex}) differs from server saved selection (${dbAns.selectedOptionIndex}).`);
-                            verificationStatus = 'DISCREPANCY_FLAGGED';
-                        } else if (clAns.type === 'coding' && (clAns.submittedCode || '').trim() !== (dbAns.submittedCode || '').trim()) {
-                            verificationDetails.discrepancies.push(`Coding Question ${clAns.questionId}: Local code snapshot differs from server saved code.`);
-                            verificationStatus = 'DISCREPANCY_FLAGGED';
-                        }
-                    });
-                }
-                verificationDetails.answersMatch = verificationDetails.discrepancies.length === 0;
-            } else {
+            if (!decryptedData) {
                 verificationStatus = 'DECRYPTION_FAILED';
                 verificationDetails.discrepancies.push('Failed to decrypt local payload using system secret key.');
             }
+        }
+
+        // Decrypt or build official DB payload for cross-verification
+        if (submission.encryptedDbPayload) {
+            dbDecryptedData = decryptEirfPayload(submission.encryptedDbPayload, studentId, submissionId);
+        }
+        if (!dbDecryptedData) {
+            dbDecryptedData = {
+                submissionId: String(submission._id || submission.id),
+                studentId,
+                candidateName,
+                testTitle,
+                answers: submission.answers || [],
+                proctoringLog: submission.proctoringLog || {},
+                generatedAt: submission.submittedAt || new Date().toISOString()
+            };
+            submission.encryptedDbPayload = encryptEirfPayload(dbDecryptedData, studentId, submissionId);
+            if (useMongo) {
+                await submission.save();
+            }
+        }
+
+        if (decryptedData && dbDecryptedData) {
+            verificationStatus = 'VERIFIED_MATCH';
+
+            // Verify answer snapshot match against DB payload answers
+            if (decryptedData.answers && Array.isArray(decryptedData.answers)) {
+                const dbAnswersMap = new Map();
+                (dbDecryptedData.answers || []).forEach(a => dbAnswersMap.set(String(a.questionId), a));
+
+                decryptedData.answers.forEach(clAns => {
+                    const dbAns = dbAnswersMap.get(String(clAns.questionId));
+                    if (!dbAns) {
+                        verificationDetails.discrepancies.push(`Question ${clAns.questionId}: Answer present in local payload but missing from server record.`);
+                        verificationStatus = 'DISCREPANCY_FLAGGED';
+                    } else if (clAns.type === 'mcq' && Number(clAns.selectedOptionIndex) !== Number(dbAns.selectedOptionIndex)) {
+                        verificationDetails.discrepancies.push(`MCQ Question ${clAns.questionId}: Local selection (${clAns.selectedOptionIndex}) differs from server saved selection (${dbAns.selectedOptionIndex}).`);
+                        verificationStatus = 'DISCREPANCY_FLAGGED';
+                    } else if (clAns.type === 'coding' && (clAns.submittedCode || '').trim() !== (dbAns.submittedCode || '').trim()) {
+                        verificationDetails.discrepancies.push(`Coding Question ${clAns.questionId}: Local code snapshot differs from server saved code.`);
+                        verificationStatus = 'DISCREPANCY_FLAGGED';
+                    }
+                });
+            }
+
+            // Verify proctoring telemetry match
+            if (decryptedData.proctoringLog && dbDecryptedData.proctoringLog) {
+                const clLog = decryptedData.proctoringLog;
+                const dbLog = dbDecryptedData.proctoringLog;
+                if (Number(clLog.fullscreenExits || 0) !== Number(dbLog.fullscreenExits || 0)) {
+                    verificationDetails.discrepancies.push(`Proctoring Telemetry: Local fullscreen exit count (${clLog.fullscreenExits || 0}) differs from server record (${dbLog.fullscreenExits || 0}).`);
+                    verificationStatus = 'DISCREPANCY_FLAGGED';
+                }
+                if (Number(clLog.tabSwitches || 0) !== Number(dbLog.tabSwitches || 0)) {
+                    verificationDetails.discrepancies.push(`Proctoring Telemetry: Local tab switch count (${clLog.tabSwitches || 0}) differs from server record (${dbLog.tabSwitches || 0}).`);
+                    verificationStatus = 'DISCREPANCY_FLAGGED';
+                }
+            }
+
+            verificationDetails.answersMatch = verificationDetails.discrepancies.length === 0;
         }
 
         let payloadUrl = '';
