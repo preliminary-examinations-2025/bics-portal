@@ -19,7 +19,25 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {(Array.isArray(submittedTestsList) ? submittedTestsList : []).map((st, sIdx) => {
+          {(() => {
+            const list = Array.isArray(submittedTestsList) ? [...submittedTestsList] : [];
+            const getTime = (st) => {
+              const sub = st?.submission || {};
+              const dateVal = sub.submittedAt || sub.createdAt || sub.startedAt || st?.startDate || st?.endDate;
+              if (dateVal) {
+                const t = new Date(dateVal).getTime();
+                if (!isNaN(t) && t > 0) return t;
+              }
+              const idStr = String(sub.id || sub._id || st?.id || st?._id || '');
+              if (idStr.length === 24) {
+                const timestamp = parseInt(idStr.substring(0, 8), 16) * 1000;
+                if (!isNaN(timestamp) && timestamp > 0) return timestamp;
+              }
+              return 0;
+            };
+            list.sort((a, b) => getTime(b) - getTime(a));
+            return list;
+          })().map((st, sIdx) => {
             const sub = st.submission || {};
             const vStatus = st.verificationStatus || (st.answersReleased ? 'released' : 'not_released');
             const isReleased = (vStatus === 'released' || vStatus === 'closed');

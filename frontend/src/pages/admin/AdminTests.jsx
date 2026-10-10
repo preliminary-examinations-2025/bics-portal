@@ -1442,10 +1442,15 @@ export default function AdminTests({
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                         {codingEvaluationResults[ans.questionId].results.map((res, rIdx) => {
                                           const tcId = questionConfig?.testCases?.[rIdx]?._id || questionConfig?.testCases?.[rIdx]?.id || (20260101 + rIdx);
-                                          const isPassed = res.status === 'Passed' || res.passed === true;
+                                          const statusLower = String(res.status || '').toLowerCase();
+                                          const isPassed = res.passed === true || statusLower === 'accepted' || statusLower === 'passed' || statusLower.includes('accept');
                                           const rawInp = res.input ?? res.sampleInput ?? questionConfig?.testCases?.[rIdx]?.input ?? questionConfig?.testCases?.[rIdx]?.sampleInput ?? '';
                                           const rawExp = res.expectedOutput ?? res.output ?? res.sampleOutput ?? questionConfig?.testCases?.[rIdx]?.output ?? questionConfig?.testCases?.[rIdx]?.expectedOutput ?? '';
-                                          const rawAct = res.actualOutput ?? res.stdout ?? res.userOutput ?? '';
+                                          const rawAct = (res.actualOutput !== undefined && res.actualOutput !== null && res.actualOutput !== '')
+                                            ? res.actualOutput
+                                            : ((res.stdout !== undefined && res.stdout !== null && res.stdout !== '')
+                                                ? res.stdout
+                                                : (res.userOutput || (isPassed ? (rawExp || '(matched expected)') : '')));
 
                                           const fmt = (v) => {
                                             if (v === undefined || v === null || String(v).trim() === '') return '(empty)';

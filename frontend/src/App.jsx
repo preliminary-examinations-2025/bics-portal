@@ -1489,6 +1489,21 @@ int main() {
       const res = await fetch(`${API_BASE}/tests/submitted?candidateId=${candidateId}`);
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
+      const getTime = (st) => {
+        const sub = st?.submission || {};
+        const dateVal = sub.submittedAt || sub.createdAt || sub.startedAt || st?.startDate || st?.endDate;
+        if (dateVal) {
+          const t = new Date(dateVal).getTime();
+          if (!isNaN(t) && t > 0) return t;
+        }
+        const idStr = String(sub.id || sub._id || st?.id || st?._id || '');
+        if (idStr.length === 24) {
+          const timestamp = parseInt(idStr.substring(0, 8), 16) * 1000;
+          if (!isNaN(timestamp) && timestamp > 0) return timestamp;
+        }
+        return 0;
+      };
+      list.sort((a, b) => getTime(b) - getTime(a));
       setSubmittedTestsList(list);
       if (list.length > 0) {
         setSelectedVerificationTestId(list[0].id || list[0]._id);
