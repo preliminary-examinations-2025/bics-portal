@@ -5054,7 +5054,7 @@ export default function App() {
       }
       
       if (q.type === 'mcq') {
-        return (ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex)) ? Number(q.points || 0) : 0;
+        return (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex)) ? Number(q.points || 0) : 0;
       }
       
       return 0;
@@ -5467,8 +5467,8 @@ export default function App() {
                       Options Evaluation:
                     </div>
                     {(q.options || []).map((opt, optIdx) => {
-                      const isCandidateChoice = Number(ans.selectedOptionIndex) === optIdx;
-                      const isOfficialCorrect = Number(q.correctOptionIndex) === optIdx;
+                      const isCandidateChoice = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === optIdx;
+                      const isOfficialCorrect = q.correctOptionIndex !== null && q.correctOptionIndex !== undefined && Number(q.correctOptionIndex) === optIdx;
 
                       let borderColor = '#e2e8f0';
                       let bgColor = '#ffffff';

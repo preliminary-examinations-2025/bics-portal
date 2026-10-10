@@ -370,9 +370,9 @@ export default function AdminObjections({
 
                     {/* MCQ Options List */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {(q?.options || (ans.selectedOptionIndex !== undefined ? ['Option A', 'Option B', 'Option C', 'Option D'] : [])).map((opt, optIdx) => {
-                        const isCandidateChoice = Number(ans.selectedOptionIndex) === optIdx;
-                        const isOfficialCorrect = Number(q?.correctOptionIndex) === optIdx;
+                      {(q?.options || (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? ['Option A', 'Option B', 'Option C', 'Option D'] : [])).map((opt, optIdx) => {
+                        const isCandidateChoice = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === optIdx;
+                        const isOfficialCorrect = q?.correctOptionIndex !== null && q?.correctOptionIndex !== undefined && Number(q?.correctOptionIndex) === optIdx;
 
                         let borderColor = '#e2e8f0';
                         let bgColor = '#ffffff';

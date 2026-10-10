@@ -1298,8 +1298,8 @@ export default function AdminTests({
                               {ans.type === 'mcq' && questionConfig && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
                                   {questionConfig.options?.map((opt, optIdx) => {
-                                    const isCandidateSelect = Number(ans.selectedOptionIndex) === optIdx;
-                                    const isCorrectKey = Number(questionConfig.correctOptionIndex) === optIdx;
+                                    const isCandidateSelect = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === optIdx;
+                                    const isCorrectKey = questionConfig.correctOptionIndex !== null && questionConfig.correctOptionIndex !== undefined && Number(questionConfig.correctOptionIndex) === optIdx;
                                     
                                     let borderStyle = '1px solid #cbd5e1';
                                     let bgStyle = '#fff';
