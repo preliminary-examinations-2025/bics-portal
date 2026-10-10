@@ -70,10 +70,16 @@ const formatCloudinaryMediaUrl = (url) => {
 };
 
 // Helper to stream file buffers to Cloudinary
-const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto') => {
+const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto', customPublicId = null) => {
     return new Promise((resolve, reject) => {
+        const options = { folder: folder, resource_type: resourceType };
+        if (customPublicId) {
+            options.public_id = customPublicId;
+            options.use_filename = true;
+            options.unique_filename = false;
+        }
         const stream = cloudinary.uploader.upload_stream(
-            { folder: folder, resource_type: resourceType },
+            options,
             (error, result) => {
                 if (error) return reject(error);
                 const rawUrl = result.secure_url || result.url;
@@ -6692,7 +6698,7 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
 
                 if (useCloudinary) {
                     try {
-                        const uploadedUrl = await uploadToCloudinary(pdfBuffer, 'BICS_2026/eirf', 'raw');
+                        const uploadedUrl = await uploadToCloudinary(pdfBuffer, 'BICS_2026/eirf', 'raw', `${targetReportId}.pdf`);
                         if (uploadedUrl) {
                             if (uploadedUrl.startsWith('http')) {
                                 finalPdfUrl = uploadedUrl;
