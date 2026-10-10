@@ -6033,20 +6033,23 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
             return res.status(404).json({ error: "Examination submission record not found." });
         }
 
-        const events = [...(submission.proctoringLog?.events || [])];
+        const events = [];
+        const seenEvents = new Set();
+        const addEv = (e) => {
+            if (!e) return;
+            const key = `${e.type}_${e.startTime || e.timestamp || ''}_${e.durationSeconds || 0}_${e.details || ''}`;
+            if (!seenEvents.has(key)) {
+                seenEvents.add(key);
+                events.push(e);
+            }
+        };
+
+        (submission.proctoringLog?.events || []).forEach(addEv);
         if (existingReport?.decryptedPayloadSnapshot?.proctoringLog?.events) {
-            (existingReport.decryptedPayloadSnapshot.proctoringLog.events || []).forEach(e => {
-                if (!events.some(ex => ex.type === e.type && String(ex.timestamp) === String(e.timestamp))) {
-                    events.push(e);
-                }
-            });
+            (existingReport.decryptedPayloadSnapshot.proctoringLog.events || []).forEach(addEv);
         }
         if (existingReport?.proctoringLogSnapshot?.events) {
-            (existingReport.proctoringLogSnapshot.events || []).forEach(e => {
-                if (!events.some(ex => ex.type === e.type && String(ex.timestamp) === String(e.timestamp))) {
-                    events.push(e);
-                }
-            });
+            (existingReport.proctoringLogSnapshot.events || []).forEach(addEv);
         }
 
         const flaggedReasons = [];
@@ -6097,6 +6100,8 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
             flaggedReasons.push(`Proctoring alert flagged by administration for incident review.`);
         }
 
+        const uniqueFlaggedReasons = Array.from(new Set(flaggedReasons));
+
         const submittedAt = submission.submittedAt || submission.startedAt || new Date();
         const expiresAt = new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
         const isExpired = Date.now() > expiresAt.getTime();
@@ -6128,7 +6133,7 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
                 maxFullscreenSeconds,
                 maxTabSwitchSeconds
             },
-            flaggedReasons: hasEirfFlag ? flaggedReasons : [],
+            flaggedReasons: hasEirfFlag ? uniqueFlaggedReasons : [],
             eventFlags: {
                 fullscreen: hasFullscreenFlag || maxFullscreenSeconds > 5,
                 tabSwitch: hasTabSwitchFlag || maxTabSwitchSeconds > 5,
