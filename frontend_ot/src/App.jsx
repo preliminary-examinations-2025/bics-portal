@@ -1690,6 +1690,112 @@ export default function App() {
     }
   };
 
+  const handleRunCode = async () => {
+    const activeQuestion = test?.questions?.[selectedQuestionIndex];
+    if (!activeQuestion) return;
+    const allCases = activeQuestion.testCases || [];
+    if (allCases.length === 0) {
+      triggerCustomAlert("No Test Cases", "This coding question does not have any test cases configured by the administrator.");
+      return;
+    }
+
+    setIsRunningCode(true);
+    setConsoleTab('result');
+    setRunResults(null);
+    setCompileError(null);
+    logProctoringEvent(submission, 'CODE_RUN', `Ran C++ compilation for Q${selectedQuestionIndex + 1}.`);
+
+    try {
+      const res = await fetch(`${API_BASE}/tests/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceCode: draftCode,
+          testCases: allCases
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.status === 'Compilation Error') {
+          setCompileError(data.compileError || "Failed to compile C++ code.");
+          const formattedErrResults = allCases.map(tc => ({
+            status: 'Compilation Error',
+            points: Number(tc.points || 0),
+            scoredPoints: 0,
+            actualOutput: data.compileError || 'Compilation Error',
+            expectedOutput: tc.output || '',
+            input: tc.input || ''
+          }));
+          setExamAnswers(prev => {
+            const updated = [...prev];
+            const qId = activeQuestion.id;
+            const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
+            if (existingIdx !== -1) {
+              updated[existingIdx] = {
+                ...updated[existingIdx],
+                submittedCode: draftCode,
+                selectedLanguage: draftLanguage,
+                testCaseResults: formattedErrResults,
+                score: 0
+              };
+            }
+            return updated;
+          });
+        } else {
+          const rawResults = data.results || [];
+          setRunResults(rawResults);
+          const formattedResults = rawResults.map((r, rIdx) => {
+            const tc = allCases[rIdx] || {};
+            const isAccepted = r.status === 'Accepted';
+            const pts = Number(tc.points || 0);
+            const scored = isAccepted ? pts : 0;
+            return {
+              status: r.status || 'Failed',
+              points: pts,
+              scoredPoints: scored,
+              actualOutput: r.actualOutput !== undefined ? r.actualOutput : (r.stdout || ''),
+              expectedOutput: tc.output || '',
+              input: tc.input || ''
+            };
+          });
+          const questionScore = formattedResults.reduce((acc, curr) => acc + curr.scoredPoints, 0);
+
+          setExamAnswers(prev => {
+            const updated = [...prev];
+            const qId = activeQuestion.id;
+            const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
+            if (existingIdx !== -1) {
+              updated[existingIdx] = {
+                ...updated[existingIdx],
+                submittedCode: draftCode,
+                selectedLanguage: draftLanguage,
+                testCaseResults: formattedResults,
+                score: questionScore
+              };
+            } else {
+              updated.push({
+                questionId: qId,
+                type: 'coding',
+                submittedCode: draftCode,
+                selectedLanguage: draftLanguage,
+                testCaseResults: formattedResults,
+                score: questionScore
+              });
+            }
+            return updated;
+          });
+        }
+      } else {
+        setCompileError(data.error || "Execution failed. Server error.");
+      }
+    } catch (err) {
+      console.error(err);
+      setCompileError("Network error. Failed to communicate with compiler.");
+    } finally {
+      setIsRunningCode(false);
+    }
+  };
+
   const syncProctoringLogs = async (warningsObj, eventType, eventDetails, startTime, endTime, durationSeconds) => {
     try {
       if (!submission) return;
