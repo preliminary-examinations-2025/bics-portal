@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import LedgerUploadForm from './components/LedgerUploadForm';
 import RichText from './components/RichText';
 import StudentProctorDashboard from './components/StudentProctorDashboard';
+import { formatMediaUrl } from './utils/media';
 
 import NotFound from './pages/NotFound';
 import Login from './pages/Login';
@@ -3863,14 +3864,14 @@ int main() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       <div>
                         <span className="cf-label" style={{ display: 'block', marginBottom: '2px' }}>Profile Photo</span>
-                        <img src={selectedCandidate.registrationData?.photoUrl} alt="Photo" style={{ width: '80px', height: '80px', objectFit: 'cover', border: '1px solid #cbd5e1' }} />
+                        <img src={formatMediaUrl(selectedCandidate.registrationData?.photoUrl)} alt="Photo" style={{ width: '80px', height: '80px', objectFit: 'cover', border: '1px solid #cbd5e1' }} />
                       </div>
                       <div>
                         <span className="cf-label" style={{ display: 'block', marginBottom: '2px' }}>Signature</span>
-                        <img src={selectedCandidate.registrationData?.signatureUrl} alt="Signature" style={{ width: '120px', height: '40px', objectFit: 'contain', border: '1px solid #cbd5e1', backgroundColor: '#fff' }} />
+                        <img src={formatMediaUrl(selectedCandidate.registrationData?.signatureUrl)} alt="Signature" style={{ width: '120px', height: '40px', objectFit: 'contain', border: '1px solid #cbd5e1', backgroundColor: '#fff' }} />
                       </div>
                       <div>
-                        <a href={selectedCandidate.registrationData?.undertakingUrl} target="_blank" rel="noreferrer" className="cf-btn-secondary" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '8.5pt' }}>
+                        <a href={formatMediaUrl(selectedCandidate.registrationData?.undertakingUrl)} target="_blank" rel="noreferrer" className="cf-btn-secondary" style={{ display: 'inline-block', padding: '4px 8px', fontSize: '8.5pt' }}>
                           <FileText size={12} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> View Undertaking Document
                         </a>
                       </div>

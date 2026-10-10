@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatMediaUrl } from '../utils/media';
 
 export default function MaterialsView({ courseMaterials = [] }) {
   const defaultOrder = ["Curriculum", "Textbooks", "External", "Assignments", "Practicals"];
@@ -47,7 +48,7 @@ export default function MaterialsView({ courseMaterials = [] }) {
                         </td>
                         <td style={{ textAlign: 'center' }}>
                           <a
-                            href={mat.fileUrl}
+                            href={formatMediaUrl(mat.fileUrl)}
                             target="_blank"
                             rel="noreferrer"
                             className="cf-btn-primary"

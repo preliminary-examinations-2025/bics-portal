@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatMediaUrl } from '../../utils/media';
 
 export default function AdminCoursework({
   systemConfig,
@@ -184,7 +185,7 @@ export default function AdminCoursework({
                     <td style={{ fontWeight: 'bold' }}>{m.section}</td>
                     <td>{m.title}</td>
                     <td>
-                      <a href={m.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: '8.5pt', color: '#3b5998', textDecoration: 'underline' }}>
+                      <a href={formatMediaUrl(m.fileUrl)} target="_blank" rel="noreferrer" style={{ fontSize: '8.5pt', color: '#3b5998', textDecoration: 'underline' }}>
                         View File
                       </a>
                     </td>

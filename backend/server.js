@@ -1681,18 +1681,31 @@ app.post('/api/admin/register-candidate', async (req, res) => {
     }
 });
 
+const sanitizeCandidate = (c) => {
+    if (!c) return c;
+    const obj = typeof c.toObject === 'function' ? c.toObject() : JSON.parse(JSON.stringify(c));
+    if (obj.registrationData) {
+        if (obj.registrationData.photoUrl) obj.registrationData.photoUrl = formatCloudinaryMediaUrl(obj.registrationData.photoUrl);
+        if (obj.registrationData.signatureUrl) obj.registrationData.signatureUrl = formatCloudinaryMediaUrl(obj.registrationData.signatureUrl);
+        if (obj.registrationData.undertakingUrl) obj.registrationData.undertakingUrl = formatCloudinaryMediaUrl(obj.registrationData.undertakingUrl);
+    }
+    if (obj.midSemLedgerUrl) obj.midSemLedgerUrl = formatCloudinaryMediaUrl(obj.midSemLedgerUrl);
+    if (obj.endSemLedgerUrl) obj.endSemLedgerUrl = formatCloudinaryMediaUrl(obj.endSemLedgerUrl);
+    return obj;
+};
+
 // 5. Get List of Candidates (Admin Only)
 app.get('/api/admin/candidates', async (req, res) => {
     if (useMongo) {
         try {
             const list = await CandidateModel.find({});
-            return res.json(list);
+            return res.json(list.map(sanitizeCandidate));
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
     } else {
         const db = getJSONData();
-        return res.json(db.candidates);
+        return res.json((db.candidates || []).map(sanitizeCandidate));
     }
 });
 
@@ -1729,7 +1742,7 @@ app.get('/api/candidate/profile/:id', async (req, res) => {
         try {
             const cand = await CandidateModel.findById(id).select('-password');
             if (!cand) return res.status(404).json({ error: "Profile not found" });
-            return res.json(cand);
+            return res.json(sanitizeCandidate(cand));
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
@@ -1738,7 +1751,7 @@ app.get('/api/candidate/profile/:id', async (req, res) => {
         const cand = db.candidates.find(c => c.id === id);
         if (!cand) return res.status(404).json({ error: "Profile not found" });
         const { password, ...safeData } = cand;
-        return res.json(safeData);
+        return res.json(sanitizeCandidate(safeData));
     }
 });
 
@@ -2633,17 +2646,23 @@ app.delete('/api/admin/video-lectures/:id', async (req, res) => {
 
 // 14. Course Materials Endpoints
 app.get('/api/course-materials', async (req, res) => {
+    const sanitizeMat = (m) => {
+        if (!m) return m;
+        const obj = typeof m.toObject === 'function' ? m.toObject() : JSON.parse(JSON.stringify(m));
+        if (obj.fileUrl) obj.fileUrl = formatCloudinaryMediaUrl(obj.fileUrl);
+        return obj;
+    };
     if (useMongo) {
         try {
             const list = await CourseMaterialModel.find({}).sort({ createdAt: 1 });
-            return res.json(list);
+            return res.json(list.map(sanitizeMat));
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
     } else {
         const db = getJSONData();
         db.courseMaterials = db.courseMaterials || [];
-        return res.json(db.courseMaterials);
+        return res.json((db.courseMaterials || []).map(sanitizeMat));
     }
 });
 

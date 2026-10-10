@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CheckCircle, Eye, Printer, Loader2 } from 'lucide-react';
 import { API_BASE } from '../config';
+import { formatMediaUrl } from '../utils/media';
 
 export default function LedgerUploadForm({ type, studentProfile, fetchStudentProfile, user, fetchStudentSubmissions, setView }) {
   const [file, setFile] = useState(null);
@@ -75,7 +76,7 @@ export default function LedgerUploadForm({ type, studentProfile, fetchStudentPro
           </div>
           <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '15px' }}>
             <a 
-              href={currentLedgerUrl} 
+              href={formatMediaUrl(currentLedgerUrl)} 
               target="_blank" 
               rel="noreferrer" 
               className="cf-btn-secondary" 

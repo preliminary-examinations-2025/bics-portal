@@ -1,5 +1,6 @@
 import React from 'react';
 import { User, Home, Mail, Upload, FileText } from 'lucide-react';
+import { formatMediaUrl } from '../utils/media';
 
 export default function StudentInfo({ studentProfile }) {
   if (!studentProfile) return null;
@@ -15,7 +16,7 @@ export default function StudentInfo({ studentProfile }) {
         <div>
           <div style={{ display: 'flex', gap: '30px', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '25px' }}>
             <div className="profile-preview-box" style={{ width: '120px', height: '120px' }}>
-              <img src={studentProfile.registrationData.photoUrl} alt="Student Profile Pic" />
+              <img src={formatMediaUrl(studentProfile.registrationData.photoUrl)} alt="Student Profile Pic" />
             </div>
             <div>
               <h3 style={{ fontSize: '15pt', color: '#002147' }}>{studentProfile.name}</h3>
@@ -74,12 +75,12 @@ export default function StudentInfo({ studentProfile }) {
             <div>
               <span className="cf-label" style={{ display: 'block', marginBottom: '5px' }}>Signature Preview</span>
               <div className="profile-preview-box" style={{ width: '180px', height: '60px' }}>
-                <img src={studentProfile.registrationData.signatureUrl} alt="Signature Upload" style={{ objectFit: 'contain' }} />
+                <img src={formatMediaUrl(studentProfile.registrationData.signatureUrl)} alt="Signature Upload" style={{ objectFit: 'contain' }} />
               </div>
             </div>
             <div>
               <span className="cf-label" style={{ display: 'block', marginBottom: '5px' }}>Signed Undertaking</span>
-              <a href={studentProfile.registrationData.undertakingUrl} target="_blank" rel="noreferrer" className="cf-btn-secondary" style={{ display: 'inline-block', lineHeight: '2.0', textAlign: 'center' }}>
+              <a href={formatMediaUrl(studentProfile.registrationData.undertakingUrl)} target="_blank" rel="noreferrer" className="cf-btn-secondary" style={{ display: 'inline-block', lineHeight: '2.0', textAlign: 'center' }}>
                 <FileText size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} /> View Uploaded Document
               </a>
             </div>
