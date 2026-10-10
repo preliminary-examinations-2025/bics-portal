@@ -128,25 +128,6 @@ export default function Sidebar({
               </div>
             )}
 
-            {/* Workspace Tools Section (Disabled Coming Soon) */}
-            <div className="sidebar-category">Workspace Tools</div>
-            <button 
-              className="sidebar-item" 
-              disabled 
-              style={{ 
-                opacity: 0.6, 
-                cursor: 'not-allowed', 
-                color: '#94a3b8', 
-                justifyContent: 'flex-start', 
-                gap: '8px', 
-                backgroundColor: 'transparent',
-                border: 'none',
-                width: '100%'
-              }}
-            >
-              <Wrench size={16} /> Coming Soon ...
-            </button>
-
             <div className="sidebar-category">CourseWork</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, coursework: !dropdowns.coursework})}>
               Menu Links {dropdowns.coursework ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -189,6 +170,25 @@ export default function Sidebar({
                 </button>
               </div>
             )}
+
+            {/* Workspace Tools Section (Disabled Coming Soon) */}
+            <div className="sidebar-category">Workspace Tools</div>
+            <button 
+              className="sidebar-item" 
+              disabled 
+              style={{ 
+                opacity: 0.6, 
+                cursor: 'not-allowed', 
+                color: '#94a3b8', 
+                justifyContent: 'flex-start', 
+                gap: '8px', 
+                backgroundColor: 'transparent',
+                border: 'none',
+                width: '100%'
+              }}
+            >
+              <Wrench size={16} /> Coming Soon ...
+            </button>
 
             <div className="sidebar-category">Examination</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, exam: !dropdowns.exam})}>
