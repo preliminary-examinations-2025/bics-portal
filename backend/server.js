@@ -27,6 +27,7 @@ const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
 const qrImage = require('qr-image');
+const { generateEirfVerdictPdfBuffer, generateDigitalVerdictHash } = require('./utils/pdfGenerator');
 require('dotenv').config();
 
 const app = express();
@@ -810,6 +811,12 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
     const nowIST = formatISTDate(new Date());
     const deadlineIST = formatISTDate(new Date(Date.now() + 45 * 60 * 1000));
 
+    const noticeTitle = 'BICS Emergency Incident Report Notice';
+    const noticeIntro = `An automated proctoring alert or session disruption was recorded during your recent online examination ${examTitle} on ${nowIST}.`;
+    const noticeActionText = `To maintain examination integrity and ensure your score is validated, you are required to complete the Emergency Incident Report Form (EIRF) and upload your downloaded local backup file (.eirf).`;
+    const buttonLabel = 'Complete Emergency Incident Report →';
+    const subjectText = `BICS Emergency Incident Report Notice - ${examTitle}`;
+
     if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
         try {
             const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
@@ -825,6 +832,12 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
                         email: toEmail,
                         to_name: name,
                         name: name,
+                        from_name: 'BICS Dept. of Examination',
+                        subject: subjectText,
+                        notice_title: noticeTitle,
+                        notice_intro: noticeIntro,
+                        notice_action_text: noticeActionText,
+                        button_label: buttonLabel,
                         student_id: extraData.studentId || 'Candidate',
                         submission_id: String(submissionId),
                         exam_title: examTitle,
@@ -855,6 +868,79 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
         console.log(`Timestamp (IST): ${nowIST}`);
         console.log(`Summary: ${incidentSummary}`);
         console.log(`EIRF Filing Link: ${eirfUrl}`);
+        console.log(`==================================================\n`);
+    }
+};
+
+const sendEirfVerdictEmail = async (toEmail, name, examTitle, verdictStatus, adminRemarks, pdfUrl, extraData = {}) => {
+    const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
+    const ejsTemplateId = process.env.EMAILJS_EIRF_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID || 'template_4lyvmlr';
+    const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const ejsPrivateKey = process.env.EMAILJS_PRIVATE_KEY;
+
+    const nowIST = formatISTDate(new Date());
+
+    const summaryText = `EIRF VERDICT NOTICE: ${verdictStatus.toUpperCase()}\n` +
+                        `Status: ${verdictStatus === 'approved' ? 'EIRF Approved - Provisional Assessment Granted' : 'EIRF Rejected - Disciplinary Action Upheld'}\n` +
+                        `Committee Remarks: ${adminRemarks || 'Standard committee evaluation recorded.'}\n` +
+                        `Notice: Candidate is required to submit a physical copy of this document to the course instructor within 48 hours.`;
+
+    const noticeTitle = `BICS Official EIRF Verdict Notice [${verdictStatus.toUpperCase()}]`;
+    const noticeIntro = `The Academic Examination Committee has evaluated your Emergency Incident Report for ${examTitle} on ${nowIST}.`;
+    const noticeActionText = `Your official BICS Verdict PDF Document containing proctoring telemetry, payload verification status, committee remarks, and digital signature has been generated. You are required to submit a physical hardcopy of this document to your course instructor within 48 hours.`;
+    const buttonLabel = 'View & Download Verdict PDF →';
+    const subjectText = `BICS Official EIRF Verdict Notice [${verdictStatus.toUpperCase()}] - ${examTitle}`;
+
+    if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
+        try {
+            const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    service_id: ejsServiceId,
+                    template_id: ejsTemplateId,
+                    user_id: ejsPublicKey,
+                    accessToken: ejsPrivateKey || undefined,
+                    template_params: {
+                        to_email: toEmail,
+                        email: toEmail,
+                        to_name: name,
+                        name: name,
+                        from_name: 'BICS Dept. of Examination',
+                        subject: subjectText,
+                        notice_title: noticeTitle,
+                        notice_intro: noticeIntro,
+                        notice_action_text: noticeActionText,
+                        button_label: buttonLabel,
+                        student_id: extraData.studentId || 'Candidate',
+                        submission_id: String(extraData.submissionId || ''),
+                        exam_title: examTitle,
+                        incident_timestamp: nowIST,
+                        expiry_deadline_ist: formatISTDate(new Date(Date.now() + 48 * 60 * 60 * 1000)),
+                        incident_summary: summaryText,
+                        eirf_url: pdfUrl,
+                        expiry_hours: '48 hours (Hardcopy submission deadline to Course Instructor)'
+                    }
+                })
+            });
+            if (response.ok) {
+                console.log(`[EIRF_VERDICT_EMAIL]: Successfully sent EIRF verdict notice to ${toEmail} via EmailJS.`);
+                return true;
+            } else {
+                const text = await response.text();
+                console.error(`[EIRF_VERDICT_EMAIL_ERROR]: EmailJS status ${response.status}: ${text}`);
+            }
+        } catch (err) {
+            console.error(`[EIRF_VERDICT_EMAIL_ERROR]: EmailJS request failed:`, err.message);
+        }
+    } else {
+        console.log(`\n==================================================`);
+        console.log(`[EIRF VERDICT EMAIL DISPATCH NOTICE LOGGED TO CONSOLE]`);
+        console.log(`Recipient: ${toEmail} (${name})`);
+        console.log(`Student ID: ${extraData.studentId || 'N/A'}`);
+        console.log(`Exam Title: ${examTitle}`);
+        console.log(`Verdict: ${verdictStatus.toUpperCase()}`);
+        console.log(`PDF Proxy URL: ${pdfUrl}`);
         console.log(`==================================================\n`);
     }
 };
@@ -6090,12 +6176,22 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
             }
         });
 
-        const totalWarningsCount = (submission.proctoringLog?.fullscreenExits || 0) + (submission.proctoringLog?.tabSwitches || 0);
+        const fsCount = submission.proctoringLog?.fullscreenExits || 0;
+        const tabCount = submission.proctoringLog?.tabSwitches || 0;
+
+        if (fsCount > 0 && !flaggedReasons.some(r => r.includes('Fullscreen'))) {
+            flaggedReasons.push(`Fullscreen exit recorded: ${fsCount} exit(s) (Max: ${maxFullscreenSeconds}s)`);
+        }
+        if (tabCount > 0 && !flaggedReasons.some(r => r.includes('Tab switch'))) {
+            flaggedReasons.push(`Tab switch / focus loss recorded: ${tabCount} switch(es) (Max: ${maxTabSwitchSeconds}s)`);
+        }
+
+        const totalWarningsCount = fsCount + tabCount;
         if (submission.status === 'auto-submitted' || totalWarningsCount >= 3) {
             flaggedReasons.push(`Exam attempt auto-submitted due to reaching maximum compliance warnings (${totalWarningsCount} warnings).`);
         }
 
-        const hasEirfFlag = Boolean(submission.hasEirfFlag || hasFullscreenFlag || hasTabSwitchFlag || hasNetworkFlag || submission.status === 'auto-submitted' || totalWarningsCount >= 3);
+        const hasEirfFlag = Boolean(submission.hasEirfFlag || hasFullscreenFlag || hasTabSwitchFlag || hasNetworkFlag || submission.status === 'auto-submitted' || totalWarningsCount >= 3 || fsCount > 0 || tabCount > 0);
 
         if (flaggedReasons.length === 0 && hasEirfFlag) {
             flaggedReasons.push(`Proctoring alert flagged by administration for incident review.`);
@@ -6469,7 +6565,7 @@ app.get('/api/admin/eirf/list', async (req, res) => {
 // 4. Admin: Approve or Reject EIRF Incident Report
 app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
     const { reportId } = req.params;
-    let { status, action, adminRemarks } = req.body;
+    let { status, action, adminRemarks, courseCode, courseName } = req.body;
 
     let rawStatus = (status || action || '').toLowerCase().trim();
     if (rawStatus === 'approve') rawStatus = 'approved';
@@ -6480,6 +6576,8 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
     }
 
     status = rawStatus;
+    const finalCourseCode = courseCode || 'R526CS01T';
+    const finalCourseName = courseName || 'Introduction to Computer Science';
 
     try {
         let report = null;
@@ -6495,6 +6593,8 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
             }
             report.status = status;
             report.adminRemarks = adminRemarks || '';
+            report.courseCode = finalCourseCode;
+            report.courseName = finalCourseName;
             report.reviewedAt = new Date();
             report.reviewedBy = 'admin';
             await report.save();
@@ -6513,6 +6613,8 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
             }
             db.eirfReports[idx].status = status;
             db.eirfReports[idx].adminRemarks = adminRemarks || '';
+            db.eirfReports[idx].courseCode = finalCourseCode;
+            db.eirfReports[idx].courseName = finalCourseName;
             db.eirfReports[idx].reviewedAt = new Date().toISOString();
             db.eirfReports[idx].reviewedBy = 'admin';
             report = db.eirfReports[idx];
@@ -6528,16 +6630,175 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
         await logSystemAction(
             'admin',
             'EIRF_ACTION',
-            `Admin set EIRF Report ${reportId} status to ${status.toUpperCase()}. Remarks: "${adminRemarks || 'N/A'}"`,
+            `Admin set EIRF Report ${reportId} status to ${status.toUpperCase()} for course ${finalCourseCode}. Remarks: "${adminRemarks || 'N/A'}"`,
             'info'
         );
 
-        return res.json({ success: true, report, message: `EIRF Incident Report ${reportId} marked as ${status.toUpperCase()}.` });
+        // Immediate fast response to admin dashboard
+        res.json({ success: true, report, message: `EIRF Incident Report ${reportId} marked as ${status.toUpperCase()}.` });
+
+        // Non-blocking async background worker for PDF generation, Cloudinary upload & EmailJS dispatch
+        (async () => {
+            try {
+                let candidateObj = null;
+                let testObj = null;
+
+                if (useMongo) {
+                    if (submission && submission.candidateId) {
+                        candidateObj = await CandidateModel.findById(submission.candidateId);
+                    }
+                    if (submission && submission.testId) {
+                        testObj = await TestConfigModel.findById(submission.testId);
+                    }
+                } else {
+                    const db = getJSONData();
+                    if (submission) {
+                        candidateObj = (db.candidates || []).find(c => c.studentId === submission.studentId || c.id === submission.candidateId);
+                        testObj = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
+                    }
+                }
+
+                const studentId = report.studentId || candidateObj?.studentId || submission?.studentId || '2026002';
+                const candidateEmail = candidateObj?.registrationData?.collegeEmail || candidateObj?.registrationData?.personalEmail || candidateObj?.email || submission?.candidateEmail || 'candidate@bics.edu';
+                const candidateName = submission?.candidateName || candidateObj?.name || 'Candidate';
+                const examTitleStr = `${finalCourseCode} - ${finalCourseName} (${submission?.testTitle || 'Examination'})`;
+
+                const digitalHash = generateDigitalVerdictHash(
+                    report.submissionId || reportId,
+                    studentId,
+                    report.reportId || reportId,
+                    report.reviewedAt
+                );
+
+                const targetReportId = report.reportId || reportId;
+                const proxyUrl = `https://bicsportal.netlify.app/media/eirf/${targetReportId}.pdf`;
+                const deadlineDateStr = formatISTDate(new Date(Date.now() + 48 * 60 * 60 * 1000));
+
+                const pdfBuffer = await generateEirfVerdictPdfBuffer({
+                    report,
+                    submission,
+                    test: testObj,
+                    candidate: candidateObj,
+                    courseCode: finalCourseCode,
+                    courseName: finalCourseName,
+                    adminRemarks: adminRemarks || 'Standard academic committee evaluation recorded.',
+                    pdfProxyUrl: proxyUrl,
+                    digitalHash,
+                    deadlineDateStr
+                });
+
+                let pdfCloudinaryPublicId = `BICS_2026/eirf/${targetReportId}.pdf`;
+                let finalPdfUrl = proxyUrl;
+
+                if (useCloudinary) {
+                    try {
+                        const uploadedUrl = await uploadToCloudinary(pdfBuffer, 'BICS_2026/eirf', 'raw');
+                        if (uploadedUrl) {
+                            if (uploadedUrl.startsWith('http')) {
+                                finalPdfUrl = uploadedUrl;
+                            } else {
+                                finalPdfUrl = `https://bicsportal.netlify.app${uploadedUrl}`;
+                            }
+                        }
+                    } catch (cErr) {
+                        console.warn("[EIRF_PDF_UPLOAD_WARN]: Cloudinary PDF stream failed, keeping proxy URL:", cErr.message);
+                    }
+                }
+
+                const cleanupDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000);
+                if (useMongo) {
+                    report.pdfUrl = finalPdfUrl;
+                    report.pdfCloudinaryPublicId = pdfCloudinaryPublicId;
+                    report.digitalHash = digitalHash;
+                    report.scheduledCleanupAt = cleanupDeadline;
+                    report.pdfDeletedFromCloudinary = false;
+                    await report.save();
+                } else {
+                    const db = getJSONData();
+                    const idx = (db.eirfReports || []).findIndex(r => String(r.reportId) === String(report.reportId));
+                    if (idx !== -1) {
+                        db.eirfReports[idx].pdfUrl = finalPdfUrl;
+                        db.eirfReports[idx].pdfCloudinaryPublicId = pdfCloudinaryPublicId;
+                        db.eirfReports[idx].digitalHash = digitalHash;
+                        db.eirfReports[idx].scheduledCleanupAt = cleanupDeadline.toISOString();
+                        db.eirfReports[idx].pdfDeletedFromCloudinary = false;
+                        saveJSONData(db);
+                    }
+                }
+
+                await sendEirfVerdictEmail(
+                    candidateEmail,
+                    candidateName,
+                    examTitleStr,
+                    status,
+                    adminRemarks,
+                    finalPdfUrl,
+                    { studentId, submissionId: report.submissionId }
+                );
+
+                console.log(`[EIRF_BACKGROUND_PIPELINE]: Verdict PDF generated, uploaded & email dispatched for ${report.reportId}. Proxy URL: ${finalPdfUrl}`);
+            } catch (bgErr) {
+                console.error("[EIRF_BACKGROUND_PIPELINE_ERROR]:", bgErr);
+            }
+        })();
+
     } catch (e) {
         console.error("Admin EIRF action error:", e);
         return res.status(500).json({ error: e.message });
     }
 });
+
+// 48-Hour Cloudinary Auto-Deletion Cleanup Routine
+const cleanupExpiredEirfPdfs = async () => {
+    try {
+        const now = new Date();
+        const cutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+        if (useMongo) {
+            const expiredReports = await EIRFReportModel.find({
+                status: { $in: ['approved', 'rejected'] },
+                pdfDeletedFromCloudinary: { $ne: true },
+                reviewedAt: { $lte: cutoff }
+            });
+
+            for (const report of expiredReports) {
+                if (useCloudinary && report.pdfCloudinaryPublicId) {
+                    try {
+                        await cloudinary.uploader.destroy(report.pdfCloudinaryPublicId, { resource_type: 'raw' });
+                        console.log(`[CLOUDINARY_CLEANUP]: Auto-deleted expired EIRF verdict PDF ${report.pdfCloudinaryPublicId} after 48-hour deadline.`);
+                    } catch (cErr) {
+                        console.error(`[CLOUDINARY_CLEANUP_ERROR]: Failed to delete ${report.pdfCloudinaryPublicId}:`, cErr.message);
+                    }
+                }
+                report.pdfDeletedFromCloudinary = true;
+                await report.save();
+            }
+        } else {
+            const db = getJSONData();
+            let modified = false;
+            (db.eirfReports || []).forEach(report => {
+                if (['approved', 'rejected'].includes(report.status) && !report.pdfDeletedFromCloudinary) {
+                    const reviewedAt = report.reviewedAt ? new Date(report.reviewedAt) : null;
+                    if (reviewedAt && reviewedAt <= cutoff) {
+                        if (useCloudinary && report.pdfCloudinaryPublicId) {
+                            cloudinary.uploader.destroy(report.pdfCloudinaryPublicId, { resource_type: 'raw' })
+                                .then(() => console.log(`[CLOUDINARY_CLEANUP]: Auto-deleted expired EIRF verdict PDF ${report.pdfCloudinaryPublicId} after 48-hour deadline.`))
+                                .catch(err => console.error(`[CLOUDINARY_CLEANUP_ERROR]: Failed to delete ${report.pdfCloudinaryPublicId}:`, err.message));
+                        }
+                        report.pdfDeletedFromCloudinary = true;
+                        modified = true;
+                    }
+                }
+            });
+            if (modified) saveJSONData(db);
+        }
+    } catch (err) {
+        console.error("[CLOUDINARY_CLEANUP_JOB_ERROR]:", err.message);
+    }
+};
+
+setInterval(cleanupExpiredEirfPdfs, 30 * 60 * 1000);
+setTimeout(cleanupExpiredEirfPdfs, 10000);
 
 // ==========================================
 // ACADEMIC COURSE MARKS LEDGER & GRADING APIS

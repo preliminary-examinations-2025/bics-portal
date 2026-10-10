@@ -2,6 +2,16 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Video, Loader2, VolumeX, Volume2, ClipboardList } from 'lucide-react';
 import { API_BASE } from '../config';
 
+const PRESET_COURSES = [
+  { code: 'R526CS01T', name: 'Introduction to Computer Science (Theory)' },
+  { code: 'R526CS02T', name: 'Programming Fundamentals with C++ (Theory)' },
+  { code: 'R526CS03T', name: 'Basics of Web Development (Theory)' },
+  { code: 'R526CS04T', name: 'Mathematical Thinking (Theory)' },
+  { code: 'R526CS02L', name: 'Programming Fundamentals with C++ Lab' },
+  { code: 'R526CS03L', name: 'Basics of Web Development Lab' },
+  { code: 'CUSTOM', name: 'Other / Custom Course Code...' }
+];
+
 export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   const [activeTab, setActiveTab] = useState('proctoring'); // 'proctoring' | 'eirf'
   const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
@@ -13,6 +23,13 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const [eirfLoading, setEirfLoading] = useState(false);
   const [adminRemarks, setAdminRemarks] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
+  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
+  const [pendingActionType, setPendingActionType] = useState('approve');
+  const [selectedCourseCode, setSelectedCourseCode] = useState('R526CS01T');
+  const [selectedCourseName, setSelectedCourseName] = useState('Introduction to Computer Science (Theory)');
+  const [customCourseCode, setCustomCourseCode] = useState('');
+  const [customCourseName, setCustomCourseName] = useState('');
+  const [submittingAction, setSubmittingAction] = useState(false);
   const pcRef = useRef(null);
   const subId = sub.id || sub._id;
 
@@ -37,9 +54,14 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
     }
   }, [subId, activeTab]);
 
-  const handleAdminEirfAction = async (actionType) => {
+  const handleAdminEirfAction = async (actionType, courseCodeVal, courseNameVal) => {
     if (!eirfData?.existingReport?.reportId) return;
     const targetStatus = (actionType === 'approve' || actionType === 'approved') ? 'approved' : 'rejected';
+    
+    const finalCourseCode = courseCodeVal === 'CUSTOM' ? customCourseCode : (courseCodeVal || selectedCourseCode);
+    const finalCourseName = courseCodeVal === 'CUSTOM' ? customCourseName : (courseNameVal || selectedCourseName);
+
+    setSubmittingAction(true);
     try {
       const res = await fetch(`${API_BASE}/admin/eirf/action/${eirfData.existingReport.reportId}`, {
         method: 'POST',
@@ -47,20 +69,25 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
         body: JSON.stringify({
           status: targetStatus,
           action: targetStatus,
-          adminRemarks: adminRemarks || `Marked as ${targetStatus} by administrator.`
+          courseCode: finalCourseCode || 'R526CS01T',
+          courseName: finalCourseName || 'Introduction to Computer Science (Theory)',
+          adminRemarks: adminRemarks || `Marked as ${targetStatus.toUpperCase()} by administration.`
         })
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setActionSuccess(`EIRF Report ${targetStatus === 'approved' ? 'Approved' : 'Rejected'} successfully.`);
+        setActionSuccess(`EIRF Report ${targetStatus === 'approved' ? 'Approved' : 'Rejected'} successfully! Official PDF generated & verdict email dispatched.`);
+        setIsCourseModalOpen(false);
         fetchEirfDetails();
         if (fetchLiveSubmissions) fetchLiveSubmissions();
       } else {
         alert(data.error || "Failed to update EIRF report status.");
       }
-    } catch (e) {
-      console.error(e);
-      alert("Network error processing EIRF action.");
+    } catch (err) {
+      console.error("Admin EIRF action error:", err);
+      alert("Network error while updating EIRF status.");
+    } finally {
+      setSubmittingAction(false);
     }
   };
 
@@ -602,14 +629,20 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                     />
                     <div style={{ display: 'flex', gap: '10px' }}>
                       <button
-                        onClick={() => handleAdminEirfAction('approve')}
+                        onClick={() => {
+                          setPendingActionType('approve');
+                          setIsCourseModalOpen(true);
+                        }}
                         className="cf-btn-primary"
                         style={{ flex: 1, backgroundColor: '#059669', borderColor: '#059669', padding: '8px', fontSize: '8.5pt', fontWeight: 'bold' }}
                       >
                         Approve EIRF Report
                       </button>
                       <button
-                        onClick={() => handleAdminEirfAction('reject')}
+                        onClick={() => {
+                          setPendingActionType('reject');
+                          setIsCourseModalOpen(true);
+                        }}
                         className="cf-btn-primary"
                         style={{ flex: 1, backgroundColor: '#dc2626', borderColor: '#dc2626', padding: '8px', fontSize: '8.5pt', fontWeight: 'bold' }}
                       >
@@ -621,6 +654,127 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* Admin Course Selection & Verdict Confirmation Modal */}
+      {isCourseModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(3px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '8px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            maxWidth: '480px',
+            width: '100%',
+            padding: '20px',
+            border: '1px solid #e2e8f0'
+          }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '11pt', color: '#002147', fontWeight: 'bold' }}>
+              Select Academic Course for EIRF Verdict PDF
+            </h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: '8.5pt', color: '#64748b', lineHeight: 1.4 }}>
+              Specify the course code and title for this examination. This metadata will be embedded into the candidate's official BICS Verdict PDF document and verification QR code.
+            </p>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '6px' }}>
+                Course Preset Selection:
+              </label>
+              <select
+                value={selectedCourseCode}
+                onChange={(e) => {
+                  const selected = e.target.value;
+                  setSelectedCourseCode(selected);
+                  const match = PRESET_COURSES.find(c => c.code === selected);
+                  if (match && match.code !== 'CUSTOM') {
+                    setSelectedCourseName(match.name);
+                  }
+                }}
+                style={{ width: '100%', padding: '8px', fontSize: '9pt', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}
+              >
+                {PRESET_COURSES.map(c => (
+                  <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {selectedCourseCode === 'CUSTOM' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                    Custom Course Code:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. CS-301"
+                    value={customCourseCode}
+                    onChange={(e) => setCustomCourseCode(e.target.value)}
+                    style={{ width: '100%', padding: '8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                    Custom Course Name:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Advanced Operating Systems"
+                    value={customCourseName}
+                    onChange={(e) => setCustomCourseName(e.target.value)}
+                    style={{ width: '100%', padding: '8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div style={{ backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '4px', marginBottom: '16px', fontSize: '8pt', color: '#334155' }}>
+              <div><strong>Verdict Action:</strong> <span style={{ color: pendingActionType === 'approve' ? '#059669' : '#dc2626', fontWeight: 'bold' }}>{pendingActionType.toUpperCase()}</span></div>
+              <div><strong>Committee Remarks:</strong> {adminRemarks || 'Standard administrative verdict notice attached.'}</div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                disabled={submittingAction}
+                onClick={() => setIsCourseModalOpen(false)}
+                style={{ padding: '8px 16px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', cursor: 'pointer', color: '#475569' }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={submittingAction}
+                onClick={() => handleAdminEirfAction(pendingActionType)}
+                style={{
+                  padding: '8px 18px',
+                  fontSize: '8.5pt',
+                  fontWeight: 'bold',
+                  borderRadius: '4px',
+                  border: 'none',
+                  backgroundColor: pendingActionType === 'approve' ? '#059669' : '#dc2626',
+                  color: '#ffffff',
+                  cursor: submittingAction ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {submittingAction && <Loader2 className="animate-spin" size={14} />}
+                {submittingAction ? 'Processing...' : `Confirm & ${pendingActionType === 'approve' ? 'Approve EIRF' : 'Reject EIRF'}`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

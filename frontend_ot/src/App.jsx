@@ -4738,65 +4738,76 @@ export default function App() {
             /* Active Form Filing */
             <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
               {/* SECTION 1: Incident Acknowledgment & Confirmation */}
-              <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
-                <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 14px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                  Section 1: Incident Acknowledgment & Confirmation
-                </h3>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div>
-                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
-                      • Your test was automatically submitted because you exceeded the allowed number of navigation warnings. Do you understand why this action was taken?
-                    </label>
-                    <div style={{ display: 'flex', gap: '15px' }}>
-                      {['Yes', 'No'].map(val => (
-                        <label key={val} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9pt', cursor: 'pointer', color: '#334155' }}>
-                          <input
-                            type="radio"
-                            name="eirfAckUnderstand"
-                            value={val}
-                            checked={eirfAckUnderstand === val}
-                            onChange={e => setEirfAckUnderstand(e.target.value)}
-                          />
-                          {val}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
+              {(() => {
+                const isAutoSub = (eirfDetails?.flaggedReasons || []).some(r => r.toLowerCase().includes('auto-submitted'));
+                const warningOptions = isAutoSub
+                  ? ['0 warnings', '1 warning', '2 warnings', '3 warnings (Auto-Submitted)', 'More than 3 warnings']
+                  : ['0 warnings', '1 warning', '2 warnings', '3 or more warnings', 'Did not notice warnings'];
 
-                  <div>
-                    <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
-                      • Please confirm the exact number of warning pop-ups you remember seeing on your screen before the session terminated.
-                    </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
-                      {['0 warnings', '1 warning', '2 warnings', '3 warnings (Auto-Submitted)', 'More than 3 warnings'].map(opt => (
-                        <label key={opt} style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '8px 10px',
-                          borderRadius: '4px',
-                          border: `1px solid ${eirfWarningCount === opt ? '#0284c7' : '#cbd5e1'}`,
-                          backgroundColor: eirfWarningCount === opt ? '#f0f9ff' : '#ffffff',
-                          cursor: 'pointer',
-                          fontSize: '8.5pt',
-                          color: eirfWarningCount === opt ? '#0284c7' : '#334155',
-                          fontWeight: eirfWarningCount === opt ? 'bold' : 'normal'
-                        }}>
-                          <input
-                            type="radio"
-                            name="eirfWarningCount"
-                            value={opt}
-                            checked={eirfWarningCount === opt}
-                            onChange={e => setEirfWarningCount(e.target.value)}
-                          />
-                          {opt}
+                return (
+                  <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
+                    <h3 style={{ fontSize: '11pt', fontWeight: 'bold', color: '#002147', margin: '0 0 14px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                      Section 1: Incident Acknowledgment & Confirmation
+                    </h3>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div>
+                        <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                          {isAutoSub
+                            ? '• Your test attempt was automatically submitted because you reached the maximum allowed navigation warnings. Do you understand why this action was taken?'
+                            : '• An automated proctoring alert or navigation interruption was flagged during your examination. Do you understand why this incident was recorded?'}
                         </label>
-                      ))}
+                        <div style={{ display: 'flex', gap: '15px' }}>
+                          {['Yes', 'No'].map(val => (
+                            <label key={val} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9pt', cursor: 'pointer', color: '#334155' }}>
+                              <input
+                                type="radio"
+                                name="eirfAckUnderstand"
+                                value={val}
+                                checked={eirfAckUnderstand === val}
+                                onChange={e => setEirfAckUnderstand(e.target.value)}
+                              />
+                              {val}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                          • Please confirm the exact number of warning pop-ups or navigation alerts you remember seeing on your screen during your examination session.
+                        </label>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
+                          {warningOptions.map(opt => (
+                            <label key={opt} style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '8px 10px',
+                              borderRadius: '4px',
+                              border: `1px solid ${eirfWarningCount === opt ? '#0284c7' : '#cbd5e1'}`,
+                              backgroundColor: eirfWarningCount === opt ? '#f0f9ff' : '#ffffff',
+                              cursor: 'pointer',
+                              fontSize: '8.5pt',
+                              color: eirfWarningCount === opt ? '#0284c7' : '#334155',
+                              fontWeight: eirfWarningCount === opt ? 'bold' : 'normal'
+                            }}>
+                              <input
+                                type="radio"
+                                name="eirfWarningCount"
+                                value={opt}
+                                checked={eirfWarningCount === opt}
+                                onChange={e => setEirfWarningCount(e.target.value)}
+                              />
+                              {opt}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* SECTION 2: Context Behind Navigation Violations */}
               <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
