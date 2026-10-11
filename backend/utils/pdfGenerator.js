@@ -154,34 +154,34 @@ Provide ONLY the final synthesis paragraph.`;
 }
 
 /**
- * Helper to draw a filled section header band
+ * Helper to draw a filled section header band (matching reference image: light/medium gray fill with black border and black text)
  */
 function drawSectionBand(doc, x, y, width, height, title) {
-    doc.rect(x, y, width, height).fill('#1e293b');
-    doc.fillColor('#ffffff').fontSize(8.5).font('Helvetica-Bold').text(title, x + 8, y + 4, { width: width - 16, lineBreak: false });
+    doc.rect(x, y, width, height).fillAndStroke('#b0b0b0', '#000000');
+    doc.fillColor('#000000').fontSize(8.5).font('Helvetica-Bold').text(title, x + 8, y + 4, { width: width - 16, lineBreak: false });
 }
 
 /**
- * Helper to draw a bordered table row with two columns
+ * Helper to draw a bordered table row with two columns (crisp black borders, pure black text)
  */
 function drawGridRow(doc, x, y, width, height, label1, val1, label2, val2, colSplit = 0.5) {
-    doc.rect(x, y, width, height).strokeColor('#cbd5e1').stroke();
+    doc.rect(x, y, width, height).strokeColor('#000000').lineWidth(0.8).stroke();
     const midX = x + width * colSplit;
     doc.moveTo(midX, y).lineTo(midX, y + height).stroke();
 
     // Col 1
-    doc.fillColor('#475569').fontSize(7.5).font('Helvetica-Bold').text(label1, x + 6, y + 4);
-    doc.fillColor('#0f172a').font('Helvetica').text(String(val1 || 'N/A'), x + 6, y + 13, { width: midX - x - 12, lineBreak: false });
+    doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold').text(label1, x + 6, y + 4);
+    doc.fillColor('#000000').font('Helvetica').text(String(val1 || 'N/A'), x + 6, y + 13, { width: midX - x - 12, lineBreak: false });
 
     // Col 2
     if (label2) {
-        doc.fillColor('#475569').font('Helvetica-Bold').text(label2, midX + 6, y + 4);
-        doc.fillColor('#0f172a').font('Helvetica').text(String(val2 || 'N/A'), midX + 6, y + 13, { width: x + width - midX - 12, lineBreak: false });
+        doc.fillColor('#000000').font('Helvetica-Bold').text(label2, midX + 6, y + 4);
+        doc.fillColor('#000000').font('Helvetica').text(String(val2 || 'N/A'), midX + 6, y + 13, { width: x + width - midX - 12, lineBreak: false });
     }
 }
 
 /**
- * Generates the Official 2-Page BICS EIRF Audit Report PDF Buffer
+ * Generates the Official 2-Page BICS EIRF Audit Report PDF Buffer (Strict Black & White Institutional Grid)
  */
 async function generateEirfVerdictPdfBuffer({
     report,
@@ -252,7 +252,7 @@ async function generateEirfVerdictPdfBuffer({
 
     return new Promise((resolve, reject) => {
         try {
-            // A4 document: 595.28 x 841.89 points. Margins: left/right/top 30pt, bottom 0pt to avoid inadvertent auto-paging.
+            // A4 document: 595.28 x 841.89 points. Margins: left/right 30pt, top 25pt, bottom 0pt
             const doc = new PDFDocument({
                 margins: { top: 25, bottom: 0, left: 30, right: 30 },
                 size: 'A4',
@@ -271,15 +271,15 @@ async function generateEirfVerdictPdfBuffer({
             // PAGE 1: DOCUMENT METADATA, EVIDENTIARY BASELINE & STUDENT DEFENSE
             // =========================================================================
 
-            // --- Header Bar ---
-            doc.rect(startX, 28, pageWidth, 48).strokeColor('#002147').lineWidth(1.5).stroke();
-            doc.rect(startX + 1, 29, pageWidth - 2, 46).fill('#f8fafc');
+            // --- Header Bar (Crisp Black & White) ---
+            doc.rect(startX, 28, pageWidth, 48).strokeColor('#000000').lineWidth(1.2).stroke();
+            doc.rect(startX + 1, 29, pageWidth - 2, 46).fill('#ffffff');
 
-            doc.fillColor('#002147').fontSize(13).font('Helvetica-Bold')
+            doc.fillColor('#000000').fontSize(13).font('Helvetica-Bold')
                .text('BICS DEPARTMENT OF EXAMINATION', startX, 35, { width: pageWidth, align: 'center' });
-            doc.fillColor('#475569').fontSize(8).font('Helvetica')
+            doc.fillColor('#000000').fontSize(8.5).font('Helvetica')
                .text('BICS Online Testing System — Academic Integrity & Incident Adjudication Unit', startX, 50, { width: pageWidth, align: 'center' });
-            doc.fillColor('#0f172a').fontSize(9.5).font('Helvetica-Bold')
+            doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold')
                .text(`EIRF AUDIT REPORT (Ref: ${reportId})`, startX, 62, { width: pageWidth, align: 'center' });
 
             let curY = 82;
@@ -307,9 +307,9 @@ async function generateEirfVerdictPdfBuffer({
             drawSectionBand(doc, startX, curY, pageWidth, 17, '2. EVIDENTIARY BASELINE & PROCTORING SYSTEM LOG');
             curY += 17;
 
-            // Itemized Trigger Timeline Header
-            doc.rect(startX, curY, pageWidth, 16).fillAndStroke('#f1f5f9', '#cbd5e1');
-            doc.fillColor('#334155').fontSize(7).font('Helvetica-Bold');
+            // Itemized Trigger Timeline Header (Gray fill with black text & black borders)
+            doc.rect(startX, curY, pageWidth, 16).fillAndStroke('#e5e7eb', '#000000');
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold');
             doc.text('TRIGGER TIMESTAMP (IST)', startX + 6, curY + 4, { width: 130 });
             doc.text('RULE VIOLATION / EVENT TYPE', startX + 140, curY + 4, { width: 170 });
             doc.text('DURATION', startX + 315, curY + 4, { width: 70 });
@@ -329,8 +329,8 @@ async function generateEirfVerdictPdfBuffer({
                     const evType = ev.type || 'PROCTORING_TRIGGER';
                     const evSev = evDur > 5 ? 'High (Exceeds 5s threshold)' : 'Moderate';
 
-                    doc.rect(startX, curY, pageWidth, 15).strokeColor('#e2e8f0').stroke();
-                    doc.fillColor('#0f172a').fontSize(7).font('Helvetica');
+                    doc.rect(startX, curY, pageWidth, 15).strokeColor('#000000').lineWidth(0.8).stroke();
+                    doc.fillColor('#000000').fontSize(7).font('Helvetica');
                     doc.text(evTime, startX + 6, curY + 4, { width: 130, lineBreak: false });
                     doc.text(evType, startX + 140, curY + 4, { width: 170, lineBreak: false });
                     doc.text(evDur > 0 ? `${evDur}s` : '< 5s', startX + 315, curY + 4, { width: 70 });
@@ -338,8 +338,8 @@ async function generateEirfVerdictPdfBuffer({
                     curY += 15;
                 });
             } else {
-                doc.rect(startX, curY, pageWidth, 15).strokeColor('#e2e8f0').stroke();
-                doc.fillColor('#0f172a').fontSize(7).font('Helvetica');
+                doc.rect(startX, curY, pageWidth, 15).strokeColor('#000000').lineWidth(0.8).stroke();
+                doc.fillColor('#000000').fontSize(7).font('Helvetica');
                 doc.text(examStartIST, startX + 6, curY + 4, { width: 130 });
                 doc.text(`Recorded Violations: ${telemetrySummary}`, startX + 140, curY + 4, { width: 170 });
                 doc.text('Session Logged', startX + 315, curY + 4, { width: 70 });
@@ -347,7 +347,7 @@ async function generateEirfVerdictPdfBuffer({
                 curY += 15;
             }
 
-            // Environment Logs Grid
+            // Environment Logs Grid (Black borders, clean text)
             const techContext = report?.technicalContext || {};
             const clientIp = techContext.ip || '127.0.0.1 (Institutional Subnet)';
             const clientBrowser = techContext.browser ? techContext.browser.substring(0, 55) : 'Standard Lock-down Chromium Engine';
@@ -376,28 +376,28 @@ async function generateEirfVerdictPdfBuffer({
             const s4Narrative = report?.detailedExplanation || formAnswers.section4?.explanation || 'Candidate submitted explanation via emergency report form.';
 
             // Student Narrative Box
-            doc.rect(startX, curY, pageWidth, 42).strokeColor('#cbd5e1').stroke();
-            doc.fillColor('#475569').fontSize(7).font('Helvetica-Bold').text('CANDIDATE OFFICIAL WRITTEN EXPLANATION (VERBATIM):', startX + 6, curY + 4);
-            doc.fillColor('#0f172a').fontSize(7.5).font('Helvetica')
+            doc.rect(startX, curY, pageWidth, 42).strokeColor('#000000').lineWidth(0.8).stroke();
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold').text('CANDIDATE OFFICIAL WRITTEN EXPLANATION (VERBATIM):', startX + 6, curY + 4);
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
                .text(s4Narrative.substring(0, 360), startX + 6, curY + 15, { width: pageWidth - 12, lineGap: 1.5 });
             curY += 42;
 
             // Context Rows
-            drawGridRow(doc, startX, curY, pageWidth, 24, 'TAB SWITCH / FOCUS LOSS JUSTIFICATION:', s2Tab.substring(0, 60), 'FULLSCREEN RESTORATION CONTEXT:', s2Fs.substring(0, 60), 0.5);
+            drawGridRow(doc, startX, curY, pageWidth, 24, 'TAB SWITCH / FOCUS LOSS JUSTIFICATION:', s2Tab.substring(0, 55), 'FULLSCREEN RESTORATION CONTEXT:', s2Fs.substring(0, 55), 0.5);
             curY += 24;
 
-            drawGridRow(doc, startX, curY, pageWidth, 24, 'PERIPHERAL CONNECTION STATUS:', s3Per, 'SELF-REPORTED WARNING COUNT:', `${s1Warn} (Awareness: ${s1Ack})`, 0.5);
-            curY += 24;
+            drawGridRow(doc, startX, curY, pageWidth, 28, 'PERIPHERAL CONNECTION STATUS:', s3Per.substring(0, 55), 'SELF-REPORTED WARNING COUNT:', `${s1Warn.substring(0, 25)} (Awareness: ${s1Ack.substring(0, 15)})`, 0.5);
+            curY += 28;
 
-            // Checklist Band
-            doc.rect(startX, curY, pageWidth, 18).fillAndStroke('#f8fafc', '#cbd5e1');
-            doc.fillColor('#1e293b').fontSize(7).font('Helvetica-Bold');
+            // Checklist Band (Ref image style: checkboxes with clear black marks)
+            doc.rect(startX, curY, pageWidth, 18).fillAndStroke('#e5e7eb', '#000000');
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold');
             doc.text(`[X] Integrity Undertaking Certified   |   [${payloadStatus === 'VERIFIED_MATCH' ? 'X' : ' '}] Encrypted Payload Matched   |   [X] Formal EIRF Signed`, startX + 10, curY + 5);
-            curY += 24;
+            curY += 22;
 
             // Page 1 Footer
-            doc.moveTo(startX, 805).lineTo(startX + pageWidth, 805).strokeColor('#94a3b8').lineWidth(1).stroke();
-            doc.fillColor('#64748b').fontSize(7).font('Helvetica')
+            doc.moveTo(startX, 805).lineTo(startX + pageWidth, 805).strokeColor('#000000').lineWidth(0.8).stroke();
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
                .text('BICS Department of Examination • Academic Integrity Record • Confidential', startX, 810, { width: 350 });
             doc.text('Page 1 of 2', startX + pageWidth - 60, 810, { width: 60, align: 'right' });
 
@@ -407,12 +407,12 @@ async function generateEirfVerdictPdfBuffer({
             // =========================================================================
             doc.addPage();
 
-            // Page 2 Mini Header
-            doc.rect(startX, 28, pageWidth, 30).strokeColor('#002147').lineWidth(1.2).stroke();
-            doc.rect(startX + 1, 29, pageWidth - 2, 28).fill('#f8fafc');
-            doc.fillColor('#002147').fontSize(10).font('Helvetica-Bold')
+            // Page 2 Header (Crisp Black & White)
+            doc.rect(startX, 28, pageWidth, 30).strokeColor('#000000').lineWidth(1.2).stroke();
+            doc.rect(startX + 1, 29, pageWidth - 2, 28).fill('#ffffff');
+            doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold')
                .text('BICS DEPARTMENT OF EXAMINATION — EIRF AUDIT REPORT', startX, 33, { width: pageWidth, align: 'center' });
-            doc.fillColor('#475569').fontSize(7.5).font('Helvetica')
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
                .text(`Incident Ref: ${reportId}   |   Candidate ID: ${studentId}   |   Continuation Sheet`, startX, 45, { width: pageWidth, align: 'center' });
 
             curY = 66;
@@ -422,13 +422,13 @@ async function generateEirfVerdictPdfBuffer({
             curY += 17;
 
             // Credibility Box
-            doc.rect(startX, curY, pageWidth, 38).strokeColor('#cbd5e1').stroke();
-            doc.fillColor('#475569').fontSize(7).font('Helvetica-Bold').text('CREDIBILITY ASSESSMENT (DEFENSE VS. TECHNICAL TELEMETRY CORRELATION):', startX + 6, curY + 4);
+            doc.rect(startX, curY, pageWidth, 46).strokeColor('#000000').lineWidth(0.8).stroke();
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold').text('CREDIBILITY ASSESSMENT (DEFENSE VS. TECHNICAL TELEMETRY CORRELATION):', startX + 6, curY + 4);
             const credibilityText = isApproved
                 ? `The candidate's explanation regarding focus loss correlates with the recorded telemetry timeline (${telemetrySummary}). No concurrent unauthorized network requests or secondary monitor instances were detected. The explanation is determined to be credible and non-prejudicial.`
                 : `The candidate's explanation fails to reconcile the duration of window departure logged by the system (${telemetrySummary}). The telemetry timeline contradicts the submission assertion, confirming an unexcused examination policy violation.`;
-            doc.fillColor('#0f172a').fontSize(7.5).font('Helvetica').text(credibilityText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.5 });
-            curY += 38;
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica').text(credibilityText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.2 });
+            curY += 46;
 
             // Mitigating & Aggravating Factors Grid
             drawGridRow(doc, startX, curY, pageWidth, 24, 'INFRACTION HISTORY RECORD:', 'First-time formal incident report in current academic term', 'REPORTING TIMELINESS:', 'Filed within mandatory 45-minute post-exam window', 0.5);
@@ -441,33 +441,31 @@ async function generateEirfVerdictPdfBuffer({
             drawSectionBand(doc, startX, curY, pageWidth, 17, '5. FINAL RESOLUTION & ACTION PLAN');
             curY += 17;
 
-            // Large Verdict Banner
-            const verdictBg = isApproved ? '#f0fdf4' : '#fef2f2';
-            const verdictBorder = isApproved ? '#059669' : '#dc2626';
-            doc.rect(startX, curY, pageWidth, 32).fillAndStroke(verdictBg, verdictBorder);
-            doc.fillColor(verdictBorder).fontSize(12).font('Helvetica-Bold')
-               .text(`OFFICIAL VERDICT: ${status} — ${isApproved ? 'VIOLATION DISMISSED (PROVISIONAL ASSESSMENT GRANTED)' : 'VIOLATION UPHELD (DISCIPLINARY ACTION ENFORCED)'}`, startX, curY + 10, { width: pageWidth, align: 'center' });
-            curY += 32;
+            // Large Verdict Banner (Ref image style: clean double/thick black border with gray background or white fill)
+            doc.rect(startX, curY, pageWidth, 28).fillAndStroke('#e5e7eb', '#000000');
+            doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold')
+               .text(`OFFICIAL VERDICT: ${status} — ${isApproved ? 'VIOLATION DISMISSED (PROVISIONAL ASSESSMENT GRANTED)' : 'VIOLATION UPHELD (DISCIPLINARY ACTION ENFORCED)'}`, startX, curY + 9, { width: pageWidth, align: 'center' });
+            curY += 28;
 
             drawGridRow(doc, startX, curY, pageWidth, 24, 'RESOLUTION CLASSIFICATION:', resolvedCategory, 'REMEDIATION / PENALTY ACTION:', resolvedRemediation, 0.5);
             curY += 24;
 
             // Policy Clause & Appeals Box
-            doc.rect(startX, curY, pageWidth, 38).strokeColor('#cbd5e1').stroke();
-            doc.fillColor('#475569').fontSize(7).font('Helvetica-Bold')
+            doc.rect(startX, curY, pageWidth, 38).strokeColor('#000000').lineWidth(0.8).stroke();
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
                .text(isApproved ? 'SYSTEM CALIBRATION & INSTRUCTOR NOTIFICATION:' : 'STATUTORY APPEALS PROCESS & DISCIPLINARY NOTICE:', startX + 6, curY + 4);
             const policyClauseText = isApproved
                 ? `System heuristics logged for threshold calibration. The candidate is granted full provisional standing for course ${courseCode}. Candidate must submit a signed hardcopy of this document to course instructor within 48 hours for final grade entry.`
                 : `In accordance with Examination Policy Section 9.2, the candidate has been assigned the designated penalty. The candidate retains the right to submit a formal appeal to the University Academic Appeals Committee within 48 hours with fresh evidence.`;
-            doc.fillColor('#0f172a').fontSize(7).font('Helvetica').text(policyClauseText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.5 });
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica').text(policyClauseText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.5 });
             curY += 44;
 
             // --- 6. COMPREHENSIVE INCIDENT SYNTHESIS & CASE SUMMARY ---
             drawSectionBand(doc, startX, curY, pageWidth, 17, '6. COMPREHENSIVE INCIDENT SYNTHESIS & CASE SUMMARY');
             curY += 17;
 
-            doc.rect(startX, curY, pageWidth, 50).fillAndStroke('#f8fafc', '#cbd5e1');
-            doc.fillColor('#0f172a').fontSize(7.5).font('Helvetica')
+            doc.rect(startX, curY, pageWidth, 50).fillAndStroke('#ffffff', '#000000');
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
                .text(forensicSynthesisText, startX + 8, curY + 6, { width: pageWidth - 16, lineGap: 2 });
             curY += 56;
 
@@ -476,49 +474,49 @@ async function generateEirfVerdictPdfBuffer({
             curY += 17;
 
             const signOffHeight = 85;
-            doc.rect(startX, curY, pageWidth, signOffHeight).strokeColor('#cbd5e1').stroke();
+            doc.rect(startX, curY, pageWidth, signOffHeight).strokeColor('#000000').lineWidth(0.8).stroke();
 
             // Left details
             const leftWidth = 410;
-            doc.fillColor('#334155').fontSize(7.5).font('Helvetica-Bold');
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold');
             doc.text(`Adjudicator Name & Title:`, startX + 8, curY + 6);
-            doc.fillColor('#0f172a').font('Helvetica').text(`${reviewerName} (${reviewerTitle})`, startX + 125, curY + 6);
+            doc.fillColor('#000000').font('Helvetica').text(`${reviewerName} (${reviewerTitle})`, startX + 125, curY + 6);
 
-            doc.fillColor('#334155').font('Helvetica-Bold').text(`Department / Board:`, startX + 8, curY + 18);
-            doc.fillColor('#0f172a').font('Helvetica').text(`BICS Department of Examination — Integrity Unit`, startX + 125, curY + 18);
+            doc.fillColor('#000000').font('Helvetica-Bold').text(`Department / Board:`, startX + 8, curY + 18);
+            doc.fillColor('#000000').font('Helvetica').text(`BICS Department of Examination — Integrity Unit`, startX + 125, curY + 18);
 
-            doc.fillColor('#334155').font('Helvetica-Bold').text(`Decision Published:`, startX + 8, curY + 30);
-            doc.fillColor('#0f172a').font('Helvetica').text(`${verdictDateIST}`, startX + 125, curY + 30);
+            doc.fillColor('#000000').font('Helvetica-Bold').text(`Decision Published:`, startX + 8, curY + 30);
+            doc.fillColor('#000000').font('Helvetica').text(`${verdictDateIST}`, startX + 125, curY + 30);
 
-            doc.fillColor('#334155').font('Helvetica-Bold').text(`Hardcopy Deadline:`, startX + 8, curY + 42);
-            doc.fillColor('#b45309').font('Helvetica-Bold').text(`${deadlineIST} (Within 48 Hours)`, startX + 125, curY + 42);
+            doc.fillColor('#000000').font('Helvetica-Bold').text(`Hardcopy Deadline:`, startX + 8, curY + 42);
+            doc.fillColor('#000000').font('Helvetica-Bold').text(`${deadlineIST} (Within 48 Hours)`, startX + 125, curY + 42);
 
-            doc.fillColor('#334155').font('Helvetica-Bold').text(`Digital Verification Hash:`, startX + 8, curY + 54);
-            doc.fillColor('#0f172a').font('Courier-Bold').text(hashString, startX + 125, curY + 54);
+            doc.fillColor('#000000').font('Helvetica-Bold').text(`Digital Verification Hash:`, startX + 8, curY + 54);
+            doc.fillColor('#000000').font('Courier-Bold').text(hashString, startX + 125, curY + 54);
 
-            doc.fillColor('#334155').font('Helvetica-Bold').text(`Official Proxy URL:`, startX + 8, curY + 66);
-            doc.fillColor('#0284c7').fontSize(7).font('Helvetica').text(proxyUrlFormatted, startX + 125, curY + 66, { width: 280, lineBreak: false });
+            doc.fillColor('#000000').font('Helvetica-Bold').text(`Official Document URL:`, startX + 8, curY + 66);
+            doc.fillColor('#000000').fontSize(7).font('Helvetica').text(proxyUrlFormatted, startX + 125, curY + 66, { width: 280, lineBreak: false });
 
             // Right QR Code
             doc.image(qrPngBuffer, startX + leftWidth + 15, curY + 5, { width: 68, height: 68 });
-            doc.fillColor('#64748b').fontSize(6).font('Helvetica')
+            doc.fillColor('#000000').fontSize(6).font('Helvetica')
                .text('Scan for Portal Record', startX + leftWidth + 8, curY + 75, { width: 85, align: 'center' });
 
             curY += signOffHeight + 8;
 
             // --- Course Instructor Physical Receipt Slip ---
-            doc.rect(startX, curY, pageWidth, 38).dash(3, { space: 3 }).strokeColor('#94a3b8').stroke();
+            doc.rect(startX, curY, pageWidth, 38).dash(3, { space: 3 }).strokeColor('#000000').stroke();
             doc.undash();
-            doc.fillColor('#475569').fontSize(7).font('Helvetica-Bold')
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
                .text('COURSE INSTRUCTOR PHYSICAL SUBMISSION ACKNOWLEDGMENT (UPON RECEIPT OF PRINTED COPY):', startX + 8, curY + 5);
-            doc.fillColor('#0f172a').fontSize(7).font('Helvetica')
+            doc.fillColor('#000000').fontSize(7).font('Helvetica')
                .text(`Instructor Name: __________________________   Signature: __________________________   Date Received: ______________`, startX + 8, curY + 16);
-            doc.fillColor('#94a3b8').fontSize(6.5).font('Helvetica')
+            doc.fillColor('#000000').fontSize(6.5).font('Helvetica')
                .text(`Candidate must submit this physical signed document to course instructor (${courseCode}) within 48 hours for institutional grade normalization.`, startX + 8, curY + 27);
 
             // Page 2 Footer
-            doc.moveTo(startX, 805).lineTo(startX + pageWidth, 805).strokeColor('#94a3b8').lineWidth(1).stroke();
-            doc.fillColor('#64748b').fontSize(7).font('Helvetica')
+            doc.moveTo(startX, 805).lineTo(startX + pageWidth, 805).strokeColor('#000000').lineWidth(0.8).stroke();
+            doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
                .text('Official Forensic Audit Document • BICS Department of Examination', startX, 810, { width: 350 });
             doc.text('Page 2 of 2', startX + pageWidth - 60, 810, { width: 60, align: 'right' });
 
