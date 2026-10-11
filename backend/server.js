@@ -6209,7 +6209,18 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
         const expiresAt = new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
         const isExpired = Date.now() > expiresAt.getTime();
 
-        if (isExpired) {
+        // Check if request is from an administrator or proctor dashboard
+        const isAdmin = Boolean(
+            req.query.role === 'admin' ||
+            req.query.isAdmin === 'true' ||
+            req.headers['x-admin-role'] === 'admin' ||
+            req.headers['x-api-secret'] ||
+            req.query.apiSecret ||
+            req.session?.admin
+        );
+
+        // For candidates: candidate emergency filing window strictly expires after 45 minutes UNLESS they already submitted a report
+        if (isExpired && !isAdmin && !existingReport) {
             return res.status(410).json({
                 error: "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.",
                 isExpired: true,

@@ -40,7 +40,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const fetchEirfDetails = async () => {
     setEirfLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}`);
+      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}?role=admin`);
       if (res.ok) {
         const data = await res.json();
         setEirfData(data);
