@@ -3,7 +3,7 @@ import {
   Settings, Users, FileText, BookOpen, Activity, Video, Ticket, 
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
-  GraduationCap, Key, LogOut, Wrench
+  GraduationCap, Key, LogOut, Wrench, Scale
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -146,7 +146,7 @@ export default function Sidebar({
               </div>
             )}
 
-            <div className="sidebar-category">Submissions</div>
+             <div className="sidebar-category">Submissions</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, submissions: !dropdowns.submissions})}>
               Menu Links {dropdowns.submissions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
@@ -167,6 +167,14 @@ export default function Sidebar({
                 </button>
                 <button className={`dropdown-item ${view === 'verification' ? 'active' : ''}`} onClick={() => { setView('verification'); setIsMobileSidebarOpen(false); if (user && fetchSubmittedTestsList) fetchSubmittedTestsList(user.id || user._id); }}>
                   <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Verification
+                </button>
+                <button className={`dropdown-item ${view === 'objections' ? 'active' : ''}`} onClick={() => { setView('objections'); setIsMobileSidebarOpen(false); if (user && fetchStudentObjections) fetchStudentObjections(user.id || user._id); }}>
+                  <Scale size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Objections
+                  {studentObjectionsList.filter(o => o.status === 'pending').length > 0 && (
+                    <span style={{ marginLeft: 'auto', backgroundColor: '#f59e0b', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                      {studentObjectionsList.filter(o => o.status === 'pending').length}
+                    </span>
+                  )}
                 </button>
               </div>
             )}
@@ -201,14 +209,6 @@ export default function Sidebar({
                 </button>
                 <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess && setConsentSuccess(''); }}>
                   <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket
-                </button>
-                <button className={`dropdown-item ${view === 'objections' ? 'active' : ''}`} onClick={() => { setView('objections'); setIsMobileSidebarOpen(false); if (user && fetchStudentObjections) fetchStudentObjections(user.id || user._id); }}>
-                  <Flag size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: '#b45309' }} /> Objections
-                  {studentObjectionsList.filter(o => o.status === 'pending').length > 0 && (
-                    <span style={{ marginLeft: 'auto', backgroundColor: '#f59e0b', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
-                      {studentObjectionsList.filter(o => o.status === 'pending').length}
-                    </span>
-                  )}
                 </button>
                 <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
                   <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
