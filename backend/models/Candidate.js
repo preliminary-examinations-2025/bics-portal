@@ -40,7 +40,20 @@ const CandidateSchema = new mongoose.Schema({
     verificationCode: { type: String, default: '' },
     verificationCodeExpires: { type: Date },
     midSemEmailVerified: { type: Boolean, default: false },
-    endSemEmailVerified: { type: Boolean, default: false }
+    endSemEmailVerified: { type: Boolean, default: false },
+    lectureProgress: {
+        type: Map,
+        of: new mongoose.Schema({
+            currentTime: { type: Number, default: 0 },
+            duration: { type: Number, default: 0 },
+            percent: { type: Number, default: 0 },
+            watchedSeconds: { type: Number, default: 0 },
+            completed: { type: Boolean, default: false },
+            lastWatchedAt: { type: Date, default: Date.now },
+            personalNotes: { type: String, default: '' }
+        }, { _id: false }),
+        default: {}
+    }
 });
 
 const CandidateModel = mongoose.model('Candidate', CandidateSchema);

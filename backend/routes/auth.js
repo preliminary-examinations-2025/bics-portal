@@ -23,7 +23,14 @@ router.post('/login', async (req, res) => {
                 return res.status(401).json({ error: "Invalid username or password" });
             }
             await logSystemAction(student.name || username, 'USER_SIGN_IN', `Student "${student.name || username}" logged into portal`, 'info');
-            return res.json({ success: true, role: 'student', id: student._id });
+            return res.json({
+                success: true,
+                role: 'student',
+                id: student._id,
+                studentId: student.studentId || student.username,
+                username: student.username,
+                name: student.name
+            });
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
@@ -35,7 +42,14 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: "Invalid username or password" });
         }
         await logSystemAction(student.name || username, 'USER_SIGN_IN', `Student "${student.name || username}" logged into portal`, 'info');
-        return res.json({ success: true, role: 'student', id: student.id });
+        return res.json({
+            success: true,
+            role: 'student',
+            id: student.id,
+            studentId: student.studentId || student.username,
+            username: student.username,
+            name: student.name
+        });
     }
 });
 

@@ -9,20 +9,259 @@ const { upload } = require('../middleware/upload');
 const { formatCloudinaryMediaUrl, uploadToCloudinary } = require('../config/cloudinary');
 const { GOOGLE_CLASSROOM_WEBHOOK_KEY } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
+const { extractYouTubeId, generateLectureSummary } = require('../utils/aiLectureSummarizer');
 
 // 1. Video Lectures Endpoints
 router.get('/video-lectures', async (req, res) => {
     if (dbState.useMongo) {
         try {
             const list = await VideoLectureModel.find({}).sort({ createdAt: 1 });
-            return res.json(list);
+            // Ensure youtubeId is present for all items
+            const updatedList = await Promise.all(list.map(async (lec) => {
+                if (!lec.youtubeId && lec.youtubeUrl) {
+                    const yId = extractYouTubeId(lec.youtubeUrl);
+                    if (yId) {
+                        lec.youtubeId = yId;
+                        await VideoLectureModel.updateOne({ _id: lec._id }, { $set: { youtubeId: yId } });
+                    }
+                }
+                return lec;
+            }));
+            return res.json(updatedList);
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
     } else {
         const db = getJSONData();
         db.videoLectures = db.videoLectures || [];
+        db.videoLectures.forEach(l => {
+            if (!l.youtubeId && l.youtubeUrl) {
+                l.youtubeId = extractYouTubeId(l.youtubeUrl);
+            }
+        });
+        saveJSONData(db);
         return res.json(db.videoLectures);
+    }
+});
+
+// AI Summary Status Endpoint (Read-Only: checks DB cache, NEVER auto-generates)
+router.get('/video-lectures/:id/summary', async (req, res) => {
+    const { id } = req.params;
+    try {
+        let lecture = null;
+        if (dbState.useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                lecture = await VideoLectureModel.findById(id);
+            }
+            if (!lecture) {
+                lecture = await VideoLectureModel.findOne({ youtubeId: id });
+            }
+        } else {
+            const db = getJSONData();
+            lecture = (db.videoLectures || []).find(l => l.id === id || l._id === id || l.youtubeId === id);
+        }
+
+        if (!lecture) {
+            return res.status(404).json({ error: "Lecture not found" });
+        }
+
+        // Return cached summary if already generated
+        if (lecture.aiSummary && lecture.aiSummary.synopsis) {
+            return res.json({
+                cached: true,
+                summary: lecture.aiSummary
+            });
+        }
+
+        // Return null summary if not generated yet (DO NOT auto-generate for all)
+        return res.json({
+            cached: false,
+            summary: null
+        });
+    } catch (err) {
+        console.error('[AI Lecture Summary Check Error]', err);
+        return res.status(500).json({ error: err.message || "Failed to check AI lecture summary" });
+    }
+});
+
+// Explicit AI Summary Generation Endpoint (Runs ONLY when student explicitly clicks "Summarize this Lecture")
+const handleGenerateSummary = async (req, res) => {
+    const { id } = req.params;
+    try {
+        let lecture = null;
+        if (dbState.useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                lecture = await VideoLectureModel.findById(id);
+            }
+            if (!lecture) {
+                lecture = await VideoLectureModel.findOne({ youtubeId: id });
+            }
+        } else {
+            const db = getJSONData();
+            lecture = (db.videoLectures || []).find(l => l.id === id || l._id === id || l.youtubeId === id);
+        }
+
+        if (!lecture) {
+            return res.status(404).json({ error: "Lecture not found" });
+        }
+
+        // If already cached, return immediately
+        if (lecture.aiSummary && lecture.aiSummary.synopsis) {
+            return res.json({
+                cached: true,
+                summary: lecture.aiSummary
+            });
+        }
+
+        // Trigger cascading AI pipeline: 1. OpenRouter (Gemini Flash) -> 2. Gemini Direct -> 3. Groq (GPT models)
+        const generated = await generateLectureSummary({
+            title: lecture.title,
+            section: lecture.section,
+            youtubeUrl: lecture.youtubeUrl
+        });
+
+        // Cache permanently in database
+        if (dbState.useMongo) {
+            await VideoLectureModel.updateOne(
+                { _id: lecture._id },
+                { $set: { aiSummary: generated } }
+            );
+        } else {
+            const db = getJSONData();
+            const target = (db.videoLectures || []).find(l => l.id === lecture.id || l._id === lecture._id);
+            if (target) {
+                target.aiSummary = generated;
+                saveJSONData(db);
+            }
+        }
+
+        return res.json({
+            cached: false,
+            summary: generated
+        });
+    } catch (err) {
+        console.error('[AI Lecture Summary Generation Error]', err);
+        return res.status(500).json({ error: err.message || "Failed to generate AI lecture summary" });
+    }
+};
+
+router.post('/video-lectures/:id/summary/generate', handleGenerateSummary);
+router.post('/video-lectures/:id/summary', handleGenerateSummary);
+
+// Student Lecture Progress - Get Current Student's Progress Map
+router.get('/student/lecture-progress', async (req, res) => {
+    const studentId = req.query.studentId || req.headers['x-student-id'];
+    if (!studentId) {
+        return res.status(400).json({ error: "Student ID required" });
+    }
+
+    if (dbState.useMongo) {
+        try {
+            const orQuery = [{ studentId }, { username: studentId }];
+            if (mongoose.Types.ObjectId.isValid(studentId)) {
+                orQuery.push({ _id: studentId });
+            }
+            const candidate = await CandidateModel.findOne({ $or: orQuery });
+            if (!candidate) return res.json({ progress: {} });
+            const progress = candidate.lectureProgress ? Object.fromEntries(candidate.lectureProgress) : {};
+            return res.json({ progress });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        const cand = (db.candidates || []).find(c => 
+            c.studentId === studentId || 
+            c.username === studentId || 
+            c.id === studentId || 
+            c._id === studentId
+        );
+        return res.json({ progress: (cand && cand.lectureProgress) || {} });
+    }
+});
+
+// Student Lecture Progress - Update Watch Progress & Notes
+router.post('/video-lectures/:id/progress', async (req, res) => {
+    const { id } = req.params;
+    const { studentId, currentTime, duration, percent, watchedSeconds, completed, personalNotes } = req.body;
+
+    if (!studentId) {
+        return res.status(400).json({ error: "Student ID required" });
+    }
+
+    const curTime = Number(currentTime) || 0;
+    const dur = Number(duration) || 0;
+    const pct = Math.min(100, Math.max(0, Math.round(Number(percent) || 0)));
+    const watched = Number(watchedSeconds) || 0;
+    const isCompleted = !!completed || pct >= 85;
+
+    const progressEntry = {
+        currentTime: curTime,
+        duration: dur,
+        percent: pct,
+        watchedSeconds: watched,
+        completed: isCompleted,
+        lastWatchedAt: new Date(),
+        personalNotes: personalNotes !== undefined ? String(personalNotes) : undefined
+    };
+
+    if (dbState.useMongo) {
+        try {
+            const orQuery = [{ studentId }, { username: studentId }];
+            if (mongoose.Types.ObjectId.isValid(studentId)) {
+                orQuery.push({ _id: studentId });
+            }
+            const candidate = await CandidateModel.findOne({ $or: orQuery });
+            if (!candidate) {
+                return res.status(404).json({ error: "Candidate not found" });
+            }
+
+            if (!candidate.lectureProgress) {
+                candidate.lectureProgress = new Map();
+            }
+
+            const existing = candidate.lectureProgress.get(id) || {};
+            const merged = {
+                currentTime: Math.max(existing.currentTime || 0, progressEntry.currentTime),
+                duration: progressEntry.duration || existing.duration || 0,
+                percent: Math.max(existing.percent || 0, progressEntry.percent),
+                watchedSeconds: Math.max(existing.watchedSeconds || 0, progressEntry.watchedSeconds || 0),
+                completed: existing.completed || progressEntry.completed || Math.max(existing.percent || 0, progressEntry.percent) >= 85,
+                lastWatchedAt: progressEntry.lastWatchedAt,
+                personalNotes: progressEntry.personalNotes !== undefined ? progressEntry.personalNotes : (existing.personalNotes || '')
+            };
+
+            candidate.lectureProgress.set(id, merged);
+            candidate.markModified('lectureProgress');
+            await candidate.save();
+
+            return res.json({ success: true, progress: merged });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    } else {
+        const db = getJSONData();
+        const cand = (db.candidates || []).find(c => 
+            c.studentId === studentId || 
+            c.username === studentId || 
+            c.id === studentId || 
+            c._id === studentId
+        );
+        if (!cand) return res.status(404).json({ error: "Candidate not found" });
+
+        cand.lectureProgress = cand.lectureProgress || {};
+        const existing = cand.lectureProgress[id] || {};
+        cand.lectureProgress[id] = {
+            currentTime: Math.max(existing.currentTime || 0, progressEntry.currentTime),
+            duration: progressEntry.duration || existing.duration || 0,
+            percent: Math.max(existing.percent || 0, progressEntry.percent),
+            watchedSeconds: Math.max(existing.watchedSeconds || 0, progressEntry.watchedSeconds || 0),
+            completed: existing.completed || progressEntry.completed || Math.max(existing.percent || 0, progressEntry.percent) >= 85,
+            lastWatchedAt: progressEntry.lastWatchedAt,
+            personalNotes: progressEntry.personalNotes !== undefined ? progressEntry.personalNotes : (existing.personalNotes || '')
+        };
+        saveJSONData(db);
+        return res.json({ success: true, progress: cand.lectureProgress[id] });
     }
 });
 
@@ -32,12 +271,15 @@ router.post('/admin/video-lectures', async (req, res) => {
         return res.status(400).json({ error: "Section, Title, and YouTube Link are required" });
     }
 
+    const yId = extractYouTubeId(youtubeUrl);
+
     if (dbState.useMongo) {
         try {
             const lect = new VideoLectureModel({
                 section,
                 title,
                 youtubeUrl,
+                youtubeId: yId,
                 hasPlayground: !!hasPlayground,
                 playgroundLanguage: playgroundLanguage || 'cpp',
                 codeTemplate: codeTemplate || '',
@@ -58,6 +300,7 @@ router.post('/admin/video-lectures', async (req, res) => {
             section,
             title,
             youtubeUrl,
+            youtubeId: yId,
             hasPlayground: !!hasPlayground,
             playgroundLanguage: playgroundLanguage || 'cpp',
             codeTemplate: codeTemplate || '',

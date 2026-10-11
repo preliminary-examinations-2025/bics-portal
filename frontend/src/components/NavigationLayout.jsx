@@ -5,7 +5,7 @@ import {
   Upload, FileText, Calendar, ShieldAlert,
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Clock, Activity,
-  Trash2, Ticket, Flag, Bell, Layers, LifeBuoy, Check, Code, Home, Printer, HelpCircle
+  Trash2, Ticket, Flag, Bell, Layers, LifeBuoy, Check, Code, Home, Printer, HelpCircle, Scale
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 
@@ -170,6 +170,9 @@ export default function NavigationLayout() {
                       </NavLink>
                       <NavLink to="/main/submissions/verification" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Answer Sheet Verification
+                      </NavLink>
+                      <NavLink to="/main/submissions/objections" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                        <Scale size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Objections
                       </NavLink>
                     </div>
                   )}

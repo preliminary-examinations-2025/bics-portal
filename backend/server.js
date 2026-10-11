@@ -61,6 +61,7 @@ app.use('/api', authorizeApiRequest);
 app.use('/api', authRouter);
 app.use('/api', candidatesRouter);
 app.use('/api', courseworkRouter);
+app.use('/api/coursework', courseworkRouter);
 app.use('/api/tests', testsRouter);
 app.use('/api/admin/tests', adminTestsRouter);
 app.use('/api/admin/recycle-bin', recycleBinRouter);

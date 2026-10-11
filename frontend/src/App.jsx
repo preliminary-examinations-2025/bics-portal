@@ -11,7 +11,7 @@ import HomeDashboard from './pages/HomeDashboard';
 import StudentRegistration from './pages/StudentRegistration';
 import StudentInfo from './pages/StudentInfo';
 import ExaminationScheduleView from './pages/ExaminationScheduleView';
-import LecturesView from './pages/LecturesView';
+import LecturesView, { extractYouTubeId } from './pages/LecturesView';
 import MaterialsView from './pages/MaterialsView';
 import OnlineTestsView from './pages/OnlineTestsView';
 import SubmissionsView from './pages/SubmissionsView';
@@ -165,16 +165,21 @@ export default function App() {
       '/student/coc': 'conduct',
       '/student/information/change-password': 'changepassword',
       '/coursework/lectures': 'lectures',
+      '/main/coursework/lectures': 'lectures',
+      '/lectures': 'lectures',
+      '/main/lectures': 'lectures',
       '/coursework/materials': 'materials',
       '/coursework/online-tests': 'tests',
       '/submissions/classroom': 'submissions',
       '/submissions/verification': 'verification',
       '/submissions/objections': 'objections',
+      '/main/submissions/objections': 'objections',
       '/submissions/counterfoil': 'counterfoil',
       '/main/submissions/counterfoil': 'counterfoil',
       '/examination/schedule': 'schedule',
       '/examination/hall-ticket': 'hallticket',
       '/examination/objections': 'objections',
+      '/main/examination/objections': 'objections',
       '/examination/counterfoil': 'counterfoil',
       '/support/ticket': 'contact',
       '/support/feedback/general': 'contact',
@@ -211,7 +216,7 @@ export default function App() {
     onlinetest: '/coursework/online-tests',
     submissions: '/submissions/classroom',
     verification: '/submissions/verification',
-    objections: '/examination/objections',
+    objections: '/submissions/objections',
     counterfoil: '/examination/counterfoil',
     schedule: '/examination/schedule',
     hallticket: '/examination/hall-ticket',
@@ -237,12 +242,31 @@ export default function App() {
   const setView = (newView) => {
     setViewState(newView);
     const targetPath = viewToPathMap[newView];
-    if (targetPath && targetPath !== location.pathname) {
-      navigate(targetPath);
+    if (targetPath) {
+      if (newView === 'lectures') {
+        const vId = selectedLecture ? (selectedLecture.youtubeId || (selectedLecture.youtubeUrl ? extractYouTubeId(selectedLecture.youtubeUrl) : '')) : '';
+        const targetUrl = vId ? `/coursework/lectures?v=${vId}` : '/coursework/lectures';
+        navigate(targetUrl);
+      } else {
+        // Strip any query parameters when navigating to any non-lectures view
+        navigate(targetPath);
+      }
     }
   };
 
   useEffect(() => {
+    // 1. Strictly strip ?v= query parameter if user is on any non-lectures route
+    if (location.pathname !== '/coursework/lectures' && location.pathname !== '/main/coursework/lectures') {
+      if (location.search && location.search.includes('v=')) {
+        navigate(location.pathname, { replace: true });
+      }
+    }
+    // 2. Automatically rewrite shortcut /lectures to /coursework/lectures
+    if (location.pathname === '/lectures' || location.pathname === '/main/lectures') {
+      navigate('/coursework/lectures' + location.search, { replace: true });
+      return;
+    }
+
     const pathToView = {
       '/': 'login',
       '': 'login',
@@ -253,16 +277,21 @@ export default function App() {
       '/student/coc': 'conduct',
       '/student/information/change-password': 'changepassword',
       '/coursework/lectures': 'lectures',
+      '/main/coursework/lectures': 'lectures',
+      '/lectures': 'lectures',
+      '/main/lectures': 'lectures',
       '/coursework/materials': 'materials',
       '/coursework/online-tests': 'tests',
       '/submissions/classroom': 'submissions',
       '/submissions/verification': 'verification',
       '/submissions/objections': 'objections',
+      '/main/submissions/objections': 'objections',
       '/submissions/counterfoil': 'counterfoil',
       '/main/submissions/counterfoil': 'counterfoil',
       '/examination/schedule': 'schedule',
       '/examination/hall-ticket': 'hallticket',
       '/examination/objections': 'objections',
+      '/main/examination/objections': 'objections',
       '/examination/counterfoil': 'counterfoil',
       '/support/ticket': 'contact',
       '/support/feedback/general': 'contact',
@@ -286,14 +315,14 @@ export default function App() {
     const nextView = matched !== undefined ? matched : 'not_found';
 
     if (!user) {
-      // 2. If not logged in, redirect for any internal path (right or wrong) to /main/login
+      // If not logged in, redirect for any internal path to /main/login
       if (location.pathname !== '/login' && location.pathname !== '/' && location.pathname !== '') {
         navigate('/login', { replace: true });
         setViewState('login');
         return;
       }
     } else {
-      // 1. When logged in, if wrong path, invalid view, or unauthorized path, redirect to role default page
+      // When logged in, if wrong path, invalid view, or unauthorized path, redirect to role default page
       if (nextView === 'not_found' || nextView === 'login' || !isViewAllowed(nextView)) {
         const defaultPath = user.role === 'admin' ? '/admin/dashboard' : '/home';
         const defaultView = user.role === 'admin' ? 'admin' : 'announcements';
@@ -308,7 +337,7 @@ export default function App() {
     if (nextView !== view) {
       setViewState(nextView);
     }
-  }, [location.pathname, user]);
+  }, [location.pathname, location.search, user]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [dropdowns, setDropdowns] = useState({
     student: true,
@@ -3300,10 +3329,14 @@ int main() {
 
               {view === 'lectures' && (
                 <LecturesView
+                  user={user}
+                  API_BASE={API_BASE}
                   videoLectures={videoLectures}
                   selectedLecture={selectedLecture}
                   setSelectedLecture={setSelectedLecture}
                   getYouTubeEmbedUrl={getYouTubeEmbedUrl}
+                  location={location}
+                  navigate={navigate}
                   playgroundMode={playgroundMode}
                   setPlaygroundMode={setPlaygroundMode}
                   playgroundCppCode={playgroundCppCode}
