@@ -72,7 +72,12 @@ const formatCloudinaryMediaUrl = (url) => {
 // Helper to stream file buffers to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto', customPublicId = null) => {
     return new Promise((resolve, reject) => {
-        const options = { folder: folder, resource_type: resourceType };
+        const options = { 
+            folder: folder, 
+            resource_type: resourceType,
+            overwrite: true,
+            invalidate: true
+        };
         if (customPublicId) {
             options.public_id = customPublicId;
             options.use_filename = true;
@@ -1495,6 +1500,7 @@ const authorizeApiRequest = (req, res, next) => {
         fullPath === '/api/system-config' || relativePath === '/system-config' ||
         fullPath.startsWith('/api/candidate/generate-hallticket') || relativePath.startsWith('/candidate/generate-hallticket') ||
         fullPath.startsWith('/api/tests/submission-verification') || relativePath.startsWith('/tests/submission-verification') ||
+        fullPath.startsWith('/api/test/eirf') || relativePath.startsWith('/test/eirf') ||
         fullPath.startsWith('/api/counterfoil') || relativePath.startsWith('/counterfoil') ||
         fullPath === '/api/log-client-error' || relativePath === '/log-client-error';
 
@@ -6103,23 +6109,51 @@ app.get('/api/test/eirf/details/:submissionId', async (req, res) => {
             if (!submission) {
                 submission = await TestSubmissionModel.findOne({ _id: submissionId }).lean();
             }
+            // Fallback: If submissionId passed is actually an EIRF reportId
+            if (!submission) {
+                existingReport = await EIRFReportModel.findOne({
+                    $or: [{ reportId: String(submissionId) }, { submissionId: String(submissionId) }]
+                }).lean();
+                if (existingReport && existingReport.submissionId) {
+                    submission = await TestSubmissionModel.findById(existingReport.submissionId).lean();
+                }
+            }
+            // Fallback: If submissionId passed is actually a testId, find candidate or latest submission for this test
+            if (!submission && mongoose.Types.ObjectId.isValid(submissionId)) {
+                submission = await TestSubmissionModel.findOne({ testId: submissionId }).sort({ submittedAt: -1 }).lean();
+            }
+
             if (submission) {
                 candidate = await CandidateModel.findById(submission.candidateId).lean();
                 testConfig = await TestConfigModel.findById(submission.testId).lean();
+                if (!existingReport) {
+                    existingReport = await EIRFReportModel.findOne({
+                        $or: [{ submissionId: String(submission._id || submission.id) }, { reportId: String(submissionId) }]
+                    }).lean();
+                }
             }
-            existingReport = await EIRFReportModel.findOne({
-                $or: [{ submissionId: String(submissionId) }, { reportId: String(submissionId) }]
-            }).lean();
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
             submission = db.testSubmissions.find(s => String(s._id || s.id) === String(submissionId));
+            if (!submission) {
+                db.eirfReports = db.eirfReports || [];
+                existingReport = db.eirfReports.find(r => String(r.reportId) === String(submissionId) || String(r.submissionId) === String(submissionId));
+                if (existingReport && existingReport.submissionId) {
+                    submission = db.testSubmissions.find(s => String(s._id || s.id) === String(existingReport.submissionId));
+                }
+            }
+            if (!submission) {
+                submission = db.testSubmissions.find(s => String(s.testId) === String(submissionId));
+            }
             if (submission) {
                 candidate = (db.candidates || []).find(c => String(c._id || c.id) === String(submission.candidateId) || c.studentId === submission.studentId);
                 testConfig = (db.tests || []).find(t => String(t._id || t.id) === String(submission.testId));
+                if (!existingReport) {
+                    db.eirfReports = db.eirfReports || [];
+                    existingReport = db.eirfReports.find(r => String(r.submissionId) === String(submission._id || submission.id));
+                }
             }
-            db.eirfReports = db.eirfReports || [];
-            existingReport = db.eirfReports.find(r => String(r.submissionId) === String(submissionId));
         }
 
         if (!submission) {
