@@ -6571,7 +6571,7 @@ app.get('/api/admin/eirf/list', async (req, res) => {
 // 4. Admin: Approve or Reject EIRF Incident Report
 app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
     const { reportId } = req.params;
-    let { status, action, adminRemarks, courseCode, courseName } = req.body;
+    let { status, action, adminRemarks, courseCode, courseName, resolutionCategory, remediationAction, reviewerName, reviewerTitle } = req.body;
 
     let rawStatus = (status || action || '').toLowerCase().trim();
     if (rawStatus === 'approve') rawStatus = 'approved';
@@ -6584,6 +6584,10 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
     status = rawStatus;
     const finalCourseCode = courseCode || 'R526CS01T';
     const finalCourseName = courseName || 'Introduction to Computer Science';
+    const finalResolutionCategory = resolutionCategory || (status === 'approved' ? 'Technical Glitch / Environmental Disruption' : 'Unexplained Window Deviation Confirmed');
+    const finalRemediationAction = remediationAction || (status === 'approved' ? 'Provisional Assessment Restored & Validated' : 'Examination Score Annulled (Zero Points)');
+    const finalReviewerName = reviewerName || 'Academic Integrity Board Convener';
+    const finalReviewerTitle = reviewerTitle || 'Convener, Examination Disciplinary Committee';
 
     try {
         let report = null;
@@ -6601,8 +6605,12 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
             report.adminRemarks = adminRemarks || '';
             report.courseCode = finalCourseCode;
             report.courseName = finalCourseName;
+            report.resolutionCategory = finalResolutionCategory;
+            report.remediationAction = finalRemediationAction;
+            report.reviewerName = finalReviewerName;
+            report.reviewerTitle = finalReviewerTitle;
             report.reviewedAt = new Date();
-            report.reviewedBy = 'admin';
+            report.reviewedBy = finalReviewerName;
             await report.save();
 
             submission = await TestSubmissionModel.findById(report.submissionId);
@@ -6621,8 +6629,12 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
             db.eirfReports[idx].adminRemarks = adminRemarks || '';
             db.eirfReports[idx].courseCode = finalCourseCode;
             db.eirfReports[idx].courseName = finalCourseName;
+            db.eirfReports[idx].resolutionCategory = finalResolutionCategory;
+            db.eirfReports[idx].remediationAction = finalRemediationAction;
+            db.eirfReports[idx].reviewerName = finalReviewerName;
+            db.eirfReports[idx].reviewerTitle = finalReviewerTitle;
             db.eirfReports[idx].reviewedAt = new Date().toISOString();
-            db.eirfReports[idx].reviewedBy = 'admin';
+            db.eirfReports[idx].reviewedBy = finalReviewerName;
             report = db.eirfReports[idx];
 
             db.testSubmissions = db.testSubmissions || [];
@@ -6688,6 +6700,10 @@ app.post('/api/admin/eirf/action/:reportId', async (req, res) => {
                     courseCode: finalCourseCode,
                     courseName: finalCourseName,
                     adminRemarks: adminRemarks || 'Standard academic committee evaluation recorded.',
+                    resolutionCategory: finalResolutionCategory,
+                    remediationAction: finalRemediationAction,
+                    reviewerName: finalReviewerName,
+                    reviewerTitle: finalReviewerTitle,
                     pdfProxyUrl: proxyUrl,
                     digitalHash,
                     deadlineDateStr

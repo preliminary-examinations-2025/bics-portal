@@ -4567,7 +4567,13 @@ export default function App() {
               }
             },
             technicalContext: {
-              browser: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+              ip: 'Client Local Session',
+              browser: typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '',
+              platform: typeof navigator !== 'undefined' ? (navigator.userAgentData?.platform || navigator.platform || 'Desktop') : 'Desktop',
+              os: typeof navigator !== 'undefined' ? (navigator.userAgent.includes('Windows') ? 'Windows 10/11 x64' : (navigator.userAgent.includes('Mac') ? 'macOS' : 'Linux')) : 'Unknown OS',
+              screenResolution: typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : '1920x1080',
+              viewportSize: typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : '1920x1080',
+              hardwareConcurrency: typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4,
               openedApp: eirfTabReason
             },
             additionalAnswers: {

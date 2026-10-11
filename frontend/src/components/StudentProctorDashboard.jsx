@@ -29,6 +29,10 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const [selectedCourseName, setSelectedCourseName] = useState('Introduction to Computer Science (Theory)');
   const [customCourseCode, setCustomCourseCode] = useState('');
   const [customCourseName, setCustomCourseName] = useState('');
+  const [resolutionCategory, setResolutionCategory] = useState('');
+  const [remediationAction, setRemediationAction] = useState('');
+  const [reviewerName, setReviewerName] = useState('Academic Integrity Board Convener');
+  const [reviewerTitle, setReviewerTitle] = useState('Convener, Examination Disciplinary Committee');
   const [submittingAction, setSubmittingAction] = useState(false);
   const pcRef = useRef(null);
   const subId = sub.id || sub._id;
@@ -60,6 +64,12 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
     
     const finalCourseCode = courseCodeVal === 'CUSTOM' ? customCourseCode : (courseCodeVal || selectedCourseCode);
     const finalCourseName = courseCodeVal === 'CUSTOM' ? customCourseName : (courseNameVal || selectedCourseName);
+    const defaultCategory = targetStatus === 'approved' 
+      ? 'Technical Glitch / Environmental Disruption' 
+      : 'Unexplained Window Deviation Confirmed';
+    const defaultRemediation = targetStatus === 'approved'
+      ? 'Provisional Assessment Restored & Validated'
+      : 'Examination Score Annulled (Zero Points)';
 
     setSubmittingAction(true);
     try {
@@ -71,7 +81,11 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
           action: targetStatus,
           courseCode: finalCourseCode || 'R526CS01T',
           courseName: finalCourseName || 'Introduction to Computer Science (Theory)',
-          adminRemarks: adminRemarks || `Marked as ${targetStatus.toUpperCase()} by administration.`
+          adminRemarks: adminRemarks || `Marked as ${targetStatus.toUpperCase()} by administration.`,
+          resolutionCategory: resolutionCategory || defaultCategory,
+          remediationAction: remediationAction || defaultRemediation,
+          reviewerName: reviewerName || 'Academic Integrity Board Convener',
+          reviewerTitle: reviewerTitle || 'Convener, Examination Disciplinary Committee'
         })
       });
       const data = await res.json();
@@ -739,6 +753,90 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 </div>
               </div>
             )}
+
+            {/* Resolution Classification Category */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '6px' }}>
+                Resolution Category:
+              </label>
+              {pendingActionType === 'approve' ? (
+                <select
+                  value={resolutionCategory || 'Technical Glitch / Environmental Disruption'}
+                  onChange={(e) => setResolutionCategory(e.target.value)}
+                  style={{ width: '100%', padding: '8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}
+                >
+                  <option value="Technical Glitch / Environmental Disruption">Technical Glitch / Environmental Disruption</option>
+                  <option value="Hardware / Network Connectivity Latency">Hardware / Network Connectivity Latency</option>
+                  <option value="Approved Academic Accommodation Exception">Approved Academic Accommodation Exception</option>
+                  <option value="Inadvertent Focus Loss (Zero Malpractice Intent)">Inadvertent Focus Loss (Zero Malpractice Intent)</option>
+                </select>
+              ) : (
+                <select
+                  value={resolutionCategory || 'Unexplained Window Deviation Confirmed'}
+                  onChange={(e) => setResolutionCategory(e.target.value)}
+                  style={{ width: '100%', padding: '8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}
+                >
+                  <option value="Unexplained Window Deviation Confirmed">Unexplained Window Deviation Confirmed</option>
+                  <option value="Proctoring Rule Breach / Secondary Application Access">Proctoring Rule Breach / Secondary Application Access</option>
+                  <option value="Defense Disproven by Objective System Telemetry">Defense Disproven by Objective System Telemetry</option>
+                  <option value="Repeated Fullscreen Evasion Beyond Allowed Limit">Repeated Fullscreen Evasion Beyond Allowed Limit</option>
+                </select>
+              )}
+            </div>
+
+            {/* Remediation Action / Penalty */}
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '8.5pt', fontWeight: 'bold', color: '#334155', marginBottom: '6px' }}>
+                {pendingActionType === 'approve' ? 'Remediation Action:' : 'Disciplinary Penalty:'}
+              </label>
+              {pendingActionType === 'approve' ? (
+                <select
+                  value={remediationAction || 'Provisional Assessment Restored & Validated'}
+                  onChange={(e) => setRemediationAction(e.target.value)}
+                  style={{ width: '100%', padding: '8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}
+                >
+                  <option value="Provisional Assessment Restored & Validated">Provisional Assessment Restored & Validated</option>
+                  <option value="Full Retake Authorized Under Supervised Proctoring">Full Retake Authorized Under Supervised Proctoring</option>
+                  <option value="Docked Points Overridden (Manual Normalization)">Docked Points Overridden (Manual Normalization)</option>
+                </select>
+              ) : (
+                <select
+                  value={remediationAction || 'Examination Score Annulled (Zero Points)'}
+                  onChange={(e) => setRemediationAction(e.target.value)}
+                  style={{ width: '100%', padding: '8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}
+                >
+                  <option value="Examination Score Annulled (Zero Points)">Examination Score Annulled (Zero Points)</option>
+                  <option value="Course Failure (Grade F) Pending Committee Escalation">Course Failure (Grade F) Pending Committee Escalation</option>
+                  <option value="Referral to University Academic Integrity Board">Referral to University Academic Integrity Board</option>
+                </select>
+              )}
+            </div>
+
+            {/* Human Adjudicator Info */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                  Reviewer Name:
+                </label>
+                <input
+                  type="text"
+                  value={reviewerName}
+                  onChange={(e) => setReviewerName(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '8pt', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>
+                  Reviewer Title:
+                </label>
+                <input
+                  type="text"
+                  value={reviewerTitle}
+                  onChange={(e) => setReviewerTitle(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', fontSize: '8.5pt', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                />
+              </div>
+            </div>
 
             <div style={{ backgroundColor: '#f1f5f9', padding: '10px', borderRadius: '4px', marginBottom: '16px', fontSize: '8pt', color: '#334155' }}>
               <div><strong>Verdict Action:</strong> <span style={{ color: pendingActionType === 'approve' ? '#059669' : '#dc2626', fontWeight: 'bold' }}>{pendingActionType.toUpperCase()}</span></div>
