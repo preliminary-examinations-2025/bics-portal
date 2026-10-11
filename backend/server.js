@@ -6516,6 +6516,18 @@ app.post('/api/test/eirf/submit', async (req, res) => {
             return res.status(410).json({ success: false, error: "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link." });
         }
 
+        const rawIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
+                       req.socket?.remoteAddress || 
+                       req.ip || 
+                       '127.0.0.1';
+        const cleanIp = rawIp.replace(/^::ffff:/, '');
+
+        const mergedTechContext = {
+            ...(technicalContext || {}),
+            ip: cleanIp,
+            submittedAt: new Date().toISOString()
+        };
+
         const reportData = {
             reportId,
             submissionId: String(submission._id || submission.id),
@@ -6541,7 +6553,7 @@ app.post('/api/test/eirf/submit', async (req, res) => {
             },
             primaryCause,
             detailedExplanation,
-            technicalContext: technicalContext || {},
+            technicalContext: mergedTechContext,
             additionalAnswers: additionalAnswers || {},
             formAnswers: formAnswers || {},
             encryptedPayloadUploaded: !!rawPayload,
