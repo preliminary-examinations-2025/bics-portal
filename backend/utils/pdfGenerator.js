@@ -316,8 +316,19 @@ async function generateEirfVerdictPdfBuffer({
             doc.text('SYSTEM SEVERITY / CONFIDENCE', startX + 390, curY + 4, { width: 140 });
             curY += 16;
 
-            // Itemized triggers (up to 4 events)
-            const displayEvents = events.slice(0, 4);
+            // Itemized triggers: Filter strictly for actual compliance violations / triggers
+            const VIOLATION_TYPES = new Set(['FULLSCREEN_EXIT', 'TAB_SWITCH', 'NETWORK_OFFLINE', 'EMERGENCY_SUBMISSION', 'SECONDARY_DEVICE', 'MIC_VOLUME_ALERT', 'PROCTORING_TRIGGER']);
+            const infractionEvents = events.filter(ev => {
+                const t = (ev.type || '').toUpperCase();
+                const d = (ev.details || '').toLowerCase();
+                if (VIOLATION_TYPES.has(t)) return true;
+                if (t.includes('EXIT') || t.includes('SWITCH') || t.includes('DISCONNECT') || t.includes('OFFLINE') || t.includes('VIOLATION')) return true;
+                if (d.includes('fullscreen') || d.includes('tab') || d.includes('focus') || d.includes('exited') || d.includes('switched') || d.includes('departed')) return true;
+                return false;
+            });
+
+            // Display up to 4 actual infractions
+            const displayEvents = infractionEvents.slice(0, 4);
             if (displayEvents.length > 0) {
                 displayEvents.forEach(ev => {
                     let evDur = Number(ev.durationSeconds || 0);
@@ -327,7 +338,7 @@ async function generateEirfVerdictPdfBuffer({
                     }
                     const evTime = formatToIST(ev.timestamp || ev.startTime || verdictDate);
                     const evType = ev.type || 'PROCTORING_TRIGGER';
-                    const evSev = evDur > 5 ? 'High (Exceeds 5s threshold)' : 'Moderate';
+                    const evSev = evDur > 5 ? 'High (Exceeds 5s threshold)' : (evDur > 0 ? 'Moderate (Flagged)' : 'Trigger Alert');
 
                     doc.rect(startX, curY, pageWidth, 15).strokeColor('#000000').lineWidth(0.8).stroke();
                     doc.fillColor('#000000').fontSize(7).font('Helvetica');
@@ -338,12 +349,13 @@ async function generateEirfVerdictPdfBuffer({
                     curY += 15;
                 });
             } else {
+                // If telemetry logged count > 0 but individual event array is empty
                 doc.rect(startX, curY, pageWidth, 15).strokeColor('#000000').lineWidth(0.8).stroke();
                 doc.fillColor('#000000').fontSize(7).font('Helvetica');
                 doc.text(examStartIST, startX + 6, curY + 4, { width: 130 });
-                doc.text(`Recorded Violations: ${telemetrySummary}`, startX + 140, curY + 4, { width: 170 });
-                doc.text('Session Logged', startX + 315, curY + 4, { width: 70 });
-                doc.text('Logged in Session Telemetry', startX + 390, curY + 4, { width: 140 });
+                doc.text(telemetrySummary || 'Fullscreen / Focus Deviation Logged', startX + 140, curY + 4, { width: 170 });
+                doc.text(fsExits > 0 || tabSwitches > 0 ? '> 5s' : '0s', startX + 315, curY + 4, { width: 70 });
+                doc.text((fsExits > 0 || tabSwitches > 0) ? 'Moderate (Threshold Exceeded)' : 'Routine Session Monitor', startX + 390, curY + 4, { width: 140 });
                 curY += 15;
             }
 
