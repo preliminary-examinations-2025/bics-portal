@@ -102,85 +102,227 @@ function cleanJsonResponse(rawText) {
 }
 
 /**
- * Fetch Full Real YouTube Page Metadata (Title, Creator/Channel, Description, Duration)
- * Crucial to completely prevent hallucinations!
+ * Parse a "HH:MM:SS" or "MM:SS" duration string into total seconds
  */
-async function fetchFullYouTubeMetadata(youtubeId) {
-    if (!youtubeId || typeof youtubeId !== 'string') return null;
-    try {
-        const url = `https://www.youtube.com/watch?v=${youtubeId}`;
-        const res = await fetch(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9'
-            }
-        });
-        if (!res.ok) return null;
-        const html = await res.text();
-
-        let realTitle = '';
-        let realDescription = '';
-        let realChannel = '';
-        let durationSeconds = 0;
-
-        // 1. Real YouTube Title
-        const mTitle = html.match(/"title":"([^"]+)"/);
-        if (mTitle) realTitle = mTitle[1];
-
-        // 2. Real YouTube Channel / Author
-        const mAuthor = html.match(/"author":"([^"]+)"/);
-        if (mAuthor) realChannel = mAuthor[1];
-
-        // 3. Real Description
-        const mDesc = html.match(/"shortDescription":"(.*?)"/);
-        if (mDesc) {
-            realDescription = mDesc[1]
-                .replace(/\\n/g, '\n')
-                .replace(/\\"/g, '"')
-                .replace(/\\\\/g, '\\');
-        }
-
-        // 4. Exact Duration
-        const mDur = html.match(/"approxDurationMs":"(\d+)"/);
-        if (mDur) {
-            durationSeconds = Math.round(parseInt(mDur[1], 10) / 1000);
-        } else {
-            const mIso = html.match(/itemprop="duration" content="PT([^"]+)"/);
-            if (mIso) {
-                const iso = mIso[1];
-                let sec = 0;
-                const h = iso.match(/(\d+)H/);
-                const m = iso.match(/(\d+)M/);
-                const s = iso.match(/(\d+)S/);
-                if (h) sec += parseInt(h[1], 10) * 3600;
-                if (m) sec += parseInt(m[1], 10) * 60;
-                if (s) sec += parseInt(s[1], 10);
-                durationSeconds = sec;
-            }
-        }
-
-        const spokenTranscript = await fetchYouTubeSpokenTranscript(youtubeId);
-
-        return {
-            realTitle,
-            realChannel,
-            realDescription,
-            durationSeconds,
-            spokenTranscript
-        };
-    } catch (err) {
-        console.warn(`[KB Ingestion] Could not fetch YouTube metadata for ${youtubeId}:`, err.message);
-        return null;
-    }
+function parseTimeTextToSeconds(timeStr) {
+    if (!timeStr || typeof timeStr !== 'string') return 0;
+    const parts = timeStr.trim().split(':').map(n => parseInt(n, 10));
+    if (parts.some(isNaN)) return 0;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    return 0;
 }
 
 /**
- * Extract full spoken audio transcript from YouTube via Python youtube_transcript_api
+ * Parse an ISO 8601 duration (e.g. PT12M7S or 12M7S) into total seconds
+ */
+function parseIsoDurationToSeconds(isoStr) {
+    if (!isoStr || typeof isoStr !== 'string') return 0;
+    let sec = 0;
+    const h = isoStr.match(/(\d+)H/i);
+    const m = isoStr.match(/(\d+)M/i);
+    const s = isoStr.match(/(\d+)S/i);
+    if (h) sec += parseInt(h[1], 10) * 3600;
+    if (m) sec += parseInt(m[1], 10) * 60;
+    if (s) sec += parseInt(s[1], 10);
+    return sec;
+}
+
+/**
+ * Fetch Full Real YouTube Page Metadata (Title, Creator/Channel, Description, Duration)
+ * Multi-layered & cloud-datacenter-proof (works on Render/AWS/GCP even when /watch is bot-gated)
+ */
+async function fetchFullYouTubeMetadata(youtubeId) {
+    if (!youtubeId || typeof youtubeId !== 'string') return null;
+
+    let realTitle = '';
+    let realDescription = '';
+    let realChannel = '';
+    let durationSeconds = 0;
+    let captionBaseUrl = '';
+
+    const commonHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'CONSENT=YES+cb.20210328-17-p0.en+FX+410; SOCS=CAISHAgBEhJnd3NfMjAyMzA4MTAtMF9SQzIaAmVuIAEaBgiAo_CmBg'
+    };
+
+    // Layer 1: Official YouTube oEmbed API (never blocked on cloud datacenter IPs)
+    try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${youtubeId}&format=json`, {
+            signal: AbortSignal.timeout(8000)
+        });
+        if (oembedRes.ok) {
+            const oembed = await oembedRes.json();
+            if (oembed?.title) realTitle = oembed.title;
+            if (oembed?.author_name) realChannel = oembed.author_name;
+        }
+    } catch (e) {}
+
+    // Layer 2: YouTube Watch Page with Consent Cookies & Multiple Duration Regexes
+    try {
+        const url = `https://www.youtube.com/watch?v=${youtubeId}&hl=en&bpctr=9999999999&has_verified=1`;
+        const res = await fetch(url, {
+            headers: commonHeaders,
+            signal: AbortSignal.timeout(10000)
+        });
+        if (res.ok) {
+            const html = await res.text();
+
+            const mTitle = html.match(/"videoDetails":\{.*?"title":"([^"]+)"/) || html.match(/"title":"([^"]+)"/);
+            if (mTitle && mTitle[1] && !realTitle) realTitle = mTitle[1];
+
+            const mAuthor = html.match(/"author":"([^"]+)"/);
+            if (mAuthor && mAuthor[1] && !realChannel) realChannel = mAuthor[1];
+
+            const mDesc = html.match(/"shortDescription":"(.*?)"/);
+            if (mDesc && mDesc[1]) {
+                realDescription = mDesc[1]
+                    .replace(/\\n/g, '\n')
+                    .replace(/\\"/g, '"')
+                    .replace(/\\\\/g, '\\');
+            }
+
+            // Check lengthSeconds first (most direct), then approxDurationMs, then itemprop="duration"
+            const mLenSec = html.match(/"lengthSeconds":"(\d+)"/) || html.match(/"lengthSeconds":(\d+)/);
+            const mApprox = html.match(/"approxDurationMs":"(\d+)"/);
+            const mIso = html.match(/itemprop="duration"\s+content="PT([^"]+)"/i);
+
+            if (mLenSec && parseInt(mLenSec[1], 10) > 0) {
+                durationSeconds = parseInt(mLenSec[1], 10);
+            } else if (mApprox && parseInt(mApprox[1], 10) > 0) {
+                durationSeconds = Math.round(parseInt(mApprox[1], 10) / 1000);
+            } else if (mIso && mIso[1]) {
+                durationSeconds = parseIsoDurationToSeconds(mIso[1]);
+            }
+
+            // Extract caption track URL for pure Node.js transcript extraction
+            const mCap = html.match(/"captionTracks":\[\{"baseUrl":"([^"]+)"/);
+            if (mCap && mCap[1]) {
+                captionBaseUrl = mCap[1].replace(/\\u0026/g, '&');
+            }
+        }
+    } catch (err) {
+        console.warn(`[KB Ingestion] Watch page scrape warning for ${youtubeId}:`, err.message);
+    }
+
+    // Layer 3: YouTube Search Page ytInitialData (NEVER blocked by playback bot-checks on Render/Cloud IPs!)
+    if (durationSeconds <= 0 || !realTitle) {
+        try {
+            const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(youtubeId)}&hl=en`;
+            const sRes = await fetch(searchUrl, {
+                headers: commonHeaders,
+                signal: AbortSignal.timeout(10000)
+            });
+            if (sRes.ok) {
+                const sHtml = await sRes.text();
+                const idToken = `"videoId":"${youtubeId}"`;
+                const idx = sHtml.indexOf(idToken);
+                if (idx !== -1) {
+                    const windowSlice = sHtml.slice(idx, idx + 4500);
+                    if (durationSeconds <= 0) {
+                        const mSimple = windowSlice.match(/"lengthText":\{.*?"simpleText":"(\d+:\d+(?::\d+)?)"/);
+                        if (mSimple && mSimple[1]) {
+                            durationSeconds = parseTimeTextToSeconds(mSimple[1]);
+                        }
+                    }
+                    if (!realTitle) {
+                        const mSTitle = windowSlice.match(/"title":\{"runs":\[\{"text":"([^"]+)"/);
+                        if (mSTitle && mSTitle[1]) realTitle = mSTitle[1];
+                    }
+                    if (!realDescription) {
+                        const mSDesc = windowSlice.match(/"detailedMetadataSnippets":\[\{"snippetText":\{"runs":(\[.*?\])\}/);
+                        if (mSDesc && mSDesc[1]) {
+                            try {
+                                const runs = JSON.parse(mSDesc[1]);
+                                realDescription = runs.map(r => r.text || '').join('');
+                            } catch (e) {}
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`[KB Ingestion] Search fallback warning for ${youtubeId}:`, err.message);
+        }
+    }
+
+    // Layer 4: YouTube Innertube API & Public Piped/Invidious APIs if duration is still 0
+    if (durationSeconds <= 0) {
+        const publicApis = [
+            `https://pipedapi.kavin.rocks/streams/${youtubeId}`,
+            `https://inv.nadeko.net/api/v1/videos/${youtubeId}`,
+            `https://invidious.nerdvpn.de/api/v1/videos/${youtubeId}`
+        ];
+        for (const apiUrl of publicApis) {
+            try {
+                const pRes = await fetch(apiUrl, { signal: AbortSignal.timeout(6000) });
+                if (pRes.ok) {
+                    const pData = await pRes.json();
+                    const dur = Number(pData?.duration || pData?.lengthSeconds || 0);
+                    if (dur > 0) {
+                        durationSeconds = dur;
+                        if (!realTitle && pData?.title) realTitle = pData.title;
+                        if (!realChannel && (pData?.uploader || pData?.author)) realChannel = pData.uploader || pData.author;
+                        if (!realDescription && pData?.description) realDescription = String(pData.description).slice(0, 2000);
+                        break;
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
+    // Layer 5: Extract spoken transcript (Pure Node.js timedtext first, then Python fallback)
+    const spokenTranscript = await fetchYouTubeSpokenTranscript(youtubeId, captionBaseUrl);
+    if (durationSeconds <= 0 && spokenTranscript.length > 0) {
+        const lastItem = spokenTranscript[spokenTranscript.length - 1];
+        if (lastItem?.start > 0) {
+            durationSeconds = Math.ceil(lastItem.start + 10);
+        }
+    }
+
+    return {
+        realTitle,
+        realChannel,
+        realDescription,
+        durationSeconds,
+        spokenTranscript
+    };
+}
+
+/**
+ * Extract full spoken audio transcript from YouTube (Pure Node.js timedtext + Python fallback)
  * Returns array of { start: number, text: string }
  */
-function fetchYouTubeSpokenTranscript(youtubeId) {
+async function fetchYouTubeSpokenTranscript(youtubeId, captionBaseUrl = '') {
+    if (!youtubeId) return [];
+
+    // 1. Pure Node.js caption extraction via captionTracks baseUrl (works on Render without Python)
+    if (captionBaseUrl) {
+        try {
+            const json3Url = captionBaseUrl.includes('fmt=') ? captionBaseUrl : `${captionBaseUrl}&fmt=json3`;
+            const cRes = await fetch(json3Url, { signal: AbortSignal.timeout(8000) });
+            if (cRes.ok) {
+                const cData = await cRes.json();
+                if (Array.isArray(cData?.events)) {
+                    const lines = [];
+                    for (const ev of cData.events) {
+                        if (!Array.isArray(ev.segs)) continue;
+                        const text = ev.segs.map(s => s.utf8 || '').join('').replace(/\n+/g, ' ').trim();
+                        if (text) {
+                            lines.push({
+                                start: Math.round(((ev.tStartMs || 0) / 1000) * 10) / 10,
+                                text
+                            });
+                        }
+                    }
+                    if (lines.length > 0) return lines;
+                }
+            }
+        } catch (e) {}
+    }
+
+    // 2. Python youtube_transcript_api fallback (if installed in environment)
     return new Promise((resolve) => {
-        if (!youtubeId) return resolve([]);
         const pyScript = `
 import sys, json
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -197,7 +339,7 @@ except Exception:
     print("[]")
 `.trim();
 
-        execFile('python', ['-c', pyScript], { timeout: 20000, maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
+        execFile('python', ['-c', pyScript], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
             if (err || !stdout) return resolve([]);
             try {
                 const parsed = JSON.parse(stdout.trim());
@@ -211,20 +353,21 @@ except Exception:
 
 /**
  * Determine exact duration in minutes for lecture segmentation
+ * Uses Math.round so 12m 07s (727s) accurately reports as 12 mins instead of inflating to 13 or 35 mins.
  */
 async function getLectureDurationMinutes(lecture, yId, realMeta) {
     if (realMeta && realMeta.durationSeconds > 0) {
         lecture.durationSeconds = realMeta.durationSeconds;
         try { await lecture.save(); } catch (e) {}
-        return Math.max(1, Math.ceil(realMeta.durationSeconds / 60));
+        return Math.max(1, Math.round(realMeta.durationSeconds / 60));
     }
 
-    if (lecture.durationSeconds && lecture.durationSeconds > 60) {
-        return Math.max(1, Math.ceil(lecture.durationSeconds / 60));
+    if (lecture.durationSeconds && lecture.durationSeconds > 0) {
+        return Math.max(1, Math.round(lecture.durationSeconds / 60));
     }
 
-    // Default 35 minutes fallback
-    return 35;
+    // Default 25 minutes single-chunk fallback if every source is unreachable
+    return 25;
 }
 
 // Prioritized Direct Gemini Models from user dashboard (Best to Okayish)
@@ -592,11 +735,15 @@ async function processLecture(lecture) {
 
     const durationMin = await getLectureDurationMinutes(lecture, yId, realMeta);
     const totalChunks = Math.max(1, Math.ceil(durationMin / CHUNK_WINDOW_MINUTES));
+    const exactSec = realMeta?.durationSeconds || lecture.durationSeconds || 0;
+    const exactFormatted = exactSec > 0
+        ? `${Math.floor(exactSec / 60)}m ${String(exactSec % 60).padStart(2, '0')}s (~${durationMin} mins)`
+        : `~${durationMin} mins`;
 
     console.log(`\n========================================================================`);
     console.log(`[KB Ingestion] STARTING LECTURE: "${lecture.title}"`);
     console.log(`[KB Ingestion] Verified Video: "${realMeta?.realTitle || lecture.title}"`);
-    console.log(`[KB Ingestion] Verified Duration: ~${durationMin} mins | Total 25-min Chunks: ${totalChunks}`);
+    console.log(`[KB Ingestion] Verified Duration: ${exactFormatted} | Total 25-min Chunks: ${totalChunks}`);
     console.log(`[KB Ingestion] YouTube ID: ${yId} | ID: ${lecture._id}`);
     console.log(`========================================================================`);
 
@@ -609,6 +756,26 @@ async function processLecture(lecture) {
     };
 
     lecture.knowledgeBase = lecture.knowledgeBase || {};
+
+    // Self-heal stale chunks if a previous run used a fallback duration (e.g. 35m) larger than the real video duration
+    if (Array.isArray(lecture.knowledgeBase.chunks) && lecture.knowledgeBase.chunks.length > 0) {
+        lecture.knowledgeBase.chunks = lecture.knowledgeBase.chunks
+            .filter(c => c.chunkIndex < totalChunks)
+            .map(c => {
+                const expectedEnd = Math.min((c.chunkIndex + 1) * CHUNK_WINDOW_MINUTES, durationMin);
+                if (c.endMinutes > durationMin + 2 && Array.isArray(c.topics)) {
+                    // Filter out any topics with timestamps exceeding the real video duration
+                    const validTopics = c.topics.filter(t => {
+                        const sec = parseTimeTextToSeconds(t?.timestamp || '');
+                        return sec === 0 || sec <= (exactSec > 0 ? exactSec + 30 : durationMin * 60 + 30);
+                    });
+                    c.topics = validTopics;
+                    c.endMinutes = expectedEnd;
+                }
+                return c;
+            });
+    }
+
     lecture.knowledgeBase.status = 'in_progress';
     lecture.knowledgeBase.flaggedForAdmin = false;
     lecture.knowledgeBase.totalDurationMinutes = durationMin;
@@ -622,7 +789,7 @@ async function processLecture(lecture) {
         ...logBase,
         action: 'STARTED',
         status: 'info',
-        message: `Started knowledge base generation for "${lecture.title}" (${realMeta?.realTitle ? `Real: "${realMeta.realTitle}"` : ''}, ${durationMin} min duration, ${totalChunks} chunks expected). 1-hour spacing strictly enforced.`
+        message: `Started knowledge base generation for "${lecture.title}" (${realMeta?.realTitle ? `Real: "${realMeta.realTitle}"` : ''}, ${exactFormatted} duration, ${totalChunks} chunk(s) expected). 1-hour spacing strictly enforced.`
     });
 
     currentWorkerStatus.activeLectureId = String(lecture._id);
@@ -759,6 +926,41 @@ async function runIngestionLoop() {
 
     try {
         await connectDB();
+        // Self-heal any lecture that previously defaulted to 35 mins when cloud scraping lacked durationSeconds
+        if (dbState.useMongo) {
+            const staleLectures = await VideoLectureModel.find({
+                'knowledgeBase.totalDurationMinutes': 35,
+                $or: [{ durationSeconds: 0 }, { durationSeconds: { $exists: false } }]
+            });
+            for (const stale of staleLectures) {
+                const yId = stale.youtubeId || extractYouTubeId(stale.youtubeUrl);
+                if (!yId) continue;
+                const meta = await fetchFullYouTubeMetadata(yId);
+                if (meta && meta.durationSeconds > 0) {
+                    const realMin = Math.max(1, Math.round(meta.durationSeconds / 60));
+                    const realChunks = Math.max(1, Math.ceil(realMin / CHUNK_WINDOW_MINUTES));
+                    stale.durationSeconds = meta.durationSeconds;
+                    stale.knowledgeBase.totalDurationMinutes = realMin;
+                    stale.knowledgeBase.totalChunksExpected = realChunks;
+                    if (Array.isArray(stale.knowledgeBase.chunks)) {
+                        stale.knowledgeBase.chunks = stale.knowledgeBase.chunks
+                            .filter(c => c.chunkIndex < realChunks)
+                            .map(c => {
+                                c.endMinutes = Math.min((c.chunkIndex + 1) * CHUNK_WINDOW_MINUTES, realMin);
+                                if (Array.isArray(c.topics)) {
+                                    c.topics = c.topics.filter(t => {
+                                        const sec = parseTimeTextToSeconds(t?.timestamp || '');
+                                        return sec === 0 || sec <= meta.durationSeconds + 30;
+                                    });
+                                }
+                                return c;
+                            });
+                    }
+                    await stale.save();
+                    console.log(`[KB Ingestion Engine] Self-healed duration for "${stale.title}": ${Math.floor(meta.durationSeconds / 60)}m ${meta.durationSeconds % 60}s (~${realMin} mins, ${realChunks} chunk(s)).`);
+                }
+            }
+        }
     } catch (dbErr) {
         console.warn('[KB Ingestion Engine] connectDB warning:', dbErr.message);
     }
@@ -846,7 +1048,10 @@ async function resetLectureKnowledgeBase(lectureId) {
         if (dbState.useMongo) {
             await VideoLectureModel.findByIdAndUpdate(lectureId, {
                 $set: {
+                    durationSeconds: 0,
                     'knowledgeBase.status': 'pending',
+                    'knowledgeBase.totalDurationMinutes': 0,
+                    'knowledgeBase.totalChunksExpected': 0,
                     'knowledgeBase.chunks': [],
                     'knowledgeBase.synopsis': '',
                     'knowledgeBase.keyConcepts': [],

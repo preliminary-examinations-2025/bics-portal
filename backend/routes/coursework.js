@@ -9,7 +9,7 @@ const { formatCloudinaryMediaUrl, uploadToCloudinary } = require('../config/clou
 const { GOOGLE_CLASSROOM_WEBHOOK_KEY } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
 const { extractYouTubeId, generateLectureSummary, generateSimpleSynopsis, askLectureQuestion } = require('../utils/aiLectureSummarizer');
-const { getWorkerStatus, startIngestionWorker, stopIngestionWorker, resetLectureKnowledgeBase } = require('../services/lectureIngestionWorker');
+const { getWorkerStatus, startIngestionWorker, stopIngestionWorker, resetLectureKnowledgeBase, fetchFullYouTubeMetadata } = require('../services/lectureIngestionWorker');
 
 // In-Memory Sliding-Window Rate Limiter for BICS Cortex /ask endpoint
 // Limit: max 15 queries per 5 minutes per student or IP address
@@ -573,6 +573,14 @@ router.post('/video-lectures/:id/progress', async (req, res) => {
             candidate.markModified('lectureProgress');
             await candidate.save();
 
+            // Also persist browser-verified YouTube IFrame duration onto VideoLectureModel if missing
+            if (dur > 10 && mongoose.Types.ObjectId.isValid(id)) {
+                VideoLectureModel.updateOne(
+                    { _id: id, $or: [{ durationSeconds: 0 }, { durationSeconds: { $exists: false } }] },
+                    { $set: { durationSeconds: Math.round(dur) } }
+                ).catch(() => {});
+            }
+
             return res.json({ success: true, progress: merged });
         } catch (e) {
             return res.status(500).json({ error: e.message });
@@ -611,6 +619,20 @@ router.post('/admin/video-lectures', async (req, res) => {
 
     const yId = extractYouTubeId(youtubeUrl);
 
+    // Resolve exact YouTube duration and metadata upfront
+    let detectedDurationSec = 0;
+    try {
+        if (yId) {
+            const ytMeta = await fetchFullYouTubeMetadata(yId);
+            if (ytMeta && ytMeta.durationSeconds > 0) {
+                detectedDurationSec = ytMeta.durationSeconds;
+            }
+        }
+    } catch (metaErr) {}
+
+    const durationMin = detectedDurationSec > 0 ? Math.max(1, Math.round(detectedDurationSec / 60)) : 0;
+    const expectedChunks = durationMin > 0 ? Math.max(1, Math.ceil(durationMin / 25)) : 1;
+
     // Automatically create a simple synopsis whenever a lecture is posted
     let initialSummary = null;
     try {
@@ -630,13 +652,20 @@ router.post('/admin/video-lectures', async (req, res) => {
                 title,
                 youtubeUrl,
                 youtubeId: yId,
+                durationSeconds: detectedDurationSec,
                 hasPlayground: !!hasPlayground,
                 playgroundLanguage: playgroundLanguage || 'cpp',
                 codeTemplate: codeTemplate || '',
                 webHtmlTemplate: webHtmlTemplate || '',
                 webCssTemplate: webCssTemplate || '',
                 webJsTemplate: webJsTemplate || '',
-                aiSummary: initialSummary || {}
+                aiSummary: initialSummary || {},
+                knowledgeBase: {
+                    status: 'pending',
+                    totalDurationMinutes: durationMin,
+                    totalChunksExpected: expectedChunks,
+                    chunks: []
+                }
             });
             await lect.save();
             return res.json({ success: true, lecture: lect });
