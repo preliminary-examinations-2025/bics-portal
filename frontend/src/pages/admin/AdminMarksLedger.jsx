@@ -21,6 +21,38 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
   const [saving, setSaving] = useState(false);
   const [linking, setLinking] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [isRefreshingData, setIsRefreshingData] = useState(false);
+  const [isRefreshingTranscripts, setIsRefreshingTranscripts] = useState(false);
+
+  const handleRefreshData = async () => {
+    if (isRefreshingData) return;
+    setIsRefreshingData(true);
+    const start = Date.now();
+    try {
+      await Promise.all([
+        fetchCourseLedger(selectedCourseCode),
+        fetchAvailableTests(selectedCourseCode),
+        fetchMasterTranscripts()
+      ]);
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshingData(false);
+    }
+  };
+
+  const handleRefreshTranscripts = async () => {
+    if (isRefreshingTranscripts) return;
+    setIsRefreshingTranscripts(true);
+    const start = Date.now();
+    try {
+      if (fetchMasterTranscripts) await fetchMasterTranscripts();
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshingTranscripts(false);
+    }
+  };
 
   // Fetch Course List & Master Transcripts
   const fetchCourses = async () => {
@@ -288,11 +320,8 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
               type="button"
-              onClick={() => {
-                fetchCourseLedger(selectedCourseCode);
-                fetchAvailableTests(selectedCourseCode);
-                fetchMasterTranscripts();
-              }}
+              onClick={handleRefreshData}
+              disabled={isRefreshingData}
               style={{
                 fontSize: '8.5pt',
                 padding: '6px 14px',
@@ -304,10 +333,11 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
                 backgroundColor: '#ffffff',
                 color: '#334155',
                 border: '1px solid #cbd5e1',
-                cursor: 'pointer'
+                cursor: isRefreshingData ? 'default' : 'pointer'
               }}
             >
-              <RefreshCw size={14} style={{ color: '#475569' }} /> Refresh Data
+              <RefreshCw size={14} className={isRefreshingData ? 'spin-smooth' : ''} style={{ color: '#475569' }} />
+              <span>{isRefreshingData ? 'Refreshing...' : 'Refresh Data'}</span>
             </button>
 
             <button
@@ -1105,10 +1135,12 @@ export default function AdminMarksLedger({ apiSecret = '' }) {
 
             <button
               className="cf-btn-secondary"
-              onClick={fetchMasterTranscripts}
-              style={{ fontSize: '8.5pt', padding: '6px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={handleRefreshTranscripts}
+              disabled={isRefreshingTranscripts}
+              style={{ fontSize: '8.5pt', padding: '6px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: isRefreshingTranscripts ? 'default' : 'pointer' }}
             >
-              <RefreshCw size={14} /> Refresh Master Transcripts
+              <RefreshCw size={14} className={isRefreshingTranscripts ? 'spin-smooth' : ''} />
+              <span>{isRefreshingTranscripts ? 'Refreshing...' : 'Refresh Master Transcripts'}</span>
             </button>
           </div>
 

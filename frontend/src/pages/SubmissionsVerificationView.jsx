@@ -4,8 +4,8 @@ import { BookOpen, CheckCircle, Lock, ShieldAlert, Flag, ExternalLink } from 'lu
 export default function SubmissionsVerificationView({ view, submittedTestsList }) {
   return (
     <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <BookOpen size={18} style={{ color: '#3b5998' }} />
+      <div className="cf-card-title">
+        <BookOpen size={16} style={{ color: '#3b5998' }} />
         <span>Evaluated Answer Sheet Verification</span>
       </div>
 
@@ -93,7 +93,7 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                       {st.title}
                     </h3>
                     <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
-                      Submitted on: {new Date(sub.submittedAt || sub.startedAt || Date.now()).toLocaleString()}
+                      Submitted on: {new Date(sub.submittedAt || sub.startedAt || Date.now()).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                     </div>
                   </div>
 

@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 
 export default function Login({
   loginError,
@@ -12,6 +13,14 @@ export default function Login({
   setRememberMe,
   handleLoginSubmit
 }) {
+  const [isRefreshingCaptcha, setIsRefreshingCaptcha] = useState(false);
+
+  const handleRefreshCaptcha = () => {
+    if (isRefreshingCaptcha) return;
+    setIsRefreshingCaptcha(true);
+    generateCaptcha();
+    setTimeout(() => setIsRefreshingCaptcha(false), 500);
+  };
   return (
     <div style={{ maxWidth: '400px', margin: '40px auto', width: '100%' }}>
       {/* PE Logo & Subtitle */}
@@ -21,7 +30,7 @@ export default function Login({
       </div>
 
       <div className="cf-card">
-        <div className="cf-card-title" style={{ textAlign: 'center' }}>Portal Sign In</div>
+        <div className="cf-card-title">Portal Sign In</div>
         {loginError && <div className="cf-alert cf-alert-error">{loginError}</div>}
         
         <form onSubmit={handleLoginSubmit}>
@@ -50,8 +59,15 @@ export default function Login({
             }}>
               {captchaCode}
             </div>
-            <button type="button" className="cf-btn-secondary" onClick={generateCaptcha} style={{ padding: '3px 8px', fontSize: '8.5pt' }}>
-              Refresh
+            <button 
+              type="button" 
+              className="cf-btn-secondary" 
+              onClick={handleRefreshCaptcha} 
+              disabled={isRefreshingCaptcha}
+              style={{ padding: '3px 8px', fontSize: '8.5pt', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            >
+              <RefreshCw size={11} className={isRefreshingCaptcha ? 'spin-smooth' : ''} />
+              <span>Refresh</span>
             </button>
           </div>
           <div className="cf-input-group" style={{ marginBottom: '15px' }}>

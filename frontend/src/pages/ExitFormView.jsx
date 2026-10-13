@@ -1,4 +1,5 @@
 import React from 'react';
+import { ClipboardList } from 'lucide-react';
 
 export default function ExitFormView({
   systemConfig,
@@ -10,7 +11,10 @@ export default function ExitFormView({
 }) {
   return (
     <div className="cf-card">
-      <div className="cf-card-title">BICS Course Exit Questionnaire</div>
+      <div className="cf-card-title">
+        <ClipboardList size={16} style={{ color: '#3b5998' }} />
+        <span>BICS Course Exit Questionnaire</span>
+      </div>
       
       {!systemConfig?.exitFormActive ? (
         <div className="cf-alert cf-alert-info">

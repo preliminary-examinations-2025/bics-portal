@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Terminal, Table } from 'lucide-react';
 
 export default function AdminLogs({
@@ -14,6 +14,21 @@ export default function AdminLogs({
   logPage
 }) {
   const [viewMode, setViewMode] = useState('terminal'); // 'terminal' (default light console) or 'table'
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const terminalScrollRef = useRef(null);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchSystemLogs) await fetchSystemLogs();
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshing(false);
+    }
+  };
 
   // Filter logs based on actor, action, and severity
   let filteredLogs = [...(systemLogs || [])];
@@ -32,9 +47,19 @@ export default function AdminLogs({
   const totalCount = filteredLogs.length;
   const maxPage = Math.ceil(totalCount / limit) || 1;
   const pageIndex = Math.min(logPage || 1, maxPage);
-  const paginatedList = filteredLogs.slice((pageIndex - 1) * limit, pageIndex * limit);
+  // Slice the page and order oldest-at-top -> newest-at-bottom
+  const paginatedList = [...filteredLogs.slice((pageIndex - 1) * limit, pageIndex * limit)].sort(
+    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+  );
   const startIdx = totalCount === 0 ? 0 : (pageIndex - 1) * limit + 1;
   const endIdx = Math.min(pageIndex * limit, totalCount);
+
+  // Auto-scroll to bottom so newest logs at the bottom are immediately visible
+  useEffect(() => {
+    if (terminalScrollRef.current) {
+      terminalScrollRef.current.scrollTop = terminalScrollRef.current.scrollHeight;
+    }
+  }, [systemLogs, pageIndex, logFilterActor, logFilterAction, logFilterSeverity, viewMode]);
 
   // Subtle light theme severity styles (no dark, no neon/bright colors)
   const getSeverityStyle = (sev) => {
@@ -135,10 +160,12 @@ export default function AdminLogs({
 
           <button
             className="cf-btn-secondary"
-            onClick={fetchSystemLogs}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '8.5pt', padding: '4px 10px' }}
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '8.5pt', padding: '4px 10px', cursor: isRefreshing ? 'default' : 'pointer' }}
           >
-            <RefreshCw size={13} /> Refresh
+            <RefreshCw size={13} className={isRefreshing ? 'spin-smooth' : ''} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
         </div>
       </div>
@@ -206,157 +233,278 @@ export default function AdminLogs({
         </div>
       </div>
 
-      {/* VIEW MODE 1: AUTHENTIC LIGHT TERMINAL CONSOLE */}
-      {viewMode === 'terminal' ? (
-        <div style={{
-          background: '#f8fafc',
-          border: '1px solid #cbd5e1',
-          borderRadius: '6px',
-          padding: '12px 14px',
-          fontFamily: 'Consolas, "Lucida Console", "Liberation Mono", Courier, monospace',
-          fontSize: '8.5pt',
-          color: '#334155',
-          lineHeight: '1.6',
-          boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.03)',
-          minHeight: '260px',
-          maxHeight: '480px',
-          overflowY: 'auto'
-        }}>
-          {paginatedList.length === 0 ? (
-            <div style={{ color: '#64748b', fontStyle: 'italic', padding: '20px 0', textAlign: 'center' }}>
-              No system log records match the current filters.
-            </div>
-          ) : (
-            paginatedList.map((log, idx) => {
-              const sev = getSeverityStyle(log.severity);
-              const dateStr = log.timestamp ? new Date(log.timestamp).toISOString().replace('T', ' ').slice(0, 19) : '----/--/-- --:--:--';
-              const actorStr = String(log.actor || 'system').padEnd(14, ' ').slice(0, 14);
+      {/* Subtle light theme severity styles & IST formatter */}
+      {(() => {
+        const formatIstTerminalTimestamp = (ts) => {
+          if (!ts) return '----/--/-- --:--:-- IST';
+          const d = new Date(ts);
+          if (isNaN(d.getTime())) return '----/--/-- --:--:-- IST';
+          const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+          return `${istDate.toISOString().replace('T', ' ').slice(0, 19)} IST`;
+        };
 
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '8px',
-                    padding: '3px 0',
-                    borderBottom: '1px solid #f1f5f9',
-                    wordBreak: 'break-word'
-                  }}
-                >
-                  <span style={{ color: '#64748b', flexShrink: 0, userSelect: 'none' }}>
-                    [{dateStr}]
-                  </span>
-                  <span style={{
-                    padding: '0 4px',
-                    borderRadius: '3px',
-                    backgroundColor: sev.bg,
-                    border: `1px solid ${sev.border}`,
-                    color: sev.text,
-                    fontWeight: 'bold',
-                    fontSize: '7.5pt',
-                    flexShrink: 0
-                  }}>
-                    {sev.tag}
-                  </span>
-                  <span style={{ color: '#002147', fontWeight: 'bold', flexShrink: 0 }}>
-                    [{actorStr}]
-                  </span>
-                  <span style={{
-                    color: '#2c4273',
-                    backgroundColor: '#f1f5f9',
-                    padding: '0 4px',
-                    borderRadius: '2px',
-                    border: '1px solid #e2e8f0',
-                    fontSize: '8pt',
-                    flexShrink: 0
-                  }}>
-                    {log.action}
-                  </span>
-                  <span style={{ color: '#334155', flex: 1, whiteSpace: 'pre-wrap' }}>
-                    {log.details || '--'}
-                  </span>
-                </div>
-              );
-            })
-          )}
-        </div>
-      ) : (
-        /* VIEW MODE 2: STRUCTURED TABLE WITH CONSOLAS FONT */
-        <div className="table-responsive" style={{ border: '1px solid var(--cf-border, #cbd5e1)', borderRadius: '6px', overflow: 'hidden' }}>
-          <table className="cf-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc' }}>
-                <th style={{ width: '170px', fontFamily: 'Consolas, "Lucida Console", Courier, monospace', fontSize: '8.5pt' }}>Timestamp</th>
-                <th style={{ width: '120px', fontFamily: 'Consolas, "Lucida Console", Courier, monospace', fontSize: '8.5pt' }}>Actor</th>
-                <th style={{ width: '190px', fontFamily: 'Consolas, "Lucida Console", Courier, monospace', fontSize: '8.5pt' }}>Action</th>
-                <th style={{ fontFamily: 'Consolas, "Lucida Console", Courier, monospace', fontSize: '8.5pt' }}>Details</th>
-                <th style={{ width: '100px', fontFamily: 'Consolas, "Lucida Console", Courier, monospace', fontSize: '8.5pt' }}>Severity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedList.length === 0 ? (
-                <tr>
-                  <td colSpan="5" style={{ fontStyle: 'italic', textAlign: 'center', padding: '20px', color: '#64748b', fontFamily: 'Consolas, monospace' }}>
-                    No system logs match the current filters.
-                  </td>
+        return viewMode === 'terminal' ? (
+          /* VIEW MODE 1: BORDERLESS TABULAR SYSTEM LOG CONSOLE */
+          <div
+            ref={terminalScrollRef}
+            className="mongo-bson-mono"
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              padding: '12px 16px',
+              fontSize: '9.5pt',
+              color: '#334155',
+              lineHeight: '1.55',
+              boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.03)',
+              minHeight: '280px',
+              maxHeight: '520px',
+              overflowY: 'auto',
+              overflowX: 'auto'
+            }}
+          >
+            {paginatedList.length === 0 ? (
+              <div style={{ color: '#64748b', fontStyle: 'italic', padding: '24px 0', textAlign: 'center', fontSize: '9.5pt' }}>
+                No system log records match the current filters.
+              </div>
+            ) : (
+              <table
+                className="mongo-bson-mono"
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  border: 'none',
+                  fontSize: '9.5pt',
+                  lineHeight: '1.55'
+                }}
+              >
+                <tbody>
+                  {paginatedList.map((log, idx) => {
+                    const sev = getSeverityStyle(log.severity);
+                    const dateStr = formatIstTerminalTimestamp(log.timestamp);
+                    const actorStr = String(log.actor || 'system').trim();
+
+                    return (
+                      <tr
+                        key={idx}
+                        style={{
+                          borderBottom: idx < paginatedList.length - 1 ? '1px solid #e2e8f0' : 'none',
+                          backgroundColor: 'transparent',
+                          transition: 'background-color 0.1s ease'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f1f5f9'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                      >
+                        {/* Column 1: Timestamp */}
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '7px 12px 7px 4px',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top',
+                            color: '#64748b',
+                            userSelect: 'none'
+                          }}
+                        >
+                          [{dateStr}]
+                        </td>
+
+                        {/* Column 2: Severity Pill */}
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '7px 12px 7px 0',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top'
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              minWidth: '54px',
+                              textAlign: 'center',
+                              padding: '1px 7px',
+                              borderRadius: '3px',
+                              backgroundColor: sev.bg,
+                              border: `1px solid ${sev.border}`,
+                              color: sev.text,
+                              fontWeight: '700',
+                              fontSize: '8.5pt',
+                              lineHeight: '1.35'
+                            }}
+                          >
+                            {sev.tag.trim()}
+                          </span>
+                        </td>
+
+                        {/* Column 3: Actor */}
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '7px 14px 7px 0',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top',
+                            color: '#002147',
+                            fontWeight: '700'
+                          }}
+                        >
+                          [{actorStr}]
+                        </td>
+
+                        {/* Column 4: Action Tag */}
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '7px 14px 7px 0',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top'
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              color: '#2c4273',
+                              backgroundColor: '#f1f5f9',
+                              padding: '1px 7px',
+                              borderRadius: '3px',
+                              border: '1px solid #e2e8f0',
+                              fontSize: '8.5pt',
+                              fontWeight: '600',
+                              lineHeight: '1.35'
+                            }}
+                          >
+                            {log.action}
+                          </span>
+                        </td>
+
+                        {/* Column 5: Details Message */}
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '7px 4px 7px 0',
+                            width: '100%',
+                            verticalAlign: 'top',
+                            color: '#1e293b',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word'
+                          }}
+                        >
+                          {log.details || '--'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        ) : (
+          /* VIEW MODE 2: BORDERLESS STRUCTURED TABLE WITH HORIZONTAL ROW DIVIDERS */
+          <div
+            className="table-responsive mongo-bson-mono"
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              padding: '8px 14px',
+              overflowX: 'auto'
+            }}
+          >
+            <table
+              className="mongo-bson-mono"
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                border: 'none',
+                fontSize: '9.5pt'
+              }}
+            >
+              <thead>
+                <tr style={{ borderBottom: '1px solid #cbd5e1' }}>
+                  <th style={{ border: 'none', textAlign: 'left', padding: '8px 12px 8px 4px', whiteSpace: 'nowrap', color: '#475569', fontSize: '9pt', fontWeight: '700' }}>Timestamp (IST)</th>
+                  <th style={{ border: 'none', textAlign: 'left', padding: '8px 12px 8px 0', whiteSpace: 'nowrap', color: '#475569', fontSize: '9pt', fontWeight: '700' }}>Severity</th>
+                  <th style={{ border: 'none', textAlign: 'left', padding: '8px 14px 8px 0', whiteSpace: 'nowrap', color: '#475569', fontSize: '9pt', fontWeight: '700' }}>Actor</th>
+                  <th style={{ border: 'none', textAlign: 'left', padding: '8px 14px 8px 0', whiteSpace: 'nowrap', color: '#475569', fontSize: '9pt', fontWeight: '700' }}>Action</th>
+                  <th style={{ border: 'none', textAlign: 'left', padding: '8px 4px 8px 0', width: '100%', color: '#475569', fontSize: '9pt', fontWeight: '700' }}>Details</th>
                 </tr>
-              ) : (
-                paginatedList.map((log, idx) => {
-                  const sev = getSeverityStyle(log.severity);
-                  return (
-                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ fontSize: '8pt', fontFamily: 'Consolas, "Lucida Console", Courier, monospace', color: '#64748b' }}>
-                        {new Date(log.timestamp).toLocaleString()}
-                      </td>
-                      <td style={{ fontWeight: 'bold', fontSize: '8.5pt', color: '#002147', fontFamily: 'Consolas, "Lucida Console", Courier, monospace' }}>
-                        {log.actor || 'system'}
-                      </td>
-                      <td>
-                        <span style={{
-                          fontFamily: 'Consolas, "Lucida Console", Courier, monospace',
-                          padding: '2px 6px',
-                          backgroundColor: '#f1f5f9',
-                          border: '1px solid #e2e8f0',
-                          borderRadius: '3px',
-                          fontSize: '8pt',
-                          color: '#2c4273'
+              </thead>
+              <tbody>
+                {paginatedList.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" style={{ border: 'none', fontStyle: 'italic', textAlign: 'center', padding: '24px', color: '#64748b', fontSize: '9.5pt' }}>
+                      No system logs match the current filters.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedList.map((log, idx) => {
+                    const sev = getSeverityStyle(log.severity);
+                    const dateStr = formatIstTerminalTimestamp(log.timestamp);
+                    return (
+                      <tr
+                        key={idx}
+                        style={{
+                          borderBottom: idx < paginatedList.length - 1 ? '1px solid #e2e8f0' : 'none'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f1f5f9'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                      >
+                        <td style={{ border: 'none', padding: '7px 12px 7px 4px', whiteSpace: 'nowrap', verticalAlign: 'top', fontSize: '9.5pt', color: '#64748b' }}>
+                          {dateStr}
+                        </td>
+                        <td style={{ border: 'none', padding: '7px 12px 7px 0', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            minWidth: '54px',
+                            textAlign: 'center',
+                            padding: '1px 7px',
+                            borderRadius: '3px',
+                            fontSize: '8.5pt',
+                            fontWeight: '700',
+                            backgroundColor: sev.bg,
+                            border: `1px solid ${sev.border}`,
+                            color: sev.text
+                          }}>
+                            {log.severity?.toUpperCase() || 'INFO'}
+                          </span>
+                        </td>
+                        <td style={{ border: 'none', padding: '7px 14px 7px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: '700', fontSize: '9.5pt', color: '#002147' }}>
+                          {log.actor || 'system'}
+                        </td>
+                        <td style={{ border: 'none', padding: '7px 14px 7px 0', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '1px 7px',
+                            backgroundColor: '#f1f5f9',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '3px',
+                            fontSize: '8.5pt',
+                            fontWeight: '600',
+                            color: '#2c4273'
+                          }}>
+                            {log.action}
+                          </span>
+                        </td>
+                        <td style={{
+                          border: 'none',
+                          padding: '7px 4px 7px 0',
+                          width: '100%',
+                          verticalAlign: 'top',
+                          fontSize: '9.5pt',
+                          color: '#1e293b',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word'
                         }}>
-                          {log.action}
-                        </span>
-                      </td>
-                      <td style={{
-                        fontSize: '8.5pt',
-                        color: '#334155',
-                        fontFamily: 'Consolas, "Lucida Console", Courier, monospace',
-                        maxWidth: '440px',
-                        whiteSpace: 'pre-wrap'
-                      }}>
-                        {log.details || '--'}
-                      </td>
-                      <td>
-                        <span style={{
-                          display: 'inline-block',
-                          padding: '2px 8px',
-                          borderRadius: '3px',
-                          fontSize: '7.5pt',
-                          fontWeight: 'bold',
-                          fontFamily: 'Consolas, "Lucida Console", Courier, monospace',
-                          backgroundColor: sev.bg,
-                          border: `1px solid ${sev.border}`,
-                          color: sev.text
-                        }}>
-                          {log.severity?.toUpperCase() || 'INFO'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+                          {log.details || '--'}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {/* PAGINATION ROW */}
       <div style={{

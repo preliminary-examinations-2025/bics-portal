@@ -94,9 +94,10 @@ export default function StudentInfo({ studentProfile }) {
   // If course registration has not been submitted yet
   if (!studentProfile.registrationSubmitted) {
     return (
-      <div className="cf-card" style={{ maxWidth: '900px', margin: '0 auto', backgroundColor: '#ffffff', border: '1px solid #cbd5e1' }}>
-        <div className="cf-card-title" style={{ color: '#002147', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
-          Official Student Information Record
+      <div className="cf-card" style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1' }}>
+        <div className="cf-card-title">
+          <User size={16} style={{ color: '#3b5998' }} />
+          <span>Official Student Information Record</span>
         </div>
         <div style={{
           backgroundColor: '#f8fafc',
@@ -126,7 +127,10 @@ export default function StudentInfo({ studentProfile }) {
 
   return (
     <div className="cf-card" style={{ padding: '15px' }}>
-      <div className="cf-card-title">Student Information Board</div>
+      <div className="cf-card-title">
+        <User size={16} style={{ color: '#3b5998' }} />
+        <span>Student Information Board</span>
+      </div>
 
       <div className="student-dossier-container" style={{
         backgroundColor: '#ffffff',

@@ -38,6 +38,7 @@ import AdminRecycleBin from './pages/admin/AdminRecycleBin';
 import AdminAttendance from './pages/admin/AdminAttendance';
 import AdminCounterfoilView from './pages/admin/AdminCounterfoilView';
 import AdminMarksLedger from './pages/admin/AdminMarksLedger';
+import AdminDatabaseViewer from './pages/admin/AdminDatabaseViewer';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
@@ -197,7 +198,8 @@ export default function App() {
       '/admin/objections': 'admin_objections',
       '/admin/recyclebin': 'admin_recyclebin',
       '/admin/counterfoil': 'admin_counterfoil',
-      '/admin/marks-ledger': 'admin_marks_ledger'
+      '/admin/marks-ledger': 'admin_marks_ledger',
+      '/admin/database': 'admin_database'
     };
     const matched = pathToView[location.pathname];
     return matched !== undefined ? matched : 'not_found';
@@ -236,7 +238,8 @@ export default function App() {
     admin_objections: '/admin/objections',
     admin_recyclebin: '/admin/recyclebin',
     admin_counterfoil: '/admin/counterfoil',
-    admin_marks_ledger: '/admin/marks-ledger'
+    admin_marks_ledger: '/admin/marks-ledger',
+    admin_database: '/admin/database'
   };
 
   const setView = (newView) => {
@@ -309,7 +312,8 @@ export default function App() {
       '/admin/objections': 'admin_objections',
       '/admin/recyclebin': 'admin_recyclebin',
       '/admin/counterfoil': 'admin_counterfoil',
-      '/admin/marks-ledger': 'admin_marks_ledger'
+      '/admin/marks-ledger': 'admin_marks_ledger',
+      '/admin/database': 'admin_database'
     };
     const matched = pathToView[location.pathname];
     const nextView = matched !== undefined ? matched : 'not_found';
@@ -667,6 +671,13 @@ export default function App() {
   const [feedbackAnswers, setFeedbackAnswers] = useState({});
   const [feedbackSuccess, setFeedbackSuccess] = useState('');
   const [activeCourseFeedbackIdx, setActiveCourseFeedbackIdx] = useState(0);
+
+  // Strictly reset feedback answers and active course index when candidate or view changes
+  useEffect(() => {
+    setFeedbackAnswers({});
+    setActiveCourseFeedbackIdx(0);
+    setFeedbackSuccess('');
+  }, [user?.id, studentProfile?._id, view, feedbackType]);
 
   // Admin Examination Attendance Sheet states
   const [attendanceCourseCode, setAttendanceCourseCode] = useState('R526CS01T');
@@ -2380,6 +2391,9 @@ int main() {
   };
 
   const handleLogout = () => {
+    setFeedbackAnswers({});
+    setActiveCourseFeedbackIdx(0);
+    setFeedbackSuccess('');
     setAuthLoading(true);
     setLoadingMessage("Signing out & clearing session cache...");
     
@@ -2395,6 +2409,9 @@ int main() {
       setAuthLoading(false);
       setUser(null);
       setStudentProfile(null);
+      setFeedbackAnswers({});
+      setActiveCourseFeedbackIdx(0);
+      setFeedbackSuccess('');
       setView('login');
       setIsMobileSidebarOpen(false);
       localStorage.removeItem('bics_session');
@@ -3061,26 +3078,38 @@ int main() {
     });
   };
 
-  const handleFeedbackSubmit = async (e) => {
-    e.preventDefault();
+  const handleFeedbackSubmit = async (e, explicitType = null) => {
+    if (e && e.preventDefault) e.preventDefault();
     setFeedbackSuccess('');
 
-    // Validation check across all courses
+    // Reliably determine active feedback type ('mid' | 'end')
+    const activeType = explicitType || (view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid'));
+    const cId = studentProfile?._id || studentProfile?.id || user?.id;
+
+    // Validation check across all courses (10 questions per course)
     let valid = true;
     let missingInfo = '';
     let firstMissingIdx = -1;
 
     for (let i = 0; i < COURSES_LIST.length; i++) {
       const course = COURSES_LIST[i];
-      const q1 = feedbackAnswers[course]?.[0];
-      const q2 = feedbackAnswers[course]?.[1];
-      const q3 = feedbackAnswers[course]?.[2];
-      const q4 = feedbackAnswers[course]?.[3];
-      const q5 = feedbackAnswers[course]?.[4];
+      const a = feedbackAnswers[course] || {};
+      
+      // Check ratings Q1 to Q9 (indexes 0 to 8)
+      for (let q = 0; q < 9; q++) {
+        if (!a[q]) {
+          valid = false;
+          missingInfo = `Please provide ratings for all evaluation dimensions in "${course}".`;
+          firstMissingIdx = i;
+          break;
+        }
+      }
+      if (!valid) break;
 
-      if (!q1 || !q2 || !q3 || !q4 || !q5 || q5.trim() === '') {
+      // Check remarks Q10 (index 9)
+      if (!a[9] || a[9].trim() === '') {
         valid = false;
-        missingInfo = `Please answer all questions and provide general remarks for "${course}".`;
+        missingInfo = `Please provide written comments/suggestions for "${course}".`;
         firstMissingIdx = i;
         break;
       }
@@ -3090,38 +3119,63 @@ int main() {
       if (firstMissingIdx !== -1) {
         setActiveCourseFeedbackIdx(firstMissingIdx);
       }
-      alert(missingInfo);
-      return;
+      return { success: false, error: missingInfo, firstMissingIdx };
     }
 
-    // Format answers map
+    // Format answers map (10 elements per course)
     const formatted = {};
     COURSES_LIST.forEach(course => {
+      const a = feedbackAnswers[course] || {};
       formatted[course] = [
-        feedbackAnswers[course][0],
-        feedbackAnswers[course][1],
-        feedbackAnswers[course][2],
-        feedbackAnswers[course][3],
-        feedbackAnswers[course][4].trim()
+        String(a[0] || '3'),
+        String(a[1] || '3'),
+        String(a[2] || '3'),
+        String(a[3] || '3'),
+        String(a[4] || '3'),
+        String(a[5] || '3'),
+        String(a[6] || '3'),
+        String(a[7] || '3'),
+        String(a[8] || '3'),
+        String(a[9] || '').trim()
       ];
     });
 
     try {
-      const res = await fetch(`${API_BASE}/candidate/feedback/${user.id}`, {
+      const targetUserId = user?.id || cId;
+      const res = await fetch(`${API_BASE}/candidate/feedback/${targetUserId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: feedbackType, feedback: formatted })
+        body: JSON.stringify({ type: activeType, feedback: formatted })
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setFeedbackSuccess(`${feedbackType === 'mid' ? 'Mid Sem' : 'End Sem'} Feedback submitted successfully.`);
+        setFeedbackSuccess(`${activeType === 'mid' ? 'Mid Sem' : 'End Sem'} Feedback submitted successfully.`);
+        // Purge all candidate-specific draft keys in localStorage upon successful submission
+        try {
+          if (cId) {
+            localStorage.removeItem(`bics_fb_draft_v3_${cId}_${activeType}`);
+            localStorage.removeItem(`bics_fb_draft_v2_${cId}_${activeType}`);
+            localStorage.removeItem(`bics_fb_draft_${cId}_${activeType}`);
+            localStorage.removeItem(`bics_feedback_draft_${cId}_${activeType}`);
+          }
+          if (user?.id) {
+            localStorage.removeItem(`bics_fb_draft_v3_${user.id}_${activeType}`);
+            localStorage.removeItem(`bics_fb_draft_v2_${user.id}_${activeType}`);
+            localStorage.removeItem(`bics_fb_draft_${user.id}_${activeType}`);
+            localStorage.removeItem(`bics_feedback_draft_${user.id}_${activeType}`);
+          }
+          localStorage.removeItem('bics_feedback_draft_candidate_mid');
+          localStorage.removeItem('bics_feedback_draft_candidate_end');
+        } catch (_) {}
+        setFeedbackAnswers({});
         fetchStudentProfile();
+        return { success: true };
       } else {
-        alert(data.error || "Failed to submit feedback.");
+        return { success: false, error: data.error || "Failed to submit feedback." };
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to submit feedback due to network connection issues.");
+      return { success: false, error: "Failed to submit feedback due to network connection issues." };
     }
   };
 
@@ -3151,7 +3205,7 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger'].includes(targetView);
     }
     
     if (user.role === 'student') {
@@ -3471,12 +3525,15 @@ int main() {
 
               {(view === 'midsem' || view === 'endsem') && studentProfile && systemConfig && (
                 <CourseFeedbackView
-                  feedbackType={feedbackType}
+                  key={`course_feedback_${studentProfile?._id || user?.id}_${view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid')}`}
+                  feedbackType={view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid')}
                   studentProfile={studentProfile}
                   systemConfig={systemConfig}
                   setView={setView}
+                  user={user}
                   COURSES_LIST={COURSES_LIST}
                   feedbackAnswers={feedbackAnswers}
+                  setFeedbackAnswers={setFeedbackAnswers}
                   activeCourseFeedbackIdx={activeCourseFeedbackIdx}
                   setActiveCourseFeedbackIdx={setActiveCourseFeedbackIdx}
                   feedbackSuccess={feedbackSuccess}
@@ -3657,6 +3714,10 @@ int main() {
                   systemLogs={systemLogs}
                   logPage={logPage}
                 />
+              )}
+
+              {view === 'admin_database' && (
+                <AdminDatabaseViewer API_BASE={API_BASE} />
               )}
 
               {view === 'admin_proctoring' && (
@@ -3924,13 +3985,41 @@ int main() {
                 <div style={{ border: '1px solid #cbd5e1', padding: '10px', borderRadius: '4px', backgroundColor: '#f8fafc' }}>
                   <strong style={{ fontSize: '9.5pt', color: '#1e3a8a' }}>Mid-Semester Course Feedback</strong>
                   {selectedCandidate.midSemFeedback && Object.keys(selectedCandidate.midSemFeedback).length > 0 ? (
-                    <div style={{ marginTop: '5px', fontSize: '8.5pt', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                      {Object.entries(selectedCandidate.midSemFeedback).map(([course, answers]) => (
-                        <div key={course} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '5px' }}>
-                          <strong>{course}</strong>: Rating 1: {answers[0]} • Rating 2: {answers[1]} • Rating 3: {answers[2]} • Recommended: {answers[3]} <br />
-                          <span style={{ color: '#555' }}>Comments: {answers[4] || "No comments"}</span>
-                        </div>
-                      ))}
+                    <div style={{ marginTop: '5px', fontSize: '8.5pt', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {Object.entries(selectedCandidate.midSemFeedback).map(([course, answers]) => {
+                        const isTenDim = Array.isArray(answers) && answers.length >= 10;
+                        let avgScore = null;
+                        if (isTenDim) {
+                          const numRatings = answers.slice(0, 9).map(v => parseFloat(v)).filter(v => !isNaN(v));
+                          if (numRatings.length > 0) {
+                            avgScore = (numRatings.reduce((a, b) => a + b, 0) / numRatings.length).toFixed(1);
+                          }
+                        }
+                        return (
+                          <div key={course} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                              <strong style={{ color: '#0f172a' }}>{course}</strong>
+                              {isTenDim && avgScore && (
+                                <span style={{ fontSize: '8pt', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                  Score: {avgScore} / 5.0
+                                </span>
+                              )}
+                            </div>
+                            {isTenDim ? (
+                              <div style={{ fontSize: '8pt', color: '#64748b', marginBottom: '2px' }}>
+                                Ratings (Q1–Q9): {answers.slice(0, 9).join(' • ')}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: '8pt', color: '#64748b', marginBottom: '2px' }}>
+                                Rating 1: {answers[0]} • Rating 2: {answers[1]} • Rating 3: {answers[2]} • Recommended: {answers[3]}
+                              </div>
+                            )}
+                            <div style={{ color: '#334155', fontStyle: 'italic', fontSize: '8.5pt' }}>
+                              Remarks: "{isTenDim ? (answers[9] || "No remarks") : (answers[4] || "No comments")}"
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p style={{ fontStyle: 'italic', color: '#666', fontSize: '8.5pt', margin: '3px 0 0 0' }}>Not submitted yet.</p>
@@ -3941,13 +4030,41 @@ int main() {
                 <div style={{ border: '1px solid #cbd5e1', padding: '10px', borderRadius: '4px', backgroundColor: '#f8fafc' }}>
                   <strong style={{ fontSize: '9.5pt', color: '#1e3a8a' }}>End-Semester Course Feedback</strong>
                   {selectedCandidate.endSemFeedback && Object.keys(selectedCandidate.endSemFeedback).length > 0 ? (
-                    <div style={{ marginTop: '5px', fontSize: '8.5pt', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                      {Object.entries(selectedCandidate.endSemFeedback).map(([course, answers]) => (
-                        <div key={course} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '5px' }}>
-                          <strong>{course}</strong>: Rating 1: {answers[0]} • Rating 2: {answers[1]} • Rating 3: {answers[2]} • Recommended: {answers[3]} <br />
-                          <span style={{ color: '#555' }}>Comments: {answers[4] || "No comments"}</span>
-                        </div>
-                      ))}
+                    <div style={{ marginTop: '5px', fontSize: '8.5pt', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {Object.entries(selectedCandidate.endSemFeedback).map(([course, answers]) => {
+                        const isTenDim = Array.isArray(answers) && answers.length >= 10;
+                        let avgScore = null;
+                        if (isTenDim) {
+                          const numRatings = answers.slice(0, 9).map(v => parseFloat(v)).filter(v => !isNaN(v));
+                          if (numRatings.length > 0) {
+                            avgScore = (numRatings.reduce((a, b) => a + b, 0) / numRatings.length).toFixed(1);
+                          }
+                        }
+                        return (
+                          <div key={course} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                              <strong style={{ color: '#0f172a' }}>{course}</strong>
+                              {isTenDim && avgScore && (
+                                <span style={{ fontSize: '8pt', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                  Score: {avgScore} / 5.0
+                                </span>
+                              )}
+                            </div>
+                            {isTenDim ? (
+                              <div style={{ fontSize: '8pt', color: '#64748b', marginBottom: '2px' }}>
+                                Ratings (Q1–Q9): {answers.slice(0, 9).join(' • ')}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: '8pt', color: '#64748b', marginBottom: '2px' }}>
+                                Rating 1: {answers[0]} • Rating 2: {answers[1]} • Rating 3: {answers[2]} • Recommended: {answers[3]}
+                              </div>
+                            )}
+                            <div style={{ color: '#334155', fontStyle: 'italic', fontSize: '8.5pt' }}>
+                              Remarks: "{isTenDim ? (answers[9] || "No remarks") : (answers[4] || "No comments")}"
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p style={{ fontStyle: 'italic', color: '#666', fontSize: '8.5pt', margin: '3px 0 0 0' }}>Not submitted yet.</p>

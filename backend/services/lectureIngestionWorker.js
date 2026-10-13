@@ -397,13 +397,14 @@ async function enforceHourlyPacing(logContext = {}) {
         currentWorkerStatus.state = 'waiting_hourly_quota';
 
         const waitMin = Math.ceil(waitMs / 60000);
-        console.log(`\n[KB Ingestion Engine] HOURLY PACING ENFORCED: Sleeping ${waitMin} minutes until ${targetTime.toLocaleTimeString()} to strictly protect 20 RPD quota...`);
+        const targetIstTime = targetTime.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+        console.log(`\n[KB Ingestion Engine] HOURLY PACING ENFORCED: Sleeping ${waitMin} minutes until ${targetIstTime} IST to strictly protect 20 RPD quota...`);
 
         await writeWorkerLog({
             ...logContext,
             action: 'HOURLY_PACING',
             status: 'info',
-            message: `1-Hour Spacing Enforced: Pausing ${waitMin} mins before next request (scheduled for ${targetTime.toLocaleTimeString()}) to preserve 20 RPD daily quota.`,
+            message: `1-Hour Spacing Enforced: Pausing ${waitMin} mins before next request (scheduled for ${targetIstTime} IST) to preserve 20 RPD daily quota.`,
             metadata: {
                 nextScheduledAt: targetTime,
                 waitMinutes: waitMin

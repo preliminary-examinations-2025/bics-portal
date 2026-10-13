@@ -26,8 +26,9 @@ export default function HallTicketView({
 }) {
   return (
     <div className="cf-card">
-      <div className="cf-card-title" style={{ borderBottom: '1px solid #cbd5e1', paddingBottom: '12px', marginBottom: '20px' }}>
-        Official Hall Ticket Dispatch ({systemConfig.examType === 'midsem' ? 'Mid' : 'End'} Semester)
+      <div className="cf-card-title">
+        <FileText size={16} style={{ color: '#3b5998' }} />
+        <span>Official Hall Ticket Dispatch ({systemConfig.examType === 'midsem' ? 'Mid' : 'End'} Semester)</span>
       </div>
       
       {!systemConfig.hallTicketDownloadActive ? (

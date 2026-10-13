@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { RefreshCw, Lock } from 'lucide-react';
 
 export default function ChangePassword({
   pwdMessage,
@@ -18,9 +19,20 @@ export default function ChangePassword({
   changePasswordCaptchaInput,
   setChangePasswordCaptchaInput
 }) {
+  const [isRefreshingCaptcha, setIsRefreshingCaptcha] = useState(false);
+
+  const handleRefreshCaptcha = () => {
+    if (isRefreshingCaptcha) return;
+    setIsRefreshingCaptcha(true);
+    generateChangePasswordCaptcha();
+    setTimeout(() => setIsRefreshingCaptcha(false), 500);
+  };
   return (
     <div className="cf-card" style={{ maxWidth: '400px', margin: '20px auto' }}>
-      <div className="cf-card-title">Change Password</div>
+      <div className="cf-card-title">
+        <Lock size={16} style={{ color: '#3b5998' }} />
+        <span>Change Password</span>
+      </div>
       {pwdMessage && <div className="cf-alert cf-alert-success">{pwdMessage}</div>}
       {pwdError && <div className="cf-alert cf-alert-error">{pwdError}</div>}
       <form onSubmit={handleChangePassword}>
@@ -96,8 +108,15 @@ export default function ChangePassword({
           }}>
             {changePasswordCaptchaCode}
           </div>
-          <button type="button" className="cf-btn-secondary" onClick={generateChangePasswordCaptcha} style={{ padding: '3px 8px', fontSize: '8.5pt' }}>
-            Refresh
+          <button 
+            type="button" 
+            className="cf-btn-secondary" 
+            onClick={handleRefreshCaptcha} 
+            disabled={isRefreshingCaptcha}
+            style={{ padding: '3px 8px', fontSize: '8.5pt', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+          >
+            <RefreshCw size={11} className={isRefreshingCaptcha ? 'spin-smooth' : ''} />
+            <span>Refresh</span>
           </button>
         </div>
         <div className="cf-input-group" style={{ marginBottom: '20px' }}>

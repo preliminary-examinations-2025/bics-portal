@@ -17,11 +17,14 @@ export default function AdminCounterfoilView({ systemConfig, setSystemConfig, ha
   const fetchCounterfoils = async () => {
     try {
       setLoading(true);
+      const start = Date.now();
       const res = await fetch(`${API_BASE}/admin/counterfoil/list`);
       if (res.ok) {
         const data = await res.json();
         setCounterfoils(data || []);
       }
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
     } catch (e) {
       console.error('Failed to fetch counterfoil submissions:', e);
     } finally {
@@ -118,7 +121,8 @@ export default function AdminCounterfoilView({ systemConfig, setSystemConfig, ha
           )}
 
           <button className="cf-btn-secondary" onClick={fetchCounterfoils} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <RefreshCw size={14} /> Refresh List
+            <RefreshCw size={14} className={loading ? 'spin-smooth' : ''} />
+            <span>{loading ? 'Refreshing...' : 'Refresh List'}</span>
           </button>
         </div>
       </div>

@@ -1137,8 +1137,10 @@ export default function LecturesView({
   return (
     <div className="cf-card">
       
-      {/* Original Standard Institutional Heading Box Preserved Exactly */}
-      <div className="cf-card-title">Course Video Lectures</div>
+      <div className="cf-card-title">
+        <Video size={16} style={{ color: '#3b5998' }} />
+        <span>Course Video Lectures</span>
+      </div>
 
       {videoLectures.length === 0 ? (
         <div className="cf-alert cf-alert-info">No video lectures have been scheduled or uploaded yet.</div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { API_BASE } from '../../config';
 
@@ -16,12 +16,28 @@ export default function AdminTickets({
   adminTicketResolutionStatus,
   setAdminTicketResolutionStatus
 }) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchAdminTickets) await fetchAdminTickets();
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div className="cf-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
         <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Helpdesk Tickets & Requests</h2>
-        <button className="cf-btn-secondary" onClick={fetchAdminTickets} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <RefreshCw size={14} /> Refresh Tickets
+        <button className="cf-btn-secondary" onClick={handleRefresh} disabled={isRefreshing} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: isRefreshing ? 'default' : 'pointer' }}>
+          <RefreshCw size={14} className={isRefreshing ? 'spin-smooth' : ''} />
+          <span>{isRefreshing ? 'Refreshing...' : 'Refresh Tickets'}</span>
         </button>
       </div>
 
@@ -118,7 +134,7 @@ export default function AdminTickets({
 
                     return (
                       <tr key={tId || idx}>
-                        <td style={{ fontSize: '8.5pt' }}>{new Date(ticket.createdAt).toLocaleString()}</td>
+                        <td style={{ fontSize: '8.5pt' }}>{new Date(ticket.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</td>
                         <td>
                           <div style={{ fontWeight: 'bold', fontSize: '9pt', color: '#1e293b' }}>{ticket.candidateName}</div>
                           <div style={{ fontSize: '7.5pt', color: '#64748b' }}>ID: {ticket.studentId}</div>
@@ -180,7 +196,7 @@ export default function AdminTickets({
             <div style={{ borderBottom: '1px solid var(--cf-border)', paddingBottom: '15px', marginBottom: '15px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '8.5pt', color: '#64748b', marginBottom: '10px' }}>
                 <div><strong>Candidate:</strong> {selectedAdminTicket.candidateName} ({selectedAdminTicket.studentId})</div>
-                <div><strong>Submitted:</strong> {new Date(selectedAdminTicket.createdAt).toLocaleString()}</div>
+                <div><strong>Submitted:</strong> {new Date(selectedAdminTicket.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</div>
                 <div><strong>Category:</strong> <span style={{ textTransform: 'capitalize' }}>{selectedAdminTicket.category?.replace('_', ' ')}</span></div>
                 <div><strong>Current Status:</strong> <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{selectedAdminTicket.status}</span></div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RefreshCw, Video } from 'lucide-react';
 import StudentProctorDashboard from '../../components/StudentProctorDashboard';
 
@@ -12,6 +12,28 @@ export default function AdminProctoring({
   setSelectedProctorStudent,
   liveSubmissions
 }) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchLiveSubmissions) {
+        if (selectedProctorTest) {
+          const tId = selectedProctorTest.id || selectedProctorTest._id;
+          await fetchLiveSubmissions(tId);
+        } else {
+          await fetchLiveSubmissions();
+        }
+      }
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshing(false);
+    }
+  };
+
   // Automatically fetch candidate list whenever an exam is selected or view is rendered
   useEffect(() => {
     if (fetchLiveSubmissions) {
@@ -31,10 +53,12 @@ export default function AdminProctoring({
         <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Live Exam Proctoring Terminal</h2>
         <button
           className="cf-btn-secondary"
-          onClick={() => fetchLiveSubmissions && fetchLiveSubmissions()}
-          style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '8.5pt', margin: 0 }}
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          style={{ display: 'inline-flex', gap: '6px', alignItems: 'center', fontSize: '8.5pt', margin: 0, cursor: isRefreshing ? 'default' : 'pointer' }}
         >
-          <RefreshCw size={14} /> Refresh Lists
+          <RefreshCw size={14} className={isRefreshing ? 'spin-smooth' : ''} />
+          <span>{isRefreshing ? 'Refreshing...' : 'Refresh Lists'}</span>
         </button>
       </div>
 

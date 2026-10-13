@@ -1,5 +1,5 @@
-import React from 'react';
-import { RefreshCw, Printer, ExternalLink, Loader2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { RefreshCw, Printer, ExternalLink, Loader2, BookOpen } from 'lucide-react';
 
 export default function SubmissionsView({
   submissionsLoading,
@@ -17,8 +17,27 @@ export default function SubmissionsView({
   setContactSubView,
   setView
 }) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing || submissionsLoading) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchStudentSubmissions) {
+        await fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username);
+      }
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) {
+        await new Promise(r => setTimeout(r, 600 - elapsed));
+      }
+      setIsRefreshing(false);
+    }
+  };
+
   return (
-    <div className="submissions-page-container">
+    <div className="cf-card submissions-page-container">
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           .app-sidebar, .app-header, .app-footer, .print-hide, .latency-notice {
@@ -50,49 +69,30 @@ export default function SubmissionsView({
         }
       `}} />
 
-      {/* Title Header */}
-      <div className="print-hide" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <div>
-          <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Coursework Submissions Ledger</h2>
-          <p style={{ fontSize: '9pt', color: '#64748b', margin: '4px 0 0 0' }}>Real-time synchronization with Google Classroom</p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          {ledgerQrData && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
-              {(() => {
-                const { success, ...cleanQr } = ledgerQrData;
-                return (
-                  <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify(cleanQr))}`} 
-                    alt="Security QR" 
-                    style={{ width: '40px', height: '40px', display: 'block' }} 
-                  />
-                );
-              })()}
-              <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
-                <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#0f172a' }}>Verification Seal</span>
-                <span style={{ fontSize: '6.5pt', color: '#64748b', fontFamily: 'monospace' }}>SECURE HMAC QR</span>
-              </div>
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button 
-              className="cf-btn-secondary" 
-              onClick={() => {
-                fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username);
-              }}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              <RefreshCw size={14} /> Refresh Ledger
-            </button>
-            <button 
-              className="cf-btn-primary" 
-              onClick={() => window.print()}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              <Printer size={14} /> Print Ledger
-            </button>
-          </div>
+      {/* Outer Box Header matching Portal Institutional Style */}
+      <div className="cf-card-title print-hide" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <BookOpen size={16} style={{ color: '#3b5998' }} />
+        <span>Coursework Submissions Ledger</span>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button 
+            type="button"
+            className="cf-btn-secondary" 
+            onClick={handleRefresh}
+            disabled={isRefreshing || submissionsLoading}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '8pt', padding: '3px 10px', height: '26px', cursor: (isRefreshing || submissionsLoading) ? 'default' : 'pointer' }}
+          >
+            <RefreshCw size={12} className={(isRefreshing || submissionsLoading) ? 'spin-smooth' : ''} />
+            <span>{(isRefreshing || submissionsLoading) ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+          <button 
+            type="button"
+            className="cf-btn-primary" 
+            onClick={() => window.print()}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '8pt', padding: '3px 10px', height: '26px' }}
+          >
+            <Printer size={12} /> Print
+          </button>
         </div>
       </div>
 
@@ -134,23 +134,44 @@ export default function SubmissionsView({
         </div>
       </div>
 
-      {/* Filter Tabs Container */}
-      <div className="print-hide" style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-        {[
-          { id: 'all', label: 'All Submissions' },
-          { id: 'assignment', label: 'Assignments' },
-          { id: 'practical', label: 'Practicals' },
-          { id: 'class_test', label: 'Class Tests' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            className={`cf-btn-${activeSubmissionTab === tab.id ? 'primary' : 'secondary'}`}
-            style={{ padding: '8px 16px', borderRadius: '20px', fontSize: '9pt', fontWeight: 'bold' }}
-            onClick={() => setActiveSubmissionTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* Filter Tabs Container & Verification Seal Row */}
+      <div className="print-hide" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {[
+            { id: 'all', label: 'All Submissions' },
+            { id: 'assignment', label: 'Assignments' },
+            { id: 'practical', label: 'Practicals' },
+            { id: 'class_test', label: 'Class Tests' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              className={`cf-btn-${activeSubmissionTab === tab.id ? 'primary' : 'secondary'}`}
+              style={{ padding: '8px 16px', borderRadius: '20px', fontSize: '9pt', fontWeight: 'bold' }}
+              onClick={() => setActiveSubmissionTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {ledgerQrData && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #cbd5e1', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+            {(() => {
+              const { success, ...cleanQr } = ledgerQrData;
+              return (
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(JSON.stringify(cleanQr))}`} 
+                  alt="Security QR" 
+                  style={{ width: '38px', height: '38px', display: 'block' }} 
+                />
+              );
+            })()}
+            <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+              <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#0f172a' }}>Verification Seal</span>
+              <span style={{ fontSize: '6.5pt', color: '#64748b', fontFamily: 'monospace' }}>SECURE HMAC QR</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dynamic Overall Statistics Segment */}
@@ -326,10 +347,10 @@ export default function SubmissionsView({
                                   )}
                                 </td>
                                 <td style={{ fontSize: '9pt', color: '#475569' }}>
-                                  {sub.dueDate ? new Date(sub.dueDate).toLocaleString() : 'N/A'}
+                                  {sub.dueDate ? `${new Date(sub.dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A'}
                                 </td>
                                 <td style={{ fontSize: '9pt', color: '#475569' }}>
-                                  {sub.submissionDate ? new Date(sub.submissionDate).toLocaleString() : 'Pending'}
+                                  {sub.submissionDate ? `${new Date(sub.submissionDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'Pending'}
                                 </td>
                                 <td>
                                   <span className="status-badge" style={{ backgroundColor: badgeBg, color: badgeColor, fontWeight: 'bold', textTransform: 'uppercase' }}>
@@ -345,7 +366,7 @@ export default function SubmissionsView({
                                     style={{ margin: 0, padding: '4px 10px', fontSize: '8pt', borderColor: '#cbd5e1' }}
                                     onClick={() => {
                                       setContactSubject(`Google Classroom Submission Inquiry - ${sub.courseCode} - ${sub.title}`);
-                                      setContactMessage(`Dear Support,\n\nI am raising an inquiry regarding my submission for "${sub.title}" under course code: ${sub.courseCode} (${sub.courseName}).\n\nSubmission Details:\n- Status: ${sub.status?.toUpperCase()}\n- Score Resolved: ${sub.score}/${sub.maxScore}\n- Due Date: ${sub.dueDate ? new Date(sub.dueDate).toLocaleString() : 'N/A'}\n- Submission Date: ${sub.submissionDate ? new Date(sub.submissionDate).toLocaleString() : 'N/A'}\n\nPlease check if this matches Google Classroom records.\n\nThank you.`);
+                                      setContactMessage(`Dear Support,\n\nI am raising an inquiry regarding my submission for "${sub.title}" under course code: ${sub.courseCode} (${sub.courseName}).\n\nSubmission Details:\n- Status: ${sub.status?.toUpperCase()}\n- Score Resolved: ${sub.score}/${sub.maxScore}\n- Due Date: ${sub.dueDate ? `${new Date(sub.dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A'}\n- Submission Date: ${sub.submissionDate ? `${new Date(sub.submissionDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A'}\n\nPlease check if this matches Google Classroom records.\n\nThank you.`);
                                       setContactSuccess('');
                                       setContactError('');
                                       setContactSubView('form');

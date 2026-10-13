@@ -1,5 +1,5 @@
-import React from 'react';
-import { ClipboardList, ShieldAlert, FileEdit, Plus, Loader2, Lock, Check, Upload, HelpCircle, GraduationCap, AlertTriangle, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { ClipboardList, ShieldAlert, FileEdit, Plus, Loader2, Lock, Check, Upload, HelpCircle, GraduationCap, AlertTriangle, X, RefreshCw } from 'lucide-react';
 import RichText from '../../components/RichText';
 import Editor from '@monaco-editor/react';
 import { API_BASE } from '../../config';
@@ -62,6 +62,23 @@ export default function AdminTests({
   runAdminCodeVerification,
   view
 }) {
+  const [isRefreshingSubmissions, setIsRefreshingSubmissions] = useState(false);
+
+  const handleRefreshSubmissions = async (testId) => {
+    if (isRefreshingSubmissions) return;
+    setIsRefreshingSubmissions(true);
+    const start = Date.now();
+    try {
+      if (fetchExamSubmissions && testId) {
+        await fetchExamSubmissions(testId);
+      }
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshingSubmissions(false);
+    }
+  };
+
   const triggerAlert = (title, msg) => {
     if (showModalAlert) showModalAlert(title, msg);
     else alert(`${title}: ${msg}`);
@@ -106,7 +123,7 @@ export default function AdminTests({
                             <td style={{ fontWeight: 'bold' }}>{t.title}</td>
                             <td>{t.duration} mins</td>
                             <td style={{ fontSize: '8.5pt', color: '#555' }}>
-                              {new Date(t.startDate).toLocaleString()} - <br />{new Date(t.endDate).toLocaleString()}
+                              {new Date(t.startDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST - <br />{new Date(t.endDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                             </td>
                             <td>{t.questions?.length || 0} items</td>
                             <td>
@@ -1009,7 +1026,7 @@ export default function AdminTests({
                               <span style={{ color: '#64748b' }}>Configured Marks cap:</span> <strong>{newExamMarks} Marks</strong>
                             </div>
                             <div>
-                              <span style={{ color: '#64748b' }}>Access Window:</span> <span style={{ fontSize: '8.5pt' }}>{new Date(newExamStart).toLocaleString()} - {new Date(newExamEnd).toLocaleString()}</span>
+                              <span style={{ color: '#64748b' }}>Access Window:</span> <span style={{ fontSize: '8.5pt' }}>{new Date(newExamStart).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST - {new Date(newExamEnd).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
                             </div>
                           </div>
 
@@ -1045,16 +1062,18 @@ export default function AdminTests({
                     <button
                       type="button"
                       className="cf-btn-secondary"
-                      style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: '8pt', background: '#ffffff', color: '#002147', borderColor: '#cbd5e1', cursor: 'pointer' }}
+                      disabled={isRefreshingSubmissions}
+                      style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: '8pt', background: '#ffffff', color: '#002147', borderColor: '#cbd5e1', cursor: isRefreshingSubmissions ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
                       onClick={() => {
                         const firstSub = (adminExamSubmissions || [])[0];
                         const testId = firstSub?.testId;
                         if (testId) {
-                          fetchExamSubmissions(testId);
+                          handleRefreshSubmissions(testId);
                         }
                       }}
                     >
-                      Refresh Submissions
+                      <RefreshCw size={12} className={isRefreshingSubmissions ? 'spin-smooth' : ''} />
+                      <span>{isRefreshingSubmissions ? 'Refreshing...' : 'Refresh Submissions'}</span>
                     </button>
                   )}
                 </div>
@@ -1084,10 +1103,10 @@ export default function AdminTests({
                             <td>{s.studentId}</td>
                             <td style={{ fontWeight: 'bold' }}>{s.candidateName}</td>
                             <td style={{ fontSize: '8pt', color: '#555' }}>
-                              {new Date(s.startedAt).toLocaleTimeString()}
+                              {new Date(s.startedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                             </td>
                             <td style={{ fontSize: '8pt', color: '#555' }}>
-                              {s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString() : (s.status === 'evaluated' ? 'Graded' : (s.status === 'submitted' ? 'Submitted' : 'In Progress'))}
+                              {s.submittedAt ? `${new Date(s.submittedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : (s.status === 'evaluated' ? 'Graded' : (s.status === 'submitted' ? 'Submitted' : 'In Progress'))}
                             </td>
                             <td>
                               <span style={{

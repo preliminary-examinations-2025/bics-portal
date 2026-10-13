@@ -37,6 +37,7 @@ const eirfRouter = require('./routes/eirf');
 const counterfoilRouter = require('./routes/counterfoil');
 const marksLedgerRouter = require('./routes/marksLedger');
 const ticketsRouter = require('./routes/tickets');
+const adminDbViewerRouter = require('./routes/adminDbViewer');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -71,6 +72,7 @@ app.use('/api', eirfRouter);
 app.use('/api', counterfoilRouter);
 app.use('/api/admin/marks-ledger', marksLedgerRouter);
 app.use('/api', ticketsRouter);
+app.use('/api/admin/db', adminDbViewerRouter);
 
 // Global Technical Error Handling Middleware
 app.use(async (err, req, res, next) => {

@@ -156,7 +156,10 @@ export default function StudentCoC() {
 
   return (
     <div className="cf-card" style={{ padding: '15px' }}>
-      <div className="cf-card-title">BICS Course Code of Conduct</div>
+      <div className="cf-card-title">
+        <ShieldCheck size={16} style={{ color: '#3b5998' }} />
+        <span>BICS Course Code of Conduct</span>
+      </div>
 
       {/* Main Inner Legal Charter Container */}
       <div className="coc-charter-container" style={{

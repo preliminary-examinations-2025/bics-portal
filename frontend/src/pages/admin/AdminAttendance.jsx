@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FileText, RefreshCw, Printer } from 'lucide-react';
 
 export default function AdminAttendance({
@@ -40,6 +40,7 @@ export default function AdminAttendance({
   attendanceSemester,
   setAttendanceSemester
 }) {
+  const [isSyncing, setIsSyncing] = useState(false);
   const isLab = attendanceCourseCode.endsWith('L') || attendanceCourseCode.toLowerCase().includes('lab');
             
             // Exam type: 'MST' (Mid Semester Test) or 'ESE' (End Semester Examination)
@@ -80,6 +81,13 @@ export default function AdminAttendance({
                 setAttendanceCustomTime(slot.time || '');
                 setAttendanceCustomMarks(slot.marks !== undefined ? String(slot.marks) : '');
               }
+            };
+
+            const handleManualSync = (courseCodeToSync) => {
+              if (isSyncing) return;
+              setIsSyncing(true);
+              syncFromTimetable(courseCodeToSync);
+              setTimeout(() => setIsSyncing(false), 600);
             };
 
             // Filter students
@@ -136,12 +144,13 @@ export default function AdminAttendance({
                       <button
                         type="button"
                         className="cf-btn-secondary"
-                        onClick={() => syncFromTimetable(attendanceCourseCode)}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '9px 16px', fontSize: '9pt', fontWeight: '600' }}
+                        onClick={() => handleManualSync(attendanceCourseCode)}
+                        disabled={isSyncing}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '9px 16px', fontSize: '9pt', fontWeight: '600', cursor: isSyncing ? 'default' : 'pointer' }}
                         title="Re-fetch date, duration, and marks from the timetable schedule"
                       >
-                        <RefreshCw size={14} />
-                        Fetch from Timetable
+                        <RefreshCw size={14} className={isSyncing ? 'spin-smooth' : ''} />
+                        <span>{isSyncing ? 'Fetching...' : 'Fetch from Timetable'}</span>
                       </button>
 
                       <button

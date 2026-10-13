@@ -1,4 +1,5 @@
 import React from 'react';
+import { BookOpen } from 'lucide-react';
 import { formatMediaUrl } from '../utils/media';
 
 export default function MaterialsView({ courseMaterials = [] }) {
@@ -15,7 +16,10 @@ export default function MaterialsView({ courseMaterials = [] }) {
 
   return (
     <div className="cf-card">
-      <div className="cf-card-title">Course Study Materials</div>
+      <div className="cf-card-title">
+        <BookOpen size={16} style={{ color: '#3b5998' }} />
+        <span>Course Study Materials</span>
+      </div>
       {courseMaterials.length === 0 ? (
         <div className="cf-alert cf-alert-info">No study materials uploaded yet.</div>
       ) : (
@@ -44,7 +48,7 @@ export default function MaterialsView({ courseMaterials = [] }) {
                           <strong>{mat.title}</strong>
                         </td>
                         <td style={{ color: '#555', fontSize: '9pt' }}>
-                          {new Date(mat.createdAt).toLocaleDateString()}
+                          {new Date(mat.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                         </td>
                         <td style={{ textAlign: 'center' }}>
                           <a

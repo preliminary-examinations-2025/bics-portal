@@ -472,7 +472,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                     <div key={idx} style={{ borderBottom: '1px dotted #e2e8f0', paddingBottom: '6px', marginBottom: '6px', color: logColor }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '7.5pt', marginBottom: '2px' }}>
                         <span>{log.type}</span>
-                        <span style={{ color: '#64748b' }}>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                        <span style={{ color: '#64748b' }}>{new Date(log.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
                       </div>
                       <div style={{ fontSize: '8pt' }}>{log.details}</div>
                     </div>

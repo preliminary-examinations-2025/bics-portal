@@ -235,7 +235,7 @@ export function VerificationReviewView({
               </div>
             </div>
             <div style={{ textAlign: 'right', fontSize: '8.5pt', color: '#475569' }}>
-              <div><strong>Submission Date:</strong> {submission?.submittedAt ? new Date(submission.submittedAt).toLocaleString() : 'Recorded'}</div>
+              <div><strong>Submission Date:</strong> {submission?.submittedAt ? `${new Date(submission.submittedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'Recorded'}</div>
               <div><strong>Evaluation Status:</strong> <span style={{ color: test?.verificationStatus === 'closed' ? '#475569' : '#166534', fontWeight: 'bold' }}>{test?.verificationStatus === 'closed' ? 'Finalized (Verification Closed)' : 'Finalized & Verification Open'}</span></div>
             </div>
           </div>
@@ -399,7 +399,7 @@ export function VerificationReviewView({
                         </strong>
                       </div>
                       <span style={{ fontSize: '8pt', color: '#64748b' }}>
-                        Raised on: {new Date(obj.raisedAt).toLocaleString()}
+                        Raised on: {new Date(obj.raisedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                       </span>
                     </div>
                     

@@ -1,10 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { Flag, CheckCircle, Clock, AlertTriangle, FileText, Search, ExternalLink, Paperclip, ChevronRight, XCircle } from 'lucide-react';
+import { Flag, CheckCircle, Clock, AlertTriangle, FileText, Search, ExternalLink, Paperclip, ChevronRight, XCircle, Scale, RefreshCw } from 'lucide-react';
 import RichText from '../components/RichText';
 
 export default function StudentObjectionsView({ user, studentObjectionsList = [], fetchStudentObjections, setView }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchStudentObjections) {
+        await fetchStudentObjections(user?.id || user?._id);
+      }
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) {
+        await new Promise(r => setTimeout(r, 600 - elapsed));
+      }
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (user && fetchStudentObjections) {
@@ -31,121 +49,128 @@ export default function StudentObjectionsView({ user, studentObjectionsList = []
   const rejectedCount = studentObjectionsList.filter(o => o.status === 'rejected').length;
 
   return (
-    <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Flag size={20} style={{ color: '#b45309' }} />
-          <div>
-            <h2 style={{ fontSize: '13pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>
-              Examination Grievances &amp; Objections
-            </h2>
-            <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '2px' }}>
-              Track the resolution status of your submitted question objections across online examinations.
-            </div>
-          </div>
-        </div>
+    <div className="cf-card">
+      {/* Outer Box Header matching Portal Institutional Style */}
+      <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <Scale size={16} style={{ color: '#3b5998' }} />
+        <span>Examination Grievances &amp; Objections</span>
 
         <button 
+          type="button"
           className="cf-btn-secondary" 
-          onClick={() => fetchStudentObjections && fetchStudentObjections(user.id || user._id)}
-          style={{ fontSize: '8.5pt', padding: '6px 14px' }}
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '8pt', padding: '3px 10px', height: '26px', cursor: isRefreshing ? 'default' : 'pointer' }}
         >
-          Refresh Status
+          <RefreshCw size={12} className={isRefreshing ? 'spin-smooth' : ''} />
+          <span>{isRefreshing ? 'Refreshing...' : 'Refresh Status'}</span>
         </button>
       </div>
 
       {/* Metric Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
-        <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '14px 16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '20px' }}>
+        <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '14px 18px' }}>
           <div style={{ fontSize: '8.5pt', color: '#64748b', fontWeight: 'bold' }}>Total Objections Logged</div>
-          <div style={{ fontSize: '16pt', fontWeight: 'bold', color: '#002147', marginTop: '4px' }}>
+          <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#002147', marginTop: '6px' }}>
             {studentObjectionsList.length}
           </div>
         </div>
 
-        <div style={{ backgroundColor: '#fefce8', border: '1px solid #fef08a', borderRadius: '8px', padding: '14px 16px' }}>
+        <div style={{ backgroundColor: '#fefce8', border: '1px solid #fef08a', borderRadius: '6px', padding: '14px 18px' }}>
           <div style={{ fontSize: '8.5pt', color: '#92400e', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Clock size={14} /> Under Academic Review
           </div>
-          <div style={{ fontSize: '16pt', fontWeight: 'bold', color: '#b45309', marginTop: '4px' }}>
+          <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#b45309', marginTop: '6px' }}>
             {pendingCount}
           </div>
         </div>
 
-        <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '14px 16px' }}>
+        <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '14px 18px' }}>
           <div style={{ fontSize: '8.5pt', color: '#166534', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <CheckCircle size={14} /> Accepted &amp; Credit Revised
           </div>
-          <div style={{ fontSize: '16pt', fontWeight: 'bold', color: '#15803d', marginTop: '4px' }}>
+          <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#15803d', marginTop: '6px' }}>
             {resolvedCount}
           </div>
         </div>
 
-        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '14px 16px' }}>
+        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '14px 18px' }}>
           <div style={{ fontSize: '8.5pt', color: '#991b1b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <XCircle size={14} /> Grievance Declined
           </div>
-          <div style={{ fontSize: '16pt', fontWeight: 'bold', color: '#b91c1c', marginTop: '4px' }}>
+          <div style={{ fontSize: '18pt', fontWeight: 'bold', color: '#b91c1c', marginTop: '6px' }}>
             {rejectedCount}
           </div>
         </div>
       </div>
 
       {/* Filters & Search Toolbar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1 1 240px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '6px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {[
+            { id: 'all', label: 'All', count: studentObjectionsList.length },
+            { id: 'pending', label: 'Under Review', count: pendingCount },
+            { id: 'resolved', label: 'Accepted', count: resolvedCount },
+            { id: 'rejected', label: 'Declined', count: rejectedCount }
+          ].map(tab => {
+            const isActive = statusFilter === tab.id;
+            return (
+              <button 
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                style={{ 
+                  backgroundColor: isActive ? '#eff6ff' : '#ffffff',
+                  border: `1px solid ${isActive ? '#3b82f6' : '#cbd5e1'}`,
+                  color: isActive ? '#002147' : '#475569',
+                  borderRadius: '4px',
+                  padding: '6px 14px', 
+                  fontSize: '8.5pt', 
+                  fontWeight: 'bold',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>{tab.label}</span>
+                <span style={{
+                  backgroundColor: isActive ? '#bfdbfe' : '#f1f5f9',
+                  color: isActive ? '#1e40af' : '#64748b',
+                  padding: '1px 7px',
+                  borderRadius: '10px',
+                  fontSize: '7.5pt',
+                  fontWeight: 'bold'
+                }}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1 1 240px', maxWidth: '340px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '6px 12px' }}>
           <Search size={14} style={{ color: '#64748b' }} />
           <input
             type="text"
             placeholder="Search by Objection ID, test, or category..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ border: 'none', outline: 'none', width: '100%', fontSize: '9pt', color: '#334155' }}
+            style={{ border: 'none', outline: 'none', width: '100%', fontSize: '8.5pt', color: '#334155' }}
           />
-        </div>
-
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          <button 
-            className={`cf-btn-${statusFilter === 'all' ? 'primary' : 'secondary'}`} 
-            onClick={() => setStatusFilter('all')}
-            style={{ padding: '4px 12px', fontSize: '8.5pt' }}
-          >
-            All ({studentObjectionsList.length})
-          </button>
-          <button 
-            className={`cf-btn-${statusFilter === 'pending' ? 'primary' : 'secondary'}`} 
-            onClick={() => setStatusFilter('pending')}
-            style={{ padding: '4px 12px', fontSize: '8.5pt' }}
-          >
-            Pending ({pendingCount})
-          </button>
-          <button 
-            className={`cf-btn-${statusFilter === 'resolved' ? 'primary' : 'secondary'}`} 
-            onClick={() => setStatusFilter('resolved')}
-            style={{ padding: '4px 12px', fontSize: '8.5pt' }}
-          >
-            Accepted ({resolvedCount})
-          </button>
-          <button 
-            className={`cf-btn-${statusFilter === 'rejected' ? 'primary' : 'secondary'}`} 
-            onClick={() => setStatusFilter('rejected')}
-            style={{ padding: '4px 12px', fontSize: '8.5pt' }}
-          >
-            Declined ({rejectedCount})
-          </button>
         </div>
       </div>
 
       {/* Objections List Container */}
       {filteredObjections.length === 0 ? (
-        <div className="cf-alert cf-alert-info" style={{ textAlign: 'center', padding: '24px' }}>
+        <div className="cf-alert cf-alert-info" style={{ textAlign: 'center', padding: '24px 20px', borderRadius: '6px', margin: 0 }}>
           {studentObjectionsList.length === 0 
             ? "No question objections recorded yet. You can raise objections directly from the Online Test Review Terminal during active verification windows."
             : "No objections matching your filter criteria."}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {filteredObjections.map((obj, idx) => {
             const isPending = obj.status === 'pending';
             const isAccepted = obj.status === 'resolved' || obj.status === 'resolved_accepted';
@@ -208,7 +233,7 @@ export default function StudentObjectionsView({ user, studentObjectionsList = []
                     </div>
 
                     <div style={{ fontSize: '8.5pt', color: '#64748b', marginTop: '4px' }}>
-                      Logged on: {new Date(obj.raisedAt).toLocaleString()}
+                      Logged on: {new Date(obj.raisedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                     </div>
                   </div>
 

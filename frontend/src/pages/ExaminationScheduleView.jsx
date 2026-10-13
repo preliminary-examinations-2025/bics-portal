@@ -28,8 +28,8 @@ export default function ExaminationScheduleView({ systemConfig }) {
 
   return (
     <div className="cf-card">
-      <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Calendar size={18} style={{ color: '#3b5998' }} />
+      <div className="cf-card-title">
+        <Calendar size={16} style={{ color: '#3b5998' }} />
         <span>Class Tests Schedule</span>
       </div>
 

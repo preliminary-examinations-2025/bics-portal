@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { formatMediaUrl } from '../../utils/media';
 import { API_BASE } from '../../config';
 
@@ -58,8 +59,11 @@ export default function AdminCoursework({
 
   const handleManualRefresh = async () => {
     setIsRefreshingLogs(true);
+    const start = Date.now();
     await fetchWorkerData();
-    setTimeout(() => setIsRefreshingLogs(false), 400);
+    const elapsed = Date.now() - start;
+    if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+    setIsRefreshingLogs(false);
   };
 
   const handleRetryLecture = async (lectureId) => {
@@ -130,13 +134,21 @@ export default function AdminCoursework({
     return `${m}m ${String(s).padStart(2, '0')}s`;
   };
 
-  const filteredLogs = workerLogs.filter(log => {
-    if (logFilter === 'all') return true;
-    if (logFilter === 'error') return log.status === 'error' || log.action === 'FAILED_FLAGGED';
-    if (logFilter === 'warning') return log.status === 'warning' || log.action === 'RETRYING';
-    if (logFilter === 'success') return log.status === 'success' || log.action === 'CHUNK_EXTRACTED' || log.action === 'COMPLETED';
-    return true;
-  });
+  const filteredLogs = [...workerLogs]
+    .filter(log => {
+      if (logFilter === 'all') return true;
+      if (logFilter === 'error') return log.status === 'error' || log.action === 'FAILED_FLAGGED';
+      if (logFilter === 'warning') return log.status === 'warning' || log.action === 'RETRYING';
+      if (logFilter === 'success') return log.status === 'success' || log.action === 'CHUNK_EXTRACTED' || log.action === 'COMPLETED';
+      return true;
+    })
+    .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [workerLogs, logFilter]);
 
   const metrics = workerStatus?.metrics || {
     totalLectures: videoLectures?.length || 0,
@@ -236,9 +248,10 @@ export default function AdminCoursework({
               onClick={handleManualRefresh}
               disabled={isRefreshingLogs}
               className="cf-btn-secondary"
-              style={{ padding: '5px 10px', fontSize: '8pt', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'Consolas, monospace' }}
+              style={{ padding: '5px 10px', fontSize: '8pt', display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: 'Consolas, monospace', cursor: isRefreshingLogs ? 'default' : 'pointer' }}
             >
-              <span>{isRefreshingLogs ? 'Refreshing...' : '🔄 Refresh Logs'}</span>
+              <RefreshCw size={12} className={isRefreshingLogs ? 'spin-smooth' : ''} />
+              <span>{isRefreshingLogs ? 'Refreshing...' : 'Refresh Logs'}</span>
             </button>
           </div>
         </div>
@@ -299,7 +312,7 @@ export default function AdminCoursework({
                 </div>
                 <div style={{ fontSize: '8pt', color: '#78350f', fontFamily: 'Consolas, monospace' }}>
                   Next Gemini API request scheduled in: <strong>{formatCountdown(workerStatus.worker.countdownSeconds)}</strong>
-                  {workerStatus.worker.nextScheduledRequestTime && ` (at ${new Date(workerStatus.worker.nextScheduledRequestTime).toLocaleTimeString()})`}
+                  {workerStatus.worker.nextScheduledRequestTime && ` (at ${new Date(workerStatus.worker.nextScheduledRequestTime).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST)`}
                 </div>
               </div>
             </div>
@@ -451,80 +464,135 @@ export default function AdminCoursework({
 
           <div
             ref={logContainerRef}
+            className="mongo-bson-mono"
             style={{
-              maxHeight: '260px',
+              maxHeight: '280px',
               overflowY: 'auto',
+              overflowX: 'auto',
               background: '#f8fafc',
               borderRadius: '6px',
               border: '1px solid #cbd5e1',
               padding: '10px 14px',
-              fontFamily: 'Consolas, "Lucida Console", "Liberation Mono", Courier, monospace',
-              fontSize: '8pt',
+              fontSize: '9.5pt',
               color: '#334155',
-              lineHeight: '1.6',
+              lineHeight: '1.55',
               boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.03)'
             }}
           >
             {filteredLogs.length === 0 ? (
-              <div style={{ color: '#64748b', fontStyle: 'italic', padding: '16px 0', textAlign: 'center' }}>
+              <div style={{ color: '#64748b', fontStyle: 'italic', padding: '16px 0', textAlign: 'center', fontSize: '9.5pt' }}>
                 No worker events logged yet. Background worker daemon is active and polling.
               </div>
             ) : (
-              filteredLogs.map((log, idx) => {
-                const timeStr = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '--:--:--';
-                
-                // Subtle, gentle light styles for log tags
-                let tagBg = '#eff6ff';
-                let tagBorder = '#bfdbfe';
-                let tagColor = '#1e40af';
-                let actionLabel = log.action || 'INFO';
+              <table
+                className="mongo-bson-mono"
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  border: 'none',
+                  fontSize: '9.5pt',
+                  lineHeight: '1.55'
+                }}
+              >
+                <tbody>
+                  {filteredLogs.map((log, idx) => {
+                    const timeStr = log.timestamp ? `${new Date(log.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : '--:--:--';
+                    
+                    // Subtle, gentle light styles for log tags
+                    let tagBg = '#eff6ff';
+                    let tagBorder = '#bfdbfe';
+                    let tagColor = '#1e40af';
+                    let actionLabel = log.action || 'INFO';
 
-                if (log.status === 'error' || log.action === 'FAILED_FLAGGED') {
-                  tagBg = '#fef2f2';
-                  tagBorder = '#fecaca';
-                  tagColor = '#991b1b';
-                } else if (log.status === 'warning' || log.action === 'RETRYING') {
-                  tagBg = '#fffbeb';
-                  tagBorder = '#fde68a';
-                  tagColor = '#92400e';
-                } else if (log.status === 'success' || log.action === 'CHUNK_EXTRACTED' || log.action === 'COMPLETED') {
-                  tagBg = '#f0fdf4';
-                  tagBorder = '#bbf7d0';
-                  tagColor = '#166534';
-                }
+                    if (log.status === 'error' || log.action === 'FAILED_FLAGGED') {
+                      tagBg = '#fef2f2';
+                      tagBorder = '#fecaca';
+                      tagColor = '#991b1b';
+                    } else if (log.status === 'warning' || log.action === 'RETRYING') {
+                      tagBg = '#fffbeb';
+                      tagBorder = '#fde68a';
+                      tagColor = '#92400e';
+                    } else if (log.status === 'success' || log.action === 'CHUNK_EXTRACTED' || log.action === 'COMPLETED') {
+                      tagBg = '#f0fdf4';
+                      tagBorder = '#bbf7d0';
+                      tagColor = '#166534';
+                    }
 
-                return (
-                  <div key={idx} style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '8px',
-                    padding: '2.5px 0',
-                    borderBottom: '1px solid #f1f5f9',
-                    wordBreak: 'break-word'
-                  }}>
-                    <span style={{ color: '#64748b', flexShrink: 0, userSelect: 'none' }}>[{timeStr}]</span>
-                    <span style={{
-                      backgroundColor: tagBg,
-                      border: `1px solid ${tagBorder}`,
-                      color: tagColor,
-                      padding: '0 4px',
-                      borderRadius: '3px',
-                      fontWeight: 'bold',
-                      fontSize: '7.5pt',
-                      flexShrink: 0
-                    }}>
-                      [{actionLabel}]
-                    </span>
-                    <span style={{ color: '#334155', flex: 1 }}>
-                      {log.lectureTitle ? <strong style={{ color: '#002147' }}>"{log.lectureTitle}": </strong> : ''}
-                      {log.message}
-                    </span>
-                    <span style={{ color: '#64748b', fontSize: '7pt', flexShrink: 0, userSelect: 'none' }}>
-                      [gemini-direct]
-                    </span>
-                  </div>
-                );
-              })
+                    return (
+                      <tr
+                        key={idx}
+                        style={{
+                          borderBottom: idx < filteredLogs.length - 1 ? '1px solid #e2e8f0' : 'none'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f1f5f9'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                      >
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '6px 12px 6px 2px',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top',
+                            color: '#64748b',
+                            userSelect: 'none'
+                          }}
+                        >
+                          [{timeStr}]
+                        </td>
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '6px 12px 6px 0',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top'
+                          }}
+                        >
+                          <span style={{
+                            display: 'inline-block',
+                            backgroundColor: tagBg,
+                            border: `1px solid ${tagBorder}`,
+                            color: tagColor,
+                            padding: '1px 6px',
+                            borderRadius: '3px',
+                            fontWeight: '700',
+                            fontSize: '8.5pt',
+                            lineHeight: '1.35'
+                          }}>
+                            [{actionLabel}]
+                          </span>
+                        </td>
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '6px 12px 6px 0',
+                            width: '100%',
+                            verticalAlign: 'top',
+                            color: '#1e293b',
+                            wordBreak: 'break-word'
+                          }}
+                        >
+                          {log.lectureTitle ? <strong style={{ color: '#002147' }}>&quot;{log.lectureTitle}&quot;: </strong> : ''}
+                          {log.message}
+                        </td>
+                        <td
+                          style={{
+                            border: 'none',
+                            padding: '6px 2px 6px 0',
+                            whiteSpace: 'nowrap',
+                            verticalAlign: 'top',
+                            color: '#64748b',
+                            fontSize: '8pt',
+                            userSelect: 'none',
+                            textAlign: 'right'
+                          }}
+                        >
+                          [gemini-direct]
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
           </div>
         </div>

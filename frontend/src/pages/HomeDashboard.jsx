@@ -1,4 +1,5 @@
 import React from 'react';
+import { Bell } from 'lucide-react';
 
 export default function HomeDashboard({ systemConfig }) {
   if (!systemConfig) return null;
@@ -6,7 +7,10 @@ export default function HomeDashboard({ systemConfig }) {
   return (
     <div>
       <div className="cf-card">
-        <div className="cf-card-title">Portal Announcements</div>
+        <div className="cf-card-title">
+          <Bell size={16} style={{ color: '#3b5998' }} />
+          <span>Portal Announcements</span>
+        </div>
         {systemConfig.announcements && systemConfig.announcements.length === 0 ? (
           <p style={{ fontStyle: 'italic', color: '#666' }}>No active announcements.</p>
         ) : (

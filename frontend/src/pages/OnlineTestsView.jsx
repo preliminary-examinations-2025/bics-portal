@@ -11,7 +11,8 @@ export default function OnlineTestsView({
   return (
     <div className="cf-card">
       <div className="cf-card-title">
-        <ClipboardList size={18} style={{ marginRight: '8px', verticalAlign: 'middle', color: '#3b5998' }} /> Online Practice &amp; Exam Tests
+        <ClipboardList size={16} style={{ color: '#3b5998' }} />
+        <span>Online Practice &amp; Exam Tests</span>
       </div>
       {(systemConfig && systemConfig.onlineExamActive === false) ? (
         <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
@@ -102,7 +103,7 @@ export default function OnlineTestsView({
                     Duration: <strong>{test.duration} minutes</strong> | Total Marks: <strong>{test.marks} marks</strong>
                   </p>
                   <p style={{ fontSize: '8.5pt', color: '#888' }}>
-                    Open from: {new Date(test.startDate).toLocaleString()} to {new Date(test.endDate).toLocaleString()}
+                    Open from: {new Date(test.startDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST to {new Date(test.endDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                   </p>
                 </div>
                 <div>

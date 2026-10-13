@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Clock, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { CheckCircle, Clock, AlertTriangle, ShieldAlert, ClipboardList } from 'lucide-react';
 import { API_BASE } from '../config';
 
 const STANDARD_COURSES = [
@@ -250,7 +250,14 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
   };
 
   return (
-    <div style={{ maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="cf-card">
+      {/* Outer Box Header matching Portal Institutional Style */}
+      <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <ClipboardList size={16} style={{ color: '#3b5998' }} />
+        <span>Answer Sheet Marks Counterfoil Entry ({examType === 'midsem' ? 'Mid' : 'End'} Semester)</span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
       {/* HEADER CARD */}
       <div style={{
@@ -481,7 +488,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
                 </div>
                 <div style={{ fontSize: '8.5pt', color: '#047857' }}>
                   Approved Total Score: <strong>{currentSubmission.totalObtained} / {currentSubmission.totalMax}</strong>
-                  {currentSubmission.approvedAt && ` on ${new Date(currentSubmission.approvedAt).toLocaleDateString()}`}
+                  {currentSubmission.approvedAt && ` on ${new Date(currentSubmission.approvedAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`}
                 </div>
               </div>
             )}
@@ -676,6 +683,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
         </>
       )}
 
+      </div>
     </div>
   );
 }

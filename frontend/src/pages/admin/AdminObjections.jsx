@@ -14,6 +14,22 @@ export default function AdminObjections({
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeWebTab, setActiveWebTab] = useState('html');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchAdminObjections) {
+        await fetchAdminObjections();
+      }
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshing(false);
+    }
+  };
 
   return (
     <div>
@@ -27,8 +43,14 @@ export default function AdminObjections({
               Review candidate grievances per question, inspect submitted source code and choices, update marks awarded, and post committee resolution feedback.
             </div>
           </div>
-          <button className="cf-btn-secondary" onClick={fetchAdminObjections} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-            <RefreshCw size={14} /> Refresh List
+          <button 
+            className="cf-btn-secondary" 
+            onClick={handleRefresh} 
+            disabled={isRefreshing}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: isRefreshing ? 'default' : 'pointer' }}
+          >
+            <RefreshCw size={14} className={isRefreshing ? 'spin-smooth' : ''} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh List'}</span>
           </button>
         </div>
 
@@ -40,32 +62,42 @@ export default function AdminObjections({
               { id: 'pending', label: 'Pending Review', count: adminObjectionsList.filter(o => o.status === 'pending').length },
               { id: 'resolved', label: 'Resolved', count: adminObjectionsList.filter(o => o.status === 'resolved').length },
               { id: 'rejected', label: 'Rejected', count: adminObjectionsList.filter(o => o.status === 'rejected').length }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setAdminObjectionsFilter(tab.id)}
-                className={`cf-btn-${adminObjectionsFilter === tab.id ? 'primary' : 'secondary'}`}
-                style={{
-                  padding: '6px 14px',
-                  fontSize: '8.5pt',
-                  fontWeight: 'bold',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                <span>{tab.label}</span>
-                <span style={{
-                  backgroundColor: adminObjectionsFilter === tab.id ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
-                  color: adminObjectionsFilter === tab.id ? '#ffffff' : '#475569',
-                  padding: '1px 6px',
-                  borderRadius: '10px',
-                  fontSize: '7.5pt'
-                }}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
+            ].map(tab => {
+              const isActive = adminObjectionsFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setAdminObjectionsFilter(tab.id)}
+                  style={{
+                    backgroundColor: isActive ? '#eff6ff' : '#ffffff',
+                    border: `1px solid ${isActive ? '#3b82f6' : '#cbd5e1'}`,
+                    color: isActive ? '#002147' : '#475569',
+                    borderRadius: '4px',
+                    padding: '6px 14px',
+                    fontSize: '8.5pt',
+                    fontWeight: 'bold',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <span>{tab.label}</span>
+                  <span style={{
+                    backgroundColor: isActive ? '#bfdbfe' : '#f1f5f9',
+                    color: isActive ? '#1e40af' : '#64748b',
+                    padding: '1px 7px',
+                    borderRadius: '10px',
+                    fontSize: '7.5pt',
+                    fontWeight: 'bold'
+                  }}>
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1 1 240px', maxWidth: '360px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '6px 12px' }}>
@@ -160,7 +192,7 @@ export default function AdminObjections({
                         </div>
                       </td>
                       <td style={{ fontSize: '8pt', color: '#64748b', whiteSpace: 'nowrap' }}>
-                        {obj.raisedAt ? new Date(obj.raisedAt).toLocaleString() : 'N/A'}
+                        {obj.raisedAt ? `${new Date(obj.raisedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A'}
                       </td>
                       <td>
                         <span style={{

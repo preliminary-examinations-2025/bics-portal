@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, User, Home, Phone, Mail, BookOpen, Upload } from 'lucide-react';
+import { AlertTriangle, User, Home, Phone, Mail, BookOpen, Upload, CheckCircle, Lock, FileText } from 'lucide-react';
 
 const COURSES_LIST = [
   "R526CS01T - Introduction to Computer Science",
@@ -28,7 +28,10 @@ export default function StudentRegistration({
     <div>
       {studentProfile.registrationSubmitted ? (
         <div className="cf-card">
-          <div className="cf-card-title">Registration Status</div>
+          <div className="cf-card-title">
+            <CheckCircle size={16} style={{ color: '#3b5998' }} />
+            <span>Registration Status</span>
+          </div>
           {studentProfile.registrationStatus === 'Approved' ? (
             <div className="cf-alert cf-alert-success">
               Your course registration has been verified and APPROVED by the administrator. Your profile is active.
@@ -41,14 +44,20 @@ export default function StudentRegistration({
         </div>
       ) : !systemConfig.courseRegistrationActive ? (
         <div className="cf-card">
-          <div className="cf-card-title">Registration Status</div>
+          <div className="cf-card-title">
+            <Lock size={16} style={{ color: '#3b5998' }} />
+            <span>Registration Status</span>
+          </div>
           <div className="cf-alert cf-alert-info">
             Course Registration is currently closed by the administrator.
           </div>
         </div>
       ) : (
         <div className="cf-card">
-          <div className="cf-card-title">Course Registration Form</div>
+          <div className="cf-card-title">
+            <FileText size={16} style={{ color: '#3b5998' }} />
+            <span>Course Registration Form</span>
+          </div>
           {studentProfile.registrationStatus === 'Rejected' && (
             <div className="cf-alert cf-alert-error" style={{ marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

@@ -23,6 +23,23 @@ export default function AdminSubmissions({
   editingSubmission,
   saveAdminSubmission
 }) {
+  const [isRefreshingSubmissions, setIsRefreshingSubmissions] = useState(false);
+
+  const handleRefreshSubmissions = async () => {
+    if (isRefreshingSubmissions) return;
+    setIsRefreshingSubmissions(true);
+    const start = Date.now();
+    try {
+      if (fetchAdminSubmissions) {
+        await fetchAdminSubmissions();
+      }
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshingSubmissions(false);
+    }
+  };
+
   return (
     <div>
       {/* Webhook Simulator Section */}
@@ -219,8 +236,9 @@ export default function AdminSubmissions({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--cf-border)', paddingBottom: '12px' }}>
           <h2 style={{ fontSize: '18pt', color: '#002147', margin: 0 }}>Digital Submissions Ledger</h2>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button className="cf-btn-secondary" onClick={fetchAdminSubmissions}>
-              <RefreshCw size={14} style={{ marginRight: '6px' }} /> Refresh
+            <button className="cf-btn-secondary" onClick={handleRefreshSubmissions} disabled={isRefreshingSubmissions} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <RefreshCw size={14} className={isRefreshingSubmissions ? 'spin-smooth' : ''} />
+              <span>{isRefreshingSubmissions ? 'Refreshing...' : 'Refresh'}</span>
             </button>
             <button
               className="cf-btn-primary"
@@ -317,8 +335,8 @@ export default function AdminSubmissions({
                       </td>
                       <td style={{ textTransform: 'capitalize', fontSize: '8.5pt' }}>{sub.type?.replace('_', ' ')}</td>
                       <td style={{ fontSize: '8pt', color: '#475569' }}>
-                        <div>Due: {sub.dueDate ? new Date(sub.dueDate).toLocaleString() : 'N/A'}</div>
-                        <div>Sub: {sub.submissionDate ? new Date(sub.submissionDate).toLocaleString() : 'Pending'}</div>
+                        <div>Due: {sub.dueDate ? `${new Date(sub.dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A'}</div>
+                        <div>Sub: {sub.submissionDate ? `${new Date(sub.submissionDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'Pending'}</div>
                       </td>
                       <td>
                         <span className="status-badge" style={{ backgroundColor: badgeBg, color: badgeColor, textTransform: 'uppercase', fontWeight: 'bold' }}>
@@ -573,11 +591,14 @@ function CounterfoilApprovalsCard() {
   const fetchCounterfoils = async () => {
     try {
       setLoading(true);
+      const start = Date.now();
       const res = await fetch(`${API_BASE}/admin/counterfoil/list`);
       if (res.ok) {
         const data = await res.json();
         setCounterfoils(data || []);
       }
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
     } catch (e) {
       console.error(e);
     } finally {
@@ -620,8 +641,9 @@ function CounterfoilApprovalsCard() {
           <h2 style={{ fontSize: '14pt', color: '#002147', margin: 0 }}>Candidate Counterfoil Marks Approvals</h2>
           <span style={{ fontSize: '8.5pt', color: '#64748b' }}>Approve or reject candidate self-reported MST / ESE marks counterfoils</span>
         </div>
-        <button className="cf-btn-secondary" onClick={fetchCounterfoils} disabled={loading}>
-          <RefreshCw size={14} style={{ marginRight: '6px' }} /> Refresh List
+        <button className="cf-btn-secondary" onClick={fetchCounterfoils} disabled={loading} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          <RefreshCw size={14} className={loading ? 'spin-smooth' : ''} />
+          <span>{loading ? 'Refreshing...' : 'Refresh List'}</span>
         </button>
       </div>
 

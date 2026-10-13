@@ -3,7 +3,7 @@ import {
   Settings, Users, FileText, BookOpen, Activity, Video, Ticket, 
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
-  GraduationCap, Key, LogOut, Wrench, Scale
+  GraduationCap, Key, LogOut, Wrench, Scale, Database
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -53,39 +53,44 @@ export default function Sidebar({
       <nav className="sidebar-menu">
         {user.role === 'admin' ? (
           <>
+            {/* 1. CONFIGURATION */}
+            <div className="sidebar-category" style={{ paddingTop: '4px' }}>Configuration</div>
             <button className={`sidebar-item ${view === 'admin' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin'); setIsMobileSidebarOpen(false); }}>
               <Settings size={16} /> Portal Settings
-            </button>
-            <button className={`sidebar-item ${view === 'admin_candidates' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_candidates'); setIsMobileSidebarOpen(false); }}>
-              <Users size={16} /> Candidates
-            </button>
-            <button className={`sidebar-item ${view === 'admin_attendance' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_attendance'); setIsMobileSidebarOpen(false); fetchCandidates && fetchCandidates(); }}>
-              <FileText size={16} /> Examination Attendance
             </button>
             <button className={`sidebar-item ${view === 'admin_coursework' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_coursework'); setIsMobileSidebarOpen(false); }}>
               <BookOpen size={16} /> Coursework
             </button>
-            <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs && fetchSystemLogs(); }}>
-              <Activity size={16} /> System Logs
-            </button>
-            <button className={`sidebar-item ${view === 'admin_proctoring' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_proctoring'); setIsMobileSidebarOpen(false); fetchLiveSubmissions && fetchLiveSubmissions(); }}>
-              <Video size={16} /> Live Proctoring
-            </button>
-            <button className={`sidebar-item ${view === 'admin_tickets' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tickets'); setIsMobileSidebarOpen(false); fetchAdminTickets && fetchAdminTickets(); }}>
-              <Ticket size={16} /> Tickets
+
+            {/* 2. STUDENT RELATED */}
+            <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>Student Related</div>
+            <button className={`sidebar-item ${view === 'admin_candidates' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_candidates'); setIsMobileSidebarOpen(false); }}>
+              <Users size={16} /> Candidates
             </button>
             <button className={`sidebar-item ${view === 'admin_submissions' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_submissions'); setIsMobileSidebarOpen(false); fetchAdminSubmissions && fetchAdminSubmissions(); }}>
               <Layers size={16} /> Submissions Tracker
             </button>
-            <button className={`sidebar-item ${view === 'admin_counterfoil' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_counterfoil'); setIsMobileSidebarOpen(false); }}>
-              <CheckCircle size={16} style={{ color: '#0284c7' }} /> Counterfoil Approvals
-            </button>
             <button className={`sidebar-item ${view === 'admin_marks_ledger' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_marks_ledger'); setIsMobileSidebarOpen(false); }}>
               <GraduationCap size={16} style={{ color: '#10b981' }} /> Academic Marks Ledger
             </button>
+            <button className={`sidebar-item ${view === 'admin_tickets' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tickets'); setIsMobileSidebarOpen(false); fetchAdminTickets && fetchAdminTickets(); }}>
+              <Ticket size={16} /> Tickets
+            </button>
+
+            {/* 3. EXAMINATION */}
+            <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>Examination</div>
             <button className={`sidebar-item ${view === 'admin_tests' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_tests'); setIsMobileSidebarOpen(false); }}>
               <ClipboardList size={16} /> Tests Manager
             </button>
+            <button className={`sidebar-item ${view === 'admin_proctoring' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_proctoring'); setIsMobileSidebarOpen(false); fetchLiveSubmissions && fetchLiveSubmissions(); }}>
+              <Video size={16} /> Live Proctoring
+            </button>
+            <button className={`sidebar-item ${view === 'admin_attendance' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_attendance'); setIsMobileSidebarOpen(false); fetchCandidates && fetchCandidates(); }}>
+              <FileText size={16} /> Examination Attendance
+            </button>
+
+            {/* 4. VERIFICATION */}
+            <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>Verification</div>
             <button className={`sidebar-item ${view === 'admin_objections' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_objections'); setIsMobileSidebarOpen(false); fetchAdminObjections && fetchAdminObjections(); }}>
               <Flag size={16} style={{ color: '#b45309' }} /> Examination Objections
               {adminObjectionsList.filter(o => o.status === 'pending').length > 0 && (
@@ -93,6 +98,18 @@ export default function Sidebar({
                   {adminObjectionsList.filter(o => o.status === 'pending').length}
                 </span>
               )}
+            </button>
+            <button className={`sidebar-item ${view === 'admin_counterfoil' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_counterfoil'); setIsMobileSidebarOpen(false); }}>
+              <CheckCircle size={16} style={{ color: '#0284c7' }} /> Counterfoil Approvals
+            </button>
+
+            {/* 5. SYSTEM */}
+            <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>System</div>
+            <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs && fetchSystemLogs(); }}>
+              <Activity size={16} /> System Logs
+            </button>
+            <button className={`sidebar-item ${view === 'admin_database' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_database'); setIsMobileSidebarOpen(false); }}>
+              <Database size={16} style={{ color: '#00684a' }} /> Database Explorer
             </button>
             <button className={`sidebar-item ${view === 'admin_recyclebin' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_recyclebin'); setIsMobileSidebarOpen(false); fetchRecycleBinItems && fetchRecycleBinItems(); }}>
               <Trash2 size={16} style={{ color: '#ef4444' }} /> Recycle Bin (24h)

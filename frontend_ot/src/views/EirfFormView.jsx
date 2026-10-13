@@ -169,7 +169,7 @@ export const EirfFormView = ({
           <div>
             <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Filing Window Expiry</span>
             <strong style={{ color: isExpired ? '#dc2626' : '#d97706' }}>
-              {isExpired ? 'Filing Expired (24h Limit Passed)' : (eirfDetails?.expiresAt ? new Date(eirfDetails.expiresAt).toLocaleString() : 'N/A')}
+              {isExpired ? 'Filing Expired (24h Limit Passed)' : (eirfDetails?.expiresAt ? `${new Date(eirfDetails.expiresAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A')}
             </strong>
           </div>
         </div>
@@ -253,7 +253,7 @@ export const EirfFormView = ({
                 <p style={{ margin: '0 0 6px 0' }}>
                   <strong>Filed At:</strong> {(() => {
                     const dVal = existingReport.filedAt || existingReport.submittedAt || existingReport.createdAt;
-                    return dVal ? new Date(dVal).toLocaleString() : 'N/A';
+                    return dVal ? `${new Date(dVal).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A';
                   })()}
                 </p>
                 <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0', marginTop: '10px' }}>

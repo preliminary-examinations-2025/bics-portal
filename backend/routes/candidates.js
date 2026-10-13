@@ -15,7 +15,17 @@ const { sendVerificationEmail } = require('../utils/email');
 
 const sanitizeCandidate = (c) => {
     if (!c) return c;
-    const obj = typeof c.toObject === 'function' ? c.toObject() : JSON.parse(JSON.stringify(c));
+    let obj = typeof c.toJSON === 'function'
+        ? c.toJSON()
+        : (typeof c.toObject === 'function' ? c.toObject({ flattenMaps: true }) : JSON.parse(JSON.stringify(c)));
+    
+    if (obj.midSemFeedback instanceof Map) {
+        obj.midSemFeedback = Object.fromEntries(obj.midSemFeedback);
+    }
+    if (obj.endSemFeedback instanceof Map) {
+        obj.endSemFeedback = Object.fromEntries(obj.endSemFeedback);
+    }
+
     if (obj.registrationData) {
         if (obj.registrationData.photoUrl) obj.registrationData.photoUrl = formatCloudinaryMediaUrl(obj.registrationData.photoUrl);
         if (obj.registrationData.signatureUrl) obj.registrationData.signatureUrl = formatCloudinaryMediaUrl(obj.registrationData.signatureUrl);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Trash2, RefreshCw, Clock, RotateCcw } from 'lucide-react';
 
 export default function AdminRecycleBin({
@@ -11,6 +11,21 @@ export default function AdminRecycleBin({
   handleRestoreRecycleItem,
   handlePurgeRecycleItem
 }) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing || recycleBinLoading) return;
+    setIsRefreshing(true);
+    const start = Date.now();
+    try {
+      if (fetchRecycleBinItems) await fetchRecycleBinItems();
+    } finally {
+      const elapsed = Date.now() - start;
+      if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div>
       <div className="cf-card" style={{ marginBottom: '25px' }}>
@@ -24,8 +39,14 @@ export default function AdminRecycleBin({
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="cf-btn-secondary" onClick={fetchRecycleBinItems} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              <RefreshCw size={14} /> Refresh Bin
+            <button 
+              className="cf-btn-secondary" 
+              onClick={handleRefresh} 
+              disabled={isRefreshing || recycleBinLoading} 
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: (isRefreshing || recycleBinLoading) ? 'default' : 'pointer' }}
+            >
+              <RefreshCw size={14} className={(isRefreshing || recycleBinLoading) ? 'spin-smooth' : ''} />
+              <span>{(isRefreshing || recycleBinLoading) ? 'Refreshing...' : 'Refresh Bin'}</span>
             </button>
             {recycleBinItems.length > 0 && (
               <button className="cf-btn-secondary" onClick={handlePurgeAllRecycleItems} style={{ backgroundColor: '#fef2f2', color: '#991b1b', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
@@ -106,7 +127,7 @@ export default function AdminRecycleBin({
                         </span>
                       </td>
                       <td style={{ padding: '10px', color: '#475569' }}>
-                        {item.deletedAt ? new Date(item.deletedAt).toLocaleString() : 'Recent'}
+                        {item.deletedAt ? `${new Date(item.deletedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'Recent'}
                       </td>
                       <td style={{ padding: '10px' }}>
                         <span style={{
