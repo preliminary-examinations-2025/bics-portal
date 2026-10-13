@@ -831,76 +831,91 @@ async function processLecture(lecture) {
     currentWorkerStatus.activeLectureTitle = lecture.title;
     currentWorkerStatus.totalChunks = totalChunks;
 
-    // Process chunk windows sequentially
-    for (let i = 0; i < totalChunks; i++) {
-        if (shouldStopWorker) break;
+    // Check if ALL expected chunks for this lecture are already completed
+    const existingChunks = Array.isArray(lecture.knowledgeBase?.chunks) ? lecture.knowledgeBase.chunks : [];
+    const allExpectedChunksDone = totalChunks > 0 && Array.from({ length: totalChunks }).every((_, idx) => {
+        const c = existingChunks.find(ch => Number(ch?.chunkIndex ?? ch?.get?.('chunkIndex')) === idx && (ch?.status === 'completed' || ch?.get?.('status') === 'completed'));
+        return c && ((Array.isArray(c.topics) && c.topics.length > 0) || (Array.isArray(c.get?.('topics')) && c.get?.('topics').length > 0));
+    });
 
-        const startMin = i * CHUNK_WINDOW_MINUTES;
-        const endMin = Math.min((i + 1) * CHUNK_WINDOW_MINUTES, durationMin);
-
-        // Check if chunk is already completed (checkpoint resume)
-        const existingChunk = lecture.knowledgeBase.chunks.find(c => c.chunkIndex === i && c.status === 'completed');
-        if (existingChunk && existingChunk.topics && existingChunk.topics.length > 0) {
-            console.log(`[KB Ingestion] Chunk ${i + 1}/${totalChunks} (${startMin}m - ${endMin}m) already completed. Skipping to next.`);
-            continue;
-        }
-
-        currentWorkerStatus.activeChunk = i + 1;
-        console.log(`[KB Ingestion] Processing Chunk ${i + 1}/${totalChunks} [${startMin}:00 - ${endMin}:00] for "${lecture.title}"...`);
-
-        const chunkLogContext = {
-            ...logBase,
-            chunkIndex: i + 1
-        };
-
-        try {
-            const chunkResult = await extractChunkKnowledge({
-                youtubeUrl,
-                yId,
-                title: lecture.title,
-                section: lecture.section,
-                realMeta,
-                startMin,
-                endMin,
-                logContext: chunkLogContext
-            });
-
+    if (allExpectedChunksDone) {
+        console.log(`[KB Ingestion] All ${totalChunks} chunk(s) already completed for "${lecture.title}". Finalizing lecture immediately...`);
+    } else {
+        // Process chunk windows sequentially
+        for (let i = 0; i < totalChunks; i++) {
             if (shouldStopWorker) break;
 
-            const topics = Array.isArray(chunkResult?.topics) ? chunkResult.topics : [];
-            const chunkIndexInArray = lecture.knowledgeBase.chunks.findIndex(c => c.chunkIndex === i);
-            const chunkRecord = {
-                chunkIndex: i,
-                startMinutes: startMin,
-                endMinutes: endMin,
-                status: 'completed',
-                topics,
-                completedAt: new Date()
+            const startMin = i * CHUNK_WINDOW_MINUTES;
+            const endMin = Math.min((i + 1) * CHUNK_WINDOW_MINUTES, durationMin);
+
+            // Check if chunk is already completed (checkpoint resume)
+            const isChunkDone = (lecture.knowledgeBase?.chunks || []).some(c => 
+                Number(c?.chunkIndex ?? c?.get?.('chunkIndex')) === i && 
+                (c?.status === 'completed' || c?.get?.('status') === 'completed') &&
+                ((Array.isArray(c.topics) && c.topics.length > 0) || (Array.isArray(c.get?.('topics')) && c.get?.('topics').length > 0))
+            );
+            if (isChunkDone) {
+                console.log(`[KB Ingestion] Chunk ${i + 1}/${totalChunks} (${startMin}m - ${endMin}m) already completed. Skipping to next.`);
+                continue;
+            }
+
+            currentWorkerStatus.activeChunk = i + 1;
+            console.log(`[KB Ingestion] Processing Chunk ${i + 1}/${totalChunks} [${startMin}:00 - ${endMin}:00] for "${lecture.title}"...`);
+
+            const chunkLogContext = {
+                ...logBase,
+                chunkIndex: i + 1
             };
 
-            if (chunkIndexInArray >= 0) {
-                lecture.knowledgeBase.chunks[chunkIndexInArray] = chunkRecord;
-            } else {
-                lecture.knowledgeBase.chunks.push(chunkRecord);
+            try {
+                const chunkResult = await extractChunkKnowledge({
+                    youtubeUrl,
+                    yId,
+                    title: lecture.title,
+                    section: lecture.section,
+                    realMeta,
+                    startMin,
+                    endMin,
+                    logContext: chunkLogContext
+                });
+
+                if (shouldStopWorker) break;
+
+                const topics = Array.isArray(chunkResult?.topics) ? chunkResult.topics : [];
+                const chunkIndexInArray = lecture.knowledgeBase.chunks.findIndex(c => Number(c?.chunkIndex ?? c?.get?.('chunkIndex')) === i);
+                const chunkRecord = {
+                    chunkIndex: i,
+                    startMinute: startMin,
+                    endMinute: endMin,
+                    status: 'completed',
+                    topics,
+                    completedAt: new Date()
+                };
+
+                if (chunkIndexInArray >= 0) {
+                    lecture.knowledgeBase.chunks[chunkIndexInArray] = chunkRecord;
+                } else {
+                    lecture.knowledgeBase.chunks.push(chunkRecord);
+                }
+                lecture.knowledgeBase.completedChunksCount = lecture.knowledgeBase.chunks.filter(c => (c.status === 'completed' || c.get?.('status') === 'completed')).length;
+
+                await lecture.save();
+
+                const isLastChunk = (i + 1 >= totalChunks);
+                await writeWorkerLog({
+                    ...chunkLogContext,
+                    action: 'CHUNK_SAVED',
+                    status: 'success',
+                    message: isLastChunk
+                        ? `Chunk ${i + 1}/${totalChunks} [${startMin}:00 - ${endMin}:00] completed (${topics.length} topics extracted). Final chunk saved to checkpoint.`
+                        : `Chunk ${i + 1}/${totalChunks} [${startMin}:00 - ${endMin}:00] completed (${topics.length} topics extracted). Saved to checkpoint. Next request scheduled in 1 hour.`
+                });
+
+                console.log(`[KB Ingestion] Chunk ${i + 1}/${totalChunks} successfully saved (${topics.length} topics extracted).`);
+            } catch (chunkErr) {
+                console.error(`[KB Ingestion] Chunk ${i + 1}/${totalChunks} extraction interrupted:`, chunkErr.message);
+                if (shouldStopWorker) return;
             }
-            lecture.knowledgeBase.completedChunksCount = lecture.knowledgeBase.chunks.filter(c => c.status === 'completed').length;
-
-            await lecture.save();
-
-            const isLastChunk = (i + 1 >= totalChunks);
-            await writeWorkerLog({
-                ...chunkLogContext,
-                action: 'CHUNK_SAVED',
-                status: 'success',
-                message: isLastChunk
-                    ? `Chunk ${i + 1}/${totalChunks} [${startMin}:00 - ${endMin}:00] completed (${topics.length} topics extracted). Final chunk saved to checkpoint.`
-                    : `Chunk ${i + 1}/${totalChunks} [${startMin}:00 - ${endMin}:00] completed (${topics.length} topics extracted). Saved to checkpoint. Next request scheduled in 1 hour.`
-            });
-
-            console.log(`[KB Ingestion] Chunk ${i + 1}/${totalChunks} successfully saved (${topics.length} topics extracted).`);
-        } catch (chunkErr) {
-            console.error(`[KB Ingestion] Chunk ${i + 1}/${totalChunks} extraction interrupted:`, chunkErr.message);
-            if (shouldStopWorker) return;
         }
     }
 
@@ -1093,6 +1108,7 @@ async function resetLectureKnowledgeBase(lectureId) {
                     'knowledgeBase.status': 'pending',
                     'knowledgeBase.totalDurationMinutes': 0,
                     'knowledgeBase.totalChunksExpected': 0,
+                    'knowledgeBase.completedChunksCount': 0,
                     'knowledgeBase.chunks': [],
                     'knowledgeBase.synopsis': '',
                     'knowledgeBase.keyConcepts': [],
@@ -1101,9 +1117,6 @@ async function resetLectureKnowledgeBase(lectureId) {
                     'knowledgeBase.attempts': 0,
                     'knowledgeBase.completedAt': null,
                     'knowledgeBase.lastAttemptAt': null
-                },
-                $unset: {
-                    aiSummary: 1
                 }
             });
             await writeWorkerLog({
