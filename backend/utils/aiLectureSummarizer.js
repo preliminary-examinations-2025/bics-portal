@@ -107,7 +107,7 @@ async function callGemini(prompt) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
 
-    const models = ['gemini-1.5-flash', 'gemini-2.0-flash'];
+    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
     let lastError = null;
 
     for (const model of models) {
@@ -255,7 +255,292 @@ Return a valid JSON object matching this schema exactly without any surrounding 
     }
 }
 
+/**
+ * Fast, simple academic synopsis generator for video lectures.
+ * Creates a clean 2 to 3 paragraph synopsis and 3-4 key concepts.
+ * Cascades: 1. OpenRouter (Gemini Flash) -> 2. Gemini Direct -> 3. Groq (GPT models) -> 4. Robust fallback
+ */
+async function generateSimpleSynopsis({ title, section, youtubeUrl }) {
+    const prompt = `
+Create a clear, concise, and pedagogical 2 to 3 paragraph academic synopsis for the following university video lecture:
+- Course / Section: "${section || 'Computer Science'}"
+- Lecture Title: "${title}"
+- YouTube Resource: ${youtubeUrl || 'N/A'}
+
+Focus on:
+1. The primary learning objective and theme.
+2. The foundational conceptual principles and mechanisms taught.
+3. Practical implementation and coursework relevance.
+
+Return a valid JSON object matching this schema exactly without any extra conversational commentary:
+{
+  "synopsis": "A clear, well-written 2 to 3 paragraph academic synopsis explaining what this lecture covers, foundational concepts, and key takeaways.",
+  "keyConcepts": [
+    "Key concept 1",
+    "Key concept 2",
+    "Key concept 3"
+  ]
+}
+`.trim();
+
+    // 1. Try OpenRouter (Gemini Flash)
+    try {
+        const res = await callOpenRouter(prompt);
+        if (res?.result?.synopsis) {
+            return {
+                synopsis: res.result.synopsis,
+                keyConcepts: Array.isArray(res.result.keyConcepts) ? res.result.keyConcepts : [],
+                generatedAt: new Date(),
+                provider: res.provider || 'BICS Cortex'
+            };
+        }
+    } catch (e) {
+        console.warn('[Simple Synopsis] OpenRouter failed, falling back:', e.message);
+    }
+
+    // 2. Try Gemini Direct
+    try {
+        const res = await callGemini(prompt);
+        if (res?.result?.synopsis) {
+            return {
+                synopsis: res.result.synopsis,
+                keyConcepts: Array.isArray(res.result.keyConcepts) ? res.result.keyConcepts : [],
+                generatedAt: new Date(),
+                provider: res.provider || 'BICS Cortex'
+            };
+        }
+    } catch (e) {
+        console.warn('[Simple Synopsis] Gemini Direct failed, falling back:', e.message);
+    }
+
+    // 3. Try Groq
+    try {
+        const res = await callGroq(prompt);
+        if (res?.result?.synopsis) {
+            return {
+                synopsis: res.result.synopsis,
+                keyConcepts: Array.isArray(res.result.keyConcepts) ? res.result.keyConcepts : [],
+                generatedAt: new Date(),
+                provider: res.provider || 'BICS Cortex'
+            };
+        }
+    } catch (e) {
+        console.warn('[Simple Synopsis] Groq failed, falling back to local curriculum synthesis:', e.message);
+    }
+
+    // 4. Guaranteed fallback synopsis
+    const fallbackSynopsis = `This lecture on "${title}" covers core principles and foundational concepts within ${section || 'Computer Science coursework'}. Students are guided through essential theoretical frameworks, structured problem-solving techniques, and practical programming methodologies. Reviewing this session reinforces key curriculum competencies and algorithmic comprehension necessary for examination success.`;
+    return {
+        synopsis: fallbackSynopsis,
+        keyConcepts: [
+            `Foundations of ${title}`,
+            `Core theoretical mechanisms and applications`,
+            `Key problem-solving patterns in ${section || 'Coursework'}`
+        ],
+        generatedAt: new Date(),
+        provider: 'BICS Curriculum Core'
+    };
+}
+
+/**
+ * Conversational Lecture Q&A via BICS Cortex (RAG System)
+ * Strictly grounded in the extracted knowledgeBase ground truth if available.
+ * Uses Groq (sub-second inference) or OpenRouter models with Gemini fallback.
+ */
+async function askLectureQuestion({ question, history = [], lectureContext = {} }) {
+    const { youtubeUrl, knowledgeBase, title } = lectureContext;
+
+    // Window history to last 6 messages
+    const recentHistory = Array.isArray(history) ? history.slice(-6) : [];
+
+    // Check if verified knowledgeBase is available for RAG
+    let groundTruthSection = '';
+    const hasKnowledgeBase = knowledgeBase && (knowledgeBase.status === 'completed' || (knowledgeBase.chunks && knowledgeBase.chunks.length > 0));
+
+    if (hasKnowledgeBase) {
+        // Collect timestamped topics across all chunks
+        const allTopics = (knowledgeBase.chunks || []).flatMap(c => c.topics || []);
+        
+        const qLower = question.toLowerCase();
+        // Check if broad overview question
+        const isOverview = qLower.includes('about') || qLower.includes('what is') || qLower.includes('summary') || qLower.includes('overview') || qLower.includes('explain the video') || qLower.includes('tell me about') || qLower.includes('topics');
+
+        let selectedTopics = [];
+        if (isOverview || allTopics.length <= 16) {
+            selectedTopics = allTopics.slice(0, 18);
+        } else {
+            const matched = allTopics.filter(t => 
+                qLower.includes((t.title || '').toLowerCase()) || 
+                (t.content || '').toLowerCase().includes(qLower)
+            );
+            if (matched.length >= 8) {
+                selectedTopics = matched.slice(0, 16);
+            } else {
+                // Combine keyword matches + chronological anchor nodes
+                const combined = [...matched];
+                const step = Math.max(1, Math.floor(allTopics.length / 10));
+                for (let i = 0; i < allTopics.length && combined.length < 16; i += step) {
+                    if (!combined.some(t => t.timestamp === allTopics[i].timestamp)) {
+                        combined.push(allTopics[i]);
+                    }
+                }
+                selectedTopics = combined.sort((a, b) => (a.timestampSeconds || 0) - (b.timestampSeconds || 0));
+            }
+        }
+
+        const formattedTopics = selectedTopics.map(t => 
+            `[${t.timestamp}] ${t.title}:\n${t.content} ${t.codeOrFormula ? `\nCode/Formula: ${t.codeOrFormula}` : ''}`
+        ).join('\n\n');
+
+        const keyConceptsList = Array.isArray(knowledgeBase.keyConcepts) && knowledgeBase.keyConcepts.length > 0
+            ? knowledgeBase.keyConcepts.map((kc, i) => `${i + 1}. ${kc}`).join('\n')
+            : 'Core academic principles and data structures.';
+
+        groundTruthSection = `
+=== VERIFIED LECTURE GROUND TRUTH (EXTRACTED DIRECTLY FROM VIDEO) ===
+LECTURE TITLE: "${title || 'Course Lecture'}"
+EXECUTIVE SYNOPSIS:
+${knowledgeBase.synopsis || 'Comprehensive academic lecture breakdown.'}
+
+KEY CONCEPTS TAUGHT:
+${keyConceptsList}
+
+CHRONOLOGICAL TOPICS & TIMESTAMPS:
+${formattedTopics}
+======================================================================
+`;
+    }
+
+    const systemPrompt = `
+You are BICS Cortex, the official LLM by BICS Portal and an expert AI academic teaching assistant.
+You are assisting a student with this university lecture.
+Video Resource: ${youtubeUrl || 'N/A'}
+${title ? `Lecture: "${title}"` : ''}
+
+${groundTruthSection ? groundTruthSection : 'Ground your answer strictly in the actual content and spoken explanations from the video.'}
+
+STRICT DIRECTIVES:
+1. Ground your answers strictly in the factual explanations, demonstrations, code, and visuals from this lecture. Do NOT hallucinate concepts not taught.
+2. Include specific timestamps in (MM:SS) format (for example: (04:15) or (12:30)) so the student can jump directly to that point in the player.
+3. Format all responses using clean, structured Markdown (code blocks, bold highlights, concise explanations).
+4. Always return your response strictly as a JSON object matching this schema without any outer markdown fences or conversation:
+{
+  "answer": "Your comprehensive, detailed answer grounded strictly in this lecture with timestamp citations...",
+  "suggestedFollowups": [
+    "Specific follow-up question 1 about what was taught in this video",
+    "Specific follow-up question 2 about code or formulas from this video",
+    "Specific follow-up question 3 about practical implementation from this video"
+  ]
+}
+`.trim();
+
+    const conversationPrompt = `
+${recentHistory.length > 0 ? `Previous conversation history:\n${recentHistory.map(m => `${m.role === 'user' ? 'Student' : 'BICS Cortex'}: ${m.content}`).join('\n')}\n` : ''}
+Student's question:
+"${question}"
+
+Provide your JSON response answering the student based strictly on the verified lecture content.
+`.trim();
+
+    // 1. Primary RAG Engine: Groq (ultra-fast sub-second inference with verified working models)
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (groqApiKey) {
+        const groqModels = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
+        for (const model of groqModels) {
+            try {
+                console.log(`[BICS Cortex RAG] Querying Groq (${model})...`);
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${groqApiKey}`
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: conversationPrompt }
+                        ],
+                        max_tokens: 1500,
+                        temperature: 0.2,
+                        response_format: { type: 'json_object' }
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const parsed = cleanJsonResponse(data.choices?.[0]?.message?.content);
+                    if (parsed && parsed.answer) {
+                        return { ...parsed, provider: `BICS Cortex (Groq: ${model.split('/')[1] || model})` };
+                    }
+                } else {
+                    const errText = await response.text();
+                    console.warn(`[BICS Cortex RAG] Groq model ${model} status ${response.status}:`, errText);
+                }
+            } catch (groqErr) {
+                console.warn(`[BICS Cortex RAG] Groq model ${model} error:`, groqErr.message);
+            }
+        }
+    }
+
+    // 2. Secondary Engine: OpenRouter (Gemini Flash & Llama 3.3 models)
+    const orApiKey = process.env.OPENROUTER_API_KEY;
+    if (orApiKey) {
+        const orModels = [
+            'google/gemini-2.5-flash-lite',
+            'google/gemini-2.5-flash',
+            'meta-llama/llama-3.3-70b-instruct'
+        ];
+        for (const model of orModels) {
+            try {
+                console.log(`[BICS Cortex RAG] Querying OpenRouter (${model})...`);
+                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${orApiKey}`,
+                        'HTTP-Referer': 'https://bics.edu.in',
+                        'X-Title': 'BICS Cortex'
+                    },
+                    body: JSON.stringify({
+                        model,
+                        max_tokens: 1500,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: conversationPrompt }
+                        ],
+                        temperature: 0.2,
+                        response_format: { type: 'json_object' }
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const parsed = cleanJsonResponse(data.choices?.[0]?.message?.content);
+                    if (parsed && parsed.answer) {
+                        return { ...parsed, provider: `BICS Cortex (OpenRouter: ${model.split('/')[1] || model})` };
+                    }
+                } else {
+                    const errText = await response.text();
+                    console.warn(`[BICS Cortex RAG] OpenRouter model ${model} status ${response.status}:`, errText);
+                }
+            } catch (e) {
+                console.warn(`[BICS Cortex RAG] OpenRouter model ${model} error:`, e.message);
+            }
+        }
+    }
+
+    // 3. Fallback: Return Error (Do not fabricate answers or save to chat database)
+    console.error('[BICS Cortex RAG] All inference providers (Groq -> OpenRouter) failed.');
+    return {
+        isError: true,
+        error: "BICS Cortex is currently experiencing high server traffic. Please try asking your question again in a moment."
+    };
+}
+
 module.exports = {
     extractYouTubeId,
-    generateLectureSummary
+    generateLectureSummary,
+    generateSimpleSynopsis,
+    askLectureQuestion
 };

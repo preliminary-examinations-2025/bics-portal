@@ -50,7 +50,12 @@ const CandidateSchema = new mongoose.Schema({
             watchedSeconds: { type: Number, default: 0 },
             completed: { type: Boolean, default: false },
             lastWatchedAt: { type: Date, default: Date.now },
-            personalNotes: { type: String, default: '' }
+            personalNotes: { type: String, default: '' },
+            chatHistory: [{
+                role: { type: String, enum: ['user', 'assistant'] },
+                content: { type: String, default: '' },
+                timestamp: { type: Date, default: Date.now }
+            }]
         }, { _id: false }),
         default: {}
     }

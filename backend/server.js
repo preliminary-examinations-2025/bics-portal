@@ -88,10 +88,15 @@ app.use(async (err, req, res, next) => {
     res.status(500).json({ error: "Internal server error. The technical team has been notified." });
 });
 
+// Autonomous Lecture Knowledge Base Ingestion Worker
+const { startIngestionWorker } = require('./services/lectureIngestionWorker');
+
 // Start Express Server
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`BICS Portal Backend server running on port ${PORT} (0.0.0.0)`);
+        // Start autonomous FIFO knowledge base ingestion loop in background
+        startIngestionWorker();
     });
 }
 

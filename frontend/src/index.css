@@ -586,6 +586,297 @@ input:checked + .slider:before {
     display: inline-block;
 }
 
+@keyframes academicPulse {
+    0%, 100% { opacity: 0.95; transform: scale(1); }
+    50% { opacity: 0.65; transform: scale(0.98); }
+}
+
+@keyframes academicShimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+@keyframes academicBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+.academic-loader-shimmer {
+    background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+    background-size: 200% 100%;
+    animation: academicShimmer 1.8s infinite ease-in-out;
+}
+
+.typewriter-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background-color: #3b5998;
+    margin-left: 2px;
+    vertical-align: -2px;
+    animation: academicBlink 0.8s infinite;
+}
+
+.cortex-spin-anim {
+    animation: spin 3s linear infinite;
+    transform-origin: center;
+}
+
+.cortex-pulse-anim {
+    animation: academicPulse 2s ease-in-out infinite;
+}
+
+/* BICS Cortex & Video Player Synchronized Slow & Smooth Layout Transitions */
+.lecture-workspace-row {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    transition: all 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lecture-video-column {
+    flex: 3 1 640px;
+    min-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    transition: flex 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+                max-width 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+    contain: layout;
+    will-change: flex;
+}
+
+.lecture-video-column.cortex-open {
+    flex: 1.6 1 520px;
+}
+
+.lecture-side-slot {
+    flex: 1 1 340px;
+    min-width: 300px;
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    transition: flex 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+                max-width 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+    contain: layout;
+    will-change: flex;
+}
+
+.cortex-panel-container {
+    transition: opacity 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: opacity, transform;
+    contain: layout;
+}
+
+.cortex-panel-open {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+}
+
+.cortex-panel-closed {
+    opacity: 0;
+    transform: translate3d(36px, 0, 0);
+    pointer-events: none;
+}
+
+/* Action Bar & Buttons - Smooth inline repositioning corresponding to video resizing */
+.lecture-action-bar {
+    margin-top: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    transition: all 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lecture-title-section {
+    flex: 1 1 auto;
+    min-width: 0; /* allows text truncation/compression without pushing buttons */
+    overflow: hidden;
+}
+
+.lecture-title-section h2 {
+    font-size: 13.5pt;
+    font-weight: bold;
+    color: #3b5998;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: font-size 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lecture-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0; /* Prevents wrapping or moving down */
+    white-space: nowrap;
+    transition: gap 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lecture-action-buttons button {
+    transition: padding 0.65s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Lecture Workspace Tabs Slow & Smooth Transition */
+.lecture-tab-bar-container {
+    display: flex;
+    position: relative;
+    border-bottom: 2px solid #e2e8f0;
+    gap: 4px;
+}
+
+.lecture-tab-nav-btn {
+    padding: 8px 18px;
+    font-size: 9pt;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+    background-color: transparent;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    transition: color 0.5s cubic-bezier(0.25, 1, 0.35, 1);
+}
+
+.lecture-tab-nav-btn.active {
+    color: #3b5998;
+}
+
+.lecture-tab-indicator {
+    position: absolute;
+    bottom: -2px;
+    height: 2.5px;
+    background-color: #3b5998;
+    border-radius: 2px 2px 0 0;
+    transition: left 0.55s cubic-bezier(0.25, 1, 0.35, 1),
+                width 0.55s cubic-bezier(0.25, 1, 0.35, 1),
+                opacity 0.25s ease;
+}
+
+.lecture-tab-pane {
+    animation: lectureTabFadeInSlow 0.55s cubic-bezier(0.25, 1, 0.35, 1) forwards;
+    will-change: opacity, transform;
+}
+
+@keyframes lectureTabFadeInSlow {
+    from {
+        opacity: 0;
+        transform: translate3d(0, 10px, 0);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+    }
+}
+
+/* Curriculum Module Sections Slow & Smooth Accordion Transition */
+.lecture-module-accordion {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.55s cubic-bezier(0.25, 1, 0.35, 1);
+    overflow: hidden;
+}
+
+.lecture-module-accordion.open {
+    grid-template-rows: 1fr;
+}
+
+.lecture-module-inner {
+    min-height: 0;
+    opacity: 0;
+    transform: translate3d(0, -6px, 0);
+    transition: opacity 0.5s cubic-bezier(0.25, 1, 0.35, 1),
+                transform 0.5s cubic-bezier(0.25, 1, 0.35, 1);
+}
+
+.lecture-module-accordion.open .lecture-module-inner {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+}
+
+.lecture-module-chevron {
+    transition: transform 0.55s cubic-bezier(0.25, 1, 0.35, 1);
+}
+
+.lecture-module-chevron.open {
+    transform: rotate(180deg);
+}
+
+.curriculum-drawer-container {
+    transition: opacity 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: opacity, transform;
+}
+
+.curriculum-drawer-open {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+}
+
+.curriculum-drawer-closed {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0);
+    pointer-events: none;
+}
+
+.syllabus-side-column-transition {
+    animation: fadeInSyllabus 0.55s cubic-bezier(0.25, 1, 0.35, 1) forwards;
+}
+
+@keyframes fadeInSyllabus {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.cortex-thinking-container {
+    animation: fadeInSmooth 0.35s ease-out forwards;
+}
+
+.cortex-assistant-bubble {
+    animation: fadeInSmooth 0.35s ease-out forwards;
+}
+
+@keyframes fadeInSmooth {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Academic Markdown Justified Typography */
+.academic-markdown-container p {
+    text-align: justify;
+    text-justify: inter-word;
+    text-align-last: left;
+    margin: 6px 0;
+    line-height: 1.65;
+    word-break: normal;
+}
+
+.academic-markdown-container .math-centered,
+.academic-markdown-container .katex-display {
+    text-align: center !important;
+}
+
 /* Professional web application text selection prevention */
 *, *::before, *::after {
     user-select: none;

@@ -13,6 +13,8 @@ const { TestTokenModel, TestTokenSchema } = require('./TestToken');
 const { ClassroomSubmissionModel, ClassroomSubmissionSchema } = require('./ClassroomSubmission');
 const { CounterfoilSubmissionModel, CounterfoilSubmissionSchema } = require('./CounterfoilSubmission');
 const { AcademicMarksLedgerModel, AcademicMarksLedgerSchema } = require('./AcademicMarksLedger');
+const { LectureChatModel, LectureChatSchema } = require('./LectureChat');
+const { WorkerLogModel, WorkerLogSchema } = require('./WorkerLog');
 
 module.exports = {
     CandidateModel,
@@ -49,5 +51,9 @@ module.exports = {
     CounterfoilSubmissionModel,
     CounterfoilSubmissionSchema,
     AcademicMarksLedgerModel,
-    AcademicMarksLedgerSchema
+    AcademicMarksLedgerSchema,
+    LectureChatModel,
+    LectureChatSchema,
+    WorkerLogModel,
+    WorkerLogSchema
 };

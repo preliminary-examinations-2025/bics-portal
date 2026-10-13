@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Video,
   Play,
@@ -22,9 +22,14 @@ import {
   Check,
   X,
   ExternalLink,
-  Printer
+  Printer,
+  SearchX,
+  FileQuestion,
+  Send,
+  MessageSquare
 } from 'lucide-react';
 import AcademicMarkdown from '../components/AcademicMarkdown.jsx';
+import CortexGpuIcon from '../components/CortexGpuIcon.jsx';
 
 /**
  * Robust extraction of the 11-character YouTube Video ID from any standard or short URL
@@ -90,20 +95,78 @@ export default function LecturesView({
   });
 
   // UI Drawer / Tabs
-  const [activeTab, setActiveTab] = useState('notes'); // 'notes' | 'summary' | 'concepts'
+  const [activeTab, setActiveTab] = useState('summary'); // 'summary' (Lecture Synopsis) | 'notes' (Personal Notes)
   const [searchQuery, setSearchQuery] = useState('');
   const [openSections, setOpenSections] = useState({});
   const [copiedLink, setCopiedLink] = useState(false);
-  const [copiedSummary, setCopiedSummary] = useState(false);
 
-  // AI Summary Modal State
-  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  // Lecture Synopsis State (Loaded directly via backend)
   const [aiSummary, setAiSummary] = useState(null);
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiError, setAiError] = useState(null);
+  const [isSynopsisLoading, setIsSynopsisLoading] = useState(false);
+
+  // BICS Cortex "Ask Questions" Side Panel States
+  const [isAskQuestionOpen, setIsAskQuestionOpen] = useState(false);
+  const [shouldRenderCortex, setShouldRenderCortex] = useState(false);
+  const [cortexAnimClass, setCortexAnimClass] = useState('cortex-panel-closed');
+  const [cortexMessages, setCortexMessages] = useState([]);
+  const [cortexInput, setCortexInput] = useState('');
+  const [isCortexThinking, setIsCortexThinking] = useState(false);
+  const [isCortexStreaming, setIsCortexStreaming] = useState(false);
+  const [cortexError, setCortexError] = useState(null);
+  const [cortexFollowups, setCortexFollowups] = useState([]);
+  const [isChatHistoryLoading, setIsChatHistoryLoading] = useState(false);
+  const chatMessagesContainerRef = useRef(null);
+  const cortexStreamTimerRef = useRef(null);
+
+  // Smooth entrance & exit transition coordinator for Cortex panel & curriculum drawer
+  useEffect(() => {
+    let timer;
+    if (isAskQuestionOpen) {
+      setShouldRenderCortex(true);
+      timer = setTimeout(() => {
+        setCortexAnimClass('cortex-panel-open');
+      }, 25);
+      return () => clearTimeout(timer);
+    } else {
+      setCortexAnimClass('cortex-panel-closed');
+      timer = setTimeout(() => {
+        setShouldRenderCortex(false);
+      }, 650);
+      return () => clearTimeout(timer);
+    }
+  }, [isAskQuestionOpen]);
 
   // Student Personal Notes
   const [studentNotes, setStudentNotes] = useState('');
+
+  // Dynamic measuring for the sliding tab indicator underline
+  const summaryTabRef = useRef(null);
+  const notesTabRef = useRef(null);
+  const [tabIndicatorStyle, setTabIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+
+  const updateTabIndicator = useCallback(() => {
+    const activeRef = activeTab === 'summary' ? summaryTabRef.current : notesTabRef.current;
+    if (activeRef && activeRef.offsetWidth > 0) {
+      setTabIndicatorStyle({
+        left: activeRef.offsetLeft,
+        width: activeRef.offsetWidth,
+        opacity: 1
+      });
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    updateTabIndicator();
+    // Re-check after activeLecture mounts or fonts finish loading
+    const t1 = setTimeout(updateTabIndicator, 50);
+    const t2 = setTimeout(updateTabIndicator, 200);
+    window.addEventListener('resize', updateTabIndicator);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('resize', updateTabIndicator);
+    };
+  }, [activeTab, activeLecture?._id, activeLecture?.id, updateTabIndicator]);
   const [isNotesSaved, setIsNotesSaved] = useState(false);
 
   // Refs for tracking system watch time
@@ -314,6 +377,75 @@ export default function LecturesView({
     }
   }, [videoLectures, queryVideoId, location?.pathname]);
 
+  // Fetch saved chat history for this lecture and student (isolated per video lecture)
+  const fetchCortexHistory = useCallback(async (lecture, { withDelay = false } = {}) => {
+    if (!lecture) return;
+    const targetId = lecture._id || lecture.id || extractYouTubeId(lecture.youtubeUrl);
+    if (!targetId) return;
+
+    const cacheKey = `bics_cortex_chat_${studentId || 'default'}_${targetId}`;
+
+    if (withDelay) {
+      setIsChatHistoryLoading(true);
+    }
+
+    // 1. Check local lecture cache
+    let cachedList = null;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          cachedList = parsed;
+        }
+      }
+    } catch (e) {}
+
+    // When withDelay is true, hold reveal until the 650ms slide and resize transition has settled
+    const delayMs = withDelay ? 650 : 0;
+    const startTime = Date.now();
+
+    const revealMessages = (messages) => {
+      setCortexMessages(messages || []);
+      setIsChatHistoryLoading(false);
+      setTimeout(() => {
+        if (chatMessagesContainerRef.current) {
+          chatMessagesContainerRef.current.scrollTo({
+            top: chatMessagesContainerRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      }, 50);
+    };
+
+    // 2. Fetch latest verified chat from database
+    let latestHistory = cachedList;
+    try {
+      const res = await fetch(`${API_BASE}/video-lectures/${targetId}/chat?studentId=${encodeURIComponent(studentId || 'default_student')}`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.chatHistory)) {
+        latestHistory = data.chatHistory;
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(data.chatHistory));
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.warn('[Cortex Chat History Fetch Notice]', err);
+    }
+
+    // 3. Reveal once transition is complete (guarantees zero re-renders mid-animation)
+    const elapsed = Date.now() - startTime;
+    const remainingDelay = Math.max(0, delayMs - elapsed);
+
+    if (remainingDelay > 0) {
+      setTimeout(() => {
+        revealMessages(latestHistory);
+      }, remainingDelay);
+    } else {
+      revealMessages(latestHistory);
+    }
+  }, [studentId, API_BASE]);
+
   // Sync personal notes, watch history, and restore position when activeLecture updates
   useEffect(() => {
     if (!activeLecture) return;
@@ -336,6 +468,9 @@ export default function LecturesView({
         freshSet.add(s);
       }
       watchedSecondsSetRef.current = freshSet;
+
+      // Automatically load and isolate chats for this new lecture from DB
+      fetchCortexHistory(activeLecture);
     }
 
     // Restore time to UI if not actively playing
@@ -347,15 +482,22 @@ export default function LecturesView({
       if (savedProg.duration) setPlayerDuration(savedProg.duration);
     }
 
-    // Check if lecture already has summary in state, otherwise check DB cache (NEVER auto-generate)
+    // Check if lecture already has summary in state, otherwise load via backend synopsis loader
     if (activeLecture.aiSummary && activeLecture.aiSummary.synopsis) {
       setAiSummary(activeLecture.aiSummary);
-      setIsAiLoading(false);
+      setIsSynopsisLoading(false);
     } else if (isNewLecture) {
       setAiSummary(null);
-      checkCachedSummary(activeLecture);
+      loadLectureSynopsis(activeLecture);
     }
-  }, [activeLecture]);
+  }, [activeLecture, fetchCortexHistory]);
+
+  // Ensure latest chat is loaded whenever Cortex panel is opened (slowed down slightly to match panel slide-in)
+  useEffect(() => {
+    if (isAskQuestionOpen && activeLecture) {
+      fetchCortexHistory(activeLecture, { withDelay: true });
+    }
+  }, [isAskQuestionOpen, activeLecture, fetchCortexHistory]);
 
   // Automatically open the section containing the loading/active lecture, keep the rest closed
   useEffect(() => {
@@ -366,58 +508,214 @@ export default function LecturesView({
     setOpenSections({ [targetTitle]: true });
   }, [activeLecture?._id, activeLecture?.section, canonicalSections]);
 
-  // Read-only check for existing summary in DB (DO NOT auto-generate for all lectures)
-  const checkCachedSummary = async (lecture) => {
+  // Backend Synopsis Loader: loads or generates simple synopsis for active lecture
+  const loadLectureSynopsis = async (lecture) => {
     if (!lecture) return;
     const targetId = lecture._id || lecture.id || extractYouTubeId(lecture.youtubeUrl);
+    setIsSynopsisLoading(true);
     try {
       const res = await fetch(`${API_BASE}/video-lectures/${targetId}/summary`);
       const data = await res.json();
       if (res.ok && data.summary && data.summary.synopsis) {
         setAiSummary(data.summary);
+        if (lecture) {
+          lecture.aiSummary = data.summary;
+        }
       } else {
         setAiSummary(null);
       }
     } catch (err) {
-      console.warn('[AI Summary Check Notice]', err);
-    }
-  };
-
-  // Explicit AI Summary Generation (Runs ONLY when student explicitly clicks "Summarize")
-  const triggerGenerateSummary = async (lecture = activeLecture) => {
-    if (!lecture) return;
-    setIsAiLoading(true);
-    setAiError(null);
-
-    const targetId = lecture._id || lecture.id || extractYouTubeId(lecture.youtubeUrl);
-    try {
-      const res = await fetch(`${API_BASE}/video-lectures/${targetId}/summary/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to synthesize lecture summary');
-      }
-      setAiSummary(data.summary);
-      // Update in active lecture in-memory
-      if (lecture) {
-        lecture.aiSummary = data.summary;
-      }
-    } catch (err) {
-      console.error('[AI Summary Generation Error]', err);
-      setAiError(err.message || 'Generation failed');
+      console.warn('[Lecture Synopsis Load Notice]', err);
     } finally {
-      setIsAiLoading(false);
+      setIsSynopsisLoading(false);
     }
   };
 
-  const handleOpenSummaryModal = () => {
-    setIsSummaryModalOpen(true);
-    if (!aiSummary && activeLecture) {
-      checkCachedSummary(activeLecture);
+  // Convert (MM:SS) string to integer seconds
+  const parseTimestampToSeconds = (ts) => {
+    if (!ts) return 0;
+    // Extract first time if a range like "03:03 - 05:52"
+    const firstPart = ts.split('-')[0].trim();
+    const parts = firstPart.split(':').map(Number);
+    if (parts.length === 2) {
+      return (parts[0] * 60) + parts[1];
+    } else if (parts.length === 3) {
+      return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+    }
+    return 0;
+  };
+
+  // Jump video to timestamp via YouTube API
+  const handleSeekToTimestamp = (tsString) => {
+    const secs = parseTimestampToSeconds(tsString);
+    if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+      try {
+        playerRef.current.seekTo(secs, true);
+        if (typeof playerRef.current.playVideo === 'function') {
+          playerRef.current.playVideo();
+        }
+      } catch (e) {
+        console.warn('[Cortex Seek Error]', e);
+      }
     }
   };
+
+
+  // Send question to BICS Cortex
+  const handleSendCortexQuestion = async (queryText) => {
+    const text = (queryText || cortexInput || '').trim();
+    if (!text || !activeLecture || isCortexThinking || isCortexStreaming) return;
+
+    setCortexError(null);
+    setCortexInput('');
+
+    // Optimistically append user message
+    const optimisticUserMsg = {
+      role: 'user',
+      content: text,
+      timestamp: new Date()
+    };
+    setCortexMessages(prev => [...prev, optimisticUserMsg]);
+    setIsCortexThinking(true);
+
+    // Scroll chat message container internally (never scroll page window)
+    setTimeout(() => {
+      if (chatMessagesContainerRef.current) {
+        chatMessagesContainerRef.current.scrollTo({
+          top: chatMessagesContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    }, 50);
+
+    const targetId = activeLecture._id || activeLecture.id || extractYouTubeId(activeLecture.youtubeUrl);
+
+    try {
+      const res = await fetch(`${API_BASE}/video-lectures/${targetId}/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: text,
+          studentId,
+          history: cortexMessages.slice(-6),
+          lectureContext: {
+            youtubeUrl: activeLecture.youtubeUrl
+          }
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'BICS Cortex was unable to process your question.');
+      }
+
+      // Stop thinking indicator
+      setIsCortexThinking(false);
+
+      // Start word-by-word response streaming
+      const fullAnswer = data.answer || '';
+      const tokens = fullAnswer.match(/\S+|\s+/g) || [fullAnswer];
+      let currWordIdx = 0;
+      setIsCortexStreaming(true);
+
+      // Append assistant message initialized with empty string
+      setCortexMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+          provider: data.provider || 'BICS Cortex'
+        }
+      ]);
+
+      if (cortexStreamTimerRef.current) {
+        clearInterval(cortexStreamTimerRef.current);
+      }
+
+      // Smooth cadence: reveal 2 words every 24ms
+      cortexStreamTimerRef.current = setInterval(() => {
+        currWordIdx += 2;
+        if (currWordIdx >= tokens.length) {
+          clearInterval(cortexStreamTimerRef.current);
+          cortexStreamTimerRef.current = null;
+          setIsCortexStreaming(false);
+
+          setCortexMessages(prev => {
+            const next = [...prev];
+            const lastIdx = next.length - 1;
+            if (lastIdx >= 0 && next[lastIdx].role === 'assistant') {
+              next[lastIdx] = { ...next[lastIdx], content: fullAnswer };
+            }
+            try {
+              const currentLec = activeLectureRef.current || activeLecture;
+              const targetId = currentLec?._id || currentLec?.id || extractYouTubeId(currentLec?.youtubeUrl || '');
+              if (targetId) {
+                const cacheKey = `bics_cortex_chat_${studentId || 'default'}_${targetId}`;
+                localStorage.setItem(cacheKey, JSON.stringify(next));
+              }
+            } catch (e) {}
+            return next;
+          });
+
+          if (Array.isArray(data.suggestedFollowups)) {
+            setCortexFollowups(data.suggestedFollowups);
+          }
+        } else {
+          const partialAnswer = tokens.slice(0, currWordIdx).join('');
+          setCortexMessages(prev => {
+            const next = [...prev];
+            const lastIdx = next.length - 1;
+            if (lastIdx >= 0 && next[lastIdx].role === 'assistant') {
+              next[lastIdx] = { ...next[lastIdx], content: partialAnswer };
+            }
+            return next;
+          });
+        }
+
+        if (chatMessagesContainerRef.current) {
+          chatMessagesContainerRef.current.scrollTo({
+            top: chatMessagesContainerRef.current.scrollHeight,
+            behavior: 'auto'
+          });
+        }
+      }, 24);
+
+    } catch (err) {
+      console.error('[Cortex Ask Error]', err);
+      setCortexError(err.message || 'Failed to connect to BICS Cortex. Please try again.');
+      setIsCortexThinking(false);
+      setIsCortexStreaming(false);
+    }
+  };
+
+  // Auto-scroll ONLY inside the chat messages container when new messages arrive (NEVER scroll the browser window)
+  useEffect(() => {
+    if (isAskQuestionOpen && chatMessagesContainerRef.current) {
+      chatMessagesContainerRef.current.scrollTo({
+        top: chatMessagesContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [cortexMessages, isCortexThinking]);
+
+  // Cleanup streaming timer on unmount
+  useEffect(() => {
+    return () => {
+      if (cortexStreamTimerRef.current) {
+        clearInterval(cortexStreamTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Load chat history when activeLecture changes
+  useEffect(() => {
+    if (activeLecture) {
+      fetchCortexHistory(activeLecture);
+      setCortexError(null);
+    }
+  }, [activeLecture?._id, activeLecture?.id]);
 
   // Active Video ID extraction
   const activeVideoId = useMemo(() => {
@@ -758,6 +1056,7 @@ export default function LecturesView({
     stopProgressPoller();
     activeLectureRef.current = lec;
     setActiveLecture(lec);
+    fetchCortexHistory(lec);
     if (typeof setSelectedLecture === 'function') setSelectedLecture(lec);
     const vId = extractYouTubeId(lec.youtubeUrl);
     if (navigate) {
@@ -765,20 +1064,40 @@ export default function LecturesView({
     }
   };
 
+  // Flattened list of all canonical lectures preserving display order across all sections
+  const allLecturesOrdered = useMemo(() => {
+    const list = [];
+    (canonicalSections || []).forEach(sec => {
+      (sec.lectures || []).forEach(lec => {
+        list.push(lec);
+      });
+    });
+    return list.length > 0 ? list : videoLectures;
+  }, [canonicalSections, videoLectures]);
+
   const currentIndex = useMemo(() => {
-    if (!activeLecture) return -1;
-    return videoLectures.findIndex(l => (l._id === activeLecture._id || l.id === activeLecture.id));
-  }, [videoLectures, activeLecture]);
+    if (!activeLecture || !allLecturesOrdered || allLecturesOrdered.length === 0) return -1;
+    const activeLecId = String(activeLecture._id || activeLecture.id || '');
+    const activeYId = extractYouTubeId(activeLecture.youtubeUrl);
+
+    return allLecturesOrdered.findIndex(l => {
+      const lId = String(l._id || l.id || '');
+      const lYId = extractYouTubeId(l.youtubeUrl);
+      if (activeLecId && lId && activeLecId === lId) return true;
+      if (activeYId && lYId && activeYId === lYId) return true;
+      return false;
+    });
+  }, [allLecturesOrdered, activeLecture]);
 
   const handleNextLecture = () => {
-    if (currentIndex >= 0 && currentIndex < videoLectures.length - 1) {
-      handleSelectLecture(videoLectures[currentIndex + 1]);
+    if (currentIndex >= 0 && currentIndex < allLecturesOrdered.length - 1) {
+      handleSelectLecture(allLecturesOrdered[currentIndex + 1]);
     }
   };
 
   const handlePrevLecture = () => {
     if (currentIndex > 0) {
-      handleSelectLecture(videoLectures[currentIndex - 1]);
+      handleSelectLecture(allLecturesOrdered[currentIndex - 1]);
     }
   };
 
@@ -787,14 +1106,6 @@ export default function LecturesView({
     navigator.clipboard.writeText(canonicalUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
-  };
-
-  const handleCopySummaryContent = () => {
-    if (!aiSummary) return;
-    const textToCopy = `Academic Summary: ${activeLecture?.title || 'Video Lecture'}\n\nEXECUTIVE SYNOPSIS:\n${aiSummary.synopsis || ''}\n\nDETAILED NOTES:\n${aiSummary.detailedNotes || ''}\n\nKEY CONCEPTS:\n${(aiSummary.keyConcepts || []).join('\n')}\n\nEXAM TAKEAWAYS:\n${(aiSummary.examTakeaways || []).join('\n')}`;
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedSummary(true);
-    setTimeout(() => setCopiedSummary(false), 2500);
   };
 
   const filteredSections = useMemo(() => {
@@ -832,10 +1143,13 @@ export default function LecturesView({
       {videoLectures.length === 0 ? (
         <div className="cf-alert cf-alert-info">No video lectures have been scheduled or uploaded yet.</div>
       ) : (
-        <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '12px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '12px' }}>
           
-          {/* LEFT COLUMN: Video Player, Telemetry Bar, & Student Workspace */}
-          <div style={{ flex: '3 1 640px', minWidth: '320px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Main Workspace Row: Video Player + [Cortex Side Panel OR Syllabus Side List] */}
+          <div className="lecture-workspace-row">
+            
+            {/* LEFT COLUMN: Video Player, Telemetry Bar, & Student Workspace */}
+            <div className={`lecture-video-column ${cortexAnimClass === 'cortex-panel-open' ? 'cortex-open' : ''}`}>
             
             {activeLecture ? (
               <div>
@@ -905,35 +1219,44 @@ export default function LecturesView({
                 </div>
 
                 {/* 3. Title & Controls Action Bar */}
-                <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                  <div style={{ flex: '1 1 300px' }}>
-                    <div style={{ display: 'inline-block', fontSize: '8pt', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#475569', fontWeight: 'bold', backgroundColor: '#e2e8f0', padding: '2px 8px', borderRadius: '3px', marginBottom: '6px' }}>
+                <div className="lecture-action-bar">
+                  <div className="lecture-title-section">
+                    <div style={{ display: 'inline-block', fontSize: '8pt', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#475569', fontWeight: 'bold', backgroundColor: '#e2e8f0', padding: '2px 8px', borderRadius: '3px', marginBottom: '4px' }}>
                       {activeLecture.section}
                     </div>
-                    <h2 style={{ fontSize: '14pt', fontWeight: 'bold', color: '#3b5998', margin: 0 }}>
+                    <h2 title={activeLecture.title}>
                       {activeLecture.title}
                     </h2>
                   </div>
 
-                  {/* Action buttons: Summarize Modal trigger, Prev, Next, Share */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    
-                    {/* Explicit Summarize Action Button (Subtle & Light, matches site theme) */}
+                  {/* Action buttons: Ask Cortex, Prev, Next, Share */}
+                  <div className="lecture-action-buttons">
+
+                    {/* BICS Cortex "Ask questions" Trigger Button */}
                     <button
                       type="button"
-                      onClick={handleOpenSummaryModal}
-                      className="cf-btn-primary"
-                      title="Open full AI academic summary modal"
+                      onClick={() => setIsAskQuestionOpen(prev => !prev)}
+                      title="Ask questions about this video"
                       style={{
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '5px',
-                        fontSize: '9pt',
-                        padding: '4px 12px'
+                        gap: '6px',
+                        fontSize: isAskQuestionOpen ? '8.5pt' : '9pt',
+                        fontWeight: '600',
+                        padding: isAskQuestionOpen ? '5px 12px' : '6px 14px',
+                        borderRadius: '9999px',
+                        backgroundColor: '#ffffff',
+                        color: isAskQuestionOpen ? '#3b5998' : '#1e293b',
+                        border: isAskQuestionOpen ? '1.5px solid #3b5998' : '1px solid #cbd5e1',
+                        boxShadow: isAskQuestionOpen 
+                          ? '0 0 0 2px rgba(59, 89, 152, 0.15), 0 2px 5px rgba(0, 0, 0, 0.04)' 
+                          : '0 1px 2px rgba(0, 0, 0, 0.04)',
+                        cursor: 'pointer',
+                        transition: 'all 0.65s cubic-bezier(0.4, 0, 0.2, 1)'
                       }}
                     >
-                      <Sparkles size={14} style={{ color: '#3b5998' }} />
-                      <span>Summarize</span>
+                      <CortexGpuIcon size={14} />
+                      <span>Ask questions</span>
                     </button>
 
                     <button
@@ -945,29 +1268,31 @@ export default function LecturesView({
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',
-                        fontSize: '9pt',
-                        padding: '6px 10px',
-                        opacity: currentIndex <= 0 ? 0.4 : 1
+                        fontSize: isAskQuestionOpen ? '8pt' : '9pt',
+                        padding: isAskQuestionOpen ? '5px 8px' : '6px 10px',
+                        opacity: currentIndex <= 0 ? 0.4 : 1,
+                        transition: 'all 0.65s cubic-bezier(0.4, 0, 0.2, 1)'
                       }}
                     >
-                      <ChevronLeft size={15} /> Prev
+                      <ChevronLeft size={14} /> Prev
                     </button>
 
                     <button
                       type="button"
                       onClick={handleNextLecture}
-                      disabled={currentIndex >= videoLectures.length - 1}
+                      disabled={currentIndex >= allLecturesOrdered.length - 1}
                       className="cf-btn-secondary"
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',
-                        fontSize: '9pt',
-                        padding: '6px 10px',
-                        opacity: currentIndex >= videoLectures.length - 1 ? 0.4 : 1
+                        fontSize: isAskQuestionOpen ? '8pt' : '9pt',
+                        padding: isAskQuestionOpen ? '5px 8px' : '6px 10px',
+                        opacity: currentIndex >= allLecturesOrdered.length - 1 ? 0.4 : 1,
+                        transition: 'all 0.65s cubic-bezier(0.4, 0, 0.2, 1)'
                       }}
                     >
-                      Next <ChevronRight size={15} />
+                      Next <ChevronRight size={14} />
                     </button>
 
                     {activeVideoId && (
@@ -980,12 +1305,13 @@ export default function LecturesView({
                           display: 'flex',
                           alignItems: 'center',
                           gap: '4px',
-                          fontSize: '8.5pt',
-                          padding: '6px 10px'
+                          fontSize: isAskQuestionOpen ? '8pt' : '8.5pt',
+                          padding: isAskQuestionOpen ? '5px 8px' : '6px 10px',
+                          transition: 'all 0.65s cubic-bezier(0.4, 0, 0.2, 1)'
                         }}
                       >
                         {copiedLink ? <Check size={13} style={{ color: '#16a34a' }} /> : <Copy size={13} />}
-                        <span>{copiedLink ? 'Copied' : 'Share Link'}</span>
+                        <span>{copiedLink ? 'Copied' : 'Share'}</span>
                       </button>
                     )}
                   </div>
@@ -993,53 +1319,99 @@ export default function LecturesView({
 
                 {/* 4. Tab Navigation below player: My Notes & AI Summary Quick Launcher */}
                 <div style={{ marginTop: '20px' }}>
-                  <div style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', gap: '4px' }}>
+                  <div className="lecture-tab-bar-container">
                     <button
+                      ref={summaryTabRef}
+                      type="button"
+                      onClick={() => setActiveTab('summary')}
+                      className={`lecture-tab-nav-btn ${activeTab === 'summary' ? 'active' : ''}`}
+                    >
+                      <Sparkles size={14} style={{ color: activeTab === 'summary' ? '#3b5998' : '#94a3b8', transition: 'color 0.5s cubic-bezier(0.25, 1, 0.35, 1)' }} />
+                      Lecture Synopsis
+                    </button>
+
+                    <button
+                      ref={notesTabRef}
                       type="button"
                       onClick={() => setActiveTab('notes')}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '9pt',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                        border: 'none',
-                        borderBottom: activeTab === 'notes' ? '2px solid #3b5998' : '2px solid transparent',
-                        backgroundColor: 'transparent',
-                        color: activeTab === 'notes' ? '#3b5998' : '#64748b',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
+                      className={`lecture-tab-nav-btn ${activeTab === 'notes' ? 'active' : ''}`}
                     >
-                      <FileText size={14} />
+                      <FileText size={14} style={{ color: activeTab === 'notes' ? '#3b5998' : '#94a3b8', transition: 'color 0.5s cubic-bezier(0.25, 1, 0.35, 1)' }} />
                       My Personal Notes
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('summary')}
+                    {/* Smooth Dynamic Sliding Underline Indicator */}
+                    <div
+                      className="lecture-tab-indicator"
                       style={{
-                        padding: '8px 16px',
-                        fontSize: '9pt',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                        border: 'none',
-                        borderBottom: activeTab === 'summary' ? '2px solid #3b5998' : '2px solid transparent',
-                        backgroundColor: 'transparent',
-                        color: activeTab === 'summary' ? '#3b5998' : '#64748b',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
+                        left: tabIndicatorStyle.width > 0 ? `${tabIndicatorStyle.left}px` : (activeTab === 'summary' ? '0px' : '150px'),
+                        width: tabIndicatorStyle.width > 0 ? `${tabIndicatorStyle.width}px` : (activeTab === 'summary' ? '146px' : '158px'),
+                        opacity: 1
                       }}
-                    >
-                      <Sparkles size={14} style={{ color: '#3b5998' }} />
-                      AI Academic Synopsis
-                    </button>
+                    />
                   </div>
 
-                  {/* TAB 1: Student Personal Study Notes */}
+                  {/* TAB 1: Lecture Synopsis Overview Callout */}
+                  {activeTab === 'summary' && (
+                    <div key="tab-summary" className="lecture-tab-pane" style={{ padding: '16px 4px' }}>
+                      {isSynopsisLoading ? (
+                        <div
+                          style={{
+                            textAlign: 'center',
+                            padding: '36px 20px',
+                            backgroundColor: '#f8fafd',
+                            borderRadius: '4px',
+                            border: '1px solid #b9c9fe'
+                          }}
+                        >
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: '#3b5998', fontSize: '9.5pt', fontWeight: 'bold' }}>
+                            <Sparkles size={16} className="cortex-spin-anim" />
+                            <span>Loading Lecture Synopsis...</span>
+                          </div>
+                          <p style={{ margin: '8px 0 14px 0', fontSize: '8.5pt', color: '#64748b' }}>
+                            Loading concise academic synopsis and learning objectives for this lecture.
+                          </p>
+                          <div
+                            style={{
+                              height: '4px',
+                              maxWidth: '240px',
+                              margin: '0 auto',
+                              backgroundColor: '#e2e8f0',
+                              borderRadius: '2px',
+                              overflow: 'hidden'
+                            }}
+                          >
+                            <div className="academic-loader-shimmer" style={{ width: '100%', height: '100%' }} />
+                          </div>
+                        </div>
+                      ) : aiSummary && aiSummary.synopsis ? (
+                        <div style={{ backgroundColor: '#f8fafd', border: '1px solid #b9c9fe', borderRadius: '4px', padding: '16px' }}>
+                          <h4 style={{ margin: '0 0 10px 0', fontSize: '10pt', fontWeight: 'bold', color: '#3b5998' }}>
+                            Lecture Synopsis
+                          </h4>
+                          <AcademicMarkdown content={aiSummary.synopsis} />
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            textAlign: 'center',
+                            padding: '28px 20px',
+                            backgroundColor: '#f8fafd',
+                            borderRadius: '4px',
+                            border: '1px dashed #cbd5e1'
+                          }}
+                        >
+                          <p style={{ margin: 0, fontSize: '8.5pt', color: '#64748b' }}>
+                            No synopsis available for this lecture yet.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 2: Student Personal Study Notes */}
                   {activeTab === 'notes' && (
-                    <div style={{ padding: '16px 4px' }}>
+                    <div key="tab-notes" className="lecture-tab-pane" style={{ padding: '16px 4px' }}>
                       <p style={{ fontSize: '8.5pt', color: '#64748b', margin: '0 0 8px 0' }}>
                         Your personal timestamped study notes for this lecture. Notes are automatically saved to your student profile.
                       </p>
@@ -1078,66 +1450,6 @@ export default function LecturesView({
                     </div>
                   )}
 
-                  {/* TAB 2: AI Summary Overview Callout */}
-                  {activeTab === 'summary' && (
-                    <div style={{ padding: '16px 4px' }}>
-                      {aiSummary ? (
-                        <div style={{ backgroundColor: '#f8fafd', border: '1px solid #b9c9fe', borderRadius: '4px', padding: '16px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                            <h4 style={{ margin: 0, fontSize: '10pt', fontWeight: 'bold', color: '#3b5998' }}>
-                              Executive Synopsis
-                            </h4>
-                            <button
-                              type="button"
-                              onClick={handleOpenSummaryModal}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                background: 'none',
-                                border: 'none',
-                                color: '#3b5998',
-                                cursor: 'pointer',
-                                fontSize: '8.5pt',
-                                fontWeight: 'bold',
-                                textDecoration: 'underline'
-                              }}
-                            >
-                              <ExternalLink size={13} /> View Full Academic Breakdown
-                            </button>
-                          </div>
-                          <AcademicMarkdown content={aiSummary.synopsis} />
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            textAlign: 'center',
-                            padding: '30px 20px',
-                            backgroundColor: '#f8fafd',
-                            borderRadius: '4px',
-                            border: '1px dashed #b9c9fe'
-                          }}
-                        >
-                          <Sparkles size={26} style={{ color: '#3b5998', marginBottom: '8px' }} />
-                          <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5pt', fontWeight: 'bold', color: '#3b5998' }}>
-                            AI Academic Lecture Summary
-                          </h4>
-                          <p style={{ fontSize: '8.5pt', color: '#64748b', maxWidth: '420px', margin: '0 auto 14px auto', lineHeight: '1.5' }}>
-                            Synthesize in-depth topical breakdowns, code snippets, and exam pitfalls on demand for <strong>"{activeLecture.title}"</strong>.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={handleOpenSummaryModal}
-                            className="cf-btn-primary"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '9pt', padding: '6px 16px' }}
-                          >
-                            <Sparkles size={14} style={{ color: '#3b5998' }} /> Summarize Lecture in Modal
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                 </div>
               </div>
             ) : (
@@ -1145,549 +1457,732 @@ export default function LecturesView({
             )}
           </div>
 
-          {/* RIGHT COLUMN: Course Syllabus & Navigation Side List */}
-          <div style={{ flex: '1 1 300px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            
-            {/* 1. Overall Course Progress Header */}
-            <div
-              style={{
-                backgroundColor: '#f8fafc',
-                border: '1px solid #cbd5e1',
-                borderRadius: '6px',
-                padding: '14px 16px'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#3b5998' }}>
-                  Overall Coursework Progress
-                </span>
-                <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#3b5998', fontFamily: 'monospace' }}>
-                  {overallProgressStats.percentage}%
-                </span>
-              </div>
-
-              {/* Progress Bar */}
-              <div style={{ width: '100%', height: '8px', backgroundColor: '#e2e8f0', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }}>
+            {/* RIGHT COLUMN SLOT: Holds either Cortex AI Panel or Syllabus List */}
+            <div className="lecture-side-slot">
+              {/* DOCKED BICS CORTEX AI SIDE PANEL (When shouldRenderCortex === true) */}
+              {shouldRenderCortex && (
+                <div
+                  className={`cortex-panel-container ${cortexAnimClass}`}
+                  style={{
+                    width: '100%',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    maxHeight: '740px',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
+                    overflow: 'hidden'
+                  }}
+                >
+                {/* Panel Header */}
                 <div
                   style={{
-                    width: `${overallProgressStats.percentage}%`,
-                    height: '100%',
-                    backgroundColor: '#3b5998',
-                    transition: 'width 0.4s ease'
-                  }}
-                />
-              </div>
-
-              <div style={{ fontSize: '8pt', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
-                <span>{overallProgressStats.completedCount} of {overallProgressStats.total} Lectures Completed</span>
-                <span>Average: {overallProgressStats.percentage}%</span>
-              </div>
-            </div>
-
-            {/* 2. Search Syllabus Filter */}
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                placeholder="Search lectures & topics..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px 8px 32px',
-                  fontSize: '9pt',
-                  borderRadius: '4px',
-                  border: '1px solid #cbd5e1',
-                  boxSizing: 'border-box'
-                }}
-              />
-              <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94a3b8' }} />
-            </div>
-
-            {/* 3. Deduplicated Canonical Sections List */}
-            <div style={{ maxHeight: '680px', overflowY: 'auto', paddingRight: '4px' }}>
-              {filteredSections.map((sec, secIdx) => {
-                const isOpen = searchQuery.trim() ? true : !!openSections[sec.title];
-                return (
-                  <div key={secIdx} style={{ marginBottom: '14px' }}>
-                    
-                    {/* Section Header Accordion (Initially Closed) */}
-                    <div
-                      onClick={() => setOpenSections(prev => ({ ...prev, [sec.title]: !prev[sec.title] }))}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        cursor: 'pointer',
-                        padding: '10px 14px',
-                        backgroundColor: '#f8fafc',
-                        borderRadius: '4px',
-                        marginBottom: isOpen ? '6px' : '0',
-                        border: '1px solid #cbd5e1',
-                        transition: 'background-color 0.15s ease'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#f1f5f9';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = '#f8fafc';
-                      }}
-                    >
-                      <h4
-                        style={{
-                          margin: 0,
-                          fontSize: '8.5pt',
-                          fontWeight: 'bold',
-                          color: '#3b5998',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.5px'
-                        }}
-                      >
-                        {sec.title}
-                      </h4>
-                      <span style={{ color: '#64748b', display: 'flex', alignItems: 'center' }}>
-                        {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                      </span>
-                    </div>
-
-                    {/* Unified Contiguous List Group (Starts at 1 for each section) */}
-                    {isOpen && (
-                      <div
-                        style={{
-                          border: '1px solid #cbd5e1',
-                          borderRadius: '4px',
-                          overflow: 'hidden',
-                          backgroundColor: '#ffffff',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                        }}
-                      >
-                        {sec.lectures.map((lec, lIdx) => {
-                          const lecId = lec._id ? String(lec._id) : (lec.id ? String(lec.id) : '');
-                          const activeId = activeLecture?._id ? String(activeLecture._id) : (activeLecture?.id ? String(activeLecture.id) : '');
-                          const lecYId = extractYouTubeId(lec.youtubeUrl);
-                          const activeYId = activeLecture ? extractYouTubeId(activeLecture.youtubeUrl) : '';
-
-                          let isActive = false;
-                          if (activeLecture) {
-                            if (lecId && activeId && lecId === activeId) {
-                              isActive = true;
-                            } else if (lecYId && activeYId && lecYId === activeYId) {
-                              isActive = true;
-                            }
-                          }
-
-                          const prog = progressMap[lec._id] || progressMap[lec.id] || progressMap[lecYId] || {};
-                          const pct = prog.percent || (prog.completed ? 100 : 0);
-                          const isDone = !!prog.completed || pct >= 85;
-                          const isLast = lIdx === sec.lectures.length - 1;
-                          const displayIndex = lIdx + 1; // Starts at 1 for each individual section
-
-                          return (
-                            <div
-                              key={lIdx}
-                              onClick={() => handleSelectLecture(lec)}
-                              style={{
-                                cursor: 'pointer',
-                                padding: '12px 16px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                gap: '12px',
-                                backgroundColor: isActive ? '#6674cc' : '#ffffff',
-                                color: isActive ? '#ffffff' : '#334155',
-                                borderBottom: isLast ? 'none' : (isActive ? '1px solid #5764be' : '1px solid #eef2f6'),
-                                transition: 'background-color 0.15s ease, color 0.15s ease'
-                              }}
-                              onMouseEnter={(e) => {
-                                if (!isActive) e.currentTarget.style.backgroundColor = '#f8fafd';
-                              }}
-                              onMouseLeave={(e) => {
-                                if (!isActive) e.currentTarget.style.backgroundColor = '#ffffff';
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontSize: '9.5pt',
-                                  fontWeight: isActive ? '600' : '400',
-                                  lineHeight: '1.45',
-                                  flex: 1
-                                }}
-                              >
-                                {displayIndex}. {lec.title}
-                              </div>
-
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                                {isDone ? (
-                                  <CheckCircle2
-                                    size={15}
-                                    style={{ color: isActive ? '#ffffff' : '#16a34a' }}
-                                    title="Completed"
-                                  />
-                                ) : (
-                                  <span
-                                    style={{
-                                      fontSize: '7.5pt',
-                                      fontWeight: 'bold',
-                                      fontFamily: 'monospace',
-                                      color: isActive ? '#ffffff' : (pct > 0 ? '#475569' : '#94a3b8'),
-                                      backgroundColor: isActive ? 'rgba(255,255,255,0.25)' : (pct > 0 ? '#f1f5f9' : '#f8fafc'),
-                                      padding: '2px 5px',
-                                      borderRadius: '3px'
-                                    }}
-                                  >
-                                    {pct}%
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                  </div>
-                );
-              })}
-            </div>
-
-          </div>
-
-        </div>
-      )}
-
-      {/* =========================================================================
-          DEDICATED ACADEMIC SUMMARY MODAL
-          Renders full video title, exhaustive breakdown, code snippets, & tips
-         ========================================================================= */}
-      {isSummaryModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.75)',
-            backdropFilter: 'blur(3px)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px'
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setIsSummaryModalOpen(false);
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '8px',
-              maxWidth: '920px',
-              width: '100%',
-              maxHeight: '90vh',
-              display: 'flex',
-              flexDirection: 'column',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
-              overflow: 'hidden',
-              border: '1px solid #cbd5e1'
-            }}
-          >
-            {/* Modal Header */}
-            <div
-              style={{
-                backgroundColor: '#f0f4fa',
-                color: '#3b5998',
-                padding: '14px 20px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderBottom: '1px solid #b9c9fe'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Sparkles size={20} style={{ color: '#3b5998' }} />
-                <div>
-                  <div style={{ fontSize: '7.5pt', textTransform: 'uppercase', letterSpacing: '0.6px', color: '#64748b', fontWeight: 'bold' }}>
-                    Academic Lecture Summary • {activeLecture?.section || 'Coursework'}
-                  </div>
-                  <h3 style={{ margin: '2px 0 0 0', fontSize: '13pt', fontWeight: 'bold', color: '#3b5998' }}>
-                    {activeLecture?.title || 'Video Lecture'}
-                  </h3>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {aiSummary && (
-                  <button
-                    type="button"
-                    onClick={handleCopySummaryContent}
-                    className="cf-btn-primary"
-                    title="Copy full summary"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontSize: '8.5pt',
-                      padding: '4px 10px'
-                    }}
-                  >
-                    {copiedSummary ? <Check size={13} style={{ color: '#16a34a' }} /> : <Copy size={13} />}
-                    <span>{copiedSummary ? 'Copied' : 'Copy'}</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setIsSummaryModalOpen(false)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#64748b',
-                    cursor: 'pointer',
-                    padding: '4px',
+                    backgroundColor: '#f8fafc',
+                    padding: '12px 16px',
+                    borderBottom: '1px solid #e2e8f0',
                     display: 'flex',
+                    justifyContent: 'space-between',
                     alignItems: 'center'
                   }}
-                  title="Close modal"
                 >
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Content Body */}
-            <div style={{ padding: '24px 28px', overflowY: 'auto', flex: 1 }}>
-              {isAiLoading ? (
-                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
-                  <Cpu size={36} className="spin-animation" style={{ color: '#3b5998', marginBottom: '14px' }} />
-                  <h4 style={{ margin: '0 0 6px 0', fontSize: '12pt', fontWeight: 'bold', color: '#3b5998' }}>
-                    Synthesizing Comprehensive Lecture Notes...
-                  </h4>
-                  <p style={{ margin: 0, fontSize: '9pt', color: '#64748b', maxWidth: '480px', marginInline: 'auto', lineHeight: '1.5' }}>
-                    Executing AI pipeline (OpenRouter Gemini Flash → Gemini Direct → Groq GPT). Summary will be saved permanently in the curriculum database.
-                  </p>
-                </div>
-              ) : aiError ? (
-                <div className="cf-alert cf-alert-danger" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <AlertCircle size={18} />
-                    <span><strong>Synthesis Notice:</strong> {aiError}</span>
+                    <CortexGpuIcon size={18} />
+                    <span style={{ fontSize: '10pt', fontWeight: 'bold', color: '#1e293b' }}>
+                      Ask about this video
+                    </span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => triggerGenerateSummary(activeLecture)}
-                    className="cf-btn-primary"
-                    style={{ fontSize: '8.5pt', padding: '6px 12px' }}
+                    onClick={() => setIsAskQuestionOpen(false)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}
+                    title="Close Cortex panel"
                   >
-                    Retry Generation
+                    <X size={16} />
                   </button>
                 </div>
-              ) : aiSummary ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+
+                {/* Messages Chat Scroll Container */}
+                <div
+                  ref={chatMessagesContainerRef}
+                  style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', backgroundColor: '#fcfdfd' }}
+                >
                   
-                  {/* Metadata Banner */}
+                  {/* BICS Cortex Identity & Disclaimer Banner */}
                   <div
                     style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '8px 12px',
                       backgroundColor: '#f1f5f9',
-                      borderRadius: '4px',
-                      fontSize: '8pt',
-                      color: '#475569'
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      padding: '10px 12px',
+                      fontSize: '7.5pt',
+                      color: '#475569',
+                      lineHeight: '1.45'
                     }}
                   >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <CheckCircle2 size={13} style={{ color: '#16a34a' }} />
-                      Verified Academic Artifact • Provider: {aiSummary.provider || 'Gemini Flash'}
-                    </span>
-                    <span style={{ fontFamily: 'monospace' }}>
-                      Video ID: {activeVideoId || 'N/A'}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                      <CortexGpuIcon size={12} />
+                      <strong style={{ color: '#1e293b' }}>Cortex is the official LLM by BICS Portal.</strong>
+                    </div>
+                    <span>
+                      It can make mistakes, so double-check important theoretical or mathematical information. Answers are grounded in <strong>"{activeLecture?.title}"</strong>.
                     </span>
                   </div>
 
-                  {/* 1. Executive Synopsis */}
-                  <div>
-                    <h4
+                  {/* History Initializing Loader (Shown smoothly while panel opens) */}
+                  {isChatHistoryLoading && (
+                    <div
+                      className="cortex-thinking-container"
                       style={{
-                        fontSize: '11pt',
-                        fontWeight: 'bold',
-                        color: '#3b5998',
-                        margin: '0 0 8px 0',
-                        borderBottom: '2px solid #b9c9fe',
-                        paddingBottom: '4px'
+                        width: '100%',
+                        padding: '14px 16px',
+                        borderRadius: '6px',
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px'
                       }}
                     >
-                      Executive Synopsis
-                    </h4>
-                    <AcademicMarkdown content={aiSummary.synopsis} />
-                  </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div className="cortex-pulse-anim" style={{ display: 'flex', alignItems: 'center' }}>
+                          <CortexGpuIcon size={14} spin={true} />
+                        </div>
+                        <span style={{ fontSize: '8pt', fontWeight: 'bold', color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          BICS CORTEX • Loading Discussion
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+                        <div className="academic-loader-shimmer" style={{ height: '11px', width: '100%', borderRadius: '3px' }} />
+                        <div className="academic-loader-shimmer" style={{ height: '11px', width: '92%', borderRadius: '3px' }} />
+                        <div className="academic-loader-shimmer" style={{ height: '11px', width: '68%', borderRadius: '3px' }} />
+                      </div>
+                    </div>
+                  )}
 
-                  {/* 2. Exhaustive Topical Breakdown with code blocks and headings */}
-                  {aiSummary.detailedNotes && (
-                    <div>
-                      <h4
-                        style={{
-                          fontSize: '11pt',
-                          fontWeight: 'bold',
-                          color: '#3b5998',
-                          margin: '0 0 10px 0',
-                          borderBottom: '2px solid #b9c9fe',
-                          paddingBottom: '4px'
-                        }}
-                      >
-                        Exhaustive Topical Breakdown
+                  {/* Empty state / Welcome prompt if no messages */}
+                  {!isChatHistoryLoading && cortexMessages.length === 0 && !isCortexThinking && (
+                    <div style={{ textAlign: 'center', padding: '24px 10px', color: '#64748b' }}>
+                      <CortexGpuIcon size={32} style={{ margin: '0 auto 10px auto', display: 'block', opacity: 0.65 }} />
+                      <h4 style={{ margin: '0 0 6px 0', fontSize: '9.5pt', fontWeight: 'bold', color: '#334155' }}>
+                        Have a question about this lecture?
                       </h4>
+                      <p style={{ margin: 0, fontSize: '8.5pt', lineHeight: '1.5' }}>
+                        Ask for concept clarifications, code walk-throughs, or timestamped pointers from the video.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Message Bubble Stream */}
+                  {!isChatHistoryLoading && cortexMessages.map((msg, mIdx) => {
+                    const isUser = msg.role === 'user';
+                    return (
                       <div
+                        key={mIdx}
                         style={{
-                          backgroundColor: '#f8fafd',
-                          padding: '18px 22px',
-                          borderRadius: '6px',
-                          border: '1px solid #b9c9fe'
-                        }}
-                      >
-                        <AcademicMarkdown content={aiSummary.detailedNotes} />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 3. Core Technical Concepts */}
-                  {aiSummary.keyConcepts && aiSummary.keyConcepts.length > 0 && (
-                    <div>
-                      <h4
-                        style={{
-                          fontSize: '11pt',
-                          fontWeight: 'bold',
-                          color: '#3b5998',
-                          margin: '0 0 10px 0',
                           display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          borderBottom: '2px solid #b9c9fe',
-                          paddingBottom: '4px'
+                          flexDirection: 'column',
+                          alignItems: isUser ? 'flex-end' : 'flex-start',
+                          gap: '3px'
                         }}
                       >
-                        <BookOpen size={16} /> Core Technical Concepts
-                      </h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {aiSummary.keyConcepts.map((concept, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              backgroundColor: '#f8fafd',
-                              border: '1px solid #b9c9fe',
-                              borderLeft: '4px solid #3b5998',
-                              borderRadius: '4px',
-                              padding: '10px 14px',
-                              fontSize: '9.5pt',
-                              color: '#1e293b'
-                            }}
-                          >
-                            <AcademicMarkdown content={concept} />
+                        <div
+                          className={isUser ? undefined : 'cortex-assistant-bubble'}
+                          style={{
+                            width: isUser ? 'auto' : '100%',
+                            maxWidth: isUser ? '88%' : '100%',
+                            padding: isUser ? '8px 12px' : '12px 14px',
+                            borderRadius: '6px',
+                            fontSize: '9pt',
+                            lineHeight: '1.6',
+                            backgroundColor: isUser ? '#e8eff7' : '#ffffff',
+                            color: '#1e293b',
+                            border: isUser ? '1px solid #b9c9fe' : '1px solid #cbd5e1',
+                            boxShadow: isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.03)'
+                          }}
+                        >
+                          {!isUser && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                              <CortexGpuIcon size={14} />
+                              <span style={{ fontSize: '8pt', fontWeight: 'bold', color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                BICS CORTEX
+                              </span>
+                            </div>
+                          )}
+
+                          {isUser ? (
+                            <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+                          ) : (
+                            <div style={{ width: '100%' }}>
+                              <AcademicMarkdown content={msg.content} />
+                              {isCortexStreaming && mIdx === cortexMessages.length - 1 && (
+                                <span className="typewriter-cursor" />
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Timestamp quick-chips if assistant mentions timestamps like (03:15) */}
+                        {!isUser && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
+                            {Array.from(new Set(msg.content.match(/\b\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\b/g) || [])).slice(0, 4).map((ts, tsIdx) => (
+                              <button
+                                key={tsIdx}
+                                type="button"
+                                onClick={() => handleSeekToTimestamp(ts)}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  fontSize: '7.5pt',
+                                  fontFamily: 'monospace',
+                                  fontWeight: 'bold',
+                                  backgroundColor: '#eff6ff',
+                                  color: '#3b5998',
+                                  border: '1px solid #b9c9fe',
+                                  cursor: 'pointer'
+                                }}
+                                title={`Jump video to ${ts}`}
+                              >
+                                <Play size={9} fill="#3b5998" /> {ts}
+                              </button>
+                            ))}
                           </div>
-                        ))}
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Thinking State Loader (Matching Reference Image) */}
+                  {isCortexThinking && (
+                    <div
+                      className="cortex-thinking-container"
+                      style={{
+                        width: '100%',
+                        padding: '12px 14px',
+                        borderRadius: '6px',
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                        <div className="cortex-pulse-anim" style={{ display: 'flex', alignItems: 'center' }}>
+                          <CortexGpuIcon size={14} spin={true} />
+                        </div>
+                        <span style={{ fontSize: '8pt', fontWeight: 'bold', color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          BICS CORTEX
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+                        <div
+                          className="academic-loader-shimmer"
+                          style={{ height: '11px', width: '100%', borderRadius: '3px' }}
+                        />
+                        <div
+                          className="academic-loader-shimmer"
+                          style={{ height: '11px', width: '100%', borderRadius: '3px' }}
+                        />
+                        <div
+                          className="academic-loader-shimmer"
+                          style={{ height: '11px', width: '100%', borderRadius: '3px' }}
+                        />
+                        <div
+                          className="academic-loader-shimmer"
+                          style={{ height: '11px', width: '65%', borderRadius: '3px' }}
+                        />
                       </div>
                     </div>
                   )}
 
-                  {/* 4. Examination Tips & Pitfalls */}
-                  {aiSummary.examTakeaways && aiSummary.examTakeaways.length > 0 && (
-                    <div>
-                      <h4
-                        style={{
-                          fontSize: '11pt',
-                          fontWeight: 'bold',
-                          color: '#b45309',
-                          margin: '0 0 10px 0',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          borderBottom: '2px solid #d97706',
-                          paddingBottom: '4px'
-                        }}
-                      >
-                        <GraduationCap size={16} /> Examination Tips & Important Pitfalls
-                      </h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {aiSummary.examTakeaways.map((tip, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              backgroundColor: '#fffbeb',
-                              border: '1px solid #fef3c7',
-                              borderLeft: '4px solid #d97706',
-                              borderRadius: '4px',
-                              padding: '10px 14px',
-                              fontSize: '9.5pt',
-                              color: '#92400e'
-                            }}
-                          >
-                            <AcademicMarkdown content={tip} />
-                          </div>
-                        ))}
-                      </div>
+                  {/* Error Notification */}
+                  {cortexError && (
+                    <div
+                      style={{
+                        padding: '10px 12px',
+                        backgroundColor: '#fff1f2',
+                        border: '1px solid #fecdd3',
+                        borderRadius: '4px',
+                        fontSize: '8.5pt',
+                        color: '#9f1239'
+                      }}
+                    >
+                      <span><strong>Notice:</strong> {cortexError}</span>
                     </div>
                   )}
-
                 </div>
-              ) : (
-                /* Un-summarized state: Click to generate on demand */
-                <div style={{ textAlign: 'center', padding: '50px 20px' }}>
-                  <Sparkles size={38} style={{ color: '#3b5998', marginBottom: '14px' }} />
-                  <h3 style={{ margin: '0 0 8px 0', fontSize: '13pt', fontWeight: 'bold', color: '#3b5998' }}>
-                    Generate Comprehensive Lecture Summary
-                  </h3>
-                  <p style={{ margin: '0 auto 20px auto', fontSize: '9.5pt', color: '#64748b', maxWidth: '480px', lineHeight: '1.6' }}>
-                    Click below to generate an academic synopsis, exhaustive topical breakdowns with code snippets, key technical concepts, and high-probability exam tips for <strong>"{activeLecture?.title}"</strong>.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => triggerGenerateSummary(activeLecture)}
-                    className="cf-btn-primary"
+
+                {/* Suggested Followup Chips */}
+                {(cortexFollowups.length > 0 || cortexMessages.length === 0) && (
+                  <div
                     style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      fontSize: '9.5pt',
-                      padding: '8px 20px',
-                      cursor: 'pointer'
+                      padding: '8px 12px',
+                      backgroundColor: '#f8fafc',
+                      borderTop: '1px solid #e2e8f0',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '5px'
                     }}
                   >
-                    <Sparkles size={16} style={{ color: '#3b5998' }} />
-                    <span>Summarize this Lecture</span>
-                  </button>
-                </div>
-              )}
-            </div>
+                    {(cortexFollowups.length > 0
+                      ? cortexFollowups.slice(0, 3)
+                      : [
+                          `What are the core concepts covered in this lecture?`,
+                          `What are high-probability exam pitfalls for this topic?`,
+                          `Can you break down the code/formulas shown?`
+                        ]
+                    ).map((promptText, pIdx) => (
+                      <button
+                        key={pIdx}
+                        type="button"
+                        onClick={() => handleSendCortexQuestion(promptText)}
+                        disabled={isCortexThinking || isCortexStreaming}
+                        style={{
+                          textAlign: 'left',
+                          fontSize: '8pt',
+                          color: '#334155',
+                          backgroundColor: '#ffffff',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '16px',
+                          padding: '5px 12px',
+                          cursor: (isCortexThinking || isCortexStreaming) ? 'not-allowed' : 'pointer',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {promptText}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-            {/* Modal Footer */}
-            <div
-              style={{
-                backgroundColor: '#f8fafc',
-                padding: '12px 20px',
-                borderTop: '1px solid #e2e8f0',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '16px'
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <span style={{ fontSize: '8pt', color: '#64748b' }}>
-                  Course: {activeLecture?.section || 'General'} • BICS Academic Repository
-                </span>
-                <span style={{ fontSize: '7.5pt', color: '#94a3b8' }}>
-                  The summary is generated by {aiSummary?.provider || 'Gemini Flash'} model. It can make mistakes, verify important information.
-                </span>
+                {/* Chat Input Bar */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendCortexQuestion();
+                  }}
+                  style={{
+                    padding: '10px 12px',
+                    backgroundColor: '#ffffff',
+                    borderTop: '1px solid #cbd5e1',
+                    display: 'flex',
+                    gap: '8px',
+                    alignItems: 'center'
+                  }}
+                >
+                  <input
+                    type="text"
+                    placeholder="Ask a question..."
+                    value={cortexInput}
+                    onChange={(e) => setCortexInput(e.target.value)}
+                    disabled={isCortexThinking || isCortexStreaming}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      fontSize: '9pt',
+                      borderRadius: '20px',
+                      border: '1px solid #cbd5e1',
+                      outline: 'none',
+                      backgroundColor: '#f8fafc'
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!cortexInput.trim() || isCortexThinking || isCortexStreaming}
+                    style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      backgroundColor: cortexInput.trim() && !isCortexThinking && !isCortexStreaming ? '#3b5998' : '#cbd5e1',
+                      color: '#ffffff',
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: cortexInput.trim() && !isCortexThinking && !isCortexStreaming ? 'pointer' : 'default',
+                      flexShrink: 0
+                    }}
+                    title="Send to Cortex"
+                  >
+                    <Send size={14} />
+                  </button>
+                </form>
+
+                {/* Bottom Model Badge */}
+                <div
+                  style={{
+                    backgroundColor: '#f1f5f9',
+                    padding: '4px 12px',
+                    borderTop: '1px solid #e2e8f0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <CortexGpuIcon size={12} />
+                  <span style={{ fontSize: '7pt', color: '#64748b', fontWeight: 'bold' }}>
+                    Cortex • Official LLM by BICS Portal
+                  </span>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsSummaryModalOpen(false)}
-                className="cf-btn-secondary"
-                style={{ fontSize: '9pt', padding: '6px 14px', flexShrink: 0 }}
+            )}
+
+            {/* SYLLABUS COLUMN (Shown in top row ONLY when Cortex panel is closed) */}
+            {!shouldRenderCortex && (
+              <div 
+                className="syllabus-side-column-transition"
+                style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '14px' }}
               >
-                Close
-              </button>
+                
+                {/* 1. Overall Course Progress Header */}
+                <div
+                  style={{
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    padding: '14px 16px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#3b5998' }}>
+                      Overall Coursework Progress
+                    </span>
+                    <span style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#3b5998', fontFamily: 'monospace' }}>
+                      {overallProgressStats.percentage}%
+                    </span>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div style={{ width: '100%', height: '8px', backgroundColor: '#e2e8f0', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }}>
+                    <div
+                      style={{
+                        width: `${overallProgressStats.percentage}%`,
+                        height: '100%',
+                        backgroundColor: '#3b5998',
+                        transition: 'width 0.4s ease'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ fontSize: '8pt', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{overallProgressStats.completedCount} of {overallProgressStats.total} Lectures Completed</span>
+                    <span>Average: {overallProgressStats.percentage}%</span>
+                  </div>
+                </div>
+
+                {/* 2. Search Syllabus Filter */}
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    placeholder="Search lectures & topics..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: searchQuery ? '8px 28px 8px 32px' : '8px 10px 8px 32px',
+                      fontSize: '9pt',
+                      borderRadius: '4px',
+                      border: '1px solid #cbd5e1',
+                      boxSizing: 'border-box',
+                      outline: 'none'
+                    }}
+                  />
+                  <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94a3b8' }} />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      title="Clear filter"
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '8px',
+                        background: 'none',
+                        border: 'none',
+                        color: '#94a3b8',
+                        cursor: 'pointer',
+                        padding: '2px',
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {/* 3. Deduplicated Canonical Sections List or Empty State */}
+                <div style={{ maxHeight: '680px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {filteredSections.length === 0 ? (
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        padding: '40px 16px',
+                        backgroundColor: '#ffffff',
+                        border: '1px dashed #cbd5e1',
+                        borderRadius: '6px',
+                        marginTop: '4px'
+                      }}
+                    >
+                      <svg
+                        width="64"
+                        height="64"
+                        viewBox="0 0 64 64"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        style={{ margin: '0 auto 12px auto', display: 'block' }}
+                      >
+                        <rect x="10" y="14" width="36" height="42" rx="4" fill="#f8fafc" stroke="#b9c9fe" strokeWidth="2" strokeDasharray="3 3" />
+                        <line x1="16" y1="24" x2="38" y2="24" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="16" y1="32" x2="34" y2="32" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="16" y1="40" x2="28" y2="40" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
+                        <circle cx="42" cy="42" r="13" fill="#ffffff" stroke="#3b5998" strokeWidth="2" />
+                        <path d="M37 42L47 42" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" />
+                        <line x1="51.5" y1="51.5" x2="58" y2="58" stroke="#3b5998" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+                      <h5 style={{ margin: '0 0 6px 0', fontSize: '10pt', fontWeight: 'bold', color: '#334155' }}>
+                        No lectures match "{searchQuery}"
+                      </h5>
+                      <p style={{ margin: '0 0 14px 0', fontSize: '8.5pt', color: '#64748b', lineHeight: '1.45' }}>
+                        No modules or lecture topics found matching your query. Check spelling or clear search.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="cf-btn-secondary"
+                        style={{ fontSize: '8pt', padding: '4px 12px', cursor: 'pointer' }}
+                      >
+                        Clear Filter
+                      </button>
+                    </div>
+                  ) : (
+                    filteredSections.map((sec, secIdx) => {
+                      const isOpen = searchQuery.trim() ? true : !!openSections[sec.title];
+                      return (
+                        <div key={secIdx} style={{ marginBottom: '14px' }}>
+                          <div
+                            onClick={() => setOpenSections(prev => ({ ...prev, [sec.title]: !prev[sec.title] }))}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              cursor: 'pointer',
+                              padding: '10px 14px',
+                              backgroundColor: '#f8fafc',
+                              borderRadius: '4px',
+                              marginBottom: isOpen ? '6px' : '0',
+                              border: '1px solid #cbd5e1',
+                              transition: 'background-color 0.15s ease'
+                            }}
+                          >
+                            <h4 style={{ margin: 0, fontSize: '8.5pt', fontWeight: 'bold', color: '#3b5998', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              {sec.title}
+                            </h4>
+                            <span className={`lecture-module-chevron ${isOpen ? 'open' : ''}`} style={{ color: '#64748b', display: 'flex', alignItems: 'center' }}>
+                              <ChevronDown size={15} />
+                            </span>
+                          </div>
+
+                          <div className={`lecture-module-accordion ${isOpen ? 'open' : ''}`}>
+                            <div className="lecture-module-inner" style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', backgroundColor: '#ffffff', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+                              {sec.lectures.map((lec, lIdx) => {
+                                const lecId = lec._id ? String(lec._id) : (lec.id ? String(lec.id) : '');
+                                const activeId = activeLecture?._id ? String(activeLecture._id) : (activeLecture?.id ? String(activeLecture.id) : '');
+                                const lecYId = extractYouTubeId(lec.youtubeUrl);
+                                const activeYId = activeLecture ? extractYouTubeId(activeLecture.youtubeUrl) : '';
+                                const isActive = (activeLecture && ((lecId && activeId && lecId === activeId) || (lecYId && activeYId && lecYId === activeYId)));
+                                const prog = progressMap[lec._id] || progressMap[lec.id] || progressMap[lecYId] || {};
+                                const pct = prog.percent || (prog.completed ? 100 : 0);
+                                const isDone = !!prog.completed || pct >= 85;
+                                const isLast = lIdx === sec.lectures.length - 1;
+                                const displayIndex = lIdx + 1;
+
+                                return (
+                                  <div
+                                    key={lIdx}
+                                    onClick={() => handleSelectLecture(lec)}
+                                    style={{
+                                      cursor: 'pointer',
+                                      padding: '12px 16px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      gap: '12px',
+                                      backgroundColor: isActive ? '#6674cc' : '#ffffff',
+                                      color: isActive ? '#ffffff' : '#334155',
+                                      borderBottom: isLast ? 'none' : (isActive ? '1px solid #5764be' : '1px solid #eef2f6'),
+                                      transition: 'background-color 0.2s ease, color 0.2s ease'
+                                    }}
+                                  >
+                                    <div style={{ fontSize: '9.5pt', fontWeight: isActive ? '600' : '400', lineHeight: '1.45', flex: 1 }}>
+                                      {displayIndex}. {lec.title}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                                      {isDone ? (
+                                        <CheckCircle2 size={15} style={{ color: isActive ? '#ffffff' : '#16a34a' }} />
+                                      ) : (
+                                        <span style={{ fontSize: '7.5pt', fontWeight: 'bold', fontFamily: 'monospace', color: isActive ? '#ffffff' : (pct > 0 ? '#475569' : '#94a3b8'), backgroundColor: isActive ? 'rgba(255,255,255,0.25)' : (pct > 0 ? '#f1f5f9' : '#f8fafc'), padding: '2px 5px', borderRadius: '3px' }}>
+                                          {pct}%
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
             </div>
           </div>
+
+          {/* CURRICULUM SYLLABUS SECTION (Shifted BELOW video when shouldRenderCortex === true) */}
+          {shouldRenderCortex && (
+            <div 
+              className={`curriculum-drawer-container ${cortexAnimClass === 'cortex-panel-open' ? 'curriculum-drawer-open' : 'curriculum-drawer-closed'}`}
+              style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '18px 20px' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '11pt', fontWeight: 'bold', color: '#3b5998' }}>
+                    Course Curriculum & Lecture Modules
+                  </h3>
+                </div>
+
+                {/* Progress bar and search in bottom drawer */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
+                    <div style={{ width: '100%', height: '8px', backgroundColor: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: `${overallProgressStats.percentage}%`, height: '100%', backgroundColor: '#3b5998', transition: 'width 0.4s ease' }} />
+                    </div>
+                    <span style={{ fontSize: '7.5pt', color: '#64748b', textAlign: 'left' }}>
+                      {overallProgressStats.completedCount} of {overallProgressStats.total} Lectures Completed ({overallProgressStats.percentage}%)
+                    </span>
+                  </div>
+                  <div style={{ position: 'relative', width: '220px' }}>
+                    <input
+                      type="text"
+                      placeholder="Search syllabus..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 10px 6px 28px',
+                        fontSize: '8.5pt',
+                        borderRadius: '4px',
+                        border: '1px solid #cbd5e1',
+                        outline: 'none'
+                      }}
+                    />
+                    <Search size={13} style={{ position: 'absolute', left: '8px', top: '9px', color: '#94a3b8' }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid of Sections */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '14px', alignItems: 'start' }}>
+                {filteredSections.map((sec, secIdx) => {
+                  const isOpen = searchQuery.trim() ? true : (openSections[sec.title] !== undefined ? !!openSections[sec.title] : true);
+                  return (
+                    <div key={secIdx} style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                      <div 
+                        onClick={() => setOpenSections(prev => ({ ...prev, [sec.title]: !isOpen }))}
+                        style={{
+                          backgroundColor: '#f1f5f9',
+                          padding: '8px 12px',
+                          borderBottom: '1px solid #cbd5e1',
+                          fontWeight: 'bold',
+                          fontSize: '8.5pt',
+                          color: '#3b5998',
+                          textTransform: 'uppercase',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          userSelect: 'none',
+                          transition: 'background-color 0.3s ease'
+                        }}
+                      >
+                        <span>{sec.title} ({sec.lectures.length} lectures)</span>
+                        <span className={`lecture-module-chevron ${isOpen ? 'open' : ''}`} style={{ color: '#64748b', display: 'flex', alignItems: 'center' }}>
+                          <ChevronDown size={15} />
+                        </span>
+                      </div>
+                      
+                      {/* Slow & Smooth Accordion Transition Container */}
+                      <div className={`lecture-module-accordion ${isOpen ? 'open' : ''}`}>
+                        <div className="lecture-module-inner">
+                          {sec.lectures.map((lec, lIdx) => {
+                            const lecId = lec._id ? String(lec._id) : (lec.id ? String(lec.id) : '');
+                            const activeId = activeLecture?._id ? String(activeLecture._id) : (activeLecture?.id ? String(activeLecture.id) : '');
+                            const lecYId = extractYouTubeId(lec.youtubeUrl);
+                            const activeYId = activeLecture ? extractYouTubeId(activeLecture.youtubeUrl) : '';
+                            const isActive = (activeLecture && ((lecId && activeId && lecId === activeId) || (lecYId && activeYId && lecYId === activeYId)));
+                            const prog = progressMap[lec._id] || progressMap[lec.id] || progressMap[lecYId] || {};
+                            const pct = prog.percent || (prog.completed ? 100 : 0);
+                            const isDone = !!prog.completed || pct >= 85;
+
+                            return (
+                              <div
+                                key={lIdx}
+                                onClick={() => handleSelectLecture(lec)}
+                                style={{
+                                  cursor: 'pointer',
+                                  padding: '10px 14px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: '10px',
+                                  backgroundColor: isActive ? '#6674cc' : '#ffffff',
+                                  color: isActive ? '#ffffff' : '#334155',
+                                  borderBottom: lIdx === sec.lectures.length - 1 ? 'none' : '1px solid #f1f5f9',
+                                  transition: 'background-color 0.2s ease, color 0.2s ease'
+                                }}
+                              >
+                                <div style={{ fontSize: '9pt', fontWeight: isActive ? '600' : '400', flex: 1 }}>
+                                  {lIdx + 1}. {lec.title}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  {isDone ? (
+                                    <CheckCircle2 size={14} style={{ color: isActive ? '#ffffff' : '#16a34a' }} />
+                                  ) : (
+                                    <span style={{ fontSize: '7.5pt', fontFamily: 'monospace', color: isActive ? '#ffffff' : '#64748b' }}>
+                                      {pct}%
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 

@@ -2,14 +2,36 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const path = require('path');
-const fs = require('fs');
-const { VideoLectureModel, CourseMaterialModel, ClassroomSubmissionModel, CandidateModel } = require('../models');
+const { VideoLectureModel, CourseMaterialModel, ClassroomSubmissionModel, CandidateModel, LectureChatModel, WorkerLogModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { upload } = require('../middleware/upload');
 const { formatCloudinaryMediaUrl, uploadToCloudinary } = require('../config/cloudinary');
 const { GOOGLE_CLASSROOM_WEBHOOK_KEY } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
-const { extractYouTubeId, generateLectureSummary } = require('../utils/aiLectureSummarizer');
+const { extractYouTubeId, generateLectureSummary, generateSimpleSynopsis, askLectureQuestion } = require('../utils/aiLectureSummarizer');
+const { getWorkerStatus, startIngestionWorker, stopIngestionWorker, resetLectureKnowledgeBase } = require('../services/lectureIngestionWorker');
+
+// In-Memory Sliding-Window Rate Limiter for BICS Cortex /ask endpoint
+// Limit: max 15 queries per 5 minutes per student or IP address
+const cortexRateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_REQUESTS_PER_WINDOW = 15;
+
+function checkCortexRateLimit(clientKey) {
+    const now = Date.now();
+    const timestamps = cortexRateLimitMap.get(clientKey) || [];
+    // Keep timestamps within the sliding window
+    const recent = timestamps.filter(t => (now - t) < RATE_LIMIT_WINDOW_MS);
+    if (recent.length >= MAX_REQUESTS_PER_WINDOW) {
+        cortexRateLimitMap.set(clientKey, recent);
+        const oldest = recent[0];
+        const waitSec = Math.ceil(((oldest + RATE_LIMIT_WINDOW_MS) - now) / 1000);
+        return { allowed: false, waitSec: Math.max(waitSec, 1) };
+    }
+    recent.push(now);
+    cortexRateLimitMap.set(clientKey, recent);
+    return { allowed: true };
+}
 
 // 1. Video Lectures Endpoints
 router.get('/video-lectures', async (req, res) => {
@@ -65,7 +87,19 @@ router.get('/video-lectures/:id/summary', async (req, res) => {
             return res.status(404).json({ error: "Lecture not found" });
         }
 
-        // Return cached summary if already generated
+        // 1. Prefer knowledgeBase synopsis if ingestion engine has completed it
+        if (lecture.knowledgeBase && lecture.knowledgeBase.synopsis) {
+            return res.json({
+                cached: true,
+                summary: {
+                    synopsis: lecture.knowledgeBase.synopsis,
+                    keyConcepts: lecture.knowledgeBase.keyConcepts || [],
+                    provider: 'BICS Knowledge Base (Verified Ground Truth)'
+                }
+            });
+        }
+
+        // 2. Return cached aiSummary if already generated
         if (lecture.aiSummary && lecture.aiSummary.synopsis) {
             return res.json({
                 cached: true,
@@ -73,14 +107,34 @@ router.get('/video-lectures/:id/summary', async (req, res) => {
             });
         }
 
-        // Return null summary if not generated yet (DO NOT auto-generate for all)
+        // Auto-generate and cache simple synopsis when loaded if missing
+        const generated = await generateSimpleSynopsis({
+            title: lecture.title,
+            section: lecture.section,
+            youtubeUrl: lecture.youtubeUrl
+        });
+
+        if (dbState.useMongo) {
+            await VideoLectureModel.updateOne(
+                { _id: lecture._id },
+                { $set: { aiSummary: generated } }
+            );
+        } else {
+            const db = getJSONData();
+            const target = (db.videoLectures || []).find(l => l.id === lecture.id || l._id === lecture._id);
+            if (target) {
+                target.aiSummary = generated;
+                saveJSONData(db);
+            }
+        }
+
         return res.json({
             cached: false,
-            summary: null
+            summary: generated
         });
     } catch (err) {
-        console.error('[AI Lecture Summary Check Error]', err);
-        return res.status(500).json({ error: err.message || "Failed to check AI lecture summary" });
+        console.error('[AI Lecture Summary Check/Load Error]', err);
+        return res.status(500).json({ error: err.message || "Failed to load AI lecture summary" });
     }
 });
 
@@ -147,6 +201,290 @@ const handleGenerateSummary = async (req, res) => {
 
 router.post('/video-lectures/:id/summary/generate', handleGenerateSummary);
 router.post('/video-lectures/:id/summary', handleGenerateSummary);
+
+// =========================================================================
+// BICS CORTEX: Conversational Q&A Endpoint for Video Lectures
+// Rate limited to max 15 requests per 5 minutes per student/IP
+// Retains conversation history in database
+// =========================================================================
+router.post('/video-lectures/:id/ask', async (req, res) => {
+    const { id } = req.params;
+    const { question, history = [], lectureContext = {}, studentId: reqStudentId } = req.body;
+
+    const studentId = reqStudentId || req.headers['x-student-id'] || req.ip || 'guest';
+
+    if (!question || !question.trim()) {
+        return res.status(400).json({ error: "Question cannot be empty" });
+    }
+
+    // 1. Rate Limiting Check
+    const rateCheck = checkCortexRateLimit(String(studentId));
+    if (!rateCheck.allowed) {
+        return res.status(429).json({
+            error: `Rate limit reached. BICS Cortex allows up to 15 queries per 5-minute interval. Please try again in ${rateCheck.waitSec} seconds.`,
+            waitSec: rateCheck.waitSec
+        });
+    }
+
+    try {
+        // 2. Fetch or augment lecture details if not fully provided
+        let lecture = null;
+        const cleanYtId = extractYouTubeId(id) || extractYouTubeId(lectureContext?.youtubeUrl);
+        if (dbState.useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                lecture = await VideoLectureModel.findById(id);
+            }
+            if (!lecture && id) {
+                lecture = await VideoLectureModel.findOne({ youtubeId: id });
+            }
+            if (!lecture && cleanYtId) {
+                lecture = await VideoLectureModel.findOne({
+                    $or: [
+                        { youtubeId: cleanYtId },
+                        { youtubeUrl: new RegExp(cleanYtId) }
+                    ]
+                });
+            }
+        } else {
+            const db = getJSONData();
+            lecture = (db.videoLectures || []).find(l => 
+                l.id === id || l._id === id || l.youtubeId === id ||
+                (cleanYtId && (l.youtubeId === cleanYtId || (l.youtubeUrl && l.youtubeUrl.includes(cleanYtId))))
+            );
+        }
+
+        const effectiveContext = {
+            youtubeUrl: lecture?.youtubeUrl || lectureContext.youtubeUrl || (cleanYtId ? `https://www.youtube.com/watch?v=${cleanYtId}` : ''),
+            title: lecture?.title || '',
+            knowledgeBase: lecture?.knowledgeBase || null
+        };
+
+        // 3. Call BICS Cortex Multi-Provider Engine (RAG Grounded)
+        const cortexResponse = await askLectureQuestion({
+            question: question.trim(),
+            history: Array.isArray(history) ? history : [],
+            lectureContext: effectiveContext
+        });
+
+        // If inference failed or returned an error, DO NOT save to chats database
+        if (cortexResponse.isError) {
+            console.warn('[BICS Cortex RAG Error]', cortexResponse.error);
+            return res.status(503).json({
+                error: cortexResponse.error || "BICS Cortex is temporarily unavailable. Please try again in a moment."
+            });
+        }
+
+        // 4. Save and Retain Chat in Database for this Student & Lecture ONLY on valid responses
+        const userMsg = {
+            role: 'user',
+            content: question.trim(),
+            timestamp: new Date()
+        };
+        const assistantMsg = {
+            role: 'assistant',
+            content: cortexResponse.answer,
+            timestamp: new Date(),
+            provider: cortexResponse.provider || 'BICS Cortex'
+        };
+
+        const lectureKey = String(lecture?._id || lecture?.id || id);
+        const youtubeKey = lecture?.youtubeId || cleanYtId || '';
+        const sId = String(studentId || 'default_student');
+
+        if (dbState.useMongo) {
+            // A. Primary Storage: Dedicated LectureChatModel per video lecture & student
+            try {
+                const chatQuery = {
+                    $or: [
+                        { lectureId: lectureKey, studentId: sId },
+                        ...(youtubeKey ? [{ youtubeId: youtubeKey, studentId: sId }] : []),
+                        ...(lectureKey !== id ? [{ lectureId: id, studentId: sId }] : [])
+                    ]
+                };
+                let chatDoc = await LectureChatModel.findOne(chatQuery);
+                if (!chatDoc) {
+                    chatDoc = new LectureChatModel({
+                        lectureId: lectureKey,
+                        youtubeId: youtubeKey || '',
+                        studentId: sId,
+                        messages: []
+                    });
+                } else {
+                    if (youtubeKey && !chatDoc.youtubeId) chatDoc.youtubeId = youtubeKey;
+                }
+                chatDoc.messages.push(userMsg, assistantMsg);
+                if (chatDoc.messages.length > 60) {
+                    chatDoc.messages = chatDoc.messages.slice(-60);
+                }
+                chatDoc.updatedAt = new Date();
+                await chatDoc.save();
+            } catch (chatDbErr) {
+                console.warn('[LectureChat Mongo Save Warning]', chatDbErr.message);
+            }
+
+            // B. Secondary Storage: Student Profile Progress Map
+            if (sId && sId !== 'guest') {
+                try {
+                    const orQuery = [{ studentId: sId }, { username: sId }];
+                    if (mongoose.Types.ObjectId.isValid(sId)) {
+                        orQuery.push({ _id: sId });
+                    }
+                    const cand = await CandidateModel.findOne({ $or: orQuery });
+                    if (cand) {
+                        const progressMap = cand.lectureProgress || new Map();
+                        const existingEntry = progressMap.get(lectureKey) || (youtubeKey ? progressMap.get(youtubeKey) : null) || {};
+                        const currentChat = Array.isArray(existingEntry.chatHistory) ? existingEntry.chatHistory : [];
+                        currentChat.push(userMsg, assistantMsg);
+                        existingEntry.chatHistory = currentChat.slice(-60);
+                        
+                        progressMap.set(lectureKey, existingEntry);
+                        if (youtubeKey && youtubeKey !== lectureKey) progressMap.set(youtubeKey, existingEntry);
+                        
+                        cand.lectureProgress = progressMap;
+                        cand.markModified('lectureProgress');
+                        await cand.save();
+                    }
+                } catch (candErr) {
+                    console.warn('[Candidate Progress Chat Save Warning]', candErr.message);
+                }
+            }
+        } else {
+            // JSON File Mode Fallback
+            try {
+                const db = getJSONData();
+                db.lectureChats = db.lectureChats || [];
+                let chatEntry = db.lectureChats.find(c =>
+                    c.studentId === sId && (c.lectureId === lectureKey || (youtubeKey && c.youtubeId === youtubeKey) || c.lectureId === id)
+                );
+                if (!chatEntry) {
+                    chatEntry = {
+                        lectureId: lectureKey,
+                        youtubeId: youtubeKey || '',
+                        studentId: sId,
+                        messages: [],
+                        updatedAt: new Date()
+                    };
+                    db.lectureChats.push(chatEntry);
+                }
+                chatEntry.messages.push(userMsg, assistantMsg);
+                if (chatEntry.messages.length > 60) {
+                    chatEntry.messages = chatEntry.messages.slice(-60);
+                }
+                chatEntry.updatedAt = new Date();
+
+                // Candidate lectureProgress update
+                if (sId && sId !== 'guest') {
+                    const cand = (db.candidates || []).find(c => c.studentId === sId || c.username === sId || c.id === sId || c._id === sId);
+                    if (cand) {
+                        if (!cand.lectureProgress) cand.lectureProgress = {};
+                        const existingEntry = cand.lectureProgress[lectureKey] || (youtubeKey ? cand.lectureProgress[youtubeKey] : null) || {};
+                        const currentChat = Array.isArray(existingEntry.chatHistory) ? existingEntry.chatHistory : [];
+                        currentChat.push(userMsg, assistantMsg);
+                        existingEntry.chatHistory = currentChat.slice(-60);
+                        cand.lectureProgress[lectureKey] = existingEntry;
+                        if (youtubeKey) cand.lectureProgress[youtubeKey] = existingEntry;
+                    }
+                }
+                saveJSONData(db);
+            } catch (jsonErr) {
+                console.warn('[Cortex Chat JSON Save Warning]', jsonErr.message);
+            }
+        }
+
+        return res.json({
+            answer: cortexResponse.answer,
+            suggestedFollowups: cortexResponse.suggestedFollowups || [],
+            provider: cortexResponse.provider || 'BICS Cortex',
+            userMessage: userMsg,
+            assistantMessage: assistantMsg
+        });
+
+    } catch (err) {
+        console.error('[BICS Cortex Ask Error]', err);
+        return res.status(500).json({
+            error: err.message || "BICS Cortex encountered an error analyzing your question. Please try again."
+        });
+    }
+});
+
+// GET Chat History for Current Student & Lecture
+router.get('/video-lectures/:id/chat', async (req, res) => {
+    const { id } = req.params;
+    const studentId = req.query.studentId || req.headers['x-student-id'] || 'default_student';
+
+    try {
+        const sId = String(studentId);
+        let lecture = null;
+        if (dbState.useMongo) {
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                lecture = await VideoLectureModel.findById(id);
+            }
+            if (!lecture) {
+                lecture = await VideoLectureModel.findOne({ youtubeId: id });
+            }
+        } else {
+            const db = getJSONData();
+            lecture = (db.videoLectures || []).find(l => l.id === id || l._id === id || l.youtubeId === id);
+        }
+
+        const lectureKey = String(lecture?._id || lecture?.id || id);
+        const youtubeKey = lecture?.youtubeId || extractYouTubeId(lecture?.youtubeUrl || '') || (id.length === 11 ? id : '');
+
+        if (dbState.useMongo) {
+            // 1. Check dedicated LectureChatModel first
+            const chatQuery = {
+                $or: [
+                    { lectureId: lectureKey, studentId: sId },
+                    ...(youtubeKey ? [{ youtubeId: youtubeKey, studentId: sId }] : []),
+                    ...(lectureKey !== id ? [{ lectureId: id, studentId: sId }] : [])
+                ]
+            };
+            const chatDoc = await LectureChatModel.findOne(chatQuery);
+            if (chatDoc && Array.isArray(chatDoc.messages) && chatDoc.messages.length > 0) {
+                return res.json({ chatHistory: chatDoc.messages });
+            }
+
+            // 2. Fallback check on CandidateModel.lectureProgress
+            const orQuery = [{ studentId: sId }, { username: sId }];
+            if (mongoose.Types.ObjectId.isValid(sId)) {
+                orQuery.push({ _id: sId });
+            }
+            const cand = await CandidateModel.findOne({ $or: orQuery });
+            if (cand && cand.lectureProgress) {
+                const entry = cand.lectureProgress.get(lectureKey) || 
+                              (youtubeKey ? cand.lectureProgress.get(youtubeKey) : null) || 
+                              cand.lectureProgress.get(id);
+                if (entry && Array.isArray(entry.chatHistory) && entry.chatHistory.length > 0) {
+                    return res.json({ chatHistory: entry.chatHistory });
+                }
+            }
+
+            return res.json({ chatHistory: [] });
+        } else {
+            const db = getJSONData();
+            db.lectureChats = db.lectureChats || [];
+            const chatEntry = db.lectureChats.find(c =>
+                c.studentId === sId && (c.lectureId === lectureKey || (youtubeKey && c.youtubeId === youtubeKey) || c.lectureId === id)
+            );
+            if (chatEntry && Array.isArray(chatEntry.messages) && chatEntry.messages.length > 0) {
+                return res.json({ chatHistory: chatEntry.messages });
+            }
+
+            const cand = (db.candidates || []).find(c => c.studentId === sId || c.username === sId || c.id === sId);
+            if (cand && cand.lectureProgress) {
+                const entry = cand.lectureProgress[lectureKey] || (youtubeKey ? cand.lectureProgress[youtubeKey] : null) || cand.lectureProgress[id];
+                if (entry && Array.isArray(entry.chatHistory) && entry.chatHistory.length > 0) {
+                    return res.json({ chatHistory: entry.chatHistory });
+                }
+            }
+            return res.json({ chatHistory: [] });
+        }
+    } catch (err) {
+        console.warn('[Cortex Chat History Fetch Warning]', err);
+        return res.json({ chatHistory: [] });
+    }
+});
+
 
 // Student Lecture Progress - Get Current Student's Progress Map
 router.get('/student/lecture-progress', async (req, res) => {
@@ -273,6 +611,18 @@ router.post('/admin/video-lectures', async (req, res) => {
 
     const yId = extractYouTubeId(youtubeUrl);
 
+    // Automatically create a simple synopsis whenever a lecture is posted
+    let initialSummary = null;
+    try {
+        initialSummary = await generateSimpleSynopsis({
+            title,
+            section,
+            youtubeUrl
+        });
+    } catch (synErr) {
+        console.warn('[Admin Video Lecture] Initial synopsis creation note:', synErr.message);
+    }
+
     if (dbState.useMongo) {
         try {
             const lect = new VideoLectureModel({
@@ -285,7 +635,8 @@ router.post('/admin/video-lectures', async (req, res) => {
                 codeTemplate: codeTemplate || '',
                 webHtmlTemplate: webHtmlTemplate || '',
                 webCssTemplate: webCssTemplate || '',
-                webJsTemplate: webJsTemplate || ''
+                webJsTemplate: webJsTemplate || '',
+                aiSummary: initialSummary || {}
             });
             await lect.save();
             return res.json({ success: true, lecture: lect });
@@ -307,6 +658,7 @@ router.post('/admin/video-lectures', async (req, res) => {
             webHtmlTemplate: webHtmlTemplate || '',
             webCssTemplate: webCssTemplate || '',
             webJsTemplate: webJsTemplate || '',
+            aiSummary: initialSummary || {},
             createdAt: new Date()
         };
         db.videoLectures.push(newLect);
@@ -327,10 +679,140 @@ router.delete('/admin/video-lectures/:id', async (req, res) => {
         }
     } else {
         const db = getJSONData();
-        db.videoLectures = db.videoLectures || [];
-        db.videoLectures = db.videoLectures.filter(l => l.id !== id);
+        db.videoLectures = (db.videoLectures || []).filter(l => l.id !== id && l._id !== id);
         saveJSONData(db);
         return res.json({ success: true });
+    }
+});
+
+// Admin Status Monitor for Knowledge Base Ingestion Engine
+router.get('/admin/knowledge-base/status', async (req, res) => {
+    try {
+        const worker = getWorkerStatus();
+        let totalCount = 0;
+        let completedCount = 0;
+        let pendingCount = 0;
+        let inProgressCount = 0;
+        let failedCount = 0;
+        let flaggedLectures = [];
+
+        if (dbState.useMongo) {
+            totalCount = await VideoLectureModel.countDocuments();
+            completedCount = await VideoLectureModel.countDocuments({ 'knowledgeBase.status': 'completed' });
+            inProgressCount = await VideoLectureModel.countDocuments({ 'knowledgeBase.status': 'in_progress' });
+            failedCount = await VideoLectureModel.countDocuments({ 
+                $or: [
+                    { 'knowledgeBase.status': 'failed' },
+                    { 'knowledgeBase.flaggedForAdmin': true }
+                ]
+            });
+            pendingCount = totalCount - completedCount - inProgressCount - failedCount;
+
+            flaggedLectures = await VideoLectureModel.find({
+                $or: [
+                    { 'knowledgeBase.flaggedForAdmin': true },
+                    { 'knowledgeBase.status': 'failed' }
+                ]
+            }).select('_id title section youtubeUrl youtubeId knowledgeBase.lastError knowledgeBase.attempts knowledgeBase.flaggedForAdmin knowledgeBase.failureDetails');
+        }
+
+        return res.json({
+            worker,
+            metrics: {
+                totalLectures: totalCount,
+                completed: completedCount,
+                inProgress: inProgressCount,
+                pending: Math.max(0, pendingCount),
+                failed: failedCount
+            },
+            flaggedLectures
+        });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// Admin Worker Logs Stream / Fetch Endpoint
+router.get('/admin/knowledge-base/logs', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 100;
+        if (dbState.useMongo) {
+            const logs = await WorkerLogModel.find({}).sort({ timestamp: -1 }).limit(limit);
+            return res.json(logs);
+        }
+        return res.json([]);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin Retry Endpoint for Flagged / Failed Lectures
+router.post('/admin/knowledge-base/retry/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (dbState.useMongo) {
+            const lec = await VideoLectureModel.findById(id);
+            if (!lec) {
+                return res.status(404).json({ error: 'Video lecture not found' });
+            }
+            lec.knowledgeBase = lec.knowledgeBase || {};
+            lec.knowledgeBase.status = 'pending';
+            lec.knowledgeBase.flaggedForAdmin = false;
+            lec.knowledgeBase.lastError = '';
+            lec.knowledgeBase.attempts = 0;
+            lec.knowledgeBase.failureDetails = null;
+            await lec.save();
+
+            await WorkerLogModel.create({
+                lectureId: String(lec._id),
+                lectureTitle: lec.title,
+                section: lec.section,
+                youtubeId: lec.youtubeId,
+                action: 'ADMIN_RETRY',
+                status: 'info',
+                message: `Admin manually reset failure flag and re-queued knowledge base ingestion for "${lec.title}"`
+            });
+
+            return res.json({ success: true, message: `Lecture "${lec.title}" re-queued for processing.` });
+        }
+        return res.json({ success: true });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin Start Worker Endpoint
+router.post('/admin/knowledge-base/start', async (req, res) => {
+    try {
+        const result = startIngestionWorker();
+        return res.json(result);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin Stop / Shut Off Worker Endpoint
+router.post('/admin/knowledge-base/stop', async (req, res) => {
+    try {
+        const result = stopIngestionWorker();
+        return res.json(result);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Admin Reset Lecture Knowledge Base Endpoint (Wipes hallucinations & re-queues)
+router.post('/admin/knowledge-base/reset/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const success = await resetLectureKnowledgeBase(id);
+        if (success) {
+            return res.json({ success: true, message: 'Lecture knowledge base wiped and scheduled for fresh, non-hallucinatory ingestion.' });
+        } else {
+            return res.status(404).json({ error: 'Could not reset lecture knowledge base.' });
+        }
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
     }
 });
 

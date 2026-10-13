@@ -196,6 +196,29 @@ export default function AcademicMarkdown({ content, style = {} }) {
         continue;
       }
 
+      // Centered math / formula block ($$ ... $$)
+      if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
+        flushList();
+        const mathContent = trimmed.slice(2, -2).trim();
+        elements.push(
+          <div
+            key={`math-${i}`}
+            className="math-centered"
+            style={{
+              textAlign: 'center',
+              margin: '10px 0',
+              padding: '6px',
+              fontFamily: 'KaTeX_Main, "Times New Roman", serif',
+              fontSize: '10.5pt',
+              color: '#1e293b'
+            }}
+          >
+            {mathContent}
+          </div>
+        );
+        continue;
+      }
+
       // Otherwise regular paragraph text
       flushList();
       elements.push(
@@ -205,7 +228,10 @@ export default function AcademicMarkdown({ content, style = {} }) {
             margin: '6px 0',
             lineHeight: '1.65',
             color: '#334155',
-            fontSize: '9.5pt'
+            fontSize: '9.5pt',
+            textAlign: 'justify',
+            textJustify: 'inter-word',
+            textAlignLast: 'left'
           }}
         >
           {formatInlineMarkdown(trimmed)}
