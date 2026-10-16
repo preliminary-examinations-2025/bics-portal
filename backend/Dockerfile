@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:22-alpine
 
 # Install g++ and make for C++ compilation support
 RUN apk add --no-cache g++ gcc build-base ca-certificates
