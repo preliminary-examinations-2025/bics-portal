@@ -1,26 +1,38 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
-const { CounterfoilSubmissionModel, AcademicMarksLedgerModel } = require('../models');
+const { CounterfoilSubmissionModel, AcademicMarksLedgerModel, CandidateModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { DEFAULT_ACADEMIC_COURSES } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
 const { calculateMarksLedgerEntry } = require('../utils/scoreCalculator');
+const { requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
 
-// 1. Get student's counterfoil submissions
-router.get('/counterfoil/my-submissions/:studentId', async (req, res) => {
-    const { studentId } = req.params;
+// 1. Get student's counterfoil submissions (accepts BICS ObjectID or candidate ID)
+router.get(['/counterfoil/my-submissions/:id', '/counterfoil/my-submissions/:studentId'], requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
+    const targetId = req.params.id || req.params.studentId;
     try {
+        let studentId = targetId;
         if (dbState.useMongo) {
+            if (mongoose.Types.ObjectId.isValid(targetId)) {
+                const cand = await CandidateModel.findById(targetId).select('studentId username');
+                if (cand) {
+                    studentId = cand.studentId || cand.username;
+                }
+            }
             const submissions = await CounterfoilSubmissionModel.find({ 
-                studentId: new RegExp(`^${studentId.trim()}$`, 'i') 
+                studentId: new RegExp(`^${String(studentId).trim()}$`, 'i') 
             }).sort({ submittedAt: -1 });
             return res.json(submissions);
         } else {
             const db = getJSONData();
+            const cand = (db.candidates || []).find(c => String(c.id || c._id) === String(targetId));
+            if (cand) {
+                studentId = cand.studentId || cand.username;
+            }
             db.counterfoilSubmissions = db.counterfoilSubmissions || [];
             const submissions = db.counterfoilSubmissions.filter(s => 
-                s.studentId && s.studentId.trim().toUpperCase() === studentId.trim().toUpperCase()
+                s.studentId && s.studentId.trim().toUpperCase() === String(studentId).trim().toUpperCase()
             );
             return res.json(submissions);
         }
@@ -31,10 +43,17 @@ router.get('/counterfoil/my-submissions/:studentId', async (req, res) => {
 });
 
 // 2. Submit or update student counterfoil
-router.post('/counterfoil/submit', async (req, res) => {
+router.post('/counterfoil/submit', requireAuth, async (req, res) => {
     const { studentId, studentName, courseCode, courseName, examType, examinationName, questionMarks } = req.body;
     if (!studentId || !courseCode || !examType || !questionMarks || !Array.isArray(questionMarks)) {
         return res.status(400).json({ error: "Missing required counterfoil fields." });
+    }
+
+    if (req.user && req.user.role !== 'admin') {
+        const allowedIds = [String(req.user.id || ''), String(req.user.studentId || ''), String(req.user.username || '')];
+        if (!allowedIds.includes(String(studentId).trim()) && !allowedIds.includes(String(req.body.candidateId || '').trim())) {
+            return res.status(403).json({ error: "403 Forbidden: You do not have permission to submit counterfoil on behalf of another candidate." });
+        }
     }
 
     const sId = studentId.trim().toUpperCase();
@@ -139,7 +158,7 @@ router.post('/counterfoil/submit', async (req, res) => {
 });
 
 // 3. Admin: list all counterfoil submissions
-router.get('/admin/counterfoil/list', async (req, res) => {
+router.get('/admin/counterfoil/list', requireAdmin, async (req, res) => {
     try {
         if (dbState.useMongo) {
             const submissions = await CounterfoilSubmissionModel.find().sort({ submittedAt: -1 });
@@ -156,7 +175,7 @@ router.get('/admin/counterfoil/list', async (req, res) => {
 });
 
 // 4. Admin: approve or reject counterfoil submission
-router.post('/admin/counterfoil/action/:id', async (req, res) => {
+router.post('/admin/counterfoil/action/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { status, adminRemarks } = req.body;
 

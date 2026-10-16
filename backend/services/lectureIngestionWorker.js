@@ -1022,6 +1022,13 @@ async function runIngestionLoop() {
 
     while (!shouldStopWorker) {
         try {
+            if (!dbState.useMongo) {
+                // MongoDB is not currently active; pause without querying Mongoose to prevent buffering timeouts
+                currentWorkerStatus.state = 'idle';
+                await sleep(30000);
+                continue;
+            }
+
             // Find next lecture needing knowledge base in FIFO order
             const nextLecture = await VideoLectureModel.findOne({
                 $and: [

@@ -101,11 +101,21 @@ export const QuestionViewer = ({
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '15px', paddingRight: '4px', marginBottom: '10px' }}>
         {/* Question Title Header */}
         <div style={{ zIndex: 11, marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <RichText
               text={currentQuestion.title || `Question ${selectedQuestionIndex + 1}`}
               style={{ fontSize: '13pt', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.4' }}
             />
+            {currentQuestion.type === 'coding' && (
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <span style={{ fontSize: '7.5pt', fontWeight: '600', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1' }}>
+                  ⏱️ {(currentQuestion.timeLimitMs || 2000) / 1000}s
+                </span>
+                <span style={{ fontSize: '7.5pt', fontWeight: '600', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1' }}>
+                  💾 {currentQuestion.memoryLimitMb || 128} MB
+                </span>
+              </div>
+            )}
           </div>
 
           <button
@@ -143,10 +153,12 @@ export const QuestionViewer = ({
                 style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: '1.4', fontStyle: 'italic' }}
               />
             </div>
-            <RichText
-              text={currentQuestion.questionText || currentQuestion.description || ''}
-              style={{ fontSize: '10.5pt', color: '#1e293b', lineHeight: '1.75', padding: '4px 0' }}
-            />
+            {(currentQuestion.description || currentQuestion.questionText || currentQuestion.statement) && (
+              <RichText
+                text={currentQuestion.description || currentQuestion.questionText || currentQuestion.statement}
+                style={{ fontSize: '10.5pt', color: '#1e293b', lineHeight: '1.75', padding: '4px 0' }}
+              />
+            )}
           </div>
         )}
 
@@ -183,7 +195,7 @@ export const QuestionViewer = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {currentQuestion.testCases.slice(0, 2).map((tc, tcIdx) => (
+                      {(currentQuestion.testCases || []).map((tc, tcIdx) => (
                         <tr key={tcIdx}>
                           <td style={{ padding: '6px 10px', fontWeight: 'bold', color: '#475569', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1' }}>
                             Test Case {tcIdx + 1}

@@ -9,6 +9,7 @@ export default function ChangePassword({
   studentProfile,
   changePasswordCodeSent,
   sendingChangePasswordCode,
+  changePasswordCooldown = 0,
   handleSendChangePasswordCode,
   changePasswordEmailCode,
   setChangePasswordEmailCode,
@@ -45,15 +46,24 @@ export default function ChangePassword({
               Email: {studentProfile?.registrationData?.personalEmail || studentProfile?.personalEmail || 'Registered Email'}
             </div>
             {!changePasswordCodeSent ? (
-              <button
-                type="button"
-                className="cf-btn-secondary"
-                disabled={sendingChangePasswordCode}
-                onClick={handleSendChangePasswordCode}
-                style={{ fontSize: '8.5pt', padding: '6px 12px' }}
-              >
-                {sendingChangePasswordCode ? "Sending Code..." : "Send Verification Code"}
-              </button>
+              <div>
+                <button
+                  type="button"
+                  className="cf-btn-secondary"
+                  disabled={sendingChangePasswordCode || changePasswordCooldown > 0}
+                  onClick={handleSendChangePasswordCode}
+                  style={{ fontSize: '8.5pt', padding: '6px 12px' }}
+                >
+                  {sendingChangePasswordCode 
+                    ? "Sending Code..." 
+                    : (changePasswordCooldown > 0 ? `Wait ${changePasswordCooldown}s` : "Send Verification Code")}
+                </button>
+                {changePasswordCooldown > 0 && (
+                  <div style={{ fontSize: '8pt', color: '#0284c7', marginTop: '6px' }}>
+                    Cooldown active: You can request another code in <strong>{changePasswordCooldown}s</strong>.
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="cf-input-group" style={{ margin: 0 }}>
                 <label className="cf-label" style={{ fontWeight: 'bold' }}>Enter 6-Digit Email Code</label>
@@ -71,13 +81,20 @@ export default function ChangePassword({
                   <button
                     type="button"
                     className="cf-btn-secondary"
-                    disabled={sendingChangePasswordCode}
+                    disabled={sendingChangePasswordCode || changePasswordCooldown > 0}
                     onClick={handleSendChangePasswordCode}
                     style={{ flex: '1', fontSize: '8pt', padding: '6px' }}
                   >
-                    Resend
+                    {sendingChangePasswordCode 
+                      ? "Sending..." 
+                      : (changePasswordCooldown > 0 ? `Resend (${changePasswordCooldown}s)` : "Resend")}
                   </button>
                 </div>
+                {changePasswordCooldown > 0 && (
+                  <div style={{ fontSize: '8pt', color: '#0284c7', marginTop: '6px' }}>
+                    Code active. Resend available in <strong>{changePasswordCooldown}s</strong>.
+                  </div>
+                )}
               </div>
             )}
           </div>

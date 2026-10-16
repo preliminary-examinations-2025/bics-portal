@@ -6,11 +6,22 @@ export function VerifyLoginView({ candidate, handleLoginToTest }) {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f8fafc' }}>
       <header className="app-header">
         <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
-          <span className="pixel-logo">Online Test BICS Terminal</span>
+          <img 
+            src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+            onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+            alt="BICS Logo" 
+            style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
+          />
+          <span className="pixel-logo">BICS Terminal</span>
         </div>
         <div className="header-right">
-          <img src="/logo.png" alt="Portal Logo" className="pe-logo" style={{ height: '34px' }} />
+          <img 
+            src={`${import.meta.env.BASE_URL}logo.png`} 
+            onError={(e) => { e.currentTarget.src = '/logo.png'; }} 
+            alt="Portal Logo" 
+            className="pe-logo" 
+            style={{ height: '34px' }} 
+          />
         </div>
       </header>
       <div style={{ display: 'flex', flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: '20px' }}>

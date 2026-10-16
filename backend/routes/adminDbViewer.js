@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const { dbState, getJSONData } = require('../config/db');
+const { logSystemAction } = require('../utils/logger');
+const { toBicsId, toMongoId, isBicsId, isMongoId, resolveToObjectId } = require('../utils/bicsId');
 const models = require('../models');
 
 /**
@@ -137,6 +139,14 @@ function toIstRawDoc(val) {
     return val;
 }
 
+function maskCandidateDoc(doc, collName) {
+    if (!doc || collName !== 'candidates') return doc;
+    const clean = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+    if (clean.password) clean.password = '[PROTECTED HASH]';
+    if (clean.verificationCode) clean.verificationCode = '[PROTECTED CODE]';
+    return clean;
+}
+
 /**
  * Safely parse a MongoDB Atlas-style filter or sort expression:
  * Supports:
@@ -195,8 +205,16 @@ function parseMongoShellJson(rawInput) {
             }
             const out = {};
             for (const [k, v] of Object.entries(obj)) {
-                if (k === '_id' && typeof v === 'string' && /^[a-fA-F0-9]{24}$/.test(v)) {
-                    out[k] = new mongoose.Types.ObjectId(v);
+                if (k === '_id' && typeof v === 'string') {
+                    if (/^[a-fA-F0-9]{24}$/.test(v)) {
+                        out[k] = new mongoose.Types.ObjectId(v);
+                    } else if (isBicsId(v)) {
+                        const dec = toMongoId(v);
+                        if (dec) out[k] = new mongoose.Types.ObjectId(dec);
+                        else out[k] = v;
+                    } else {
+                        out[k] = v;
+                    }
                 } else {
                     out[k] = hydrateBsonLiterals(v);
                 }
@@ -310,6 +328,25 @@ router.get('/collections/:collectionName/documents', async (req, res) => {
     const rawProjection = (req.query.projection || '').trim();
     const skip = (page - 1) * limit;
 
+    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const actorId = req.user?.id || req.user?.username || 'admin';
+    const actorRole = req.user?.role || 'admin';
+
+    // Feature 5: Immutable DB Viewer Access Audit Log
+    logSystemAction({
+        actor: actorId,
+        actorId: actorId,
+        actorRole: actorRole,
+        action: 'ADMIN_DB_VIEWER_INSPECT',
+        resourceType: 'database_collection',
+        resourceId: collectionName,
+        details: `Admin inspected collection "${collectionName}" (page ${page}, filter: "${rawFilter || 'none'}").`,
+        ipAddress: clientIp,
+        userAgent: userAgent,
+        severity: 'info'
+    }).catch(() => {});
+
     try {
         if (dbState.useMongo && mongoose.connection && mongoose.connection.db) {
             const db = mongoose.connection.db;
@@ -330,6 +367,11 @@ router.get('/collections/:collectionName/documents', async (req, res) => {
 
                     if (/^[a-fA-F0-9]{24}$/.test(rawFilter)) {
                         orClauses.push({ _id: new mongoose.Types.ObjectId(rawFilter) });
+                    } else if (isBicsId(rawFilter)) {
+                        const decryptedOid = toMongoId(rawFilter);
+                        if (decryptedOid && mongoose.Types.ObjectId.isValid(decryptedOid)) {
+                            orClauses.push({ _id: new mongoose.Types.ObjectId(decryptedOid) });
+                        }
                     }
 
                     // Sample up to 3 documents to discover top-level string/scalar fields dynamically
@@ -377,8 +419,9 @@ router.get('/collections/:collectionName/documents', async (req, res) => {
             }
             const rawDocs = await cursor.sort(mongoSort).skip(skip).limit(limit).toArray();
 
-            const istDocuments = rawDocs.map(doc => toIstRawDoc(doc));
-            const bsonDocuments = rawDocs.map(doc => toExtendedBson(doc));
+            const maskedDocs = rawDocs.map(doc => maskCandidateDoc(doc, collectionName));
+            const istDocuments = maskedDocs.map(doc => toIstRawDoc(doc));
+            const bsonDocuments = maskedDocs.map(doc => toExtendedBson(doc));
 
             return res.json({
                 collectionName,
@@ -408,8 +451,9 @@ router.get('/collections/:collectionName/documents', async (req, res) => {
 
             const totalCount = filtered.length;
             const pageDocs = filtered.slice(skip, skip + limit);
-            const istDocuments = pageDocs.map(doc => toIstRawDoc(doc));
-            const bsonDocuments = pageDocs.map(doc => toExtendedBson(doc));
+            const maskedDocs = pageDocs.map(doc => maskCandidateDoc(doc, collectionName));
+            const istDocuments = maskedDocs.map(doc => toIstRawDoc(doc));
+            const bsonDocuments = maskedDocs.map(doc => toExtendedBson(doc));
 
             return res.json({
                 collectionName,
@@ -504,6 +548,147 @@ router.get('/collections/:collectionName/indexes', async (req, res) => {
         }
     } catch (err) {
         return res.status(500).json({ error: err.message || 'Failed to inspect indexes and schema' });
+    }
+});
+
+/**
+ * 4. ALL /api/admin/db/bics/lookup & /api/admin/db/bics/lookup/:id
+ * Universal BICS ObjectID Decryptor & Cross-Collection Document Finder.
+ * Decrypts BICS ObjId to Mongo ObjectId (or vice versa), extracts the creation timestamp,
+ * and searches across all database collections for the matching document.
+ */
+router.all(['/bics/lookup', '/bics/lookup/:id'], async (req, res) => {
+    try {
+        const rawParam = req.params.id;
+        const rawBody = req.body?.id || req.body?.bicsId;
+        const rawQuery = req.query.id || req.query.bicsId;
+        const rawInput = (rawParam || rawBody || rawQuery || '').trim();
+
+        if (!rawInput) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please provide a BICS ObjId (xxxxxx-xxxx-xxxx-xxxxxx) or MongoDB ObjectId.'
+            });
+        }
+
+        const cleanAlphanumeric = rawInput.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let bicsId = null;
+        let mongoId = null;
+        let inputType = 'unknown';
+
+        if (isBicsId(rawInput) || cleanAlphanumeric.length === 20) {
+            inputType = 'bics_id';
+            mongoId = toMongoId(rawInput);
+            bicsId = mongoId ? toBicsId(mongoId) : null;
+        } else if (isMongoId(rawInput) || (cleanAlphanumeric.length === 24 && /^[a-f0-9]{24}$/.test(cleanAlphanumeric))) {
+            inputType = 'mongo_id';
+            mongoId = cleanAlphanumeric;
+            bicsId = toBicsId(mongoId);
+        } else {
+            // Attempt to decrypt as BICS ID first
+            mongoId = toMongoId(rawInput);
+            if (mongoId) {
+                inputType = 'bics_id';
+                bicsId = toBicsId(mongoId);
+            } else if (/^[a-fA-F0-9]{24}$/.test(rawInput)) {
+                inputType = 'mongo_id';
+                mongoId = rawInput.toLowerCase();
+                bicsId = toBicsId(mongoId);
+            }
+        }
+
+        if (!mongoId || !mongoose.Types.ObjectId.isValid(mongoId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid identifier format. Could not decrypt BICS ObjId (checksum failed) or format is not a 24-hex Mongo ObjectId.',
+                providedInput: rawInput
+            });
+        }
+
+        // Extract creation timestamp from ObjectId 4-byte epoch header
+        const oid = new mongoose.Types.ObjectId(mongoId);
+        const timestampDate = oid.getTimestamp();
+        const timestampIso = timestampDate.toISOString();
+        const timestampIst = formatHumanIstDate(timestampDate);
+        const timestampEpoch = Math.floor(timestampDate.getTime() / 1000);
+
+        let matchedCollection = null;
+        let matchedDoc = null;
+        let matchedBson = null;
+        const checkedCollections = [];
+
+        if (dbState.useMongo && mongoose.connection && mongoose.connection.db) {
+            const db = mongoose.connection.db;
+            const rawCollections = await db.listCollections().toArray();
+            const colNames = rawCollections.map(c => c.name).filter(n => !n.startsWith('system.'));
+
+            for (const cName of colNames) {
+                checkedCollections.push(cName);
+                const col = db.collection(cName);
+                const found = await col.findOne({
+                    $or: [
+                        { _id: oid },
+                        { _id: mongoId },
+                        { id: mongoId },
+                        { id: bicsId },
+                        { bicsId: bicsId }
+                    ]
+                });
+
+                if (found) {
+                    matchedCollection = cName;
+                    const masked = maskCandidateDoc(found, cName);
+                    matchedDoc = toIstRawDoc(masked);
+                    matchedBson = toExtendedBson(masked);
+                    break;
+                }
+            }
+        } else {
+            // JSON fallback mode
+            const db = getJSONData();
+            for (const [cName, val] of Object.entries(db)) {
+                checkedCollections.push(cName);
+                const arr = Array.isArray(val) ? val : [val];
+                const found = arr.find(item => item && (
+                    item._id === mongoId ||
+                    item._id === bicsId ||
+                    item.id === mongoId ||
+                    item.id === bicsId ||
+                    (item._id && item._id.toString && item._id.toString() === mongoId)
+                ));
+                if (found) {
+                    matchedCollection = cName;
+                    const masked = maskCandidateDoc(found, cName);
+                    matchedDoc = toIstRawDoc(masked);
+                    matchedBson = toExtendedBson(masked);
+                    break;
+                }
+            }
+        }
+
+        return res.json({
+            success: true,
+            inputType,
+            bicsId,
+            mongoId,
+            isValid: true,
+            timestamp: {
+                iso: timestampIso,
+                ist: timestampIst,
+                epoch: timestampEpoch
+            },
+            found: !!matchedCollection,
+            collection: matchedCollection,
+            document: matchedDoc,
+            bsonDocument: matchedBson,
+            checkedCollectionsCount: checkedCollections.length
+        });
+    } catch (err) {
+        console.error('[Admin DB Viewer BICS Lookup Error]', err);
+        return res.status(500).json({
+            success: false,
+            error: err.message || 'Failed to resolve BICS identifier'
+        });
     }
 });
 

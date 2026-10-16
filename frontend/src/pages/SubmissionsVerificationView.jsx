@@ -179,7 +179,11 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                     {vStatus === 'released' ? (
                       <button
                         className="cf-btn-primary"
-                        onClick={() => { window.location.href = `${otBase}/verification/${sub.id || sub._id}`; }}
+                        onClick={() => {
+                          const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+                          const authParam = userToken ? `?authToken=${encodeURIComponent(userToken)}` : '';
+                          window.location.href = `${otBase}/verification/${sub.id || sub._id}${authParam}`;
+                        }}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',

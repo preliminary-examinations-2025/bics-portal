@@ -3,54 +3,204 @@ const router = express.Router();
 const { CandidateModel, ConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData, initialDB } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
+const { generateToken, verifyToken } = require('../utils/jwt');
+const { hashPassword, comparePassword, isBcryptHash } = require('../utils/password');
+
+// Rate limiter and lockout trackers
+const adminFailedLogins = new Map(); // ip -> { count, lockedUntil }
+const clientErrorRateLimits = new Map(); // ip -> { count, windowStart }
 
 // 1. Unified Login (Admin & Candidate)
 router.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, password, rememberMe } = req.body;
+    const studentExpiresIn = rememberMe ? (process.env.JWT_STUDENT_EXPIRES_IN || '7d') : '24h';
 
-    const adminUser = process.env.ADMIN_USER;
-    const adminPass = process.env.ADMIN_PASS;
-    if (adminUser && adminPass && username === adminUser && password === adminPass) {
-        await logSystemAction('admin', 'USER_SIGN_IN', 'Admin logged into portal', 'info');
-        return res.json({ success: true, role: 'admin', name: 'System Administrator' });
+    // Strict input type validation: blocks NoSQL query operator injection (e.g., {"password": {"$ne": ""}})
+    if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
+        return res.status(400).json({ error: "Invalid username or password format." });
     }
 
-    if (dbState.useMongo) {
-        try {
-            const student = await CandidateModel.findOne({ username, password });
-            if (!student) {
-                await logSystemAction(username || 'unknown', 'SIGN_IN_FAILED', `Failed login attempt for username: ${username}`, 'warning');
-                return res.status(401).json({ error: "Invalid username or password" });
-            }
-            await logSystemAction(student.name || username, 'USER_SIGN_IN', `Student "${student.name || username}" logged into portal`, 'info');
+    const cleanUsername = username.trim();
+    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || 'unknown';
+
+    // Authenticate System Administrator
+    const adminUser = process.env.ADMIN_USER;
+    const adminPass = process.env.ADMIN_PASS;
+    if (adminUser && cleanUsername === adminUser) {
+        const lockRecord = adminFailedLogins.get(clientIp);
+        if (lockRecord && lockRecord.lockedUntil && Date.now() < lockRecord.lockedUntil) {
+            const waitMins = Math.ceil((lockRecord.lockedUntil - Date.now()) / 60000);
+            return res.status(429).json({ 
+                error: `Admin login locked due to multiple failed attempts. Please try again in ${waitMins} minute${waitMins === 1 ? '' : 's'}.` 
+            });
+        }
+
+        if (adminPass && password === adminPass) {
+            adminFailedLogins.delete(clientIp);
+            const token = generateToken({
+                id: 'admin',
+                role: 'admin',
+                username: adminUser
+            }, '12h');
+
+            await logSystemAction('admin', 'USER_SIGN_IN', 'Admin logged into portal with signed JWT', 'info');
             return res.json({
                 success: true,
+                token,
+                role: 'admin',
+                name: 'System Administrator',
+                user: { id: 'admin', role: 'admin', name: 'System Administrator', username: adminUser }
+            });
+        } else {
+            const current = adminFailedLogins.get(clientIp) || { count: 0, lockedUntil: null };
+            current.count += 1;
+            if (current.count >= 5) {
+                current.lockedUntil = Date.now() + 15 * 60 * 1000;
+                adminFailedLogins.set(clientIp, current);
+                await logSystemAction('system', 'SECURITY_LOCKOUT', `Admin account locked out after 5 consecutive failed attempts from IP ${clientIp}`, 'error');
+                return res.status(429).json({ 
+                    error: "Admin account locked due to 5 consecutive failed attempts. Please try again in 15 minutes." 
+                });
+            }
+            adminFailedLogins.set(clientIp, current);
+            const remainingAttempts = 5 - current.count;
+            return res.status(401).json({ 
+                error: `Invalid admin credentials. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining before lockout.` 
+            });
+        }
+    }
+
+    // Authenticate Student
+    if (dbState.useMongo) {
+        try {
+            const student = await CandidateModel.findOne({ username: cleanUsername });
+            if (!student) {
+                await logSystemAction(cleanUsername, 'SIGN_IN_FAILED', `Failed login attempt for username: ${cleanUsername}`, 'warning');
+                return res.status(401).json({ error: "Invalid username or password" });
+            }
+
+            const isValidPassword = await comparePassword(password, student.password);
+            if (!isValidPassword) {
+                await logSystemAction(cleanUsername, 'SIGN_IN_FAILED', `Invalid password for username: ${cleanUsername}`, 'warning');
+                return res.status(401).json({ error: "Invalid username or password" });
+            }
+
+            // Transparent migration: Upgrade plaintext password to salted bcrypt hash
+            if (!isBcryptHash(student.password)) {
+                try {
+                    student.password = await hashPassword(password);
+                    await student.save();
+                    console.log(`[AUTH MIGRATION] Automatically upgraded password for candidate "${cleanUsername}" to salted bcrypt hash.`);
+                } catch (migErr) {
+                    console.warn(`[AUTH MIGRATION NOTICE] Could not save upgraded hash:`, migErr.message);
+                }
+            }
+
+            const studentIdVal = student.studentId || student.username;
+            const token = generateToken({
+                id: student._id.toString(),
+                studentId: studentIdVal,
+                role: 'student',
+                username: student.username
+            }, studentExpiresIn);
+
+            await logSystemAction(student.name || cleanUsername, 'USER_SIGN_IN', `Student "${student.name || cleanUsername}" logged into portal with signed JWT`, 'info');
+            return res.json({
+                success: true,
+                token,
                 role: 'student',
                 id: student._id,
-                studentId: student.studentId || student.username,
+                studentId: studentIdVal,
                 username: student.username,
-                name: student.name
+                name: student.name,
+                user: {
+                    id: student._id,
+                    studentId: studentIdVal,
+                    role: 'student',
+                    username: student.username,
+                    name: student.name
+                }
             });
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
     } else {
         const db = getJSONData();
-        const student = (db.candidates || []).find(c => c.username === username && c.password === password);
+        const student = (db.candidates || []).find(c => c.username === cleanUsername);
         if (!student) {
-            await logSystemAction(username || 'unknown', 'SIGN_IN_FAILED', `Failed login attempt for username: ${username}`, 'warning');
+            await logSystemAction(cleanUsername, 'SIGN_IN_FAILED', `Failed login attempt for username: ${cleanUsername}`, 'warning');
             return res.status(401).json({ error: "Invalid username or password" });
         }
-        await logSystemAction(student.name || username, 'USER_SIGN_IN', `Student "${student.name || username}" logged into portal`, 'info');
+
+        const isValidPassword = await comparePassword(password, student.password);
+        if (!isValidPassword) {
+            await logSystemAction(cleanUsername, 'SIGN_IN_FAILED', `Invalid password for username: ${cleanUsername}`, 'warning');
+            return res.status(401).json({ error: "Invalid username or password" });
+        }
+
+        // Transparent migration in fallback JSON db
+        if (!isBcryptHash(student.password)) {
+            try {
+                student.password = await hashPassword(password);
+                saveJSONData(db);
+                console.log(`[AUTH MIGRATION] Automatically upgraded db.json password for candidate "${cleanUsername}" to salted bcrypt hash.`);
+            } catch (migErr) {
+                console.warn(`[AUTH MIGRATION NOTICE] Could not save upgraded hash in db.json:`, migErr.message);
+            }
+        }
+
+        const studentIdVal = student.studentId || student.username;
+        const token = generateToken({
+            id: String(student.id || student._id),
+            studentId: studentIdVal,
+            role: 'student',
+            username: student.username
+        }, studentExpiresIn);
+
+        await logSystemAction(student.name || cleanUsername, 'USER_SIGN_IN', `Student "${student.name || cleanUsername}" logged into portal with signed JWT`, 'info');
         return res.json({
             success: true,
+            token,
             role: 'student',
-            id: student.id,
-            studentId: student.studentId || student.username,
+            id: student.id || student._id,
+            studentId: studentIdVal,
             username: student.username,
-            name: student.name
+            name: student.name,
+            user: {
+                id: student.id || student._id,
+                studentId: studentIdVal,
+                role: 'student',
+                username: student.username,
+                name: student.name
+            }
         });
     }
+});
+
+// Session Validation Endpoint: Allows frontend to verify currently stored JWT on page refresh
+router.get('/verify-session', async (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+
+    if (!token) {
+        return res.status(401).json({ valid: false, error: "No token provided." });
+    }
+
+    const decoded = verifyToken(token);
+    if (!decoded) {
+        return res.status(401).json({ valid: false, error: "Token is invalid or expired." });
+    }
+
+    return res.json({
+        valid: true,
+        user: {
+            id: decoded.id,
+            role: decoded.role,
+            username: decoded.username,
+            studentId: decoded.studentId,
+            name: decoded.role === 'admin' ? 'System Administrator' : decoded.username
+        }
+    });
 });
 
 // Logout endpoint
@@ -62,10 +212,29 @@ router.post('/logout', async (req, res) => {
     return res.json({ success: true });
 });
 
-// Client Error Logging endpoint
+// Client Error Logging endpoint (Rate limited & bounded)
 router.post('/log-client-error', async (req, res) => {
-    const { actor, action, details, severity } = req.body;
-    await logSystemAction(actor || 'client', action || 'CLIENT_ERROR', details || 'An external error occurred', severity || 'error');
+    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || 'unknown';
+    const now = Date.now();
+    const rateData = clientErrorRateLimits.get(clientIp) || { count: 0, windowStart: now };
+    if (now - rateData.windowStart > 60000) {
+        rateData.count = 0;
+        rateData.windowStart = now;
+    }
+    rateData.count++;
+    clientErrorRateLimits.set(clientIp, rateData);
+
+    if (rateData.count > 20) {
+        return res.status(429).json({ error: "Too many error logs submitted. Rate limit exceeded." });
+    }
+
+    const { actor, action, details, severity } = req.body || {};
+    const safeActor = String(actor || 'client').slice(0, 50).trim();
+    const safeAction = String(action || 'CLIENT_ERROR').slice(0, 50).trim();
+    const safeDetails = String(details || 'An external error occurred').slice(0, 1000).trim();
+    const safeSeverity = ['info', 'warning', 'error'].includes(severity) ? severity : 'error';
+
+    await logSystemAction(safeActor, safeAction, safeDetails, safeSeverity);
     return res.json({ success: true });
 });
 
@@ -157,16 +326,18 @@ router.post('/admin/config', async (req, res) => {
     }
 });
 
-// Change Password Endpoint (Admin & Candidate)
+// Change Password Endpoint (Candidate Only)
 router.post('/change-password', async (req, res) => {
     const { role, id, newPassword, code } = req.body;
 
-    if (!newPassword || newPassword.length < 4) {
-        return res.status(400).json({ error: "Password must be at least 4 characters long" });
+    if (role === 'admin' || req.user?.role === 'admin') {
+        return res.status(403).json({ 
+            error: "Forbidden: Admin credentials are configuration-authoritative and managed exclusively via server environment variables (.env)." 
+        });
     }
 
-    if (role === 'admin') {
-        return res.json({ success: true, message: "Admin password changed successfully (session mock update)." });
+    if (!newPassword || newPassword.length < 4) {
+        return res.status(400).json({ error: "Password must be at least 4 characters long" });
     }
 
     if (!code) {
@@ -184,23 +355,59 @@ router.post('/change-password', async (req, res) => {
 
         if (!student) return res.status(404).json({ error: "Candidate not found" });
 
+        student.verificationAttempts = (student.verificationAttempts || 0) + 1;
+
         if (!student.verificationCode || student.verificationCode !== code.trim()) {
-            return res.status(400).json({ error: "Invalid verification code." });
+            if (student.verificationAttempts >= 5) {
+                student.verificationCode = '';
+                student.verificationCodeExpires = null;
+                student.verificationAttempts = 0;
+                if (dbState.useMongo) await student.save();
+                else {
+                    const db = getJSONData();
+                    const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
+                    if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
+                }
+                return res.status(429).json({ 
+                    error: "Maximum verification attempts (5) exceeded. Your code has been invalidated. Please request a new code." 
+                });
+            }
+
+            if (dbState.useMongo) await student.save();
+            else {
+                const db = getJSONData();
+                const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
+                if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
+            }
+
+            const remainingAttempts = 5 - student.verificationAttempts;
+            return res.status(400).json({ 
+                error: `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.` 
+            });
         }
 
         if (new Date() > new Date(student.verificationCodeExpires)) {
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
+            if (dbState.useMongo) await student.save();
             return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
         }
 
+        // Salted bcrypt password hashing
+        const hashedPassword = await hashPassword(newPassword);
+
         if (dbState.useMongo) {
-            student.password = newPassword;
+            student.password = hashedPassword;
             student.verificationCode = '';
             student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
             await student.save();
         } else {
-            student.password = newPassword;
+            student.password = hashedPassword;
             student.verificationCode = '';
             student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
             const db = getJSONData();
             const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
             if (candIdx !== -1) {
@@ -210,7 +417,7 @@ router.post('/change-password', async (req, res) => {
         }
 
         await logSystemAction(student.name || 'candidate', 'PASSWORD_CHANGED', `Student changed account password`, 'info');
-        return res.json({ success: true });
+        return res.json({ success: true, message: "Password updated successfully." });
     } catch (e) {
         console.error("Password change failed:", e);
         return res.status(500).json({ error: "Server error updating password. Please try again." });

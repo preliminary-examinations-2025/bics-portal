@@ -13,10 +13,26 @@ export const RichText = React.memo(function RichText({ text, style, className })
     let placeholderIndex = 0;
     let formatted = String(raw).replace(/\r\n/g, '\n');
 
+    const escapeHtml = (str) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    };
+
     // Extract markdown images BEFORE HTML escaping: ![alt](url)
     formatted = formatted.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
       const placeholder = `%%IMAGEBLOCK${placeholderIndex++}%%`;
-      imageBlocks.push({ placeholder, alt: alt || 'Question Image', src: src.trim() });
+      const cleanSrc = (src || '').trim();
+      const isSafeUrl = /^(https?:\/\/|\/|data:image\/)/i.test(cleanSrc);
+      imageBlocks.push({
+        placeholder,
+        alt: escapeHtml(alt || 'Question Image'),
+        src: isSafeUrl ? escapeHtml(cleanSrc) : 'about:blank'
+      });
       return placeholder;
     });
 
@@ -27,31 +43,31 @@ export const RichText = React.memo(function RichText({ text, style, className })
       return placeholder;
     });
 
-    // Temporarily extract double-dollar display math blocks
-    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
+    // Temporarily extract double-dollar display math blocks with HTML escaping
+    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `$$${escapeHtml(mathContent)}$$` });
       return placeholder;
     });
 
-    // Temporarily extract single-dollar inline math blocks
-    formatted = formatted.replace(/\$(.*?)\$/g, (match) => {
+    // Temporarily extract single-dollar inline math blocks with HTML escaping
+    formatted = formatted.replace(/\$(.*?)\$/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `$${escapeHtml(mathContent)}$` });
       return placeholder;
     });
 
-    // Temporarily extract \[...\] display math
-    formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match) => {
+    // Temporarily extract \[...\] display math with HTML escaping
+    formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `\\[${escapeHtml(mathContent)}\\]` });
       return placeholder;
     });
 
-    // Temporarily extract \(...\) inline math
-    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match) => {
+    // Temporarily extract \(...\) inline math with HTML escaping
+    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `\\(${escapeHtml(mathContent)}\\)` });
       return placeholder;
     });
 

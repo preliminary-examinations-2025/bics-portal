@@ -11,17 +11,41 @@ const RichText = React.memo(function RichText({ text, style, className }) {
 
     let placeholderIndex = 0;
 
-    // Temporarily extract double-dollar display math blocks
-    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
+    const escapeHtml = (str) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    };
+
+    // Temporarily extract double-dollar display math blocks with HTML escaping
+    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `$$${escapeHtml(mathContent)}$$` });
       return placeholder;
     });
 
-    // Temporarily extract single-dollar inline math blocks
-    formatted = formatted.replace(/\$(.*?)\$/g, (match) => {
+    // Temporarily extract single-dollar inline math blocks with HTML escaping
+    formatted = formatted.replace(/\$(.*?)\$/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `$${escapeHtml(mathContent)}$` });
+      return placeholder;
+    });
+
+    // Temporarily extract \[...\] display math with HTML escaping
+    formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match, mathContent) => {
+      const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
+      mathBlocks.push({ placeholder, content: `\\[${escapeHtml(mathContent)}\\]` });
+      return placeholder;
+    });
+
+    // Temporarily extract \(...\) inline math with HTML escaping
+    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match, mathContent) => {
+      const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
+      mathBlocks.push({ placeholder, content: `\\(${escapeHtml(mathContent)}\\)` });
       return placeholder;
     });
 
@@ -39,7 +63,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
     formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
 
-    // Restore original LaTeX formulas back inside placeholders
+    // Restore safely escaped LaTeX formulas back inside placeholders
     mathBlocks.forEach(({ placeholder, content }) => {
       formatted = formatted.replace(placeholder, content);
     });

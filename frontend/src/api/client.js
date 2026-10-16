@@ -13,18 +13,47 @@ export const API_BASE = (() => {
   return isLocal ? `http://127.0.0.1:5000/api` : (typeof window !== 'undefined' ? `${window.location.origin}/api` : '/api');
 })();
 
-export const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
+/**
+ * Retrieve the active authentication token from client storage
+ */
+export const getAuthToken = () => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || null;
+};
 
-// Automatically attach apiSecret query parameter to all backend API requests
+/**
+ * Persist authentication token to storage
+ */
+export const setAuthToken = (token, rememberMe = true) => {
+  if (typeof window === 'undefined') return;
+  if (!token) {
+    clearAuthToken();
+    return;
+  }
+  if (rememberMe) {
+    localStorage.setItem('bics_auth_token', token);
+    sessionStorage.removeItem('bics_auth_token');
+  } else {
+    sessionStorage.setItem('bics_auth_token', token);
+    localStorage.removeItem('bics_auth_token');
+  }
+};
+
+/**
+ * Clear stored authentication token
+ */
+export const clearAuthToken = () => {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('bics_auth_token');
+  sessionStorage.removeItem('bics_auth_token');
+};
+
+// Automatically attach Bearer Authorization header to all backend API requests
 if (typeof window !== 'undefined' && window.fetch && !window.__bics_fetch_patched) {
   window.__bics_fetch_patched = true;
   const originalFetch = window.fetch;
-  window.fetch = function(resource, init) {
-    const secret = API_ACCESS_SECRET || 
-                   localStorage.getItem('portal_api_secret') || 
-                   window.__BICS_API_SECRET__ || 
-                   'qwertty';
-
+  
+  window.fetch = async function(resource, init = {}) {
     let urlString = '';
     if (typeof resource === 'string') {
       urlString = resource;
@@ -44,15 +73,36 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_fetch_patche
                           urlString.startsWith(window.location.origin) ||
                           (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
 
-    if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
-      const separator = urlString.includes('?') ? '&' : '?';
-      const targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
-      if (typeof resource === 'string') {
-        return originalFetch.call(this, targetUrl, init);
-      } else if (resource && typeof resource === 'object') {
-        return originalFetch.call(this, new Request(targetUrl, resource), init);
+    if (isBackendApi) {
+      const token = getAuthToken();
+      const headers = new Headers(init.headers || (typeof resource === 'object' && resource.headers ? resource.headers : {}));
+
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+
+      const modifiedInit = {
+        ...init,
+        headers
+      };
+
+      try {
+        const response = await originalFetch.call(this, resource, modifiedInit);
+        
+        // Handle 401 Unauthorized: clear expired credentials
+        if (response.status === 401 && !urlString.includes('/login') && !urlString.includes('/verify-session')) {
+          clearAuthToken();
+          localStorage.removeItem('bics_session');
+          sessionStorage.removeItem('bics_session');
+          window.dispatchEvent(new CustomEvent('bics_auth_expired'));
+        }
+
+        return response;
+      } catch (err) {
+        throw err;
       }
     }
+
     return originalFetch.call(this, resource, init);
   };
 }

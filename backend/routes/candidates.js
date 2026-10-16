@@ -12,6 +12,8 @@ const { upload } = require('../middleware/upload');
 const { formatCloudinaryMediaUrl, uploadToCloudinary } = require('../config/cloudinary');
 const { logSystemAction } = require('../utils/logger');
 const { sendVerificationEmail } = require('../utils/email');
+const { hashPassword } = require('../utils/password');
+const { requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
 
 const sanitizeCandidate = (c) => {
     if (!c) return c;
@@ -19,6 +21,10 @@ const sanitizeCandidate = (c) => {
         ? c.toJSON()
         : (typeof c.toObject === 'function' ? c.toObject({ flattenMaps: true }) : JSON.parse(JSON.stringify(c)));
     
+    // Explicitly delete sensitive credentials
+    delete obj.password;
+    delete obj.verificationCode;
+
     if (obj.midSemFeedback instanceof Map) {
         obj.midSemFeedback = Object.fromEntries(obj.midSemFeedback);
     }
@@ -37,12 +43,14 @@ const sanitizeCandidate = (c) => {
 };
 
 // Register Candidate Shell (Admin Only)
-router.post('/admin/register-candidate', async (req, res) => {
+router.post('/admin/register-candidate', requireAdmin, async (req, res) => {
     const { studentId, name, username, password, eligible } = req.body;
 
     if (!studentId || !name || !username || !password) {
         return res.status(400).json({ error: "All student fields are required" });
     }
+
+    const hashedPassword = await hashPassword(password);
 
     if (dbState.useMongo) {
         try {
@@ -50,12 +58,12 @@ router.post('/admin/register-candidate', async (req, res) => {
             if (exists) return res.status(400).json({ error: "Candidate Username or Student ID already exists" });
 
             const cand = new CandidateModel({
-                studentId, name, username, password,
+                studentId, name, username, password: hashedPassword,
                 eligible: !!eligible,
                 registeredCourses: []
             });
             await cand.save();
-            return res.json({ success: true, candidate: cand });
+            return res.json({ success: true, candidate: sanitizeCandidate(cand) });
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
@@ -66,7 +74,7 @@ router.post('/admin/register-candidate', async (req, res) => {
 
         const newCand = {
             id: Date.now().toString(),
-            studentId, name, username, password,
+            studentId, name, username, password: hashedPassword,
             eligible: !!eligible,
             signedConsent: false,
             registrationSubmitted: false,
@@ -81,12 +89,12 @@ router.post('/admin/register-candidate', async (req, res) => {
         db.candidates = db.candidates || [];
         db.candidates.push(newCand);
         saveJSONData(db);
-        return res.json({ success: true, candidate: newCand });
+        return res.json({ success: true, candidate: sanitizeCandidate(newCand) });
     }
 });
 
 // Get List of Candidates (Admin Only)
-router.get('/admin/candidates', async (req, res) => {
+router.get('/admin/candidates', requireAdmin, async (req, res) => {
     if (dbState.useMongo) {
         try {
             const list = await CandidateModel.find({}).select('-password -__v').lean();
@@ -102,7 +110,7 @@ router.get('/admin/candidates', async (req, res) => {
 });
 
 // Toggle Candidate Exam Eligibility (Admin Only)
-router.post('/admin/set-eligibility/:id', async (req, res) => {
+router.post('/admin/set-eligibility/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { eligible } = req.body;
 
@@ -127,7 +135,7 @@ router.post('/admin/set-eligibility/:id', async (req, res) => {
 });
 
 // Get Candidate Profile details
-router.get('/candidate/profile/:id', async (req, res) => {
+router.get('/candidate/profile/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
 
     if (dbState.useMongo) {
@@ -148,7 +156,7 @@ router.get('/candidate/profile/:id', async (req, res) => {
 });
 
 // Submit Candidate Course Registration with files to Cloudinary
-router.post('/candidate/complete-registration/:id', upload.fields([
+router.post('/candidate/complete-registration/:id', requireAuth, requireOwnerOrAdmin('id'), upload.fields([
     { name: 'photo', maxCount: 1 },
     { name: 'signature', maxCount: 1 },
     { name: 'undertaking', maxCount: 1 }
@@ -222,7 +230,7 @@ router.post('/candidate/complete-registration/:id', upload.fields([
 });
 
 // Sign Malpractice Consent
-router.post('/candidate/consent/:id', async (req, res) => {
+router.post('/candidate/consent/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
     const { type } = req.body;
 
@@ -274,7 +282,7 @@ router.post('/candidate/consent/:id', async (req, res) => {
 });
 
 // Submit Feedback
-router.post('/candidate/feedback/:id', async (req, res) => {
+router.post('/candidate/feedback/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
     const { type, feedback } = req.body;
 
@@ -321,7 +329,7 @@ router.post('/candidate/feedback/:id', async (req, res) => {
 });
 
 // Generate Ledger QR Verification Data
-router.get('/candidate/ledger-qr-data/:id', async (req, res) => {
+router.get('/candidate/ledger-qr-data/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
     const { type } = req.query;
     
@@ -393,7 +401,7 @@ router.get('/candidate/ledger-qr-data/:id', async (req, res) => {
 });
 
 // Upload Signed Ledger
-router.post('/candidate/upload-ledger/:id', upload.single('ledgerFile'), async (req, res) => {
+router.post('/candidate/upload-ledger/:id', requireAuth, requireOwnerOrAdmin('id'), upload.single('ledgerFile'), async (req, res) => {
     const { id } = req.params;
     const { type } = req.body;
     
@@ -529,16 +537,34 @@ router.post('/candidate/send-verification-code/:id', async (req, res) => {
             return res.status(400).json({ error: "No email registered for this candidate. Please contact support." });
         }
 
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
-        const expires = new Date(Date.now() + 10 * 60 * 1000);
+        // 60-Second Cooldown Check
+        const now = Date.now();
+        const lastSent = student.lastVerificationCodeSentAt ? new Date(student.lastVerificationCodeSentAt).getTime() : 0;
+        const elapsed = now - lastSent;
+        const COOLDOWN_MS = 60 * 1000;
+        if (elapsed < COOLDOWN_MS) {
+            const waitSec = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
+            return res.status(429).json({
+                error: `Please wait ${waitSec} seconds before requesting another verification code.`,
+                waitSec
+            });
+        }
+
+        // Cryptographically secure 6-digit code
+        const code = crypto.randomInt(100000, 1000000).toString();
+        const expires = new Date(now + 10 * 60 * 1000);
 
         if (dbState.useMongo) {
             student.verificationCode = code;
             student.verificationCodeExpires = expires;
+            student.verificationAttempts = 0;
+            student.lastVerificationCodeSentAt = new Date(now);
             await student.save();
         } else {
             student.verificationCode = code;
             student.verificationCodeExpires = expires;
+            student.verificationAttempts = 0;
+            student.lastVerificationCodeSentAt = new Date(now);
             const db = getJSONData();
             const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
             if (candIdx !== -1) {
@@ -548,7 +574,11 @@ router.post('/candidate/send-verification-code/:id', async (req, res) => {
         }
 
         await sendVerificationEmail(studentEmail, student.name || 'Candidate', code);
-        return res.json({ success: true, message: "Verification code sent to your email." });
+        return res.json({ 
+            success: true, 
+            cooldownSec: 60,
+            message: "Verification code sent to your email." 
+        });
     } catch (err) {
         console.error("Failed to send verification code:", err);
         return res.status(500).json({ error: "Failed to send verification code. Please try again." });
@@ -573,17 +603,49 @@ router.post('/candidate/verify-code/:id', async (req, res) => {
 
         if (!student) return res.status(404).json({ error: "Candidate not found." });
 
+        student.verificationAttempts = (student.verificationAttempts || 0) + 1;
+
         if (!student.verificationCode || student.verificationCode !== code.trim()) {
-            return res.status(400).json({ error: "Invalid verification code." });
+            if (student.verificationAttempts >= 5) {
+                student.verificationCode = '';
+                student.verificationCodeExpires = null;
+                student.verificationAttempts = 0;
+                if (dbState.useMongo) await student.save();
+                else {
+                    const db = getJSONData();
+                    const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
+                    if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
+                }
+                return res.status(429).json({ 
+                    error: "Maximum verification attempts (5) exceeded. Your code has been invalidated. Please request a new code." 
+                });
+            }
+
+            if (dbState.useMongo) await student.save();
+            else {
+                const db = getJSONData();
+                const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
+                if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
+            }
+
+            const remainingAttempts = 5 - student.verificationAttempts;
+            return res.status(400).json({ 
+                error: `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.` 
+            });
         }
 
         if (new Date() > new Date(student.verificationCodeExpires)) {
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
+            if (dbState.useMongo) await student.save();
             return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
         }
 
         if (dbState.useMongo) {
             student.verificationCode = '';
             student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
             if (type === 'mid') {
                 student.midSemEmailVerified = true;
             } else if (type === 'end') {
@@ -593,6 +655,7 @@ router.post('/candidate/verify-code/:id', async (req, res) => {
         } else {
             student.verificationCode = '';
             student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
             if (type === 'mid') {
                 student.midSemEmailVerified = true;
             } else if (type === 'end') {
@@ -607,7 +670,7 @@ router.post('/candidate/verify-code/:id', async (req, res) => {
         }
 
         await logSystemAction(student.name || 'candidate', 'EMAIL_VERIFIED', `Candidate verified email successfully for ${type || 'action'}`, 'info');
-        return res.json({ success: true, message: "Verification successful.", student });
+        return res.json({ success: true, message: "Verification successful.", student: sanitizeCandidate(student) });
     } catch (err) {
         console.error("Code verification failed:", err);
         return res.status(500).json({ error: "Verification failed. Please try again." });
@@ -615,7 +678,7 @@ router.post('/candidate/verify-code/:id', async (req, res) => {
 });
 
 // Centralized PDF Hall Ticket Generator
-router.get('/candidate/generate-hallticket/:id', async (req, res) => {
+router.get('/candidate/generate-hallticket/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
     const type = req.query?.type || req.body?.type;
     const t = req.query?.t || req.body?.t || Date.now();
@@ -909,7 +972,7 @@ router.get('/candidate/generate-hallticket/:id', async (req, res) => {
 });
 
 // Submit Exit Form
-router.post('/candidate/exit-form/:id', async (req, res) => {
+router.post('/candidate/exit-form/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
     const { answers } = req.body;
 
@@ -934,7 +997,7 @@ router.post('/candidate/exit-form/:id', async (req, res) => {
 });
 
 // Verify Candidate Registration (Admin Only)
-router.post('/admin/verify-registration/:id', async (req, res) => {
+router.post('/admin/verify-registration/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 

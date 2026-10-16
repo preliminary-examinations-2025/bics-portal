@@ -33,10 +33,13 @@ function generateEirfReportId() {
     return `EIRF-${year}-${code}`;
 }
 
+const { resolveToObjectId } = require('../utils/bicsId');
+
 const buildCandidateQueryFilter = (candidateIdInput) => {
     if (!candidateIdInput) return null;
-    const strVal = candidateIdInput.toString().trim();
+    let strVal = candidateIdInput.toString().trim();
     if (!strVal || strVal === 'admin') return null;
+    strVal = resolveToObjectId(strVal);
     if (mongoose.Types.ObjectId.isValid(strVal)) {
         return { $or: [{ candidateId: new mongoose.Types.ObjectId(strVal) }, { studentId: strVal }] };
     }

@@ -1,3 +1,6 @@
+const { verifyToken } = require('../utils/jwt');
+const { toMongoId, toBicsId, isBicsId } = require('../utils/bicsId');
+
 const FORBIDDEN_HTML_PAGE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -54,69 +57,263 @@ const FORBIDDEN_HTML_PAGE = `<!DOCTYPE html>
 </body>
 </html>`;
 
-const authorizeApiRequest = (req, res, next) => {
-    const secret = process.env.API_ACCESS_SECRET;
+/**
+ * Extracts and verifies JWT from the Authorization header.
+ * Attaches decoded claims to req.user if valid.
+ */
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') 
+        ? authHeader.slice(7).trim() 
+        : null;
 
-    // Allow pass-through if process.env.API_ACCESS_SECRET is not configured in environment
-    if (!secret) {
-        return next();
+    if (!token) {
+        // Direct browser navigation gets HTML error
+        const acceptHeader = req.headers['accept'] || '';
+        if (req.method === 'GET' && acceptHeader.includes('text/html')) {
+            return res.status(401).type('html').send(FORBIDDEN_HTML_PAGE);
+        }
+        return res.status(401).json({
+            success: false,
+            error: "401 Unauthorized: Authentication token required. Please sign in."
+        });
     }
 
+    const decoded = verifyToken(token);
+    if (!decoded) {
+        return res.status(401).json({
+            success: false,
+            error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
+        });
+    }
+
+    req.user = decoded;
+    return next();
+};
+
+/**
+ * Strict role-check middleware requiring an active administrator identity.
+ * Rejects requests if req.user is absent or req.user.role !== 'admin'.
+ */
+const requireAdmin = (req, res, next) => {
+    if (!req.user || req.user.role !== 'admin') {
+        console.warn(`[SECURITY BREACH ATTEMPT] Unauthorized non-admin access attempt on ${req.method} ${req.originalUrl} by user: ${JSON.stringify(req.user || 'unauthenticated')}`);
+        
+        const acceptHeader = req.headers['accept'] || '';
+        if (req.method === 'GET' && acceptHeader.includes('text/html')) {
+            return res.status(403).type('html').send(FORBIDDEN_HTML_PAGE);
+        }
+
+        return res.status(403).json({
+            success: false,
+            error: "403 Forbidden: Administrator credentials required. Access denied."
+        });
+    }
+    return next();
+};
+
+/**
+ * Middleware ensuring a user is authenticated (student or admin).
+ */
+const requireAuth = (req, res, next) => {
+    if (!req.user) {
+        return authenticateToken(req, res, next);
+    }
+    return next();
+};
+
+/**
+ * IDOR guard: verifies that a student only accesses their own resources.
+ * Admins are permitted to view or manage any student's resources.
+ * Supports both Mongo ObjectIds and BICS ObjectIds.
+ * @param {string|function} idExtractor - Key name in req.query/req.params/req.body or a custom extractor function
+ */
+const requireOwnerOrAdmin = (idExtractor) => {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ success: false, error: "401 Unauthorized: Authentication required." });
+        }
+
+        // Administrators bypass student ownership check
+        if (req.user.role === 'admin') {
+            return next();
+        }
+
+        let targetId = null;
+        if (typeof idExtractor === 'function') {
+            targetId = idExtractor(req);
+        } else if (typeof idExtractor === 'string') {
+            targetId = req.params[idExtractor] || req.query[idExtractor] || req.body[idExtractor];
+        }
+
+        if (!targetId) {
+            return next();
+        }
+
+        const userIdStr = String(req.user.id || '');
+        const studentIdStr = String(req.user.studentId || '');
+        const usernameStr = String(req.user.username || '');
+        const targetStr = String(targetId);
+
+        // Normalize targetStr if it is a BICS ID
+        const normalizedTarget = isBicsId(targetStr) ? toMongoId(targetStr) : targetStr;
+        const normalizedUser = isBicsId(userIdStr) ? toMongoId(userIdStr) : userIdStr;
+
+        const isOwner = targetStr === userIdStr || 
+                        targetStr === studentIdStr || 
+                        targetStr === usernameStr ||
+                        normalizedTarget === normalizedUser ||
+                        toBicsId(normalizedUser) === targetStr;
+
+        if (!isOwner) {
+            console.warn(`[IDOR BLOCKED] Student ${req.user.username} (ID: ${userIdStr}) attempted to access resource belonging to candidate: ${targetStr}`);
+            return res.status(403).json({
+                success: false,
+                error: "403 Forbidden: You do not have permission to access another candidate's records."
+            });
+        }
+
+        return next();
+    };
+};
+
+const isWhitelisted = (urlPath, method = 'GET') => {
+    if (method === 'OPTIONS') return true;
+    const fullPath = (urlPath || '').split('?')[0].toLowerCase();
+    return (
+        fullPath === '/health' || fullPath === '/api/health' ||
+        fullPath.startsWith('/api/webhooks/') || fullPath.includes('/webhooks/') ||
+        fullPath === '/api/login' || fullPath === '/api/admin/login' || fullPath === '/api/logout' ||
+        fullPath === '/api/candidate/login' ||
+        fullPath.startsWith('/api/candidate/send-verification-code') ||
+        fullPath.startsWith('/api/candidate/verify-code') ||
+        fullPath === '/api/config' || fullPath === '/api/system-config' ||
+        fullPath === '/api/tests/verify-token' ||
+        fullPath.startsWith('/api/tests/submission-verification') ||
+        fullPath === '/api/tests/beacon-disconnect' ||
+        fullPath === '/api/test/eirf/public-key' ||
+        fullPath === '/api/log-client-error'
+    );
+};
+
+/**
+ * Enterprise API Access Gate.
+ * 1. Checks and verifies Authorization Bearer JWT on all requests first.
+ * 2. Whitelists strictly minimal, public, rate-limited Tier 1 endpoints.
+ * 3. Requires valid authentication for all student (Tier 3) and admin (Tier 4) routes.
+ */
+const authorizeApiRequest = async (req, res, next) => {
     const fullPath = (req.originalUrl || req.path).split('?')[0].toLowerCase();
     const relativePath = req.path.toLowerCase();
 
-    // Whitelist rules: OPTIONS preflight, health checks, authentication, and external webhooks
-    const isWhitelisted = 
-        req.method === 'OPTIONS' ||
-        fullPath === '/health' || relativePath === '/health' ||
-        fullPath === '/api/health' || relativePath === '/health' ||
-        fullPath.startsWith('/api/webhooks/') || relativePath.startsWith('/webhooks/') ||
-        fullPath === '/api/login' || relativePath === '/login' ||
-        fullPath === '/api/register' || relativePath === '/register' ||
-        fullPath === '/api/candidate/login' || relativePath === '/candidate/login' ||
-        fullPath === '/api/candidate/register' || relativePath === '/candidate/register' ||
-        fullPath.startsWith('/api/candidate/send-verification-code') || relativePath.startsWith('/candidate/send-verification-code') ||
-        fullPath === '/api/candidate/verify-email-code' || relativePath === '/candidate/verify-email-code' ||
-        fullPath.startsWith('/api/candidate/verify-code') || relativePath.startsWith('/candidate/verify-code') ||
-        fullPath === '/api/tests/verify-token' || relativePath === '/tests/verify-token' ||
-        fullPath === '/api/config' || relativePath === '/config' ||
-        fullPath === '/api/system-config' || relativePath === '/system-config' ||
-        fullPath.startsWith('/api/candidate/generate-hallticket') || relativePath.startsWith('/candidate/generate-hallticket') ||
-        fullPath.startsWith('/api/tests/submission-verification') || relativePath.startsWith('/tests/submission-verification') ||
-        fullPath.startsWith('/api/test/eirf') || relativePath.startsWith('/test/eirf') ||
-        fullPath.startsWith('/api/counterfoil') || relativePath.startsWith('/counterfoil') ||
-        fullPath === '/api/log-client-error' || relativePath === '/log-client-error';
+    // 1. Process Authorization Bearer token or query token for direct browser downloads
+    const authHeader = req.headers['authorization'];
+    const queryToken = req.query.token;
+    const bearerToken = authHeader && authHeader.startsWith('Bearer ') 
+        ? authHeader.slice(7).trim() 
+        : null;
 
-    if (isWhitelisted) {
+    if (bearerToken) {
+        const decoded = verifyToken(bearerToken);
+        if (decoded) {
+            req.user = decoded;
+        } else {
+            return res.status(401).json({
+                success: false,
+                error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
+            });
+        }
+    } else if (queryToken) {
+        const decoded = verifyToken(String(queryToken).trim());
+        if (decoded) {
+            req.user = decoded;
+        }
+    }
+
+    // 2. Minimal, bounded Tier 1 Public Whitelist
+    if (isWhitelisted(fullPath, req.method) || isWhitelisted(relativePath, req.method)) {
         return next();
     }
 
-    // Check credentials via apiSecret or apiKey query parameter, or header
+    // 2.1 Dual Authentication for Online Examination Routes (supports active TestToken session)
+    if (!req.user && (
+        fullPath.includes('/api/tests/start') || 
+        fullPath.includes('/api/tests/proctoring') || 
+        fullPath.includes('/api/tests/heartbeat') || 
+        fullPath.includes('/api/tests/run') || 
+        fullPath.includes('/api/tests/submit')
+    )) {
+        const examToken = req.headers['x-exam-token'] || req.query.token || (req.body && req.body.token);
+        if (examToken && typeof examToken === 'string') {
+            try {
+                const { TestTokenModel } = require('../models');
+                const { dbState, getJSONData } = require('../config/db');
+                let tokenDoc = null;
+                if (dbState.useMongo) {
+                    tokenDoc = await TestTokenModel.findOne({ token: examToken.trim() });
+                } else {
+                    const db = getJSONData();
+                    tokenDoc = (db.tokens || []).find(t => t.token === examToken.trim());
+                }
+                if (tokenDoc) {
+                    req.user = {
+                        id: String(tokenDoc.candidateId),
+                        role: 'candidate',
+                        studentId: String(tokenDoc.candidateId),
+                        username: 'candidate'
+                    };
+                    req.isExamTokenAuth = true;
+                }
+            } catch (err) {}
+        }
+    }
+
+    // 3. Admin perimeter check: strictly require role === 'admin'
+    if (fullPath.includes('/admin/') || fullPath.endsWith('/admin')) {
+        if (!req.user || req.user.role !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                error: "403 Forbidden: Administrator credentials required. Access denied."
+            });
+        }
+        return next();
+    }
+
+    // 4. If user is authenticated (Student or Admin), allow request to proceed to route-level checks
+    if (req.user) {
+        return next();
+    }
+
+    // 5. Legacy API access secret check for non-admin automated scripts
+    const secret = process.env.API_ACCESS_SECRET;
     const clientSecret = req.query.apiSecret || 
                          req.query.apiKey || 
-                         req.headers['x-portal-api-key'] ||
-                         (req.headers['authorization'] ? req.headers['authorization'].replace(/^Bearer\s+/i, '') : null);
+                         req.headers['x-portal-api-key'];
 
-    if (clientSecret && clientSecret === secret) {
+    if (secret && clientSecret && clientSecret === secret) {
         return next();
     }
 
     console.warn(`[SECURITY ALERT] Unauthorized API access blocked: ${req.method} ${req.originalUrl} from IP ${req.ip}`);
     
-    // Direct browser navigation (GET requesting text/html) gets the custom Server Error HTML page
     const acceptHeader = req.headers['accept'] || '';
     if (req.method === 'GET' && acceptHeader.includes('text/html')) {
-        return res.status(403).type('html').send(FORBIDDEN_HTML_PAGE);
+        return res.status(401).type('html').send(FORBIDDEN_HTML_PAGE);
     }
 
-    // Programmatic fetch / API calls get clean JSON response
-    return res.status(403).json({
+    return res.status(401).json({
         success: false,
-        error: "403 Forbidden: Access is denied. Invalid or missing API Secret."
+        error: "401 Unauthorized: Authentication required. Please sign in to access this resource."
     });
 };
 
 module.exports = {
+    authenticateToken,
+    requireAdmin,
+    requireAuth,
+    requireOwnerOrAdmin,
     authorizeApiRequest,
+    isWhitelisted,
     FORBIDDEN_HTML_PAGE
 };
+

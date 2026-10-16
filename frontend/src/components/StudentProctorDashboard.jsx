@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Video, Loader2, VolumeX, Volume2, ClipboardList } from 'lucide-react';
+import { 
+  Video, Loader2, VolumeX, Volume2, ClipboardList, Camera, Eye, 
+  ZoomIn, X, ShieldAlert, Laptop, CheckCircle2, Clock, Image as ImageIcon, ExternalLink, AlertTriangle
+} from 'lucide-react';
 import { API_BASE } from '../config';
 
 const PRESET_COURSES = [
@@ -15,6 +18,11 @@ const PRESET_COURSES = [
 export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   const [activeTab, setActiveTab] = useState('proctoring'); // 'proctoring' | 'eirf'
   const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
+  const [snapshots, setSnapshots] = useState(sub.proctoringLog?.snapshots || []);
+  const [baselinePhotoUrl, setBaselinePhotoUrl] = useState(sub.baselinePhotoUrl || '');
+  const [securityMetadata, setSecurityMetadata] = useState(sub.securityMetadata || null);
+  const [selectedSnapshot, setSelectedSnapshot] = useState(null);
+  const [logViewMode, setLogViewMode] = useState('timeline'); // 'timeline' | 'gallery'
   const [isMuted, setIsMuted] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
   const [status, setStatus] = useState(sub.status || 'started');
@@ -122,6 +130,15 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
           if (match) {
             if (match.proctoringLog) {
               setLogs(match.proctoringLog.events || []);
+              if (Array.isArray(match.proctoringLog.snapshots)) {
+                setSnapshots(match.proctoringLog.snapshots);
+              }
+            }
+            if (match.baselinePhotoUrl) {
+              setBaselinePhotoUrl(match.baselinePhotoUrl);
+            }
+            if (match.securityMetadata) {
+              setSecurityMetadata(match.securityMetadata);
             }
             if (match.status) {
               if (match.status !== status) {
@@ -335,66 +352,107 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
         </div>
       </div>
 
-      {activeTab === 'proctoring' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '20px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {isCompleted ? (
-              <div style={{
-                backgroundColor: '#1e293b',
-                borderRadius: '4px',
-                overflow: 'hidden',
-                aspectRatio: '4/3',
-                width: '100%',
-                position: 'relative',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'center',
-                border: '1px solid var(--cf-border)',
-                color: '#cbd5e1',
-                padding: '40px 20px',
-                textAlign: 'center'
-              }}>
-                <Video size={48} style={{ color: '#64748b', marginBottom: '15px' }} />
-                <strong style={{ fontSize: '11pt', color: '#fff', marginBottom: '4px' }}>Exam Session Completed</strong>
-                <span style={{ fontSize: '8.5pt', color: '#94a3b8', maxWidth: '320px' }}>
-                  This candidate has finalized and submitted their exam answers. Live camera feed is offline. Historic activity logs are preserved.
+      {/* Lightbox Modal for Snapshot Inspection */}
+      {selectedSnapshot && (
+        <div 
+          onClick={() => setSelectedSnapshot(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            zIndex: 99999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            backdropFilter: 'blur(3px)'
+          }}
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '6px',
+              maxWidth: '720px',
+              width: '100%',
+              overflow: 'hidden',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+              border: '1px solid #cbd5e1'
+            }}
+          >
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '11pt', fontWeight: 'bold', color: '#002147' }}>
+                  Proctoring Evidence Snapshot: {selectedSnapshot.type}
+                </h4>
+                <span style={{ fontSize: '8pt', color: '#64748b' }}>
+                  Captured: {new Date(selectedSnapshot.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                 </span>
               </div>
-            ) : (
+              <button 
+                onClick={() => setSelectedSnapshot(null)}
+                className="cf-btn-secondary"
+                style={{ padding: '4px 8px', fontSize: '8pt', margin: 0 }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div style={{ backgroundColor: '#0f172a', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '360px' }}>
+              <img 
+                src={selectedSnapshot.url} 
+                alt="Proctoring Snapshot" 
+                style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain' }}
+              />
+            </div>
+            {selectedSnapshot.details && (
+              <div style={{ padding: '12px 18px', backgroundColor: '#f8fafc', borderTop: '1px solid #e2e8f0', fontSize: '8.5pt', color: '#334155' }}>
+                <strong>Details:</strong> {selectedSnapshot.details}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'proctoring' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: "'Roboto', -apple-system, sans-serif" }}>
+          
+          {/* Top Monitoring Panel: Compact Camera, Baseline Photo & Security Profile */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '16px', alignItems: 'stretch' }}>
+            
+            {/* 1. Compact Live Camera Window (Desktop Size: 240px x 180px) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Video size={13} /> Live Camera Feed
+                </span>
+                <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: isCompleted ? '#64748b' : connectionStatus === 'Connected' ? '#16a34a' : '#d97706' }}>
+                  {isCompleted ? 'Offline' : connectionStatus}
+                </span>
+              </div>
+
               <div style={{
+                width: '240px',
+                height: '180px',
                 backgroundColor: '#0f172a',
                 borderRadius: '4px',
                 overflow: 'hidden',
-                aspectRatio: '4/3',
-                width: '100%',
                 position: 'relative',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
                 alignItems: 'center',
-                border: '1px solid var(--cf-border)',
-                color: '#94a3b8',
-                padding: connectionStatus === 'Connected' ? '0' : '40px 20px',
-                textAlign: 'center'
+                border: '1px solid #cbd5e1'
               }}>
-                <style>{`
-                  @keyframes cf-spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                  }
-                  .cf-spinner {
-                    animation: cf-spin 1s linear infinite;
-                  }
-                `}</style>
-                {connectionStatus !== 'Connected' ? (
-                  <>
-                    <Loader2 className="cf-spinner" size={32} style={{ color: '#38bdf8', marginBottom: '15px' }} />
-                    <strong style={{ fontSize: '10.5pt', color: '#f1f5f9', marginBottom: '4px' }}>Waiting for Candidate Stream...</strong>
-                    <span style={{ fontSize: '8pt', color: '#64748b', maxWidth: '280px' }}>
-                      Establishing secure WebRTC channel. Ensure the candidate has started the test lobby and allowed media access.
-                    </span>
-                  </>
+                {isCompleted ? (
+                  <div style={{ color: '#cbd5e1', textAlign: 'center', padding: '10px' }}>
+                    <Video size={28} style={{ color: '#64748b', marginBottom: '6px' }} />
+                    <div style={{ fontSize: '8.5pt', color: '#94a3b8' }}>Session Completed</div>
+                  </div>
+                ) : connectionStatus !== 'Connected' ? (
+                  <div style={{ color: '#94a3b8', textAlign: 'center', padding: '10px' }}>
+                    <Loader2 className="cf-spinner" size={24} style={{ color: '#38bdf8', marginBottom: '8px' }} />
+                    <div style={{ fontSize: '8pt', color: '#cbd5e1' }}>Awaiting Stream...</div>
+                  </div>
                 ) : (
                   <>
                     <video
@@ -408,79 +466,337 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       onClick={() => setIsMuted(!isMuted)}
                       style={{
                         position: 'absolute',
-                        bottom: '12px',
-                        right: '12px',
-                        backgroundColor: isMuted ? '#ef4444' : '#10b981',
+                        bottom: '8px',
+                        right: '8px',
+                        backgroundColor: isMuted ? 'rgba(239, 68, 68, 0.9)' : 'rgba(16, 185, 129, 0.9)',
                         color: '#fff',
                         border: 'none',
-                        borderRadius: '4px',
-                        padding: '6px 12px',
-                        fontSize: '8.5pt',
+                        borderRadius: '3px',
+                        padding: '3px 8px',
+                        fontSize: '7.5pt',
                         cursor: 'pointer',
                         fontWeight: 'bold',
-                        zIndex: 10,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '6px'
+                        gap: '4px'
                       }}
                     >
-                      {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                      {isMuted ? 'Muted' : 'Audible'}
+                      {isMuted ? <VolumeX size={11} /> : <Volume2 size={11} />}
+                      {isMuted ? 'Muted' : 'Live'}
                     </button>
                   </>
                 )}
               </div>
-            )}
+            </div>
 
-            {!isCompleted && (
-              <button
-                onClick={handleTerminateExam}
-                className="cf-btn-primary"
-                style={{ width: '100%', padding: '10px', fontSize: '9.5pt', backgroundColor: '#dc2626', borderColor: '#dc2626', fontWeight: 'bold' }}
-              >
-                Disqualify Candidate
-              </button>
-            )}
-          </div>
+            {/* 2. Baseline Reference Portrait Card */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Camera size={13} /> Baseline Identity Photo
+              </span>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ClipboardList size={16} /> Compliance Warnings & Alerts
-            </h4>
-            <div style={{
-              flexGrow: 1,
-              overflowY: 'auto',
-              border: '1px solid #cbd5e1',
-              padding: '8px',
-              borderRadius: '4px',
-              backgroundColor: '#f8fafc',
-              fontSize: '8pt',
-              maxHeight: '380px',
-              minHeight: '260px'
-            }}>
-              {(!Array.isArray(logs) || logs.length === 0) ? (
-                <div style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: '20px' }}>
-                  No compliance events recorded.
+              <div style={{
+                width: '180px',
+                height: '180px',
+                backgroundColor: '#f1f5f9',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                border: '1px solid #cbd5e1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative'
+              }}>
+                {baselinePhotoUrl ? (
+                  <>
+                    <img 
+                      src={baselinePhotoUrl} 
+                      alt="Baseline Identity" 
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                    <button
+                      onClick={() => setSelectedSnapshot({ url: baselinePhotoUrl, type: 'BASELINE_REFERENCE', timestamp: sub.startedAt || new Date(), details: 'Initial onboarding baseline identity photograph.' })}
+                      style={{
+                        position: 'absolute',
+                        bottom: '6px',
+                        right: '6px',
+                        backgroundColor: 'rgba(0, 33, 71, 0.85)',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '3px',
+                        padding: '2px 6px',
+                        fontSize: '7pt',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px'
+                      }}
+                    >
+                      <ZoomIn size={10} /> Zoom
+                    </button>
+                  </>
+                ) : (
+                  <div style={{ textAlign: 'center', color: '#94a3b8', padding: '10px' }}>
+                    <Camera size={24} style={{ marginBottom: '4px' }} />
+                    <div style={{ fontSize: '7.5pt' }}>No Baseline Photo</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 3. Candidate Security & Integrity Overview */}
+            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '12px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                  <div>
+                    <h4 style={{ fontSize: '10pt', fontWeight: '700', color: '#002147', margin: 0 }}>Candidate Session Profile</h4>
+                    <span style={{ fontSize: '8pt', color: '#64748b' }}>Exam: {sub.testTitle} • Started: {new Date(sub.startedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
+                  </div>
+                  
+                  <span style={{
+                    fontSize: '8pt',
+                    fontWeight: 'bold',
+                    padding: '3px 8px',
+                    borderRadius: '3px',
+                    backgroundColor: isCompleted ? '#f1f5f9' : '#ecfdf5',
+                    color: isCompleted ? '#475569' : '#15803d',
+                    border: `1px solid ${isCompleted ? '#cbd5e1' : '#bbf7d0'}`
+                  }}>
+                    {isCompleted ? 'Finished' : 'In Progress'}
+                  </span>
                 </div>
-              ) : (
-                (Array.isArray(logs) ? logs : []).map((log, idx) => {
-                  const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED');
-                  const isCode = log.type?.includes('CODE_RUN') || log.type?.includes('CODE_SAVED');
-                  const isMcq = log.type?.includes('OPTION_MARKED');
-                  const logColor = isWarning ? '#dc2626' : (isCode ? '#2563eb' : (isMcq ? '#059669' : '#1e293b'));
-                  return (
-                    <div key={idx} style={{ borderBottom: '1px dotted #e2e8f0', paddingBottom: '6px', marginBottom: '6px', color: logColor }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '7.5pt', marginBottom: '2px' }}>
-                        <span>{log.type}</span>
-                        <span style={{ color: '#64748b' }}>{new Date(log.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
+
+                {/* Security Metrics Pills */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', fontSize: '8pt' }}>
+                  <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ color: '#64748b', fontSize: '7pt' }}>Fullscreen Exits</div>
+                    <strong style={{ color: sub.proctoringLog?.fullscreenExits > 0 ? '#b91c1c' : '#334155', fontSize: '9pt' }}>
+                      {sub.proctoringLog?.fullscreenExits || 0} / 3
+                    </strong>
+                  </div>
+
+                  <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ color: '#64748b', fontSize: '7pt' }}>Tab Switches / Blurs</div>
+                    <strong style={{ color: sub.proctoringLog?.tabSwitches > 0 ? '#b91c1c' : '#334155', fontSize: '9pt' }}>
+                      {sub.proctoringLog?.tabSwitches || 0} / 3
+                    </strong>
+                  </div>
+
+                  <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ color: '#64748b', fontSize: '7pt' }}>Clipboard Lockdown</div>
+                    <strong style={{ color: (sub.proctoringLog?.clipboardAttempts > 0) ? '#b91c1c' : '#15803d', fontSize: '9pt' }}>
+                      {sub.proctoringLog?.clipboardAttempts || 0} Blocked
+                    </strong>
+                  </div>
+
+                  <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ color: '#64748b', fontSize: '7pt' }}>Evidence Snapshots</div>
+                    <strong style={{ color: '#002147', fontSize: '9pt' }}>
+                      {snapshots.length} Captured
+                    </strong>
+                  </div>
+
+                  {securityMetadata && (
+                    <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0', gridColumn: 'span 2' }}>
+                      <div style={{ color: '#64748b', fontSize: '7pt' }}>Client Environment &amp; Network Telemetry</div>
+                      <div style={{ color: '#334155', fontWeight: 'bold', fontSize: '8pt', marginTop: '2px' }}>
+                        {securityMetadata.osDetails?.osVersion || securityMetadata.operatingSystem} ({securityMetadata.osDetails?.architecture || '64-bit'}) • {securityMetadata.browser}
                       </div>
-                      <div style={{ fontSize: '8pt' }}>{log.details}</div>
+                      <div style={{ color: '#64748b', fontSize: '7.5pt', marginTop: '2px' }}>
+                        IP: {securityMetadata.network?.publicIp || securityMetadata.ip}
+                        {securityMetadata.network?.city ? ` (${securityMetadata.network.city}, ${securityMetadata.network.country})` : ''}
+                        {securityMetadata.network?.isp ? ` • ISP: ${securityMetadata.network.isp}` : ''}
+                        {securityMetadata.network?.isProxyOrVpn ? <span style={{ color: '#dc2626', fontWeight: 'bold', marginLeft: '6px' }}>[VPN / Proxy Detected]</span> : ''}
+                        {securityMetadata.osDetails?.isVirtualMachineDetected ? <span style={{ color: '#dc2626', fontWeight: 'bold', marginLeft: '6px' }}>[⚠️ {securityMetadata.osDetails.vmIndicator}]</span> : ''}
+                      </div>
                     </div>
-                  );
-                })
+                  )}
+                </div>
+              </div>
+
+              {!isCompleted && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                  <button
+                    onClick={handleTerminateExam}
+                    className="cf-btn-primary"
+                    style={{ padding: '6px 14px', fontSize: '8.5pt', backgroundColor: '#dc2626', borderColor: '#dc2626', fontWeight: 'bold' }}
+                  >
+                    Disqualify Candidate
+                  </button>
+                </div>
               )}
             </div>
+
           </div>
+
+          {/* Bottom Section: Forensic Audit Timeline & Snapshot Evidence Gallery */}
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+            <div style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <ClipboardList size={16} style={{ color: '#002147' }} />
+                <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>
+                  Compliance Audit &amp; Violation Evidence Feed
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  onClick={() => setLogViewMode('timeline')}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: '8pt',
+                    borderRadius: '3px',
+                    border: '1px solid',
+                    borderColor: logViewMode === 'timeline' ? '#002147' : '#cbd5e1',
+                    backgroundColor: logViewMode === 'timeline' ? '#002147' : '#ffffff',
+                    color: logViewMode === 'timeline' ? '#ffffff' : '#475569',
+                    cursor: 'pointer',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Timeline Log ({logs.length})
+                </button>
+                <button
+                  onClick={() => setLogViewMode('gallery')}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: '8pt',
+                    borderRadius: '3px',
+                    border: '1px solid',
+                    borderColor: logViewMode === 'gallery' ? '#002147' : '#cbd5e1',
+                    backgroundColor: logViewMode === 'gallery' ? '#002147' : '#ffffff',
+                    color: logViewMode === 'gallery' ? '#ffffff' : '#475569',
+                    cursor: 'pointer',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Evidence Snapshots ({snapshots.length})
+                </button>
+              </div>
+            </div>
+
+            {logViewMode === 'timeline' ? (
+              <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '12px' }}>
+                {(!Array.isArray(logs) || logs.length === 0) ? (
+                  <div style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '24px', fontSize: '8.5pt' }}>
+                    No compliance events recorded for this candidate.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {logs.map((log, idx) => {
+                      const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED') || log.type?.includes('WARNING') || log.type?.includes('VOICE') || log.type?.includes('CLIPBOARD');
+                      
+                      // Match snapshot by time or category if available
+                      const matchingSnapshot = snapshots.find(s => 
+                        s.type === log.type && 
+                        Math.abs(new Date(s.timestamp).getTime() - new Date(log.timestamp).getTime()) < 30000
+                      );
+
+                      return (
+                        <div 
+                          key={idx} 
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '8px 12px',
+                            backgroundColor: isWarning ? '#fff7ed' : '#f8fafc',
+                            border: `1px solid ${isWarning ? '#fed7aa' : '#e2e8f0'}`,
+                            borderRadius: '4px',
+                            gap: '12px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                            <span style={{
+                              fontSize: '7.5pt',
+                              fontWeight: 'bold',
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              backgroundColor: isWarning ? '#ffedd5' : '#e2e8f0',
+                              color: isWarning ? '#9a3412' : '#334155'
+                            }}>
+                              {log.type}
+                            </span>
+                            <span style={{ fontSize: '8.5pt', color: '#1e293b' }}>
+                              {log.details}
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                            {matchingSnapshot && (
+                              <button
+                                onClick={() => setSelectedSnapshot(matchingSnapshot)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  fontSize: '7.5pt',
+                                  color: '#002147',
+                                  backgroundColor: '#ffffff',
+                                  border: '1px solid #cbd5e1',
+                                  borderRadius: '3px',
+                                  padding: '2px 6px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <ImageIcon size={12} /> View Snapshot
+                              </button>
+                            )}
+
+                            <span style={{ fontSize: '7.5pt', color: '#64748b', minWidth: '70px', textAlign: 'right' }}>
+                              {new Date(log.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Snapshot Gallery View */
+              <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '16px' }}>
+                {snapshots.length === 0 ? (
+                  <div style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '24px', fontSize: '8.5pt' }}>
+                    No violation evidence snapshots recorded for this candidate.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px' }}>
+                    {snapshots.map((snap, sIdx) => (
+                      <div 
+                        key={sIdx}
+                        onClick={() => setSelectedSnapshot(snap)}
+                        style={{
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '4px',
+                          overflow: 'hidden',
+                          backgroundColor: '#f8fafc',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column'
+                        }}
+                      >
+                        <div style={{ width: '100%', height: '110px', backgroundColor: '#0f172a', overflow: 'hidden' }}>
+                          <img 
+                            src={snap.url} 
+                            alt={snap.type} 
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        </div>
+                        <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#002147' }}>{snap.type}</span>
+                          <span style={{ fontSize: '7pt', color: '#64748b' }}>
+                            {new Date(snap.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
         </div>
       ) : (
         /* EIRF Forensic Center View */

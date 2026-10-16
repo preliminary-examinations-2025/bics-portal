@@ -5,10 +5,11 @@ const { TestConfigModel, TestSubmissionModel, RecycleBinModel } = require('../mo
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
+const { resolveToObjectId } = require('../utils/bicsId');
 
 const findTestConfig = async (id) => {
     if (!id) return null;
-    const strId = id.toString();
+    const strId = resolveToObjectId(id.toString());
     if (mongoose.Types.ObjectId.isValid(strId)) {
         return await TestConfigModel.findOne({ _id: new mongoose.Types.ObjectId(strId), isDeleted: { $ne: true } });
     }
@@ -156,7 +157,7 @@ router.post('/toggle-publish/:id', async (req, res) => {
 
 // 5. Create/configure a test (Admin only)
 router.post('/', async (req, res) => {
-    const { _id, id, title, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
+    const { _id, id, title, course, courseCode, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
     if (!title || !duration || !startDate || !endDate) {
         return res.status(400).json({ error: "Title, Duration, Start Date, and End Date are required" });
     }
@@ -164,14 +165,15 @@ router.post('/', async (req, res) => {
     try {
         const normalizedQuestions = (questions || []).map((q, qIdx) => {
             const qObj = q.toObject ? q.toObject() : { ...q };
-            const mainText = qObj.questionText || qObj.title || qObj.description || qObj.question || qObj.statement || '';
+            const title = (qObj.title || '').trim() || `Question ${qIdx + 1}`;
+            const description = (qObj.description || qObj.questionText || qObj.question || qObj.statement || '').trim();
             const qId = qObj.id || qObj._id || `q_${Date.now()}_${qIdx + 1}`;
             return {
                 ...qObj,
                 id: qId,
-                title: qObj.title || mainText,
-                questionText: qObj.questionText || mainText,
-                description: qObj.description || mainText
+                title,
+                description,
+                questionText: description
             };
         });
 
@@ -183,6 +185,8 @@ router.post('/', async (req, res) => {
             }
             if (savedTest) {
                 savedTest.title = title;
+                savedTest.course = course || '';
+                savedTest.courseCode = courseCode || '';
                 savedTest.marks = Number(marks || 0);
                 savedTest.instructions = instructions || '';
                 savedTest.duration = Number(duration || 60);
@@ -192,7 +196,18 @@ router.post('/', async (req, res) => {
                 if (isPublished !== undefined) savedTest.isPublished = isPublished;
                 await savedTest.save();
             } else {
-                savedTest = new TestConfigModel({ title, marks, instructions, duration, startDate, endDate, questions: normalizedQuestions, isPublished: isPublished || false });
+                savedTest = new TestConfigModel({ 
+                    title, 
+                    course: course || '',
+                    courseCode: courseCode || '',
+                    marks, 
+                    instructions, 
+                    duration, 
+                    startDate, 
+                    endDate, 
+                    questions: normalizedQuestions, 
+                    isPublished: isPublished || false 
+                });
                 await savedTest.save();
             }
         } else {
@@ -204,6 +219,8 @@ router.post('/', async (req, res) => {
                     db.tests[idx] = {
                         ...db.tests[idx],
                         title,
+                        course: course || '',
+                        courseCode: courseCode || '',
                         marks: Number(marks || 0),
                         instructions: instructions || '',
                         duration: Number(duration || 60),
@@ -220,6 +237,8 @@ router.post('/', async (req, res) => {
                     id: Date.now().toString(),
                     _id: Date.now().toString(),
                     title,
+                    course: course || '',
+                    courseCode: courseCode || '',
                     marks: Number(marks || 0),
                     instructions,
                     duration: Number(duration || 60),

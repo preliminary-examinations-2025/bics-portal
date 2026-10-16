@@ -95,27 +95,6 @@ export const ExamHeader = ({
           )}
         </div>
       </div>
-
-      {webcamProctorWarning && (
-        <div style={{
-          backgroundColor: '#fffbeb',
-          borderLeft: '5px solid #d97706',
-          color: '#b45309',
-          padding: '12px 15px',
-          fontSize: '9.5pt',
-          fontWeight: 'bold',
-          borderRadius: '4px',
-          boxShadow: '0 2px 5px rgba(0,0,0,0.05)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          margin: '0 0 -10px 0',
-          zIndex: 100
-        }}>
-          <ShieldAlert size={18} style={{ color: '#d97706', flexShrink: 0 }} />
-          <span>{webcamProctorWarning}</span>
-        </div>
-      )}
     </>
   );
 };

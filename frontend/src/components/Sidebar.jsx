@@ -258,14 +258,14 @@ export default function Sidebar({
             <button className={`sidebar-item ${view === 'exit' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('exit'); setExitSuccess && setExitSuccess(''); setIsMobileSidebarOpen(false); }}>
               <GraduationCap size={16} /> Exit Form
             </button>
+
+            <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1', justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); setPwdError && setPwdError(''); setPwdMessage && setPwdMessage(''); setChangePasswordCodeSent && setChangePasswordCodeSent(false); setChangePasswordEmailCode && setChangePasswordEmailCode(''); generateChangePasswordCaptcha && generateChangePasswordCaptcha(); }}>
+              <Key size={16} /> Change Password
+            </button>
           </>
         )}
 
-        <button className={`sidebar-item ${view === 'changepassword' ? 'active' : ''}`} style={{ marginTop: '20px', borderTop: '1px solid #cbd5e1', justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('changepassword'); setIsMobileSidebarOpen(false); setPwdError && setPwdError(''); setPwdMessage && setPwdMessage(''); setChangePasswordCodeSent && setChangePasswordCodeSent(false); setChangePasswordEmailCode && setChangePasswordEmailCode(''); generateChangePasswordCaptcha && generateChangePasswordCaptcha(); }}>
-          <Key size={16} /> Change Password
-        </button>
-
-        <button className="sidebar-item" style={{ color: '#e11d48', justifyContent: 'flex-start', gap: '8px' }} onClick={() => setShowLogoutModal && setShowLogoutModal(true)}>
+        <button className="sidebar-item" style={{ color: '#e11d48', justifyContent: 'flex-start', gap: '8px', marginTop: user?.role === 'admin' ? '20px' : '0', borderTop: user?.role === 'admin' ? '1px solid #cbd5e1' : 'none' }} onClick={() => setShowLogoutModal && setShowLogoutModal(true)}>
           <LogOut size={16} /> Sign Out
         </button>
 

@@ -231,16 +231,50 @@ const dbState = {
     isConnected: false
 };
 
+let isConnecting = false;
+let lastConnectAttempt = 0;
+const RECONNECT_COOLDOWN_MS = 30000; // 30 seconds
+
+// Mongoose connection lifecycle listeners
+mongoose.connection.on('connected', () => {
+    dbState.isConnected = true;
+    dbState.useMongo = true;
+    console.log("--> MongoDB connection established.");
+});
+
+mongoose.connection.on('disconnected', () => {
+    dbState.isConnected = false;
+    dbState.useMongo = false;
+    console.warn("--> MongoDB disconnected. Active in local JSON database mode.");
+});
+
+mongoose.connection.on('error', (err) => {
+    dbState.isConnected = false;
+    dbState.useMongo = false;
+    console.error("--> MongoDB connection error:", err.message);
+});
+
 const connectDB = async (models = {}) => {
     const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bics_db';
     if (dbState.isConnected && mongoose.connection.readyState === 1) {
         dbState.useMongo = true;
         return;
     }
+    if (isConnecting || mongoose.connection.readyState === 2) {
+        return;
+    }
+    const now = Date.now();
+    if (now - lastConnectAttempt < RECONNECT_COOLDOWN_MS) {
+        return;
+    }
+    lastConnectAttempt = now;
+    isConnecting = true;
+
     try {
         console.log("--> Connecting to MongoDB Atlas...");
         await mongoose.connect(MONGO_URI, { 
-            serverSelectionTimeoutMS: 5000 
+            serverSelectionTimeoutMS: 3000,
+            bufferCommands: false
         });
         dbState.isConnected = true;
         dbState.useMongo = true;
@@ -283,7 +317,14 @@ const connectDB = async (models = {}) => {
         }
     } catch (err) {
         console.error("--> MongoDB connection failed:", err.message);
+        const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL;
+        dbState.isConnected = false;
         dbState.useMongo = false;
+        if (isProduction) {
+            console.error("--> [CRITICAL PRODUCTION FAILURE] Cannot fall back to local db.json in production environment. Failing loudly.");
+        }
+    } finally {
+        isConnecting = false;
     }
 };
 

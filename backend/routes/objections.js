@@ -5,6 +5,8 @@ const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { generateObjectionId, buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { isBicsId, toMongoId, toBicsId } = require('../utils/bicsId');
 
 const ensureObjectionIdsSaved = async (submissionsList) => {
     try {
@@ -54,7 +56,7 @@ const ensureObjectionIdsSaved = async (submissionsList) => {
 };
 
 // 1. Candidate Raise Objection on a specific question
-router.post('/tests/objection/:submissionId', async (req, res) => {
+router.post('/tests/objection/:submissionId', requireAuth, async (req, res) => {
     const { submissionId } = req.params;
     const { questionId, questionIndex, reason, details, attachments } = req.body;
 
@@ -79,6 +81,15 @@ router.post('/tests/objection/:submissionId', async (req, res) => {
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
             db.tests = db.tests || [];
             test = db.tests.find(t => t.id === String(submission.testId) || t._id === String(submission.testId));
+        }
+
+        if (req.user && req.user.role !== 'admin') {
+            const subCandId = String(submission.candidateId || submission.studentId || '');
+            const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
+            const subNorm = isBicsId(subCandId) ? toMongoId(subCandId) : subCandId;
+            if (subNorm !== userMongo && subCandId !== String(req.user.studentId || '')) {
+                return res.status(403).json({ success: false, error: "Access denied: You cannot raise an objection on another candidate's submission." });
+            }
         }
 
         if (test) {
@@ -139,7 +150,7 @@ router.post('/tests/objection/:submissionId', async (req, res) => {
 });
 
 // 2. Admin Resolve Question Objection
-router.post('/admin/tests/objection/resolve', async (req, res) => {
+router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => {
     const { submissionId, questionId, questionIndex, status, adminRemarks, revisedMarks } = req.body;
 
     if (!submissionId || questionIndex === undefined || !status) {
@@ -256,7 +267,7 @@ router.post('/admin/tests/objection/resolve', async (req, res) => {
 });
 
 // 3. Admin Get All Objections
-router.get('/admin/objections', async (req, res) => {
+router.get('/admin/objections', requireAdmin, async (req, res) => {
     try {
         let submissions = [];
         if (dbState.useMongo) {
@@ -332,10 +343,29 @@ router.get('/admin/objections', async (req, res) => {
 });
 
 // 4. Get Candidate Objections List (Student view)
-router.get('/tests/objections/student', async (req, res) => {
-    const { candidateId } = req.query;
+router.get('/tests/objections/student', requireAuth, async (req, res) => {
+    let candidateId = req.query.id || req.query.candidateId;
+
+    if (req.user && req.user.role !== 'admin') {
+        const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
+        const allowedIds = [
+            String(req.user.id || ''),
+            String(req.user.studentId || ''),
+            String(req.user.username || ''),
+            userMongo,
+            toBicsId(userMongo)
+        ];
+        if (candidateId) {
+            const candNorm = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+            if (candNorm !== userMongo && !allowedIds.includes(String(candidateId))) {
+                return res.status(403).json({ error: "Access denied: You cannot view objections for another candidate." });
+            }
+        }
+        candidateId = req.user.id || req.user.studentId;
+    }
+
     if (!candidateId) {
-        return res.status(400).json({ error: "candidateId is required" });
+        return res.status(400).json({ error: "Candidate identifier is required" });
     }
 
     try {

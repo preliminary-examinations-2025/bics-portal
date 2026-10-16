@@ -31,9 +31,42 @@ export const ExamModals = ({
   setDraftJs,
   showQuestionInfoModal,
   setShowQuestionInfoModal,
-  submittingExam
+  submittingExam,
+  onClipboardAttempt
 }) => {
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
+
+  const handleEditorMount = (editor, monaco) => {
+    editor.onKeyDown((e) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (isModifier && (e.keyCode === monaco.KeyCode.KeyC || e.keyCode === monaco.KeyCode.KeyV || e.keyCode === monaco.KeyCode.KeyX || e.keyCode === monaco.KeyCode.Insert)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const act = e.keyCode === monaco.KeyCode.KeyV ? 'paste' : (e.keyCode === monaco.KeyCode.KeyX ? 'cut' : 'copy');
+        onClipboardAttempt?.(act);
+      } else if (e.shiftKey && e.keyCode === monaco.KeyCode.Insert) {
+        e.preventDefault();
+        e.stopPropagation();
+        onClipboardAttempt?.('paste');
+      }
+    });
+
+    const domNode = editor.getDomNode();
+    if (domNode) {
+      ['copy', 'cut', 'paste', 'contextmenu'].forEach(evt => {
+        domNode.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+          }
+          if (evt !== 'contextmenu') {
+            onClipboardAttempt?.(evt);
+          }
+        }, true);
+      });
+    }
+  };
 
   return (
     <>
@@ -208,6 +241,7 @@ export const ExamModals = ({
                   height="100%"
                   language={webActiveTab === 'html' ? 'html' : webActiveTab === 'css' ? 'css' : 'javascript'}
                   theme="vs-light"
+                  onMount={handleEditorMount}
                   value={(() => {
                     const isCurrent = (draftQIdx === selectedQuestionIndex);
                     const activeAns = examAnswers[selectedQuestionIndex];
@@ -249,6 +283,7 @@ export const ExamModals = ({
                     minimap: { enabled: false },
                     scrollBeyondLastLine: false,
                     automaticLayout: true,
+                    contextmenu: false,
                     tabSize: 2,
                     lineNumbers: 'on',
                     wordWrap: 'on'

@@ -4,6 +4,15 @@ import RichText from '../../components/RichText';
 import Editor from '@monaco-editor/react';
 import { API_BASE } from '../../config';
 
+export const DEFAULT_ACADEMIC_COURSES = [
+  { code: "R526CS01T", name: "Introduction to Computer Science", type: "theory" },
+  { code: "R526CS02T", name: "Programming Fundamentals with C++", type: "theory" },
+  { code: "R526CS03T", name: "Basics of Web Development", type: "theory" },
+  { code: "R526CS04T", name: "Mathematical Thinking", type: "theory" },
+  { code: "R526CS02L", name: "Programming Fundamentals with C++ Lab", type: "lab" },
+  { code: "R526CS03L", name: "Basics of Web Development Lab", type: "lab" }
+];
+
 export default function AdminTests({
   showModalAlert,
   showModalConfirm,
@@ -27,6 +36,10 @@ export default function AdminTests({
   setEditingTestConfigId,
   newExamTitle,
   setNewExamTitle,
+  newExamCourse,
+  setNewExamCourse,
+  newExamCourseCode,
+  setNewExamCourseCode,
   newExamMarks,
   setNewExamMarks,
   newExamInstructions,
@@ -120,7 +133,28 @@ export default function AdminTests({
                       <tbody>
                         {adminTests.map((t, idx) => (
                           <tr key={idx}>
-                            <td style={{ fontWeight: 'bold' }}>{t.title}</td>
+                            <td style={{ fontWeight: 'bold' }}>
+                              <div>{t.title}</div>
+                              {(t.courseCode || t.course) && (
+                                <div style={{ marginTop: '4px' }}>
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontSize: '7.5pt',
+                                    fontWeight: '600',
+                                    padding: '2px 6px',
+                                    borderRadius: '4px',
+                                    backgroundColor: '#e0f2fe',
+                                    color: '#0369a1',
+                                    border: '1px solid #bae6fd'
+                                  }}>
+                                    <GraduationCap size={11} />
+                                    {t.courseCode ? `${t.courseCode}${t.course ? ` • ${t.course}` : ''}` : t.course}
+                                  </span>
+                                </div>
+                              )}
+                            </td>
                             <td>{t.duration} mins</td>
                             <td style={{ fontSize: '8.5pt', color: '#555' }}>
                               {new Date(t.startDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST - <br />{new Date(t.endDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
@@ -268,6 +302,8 @@ export default function AdminTests({
                     if (showTestCreator) {
                       setEditingTestConfigId(null);
                       setNewExamTitle('');
+                      setNewExamCourse?.('');
+                      setNewExamCourseCode?.('');
                       setNewExamMarks(100);
                       setNewExamInstructions('');
                       setNewExamDuration(60);
@@ -310,7 +346,7 @@ export default function AdminTests({
                     {/* Step 1: Details & Schedule */}
                     {creatorStep === 1 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
+                        <div className="cf-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '15px' }}>
                           <div className="cf-input-group">
                             <label className="cf-label">Test Title</label>
                             <input
@@ -320,6 +356,29 @@ export default function AdminTests({
                               onChange={e => setNewExamTitle(e.target.value)}
                               placeholder="e.g. BICS Mid Semester Coding Test"
                             />
+                          </div>
+                          <div className="cf-input-group">
+                            <label className="cf-label" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <GraduationCap size={14} style={{ color: '#3b82f6' }} />
+                              <span>Academic Course (Curriculum Mapping)</span>
+                            </label>
+                            <select
+                              className="cf-input"
+                              value={newExamCourseCode || ''}
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (setNewExamCourseCode) setNewExamCourseCode(val);
+                                const matched = DEFAULT_ACADEMIC_COURSES.find(c => c.code === val);
+                                if (setNewExamCourse) setNewExamCourse(matched ? matched.name : '');
+                              }}
+                            >
+                              <option value="">-- No Specific Course / General Test --</option>
+                              {DEFAULT_ACADEMIC_COURSES.map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.name} ({c.type.toUpperCase()})
+                                </option>
+                              ))}
+                            </select>
                           </div>
                           <div className="cf-input-group">
                             <label className="cf-label">Time Duration (Minutes)</label>
@@ -457,18 +516,36 @@ export default function AdminTests({
                                         const nextType = opt.value;
                                         updated[editingQuestionIdx].type = nextType;
                                         if (nextType === 'mcq') {
-                                          updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
-                                          updated[editingQuestionIdx].correctOptionIndex = 0;
+                                          if (!updated[editingQuestionIdx].options || updated[editingQuestionIdx].options.length === 0) {
+                                            updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
+                                            updated[editingQuestionIdx].correctOptionIndex = 0;
+                                          }
                                         } else if (nextType === 'coding') {
-                                          updated[editingQuestionIdx].description = 'Solve the problem.';
-                                          updated[editingQuestionIdx].initialTemplate = '#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}';
+                                          if (!updated[editingQuestionIdx].initialTemplate) {
+                                            updated[editingQuestionIdx].initialTemplate = '#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}';
+                                          }
                                           updated[editingQuestionIdx].language = 'cpp';
-                                          updated[editingQuestionIdx].testCases = [{ input: '', output: '', isSample: true, points: 10 }];
+                                          if (!updated[editingQuestionIdx].timeLimitMs) {
+                                            updated[editingQuestionIdx].timeLimitMs = 2000;
+                                          }
+                                          if (!updated[editingQuestionIdx].memoryLimitMb) {
+                                            updated[editingQuestionIdx].memoryLimitMb = 128;
+                                          }
+                                          if (!updated[editingQuestionIdx].testCases || updated[editingQuestionIdx].testCases.length === 0) {
+                                            updated[editingQuestionIdx].testCases = [{ input: '', output: '', isSample: true, points: 10 }];
+                                          }
                                         } else if (nextType === 'web') {
-                                          updated[editingQuestionIdx].description = 'Create a webpage.';
-                                          updated[editingQuestionIdx].initialHtml = '<h1>Hello World</h1>';
-                                          updated[editingQuestionIdx].initialCss = 'h1 {\n  color: red;\n}';
-                                          updated[editingQuestionIdx].initialJs = '// Write script here';
+                                          if (!updated[editingQuestionIdx].initialHtml) {
+                                            updated[editingQuestionIdx].initialHtml = '<h1>Hello World</h1>';
+                                            updated[editingQuestionIdx].initialCss = 'h1 {\n  color: red;\n}';
+                                            updated[editingQuestionIdx].initialJs = '// Write script here';
+                                          }
+                                        }
+                                        if (!updated[editingQuestionIdx].description) {
+                                          updated[editingQuestionIdx].description = nextType === 'mcq'
+                                            ? 'Choose the correct answer from the options below.'
+                                            : (nextType === 'coding' ? 'Write a C++ program to solve the problem.' : 'Create a web page meeting the requirements.');
+                                          updated[editingQuestionIdx].questionText = updated[editingQuestionIdx].description;
                                         }
                                         setNewExamQuestions(updated);
                                       }}
@@ -521,6 +598,44 @@ export default function AdminTests({
                                   <span>Bonus Marks (Give Full Points to All)</span>
                                 </label>
                               </div>
+                            </div>
+
+                            {/* Unified Question Description for all question types */}
+                            <div className="cf-input-group" style={{ marginBottom: '15px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                <label className="cf-label" style={{ fontWeight: 'bold', margin: 0 }}>
+                                  Question Description / Problem Statement (Markdown &amp; LaTeX Supported)
+                                </label>
+                                <span style={{ fontSize: '7.5pt', color: '#64748b' }}>
+                                  Markdown, code blocks (`...`), and LaTeX math formulas ($...$) supported
+                                </span>
+                              </div>
+                              <textarea
+                                className="cf-input"
+                                rows="4"
+                                value={newExamQuestions[editingQuestionIdx]?.description || ''}
+                                onChange={e => {
+                                  const updated = [...newExamQuestions];
+                                  updated[editingQuestionIdx].description = e.target.value;
+                                  updated[editingQuestionIdx].questionText = e.target.value;
+                                  setNewExamQuestions(updated);
+                                }}
+                                placeholder={
+                                  newExamQuestions[editingQuestionIdx]?.type === 'mcq'
+                                    ? "Enter the full multiple-choice question prompt or problem description..."
+                                    : newExamQuestions[editingQuestionIdx]?.type === 'coding'
+                                    ? "Explain C++ problem requirements, constraints, input/output specifications..."
+                                    : "Explain web layout requirements, styling rules, DOM structure, and interactive expectations..."
+                                }
+                              />
+                              {newExamQuestions[editingQuestionIdx]?.description && (
+                                <div style={{ marginTop: '8px', padding: '10px 14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                                  <div style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>
+                                    Rendered Preview:
+                                  </div>
+                                  <RichText text={newExamQuestions[editingQuestionIdx].description} style={{ fontSize: '9pt', color: '#1e293b' }} />
+                                </div>
+                              )}
                             </div>
 
                             {/* Image Uploader */}
@@ -655,20 +770,52 @@ export default function AdminTests({
                             {/* C++ Coding Sub-Form */}
                             {newExamQuestions[editingQuestionIdx]?.type === 'coding' && (
                               <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                                <div className="cf-input-group">
-                                  <label className="cf-label">Problem Task Description (Markdown Guidelines)</label>
-                                  <textarea
-                                    className="cf-input"
-                                    rows="4"
-                                    value={newExamQuestions[editingQuestionIdx]?.description || ''}
-                                    onChange={e => {
-                                      const updated = [...newExamQuestions];
-                                      updated[editingQuestionIdx].description = e.target.value;
-                                      setNewExamQuestions(updated);
-                                    }}
-                                    placeholder="Explain C++ coding rules, specifications, and stdin inputs format details..."
-                                  />
+                                {/* Execution Sandbox Limits */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                  <div className="cf-input-group">
+                                    <label className="cf-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <span style={{ fontWeight: '600' }}>CPU Time Limit (ms)</span>
+                                      <span style={{ color: '#64748b', fontSize: '7.5pt' }}>200 - 10000ms</span>
+                                    </label>
+                                    <input
+                                      type="number"
+                                      className="cf-input"
+                                      min="200"
+                                      max="10000"
+                                      step="100"
+                                      placeholder="2000"
+                                      value={newExamQuestions[editingQuestionIdx]?.timeLimitMs ?? 2000}
+                                      onChange={e => {
+                                        const updated = [...newExamQuestions];
+                                        updated[editingQuestionIdx].timeLimitMs = Number(e.target.value) || 2000;
+                                        setNewExamQuestions(updated);
+                                      }}
+                                    />
+                                    <span style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '2px' }}>Default: 2000ms. Time limit per individual test case run.</span>
+                                  </div>
+                                  <div className="cf-input-group">
+                                    <label className="cf-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <span style={{ fontWeight: '600' }}>Memory Limit (MB)</span>
+                                      <span style={{ color: '#64748b', fontSize: '7.5pt' }}>16 - 512MB</span>
+                                    </label>
+                                    <input
+                                      type="number"
+                                      className="cf-input"
+                                      min="16"
+                                      max="512"
+                                      step="16"
+                                      placeholder="128"
+                                      value={newExamQuestions[editingQuestionIdx]?.memoryLimitMb ?? 128}
+                                      onChange={e => {
+                                        const updated = [...newExamQuestions];
+                                        updated[editingQuestionIdx].memoryLimitMb = Number(e.target.value) || 128;
+                                        setNewExamQuestions(updated);
+                                      }}
+                                    />
+                                    <span style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '2px' }}>Default: 128MB. RAM allocation limit per sandbox container.</span>
+                                  </div>
                                 </div>
+
                                 <div className="cf-input-group">
                                   <label className="cf-label">Preloaded Code Editor Template</label>
                                   <textarea
@@ -797,20 +944,6 @@ export default function AdminTests({
                             {newExamQuestions[editingQuestionIdx]?.type === 'web' && (
                               <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
                                 <div className="cf-input-group">
-                                  <label className="cf-label">Web Problem Description &amp; Requirements</label>
-                                  <textarea
-                                    className="cf-input"
-                                    rows="4"
-                                    value={newExamQuestions[editingQuestionIdx]?.description || ''}
-                                    onChange={e => {
-                                      const updated = [...newExamQuestions];
-                                      updated[editingQuestionIdx].description = e.target.value;
-                                      setNewExamQuestions(updated);
-                                    }}
-                                    placeholder="Explain page formatting, DOM elements requirements, styling specifications..."
-                                  />
-                                </div>
-                                <div className="cf-input-group">
                                   <label className="cf-label">Initial HTML Template Code</label>
                                   <textarea
                                     className="cf-input"
@@ -932,7 +1065,9 @@ export default function AdminTests({
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                                     type: 'mcq',
-                                    title: 'New MCQ Question',
+                                    title: 'Question ' + (newExamQuestions.length + 1),
+                                    description: 'Choose the correct answer for the question below.',
+                                    questionText: 'Choose the correct answer for the question below.',
                                     points: 10,
                                     options: ['Option A', 'Option B', 'Option C', 'Option D'],
                                     correctOptionIndex: 0
@@ -951,9 +1086,12 @@ export default function AdminTests({
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                                     type: 'coding',
-                                    title: 'C++ Coding Question',
-                                    points: 20,
+                                    title: 'Question ' + (newExamQuestions.length + 1) + ' - C++ Coding Problem',
                                     description: 'Write a C++ program to solve...',
+                                    questionText: 'Write a C++ program to solve...',
+                                    points: 20,
+                                    timeLimitMs: 2000,
+                                    memoryLimitMb: 128,
                                     initialTemplate: '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Code here\n    return 0;\n}',
                                     language: 'cpp',
                                     testCases: [{ input: '', output: '', isSample: true, points: 10 }]
@@ -972,9 +1110,10 @@ export default function AdminTests({
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                                     type: 'web',
-                                    title: 'Web Design Question',
-                                    points: 20,
+                                    title: 'Question ' + (newExamQuestions.length + 1) + ' - Web Design Problem',
                                     description: 'Build a responsive card component with HTML and CSS.',
+                                    questionText: 'Build a responsive card component with HTML and CSS.',
+                                    points: 20,
                                     initialHtml: '<div class="card">\n  <h2>Title</h2>\n</div>',
                                     initialCss: '.card {\n  padding: 20px;\n  background: #f1f5f9;\n}',
                                     initialJs: 'console.log("Web card loaded");'

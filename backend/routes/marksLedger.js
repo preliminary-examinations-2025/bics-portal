@@ -288,9 +288,47 @@ router.post('/save/:courseCode', async (req, res) => {
     try {
         const recalculated = (studentMarks || []).map(m => calculateMarksLedgerEntry(m, courseDef.type));
 
+        const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || 'unknown';
+        const userAgent = req.headers['user-agent'] || 'unknown';
+        const actorId = req.user?.id || req.user?.username || 'admin';
+        const actorRole = req.user?.role || 'admin';
+
+        let oldMarks = [];
+        const diff = [];
+
         if (dbState.useMongo) {
             let ledger = await AcademicMarksLedgerModel.findOne({ courseCode });
-            if (!ledger) {
+            if (ledger) {
+                if (ledger.isLocked) {
+                    return res.status(403).json({ error: "This course marks ledger is locked by administration and cannot be modified." });
+                }
+                oldMarks = ledger.studentMarks || [];
+                const oldMap = new Map(oldMarks.map(m => [String(m.studentId), typeof m.toObject === 'function' ? m.toObject() : m]));
+
+                recalculated.forEach(nm => {
+                    const sid = String(nm.studentId);
+                    const old = oldMap.get(sid);
+                    if (!old) {
+                        diff.push({ studentId: sid, type: 'ADD', after: nm });
+                    } else {
+                        const changes = {};
+                        for (const key of Object.keys(nm)) {
+                            if (JSON.stringify(old[key]) !== JSON.stringify(nm[key])) {
+                                changes[key] = { from: old[key], to: nm[key] };
+                            }
+                        }
+                        if (Object.keys(changes).length > 0) {
+                            diff.push({ studentId: sid, type: 'UPDATE', changes });
+                        }
+                    }
+                });
+
+                if (linkedOnlineTestId !== undefined) ledger.linkedOnlineTestId = linkedOnlineTestId;
+                if (linkedMstOnlineTestId !== undefined) ledger.linkedMstOnlineTestId = linkedMstOnlineTestId;
+                if (linkedEseOnlineTestId !== undefined) ledger.linkedEseOnlineTestId = linkedEseOnlineTestId;
+                ledger.studentMarks = recalculated;
+            } else {
+                recalculated.forEach(nm => diff.push({ studentId: String(nm.studentId), type: 'ADD', after: nm }));
                 ledger = new AcademicMarksLedgerModel({
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
@@ -300,14 +338,6 @@ router.post('/save/:courseCode', async (req, res) => {
                     linkedEseOnlineTestId: linkedEseOnlineTestId || '',
                     studentMarks: recalculated
                 });
-            } else {
-                if (ledger.isLocked) {
-                    return res.status(403).json({ error: "This course marks ledger is locked by administration and cannot be modified." });
-                }
-                if (linkedOnlineTestId !== undefined) ledger.linkedOnlineTestId = linkedOnlineTestId;
-                if (linkedMstOnlineTestId !== undefined) ledger.linkedMstOnlineTestId = linkedMstOnlineTestId;
-                if (linkedEseOnlineTestId !== undefined) ledger.linkedEseOnlineTestId = linkedEseOnlineTestId;
-                ledger.studentMarks = recalculated;
             }
             await ledger.save();
         } else {
@@ -317,6 +347,18 @@ router.post('/save/:courseCode', async (req, res) => {
             if (idx !== -1 && db.academicMarksLedgers[idx].isLocked) {
                 return res.status(403).json({ error: "This course marks ledger is locked by administration and cannot be modified." });
             }
+            oldMarks = idx !== -1 ? (db.academicMarksLedgers[idx].studentMarks || []) : [];
+            const oldMap = new Map(oldMarks.map(m => [String(m.studentId), m]));
+            recalculated.forEach(nm => {
+                const sid = String(nm.studentId);
+                const old = oldMap.get(sid);
+                if (!old) {
+                    diff.push({ studentId: sid, type: 'ADD', after: nm });
+                } else if (JSON.stringify(old) !== JSON.stringify(nm)) {
+                    diff.push({ studentId: sid, type: 'UPDATE', before: old, after: nm });
+                }
+            });
+
             const record = {
                 courseCode: courseDef.code,
                 courseName: courseDef.name,
@@ -336,8 +378,28 @@ router.post('/save/:courseCode', async (req, res) => {
             saveJSONData(db);
         }
 
-        await logSystemAction('admin', 'MARKS_LEDGER_SAVED', `Admin updated marks ledger for course ${courseCode}`, 'info');
-        return res.json({ success: true, message: `Marks ledger for ${courseCode} saved successfully.` });
+        // Feature 5: Immutable Change-Data-Capture (CDC) Audit Log
+        await logSystemAction({
+            actor: actorId,
+            actorId: actorId,
+            actorRole: actorRole,
+            action: 'MARKS_LEDGER_CDC',
+            resourceType: 'academic_marks_ledger',
+            resourceId: courseCode,
+            details: `Marks ledger updated for course ${courseCode} (${diff.length} student record(s) modified).`,
+            beforeState: { studentMarksCount: oldMarks.length },
+            afterState: { studentMarksCount: recalculated.length },
+            diff: diff,
+            ipAddress: clientIp,
+            userAgent: userAgent,
+            severity: diff.length > 0 ? 'warning' : 'info'
+        });
+
+        return res.json({ 
+            success: true, 
+            message: `Marks ledger for ${courseCode} saved successfully.`,
+            recordsModified: diff.length
+        });
     } catch (e) {
         console.error("Failed to save marks ledger:", e);
         return res.status(500).json({ error: e.message });

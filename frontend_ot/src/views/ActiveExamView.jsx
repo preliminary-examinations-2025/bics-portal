@@ -5,6 +5,7 @@ import { QuestionViewer } from '../components/exam/QuestionViewer';
 import { CodeEditor } from '../components/exam/CodeEditor';
 import { ExamProctorOverlay } from '../components/exam/ExamProctorOverlay';
 import { ExamModals } from '../components/exam/ExamModals';
+import { ProctorToast } from '../components/exam/ProctorToast';
 
 /**
  * ActiveExamView: Assembles all subcomponents of the active proctored examination workspace.
@@ -17,6 +18,7 @@ export const ActiveExamView = ({
   submittingExam,
   handleManualSubmitExam,
   webcamProctorWarning,
+  onDismissProctorWarning,
   examVideoRef,
   isSidebarOpen,
   setIsSidebarOpen,
@@ -68,10 +70,28 @@ export const ActiveExamView = ({
   saveServerDraft,
   activeQuestionBtnRef,
   navTrackRef,
-  setTest
+  setTest,
+  onClipboardAttempt
 }) => {
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '20px', gap: '20px', overflow: 'hidden', boxSizing: 'border-box' }}>
+    <div 
+      onCopy={(e) => { e.preventDefault(); onClipboardAttempt?.('copy'); }}
+      onCut={(e) => { e.preventDefault(); onClipboardAttempt?.('cut'); }}
+      onPaste={(e) => { e.preventDefault(); onClipboardAttempt?.('paste'); }}
+      onContextMenu={(e) => { e.preventDefault(); }}
+      style={{ 
+        height: '100vh', 
+        display: 'flex', 
+        flexDirection: 'column', 
+        backgroundColor: '#f8fafc', 
+        padding: '20px', 
+        gap: '20px', 
+        overflow: 'hidden', 
+        boxSizing: 'border-box',
+        userSelect: 'none',
+        WebkitUserSelect: 'none'
+      }}
+    >
       
       {/* 1. Top floating status bar & proctor banner */}
       <ExamHeader
@@ -155,6 +175,7 @@ export const ActiveExamView = ({
           triggerCustomConfirm={triggerCustomConfirm}
           setIsFullWebStudioOpen={setIsFullWebStudioOpen}
           webConsoleLogs={webConsoleLogs}
+          onClipboardAttempt={onClipboardAttempt}
         />
       </div>
 
@@ -195,6 +216,13 @@ export const ActiveExamView = ({
         showQuestionInfoModal={showQuestionInfoModal}
         setShowQuestionInfoModal={setShowQuestionInfoModal}
         submittingExam={submittingExam}
+        onClipboardAttempt={onClipboardAttempt}
+      />
+
+      {/* 5. Bottom Right Floating Proctor Warning Toast (Reference Design) */}
+      <ProctorToast
+        message={webcamProctorWarning}
+        onDismiss={onDismissProctorWarning}
       />
     </div>
   );

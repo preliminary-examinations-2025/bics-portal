@@ -39,6 +39,8 @@ const CandidateSchema = new mongoose.Schema({
     exitAnswers: { type: Map, of: String, default: {} },
     verificationCode: { type: String, default: '' },
     verificationCodeExpires: { type: Date },
+    verificationAttempts: { type: Number, default: 0 },
+    lastVerificationCodeSentAt: { type: Date },
     midSemEmailVerified: { type: Boolean, default: false },
     endSemEmailVerified: { type: Boolean, default: false },
     lectureProgress: {
@@ -54,10 +56,29 @@ const CandidateSchema = new mongoose.Schema({
             chatHistory: [{
                 role: { type: String, enum: ['user', 'assistant'] },
                 content: { type: String, default: '' },
-                timestamp: { type: Date, default: Date.now }
+                timestamp: { type: Date, default: Date.now },
+                provider: { type: String, default: 'BICS Cortex' },
+                isError: { type: Boolean, default: false }
             }]
         }, { _id: false }),
         default: {}
+    }
+});
+
+// Automatically redact sensitive credentials from JSON and Object serialization
+CandidateSchema.set('toJSON', {
+    transform: (doc, ret) => {
+        delete ret.password;
+        delete ret.verificationCode;
+        return ret;
+    }
+});
+
+CandidateSchema.set('toObject', {
+    transform: (doc, ret) => {
+        delete ret.password;
+        delete ret.verificationCode;
+        return ret;
     }
 });
 

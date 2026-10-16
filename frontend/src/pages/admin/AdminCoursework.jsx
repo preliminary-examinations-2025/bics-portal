@@ -28,9 +28,16 @@ export default function AdminCoursework({
   const [retryingLectureId, setRetryingLectureId] = useState(null);
   const [retryFeedback, setRetryFeedback] = useState('');
   const [logFilter, setLogFilter] = useState('all'); // 'all', 'error', 'warning', 'success'
+  const [workerLogLimit, setWorkerLogLimit] = useState(100);
+  const [workerLogSearch, setWorkerLogSearch] = useState('');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
+  const [newEventsCount, setNewEventsCount] = useState(0);
+  const lastEventCountRef = useRef(0);
+  const userScrolledUpRef = useRef(false);
   const logContainerRef = useRef(null);
 
-  // Poll Worker Status & Logs
+  // Poll Worker Status & Logs (Dynamic limit & meta)
   const fetchWorkerData = async () => {
     try {
       // 1. Fetch Status & Metrics
@@ -40,11 +47,12 @@ export default function AdminCoursework({
         setWorkerStatus(statusData);
       }
 
-      // 2. Fetch Latest Logs
-      const logsRes = await fetch(`${API_BASE}/admin/knowledge-base/logs?limit=80`);
+      // 2. Fetch Latest Logs (dynamic limit, search, object format)
+      const logsRes = await fetch(`${API_BASE}/admin/knowledge-base/logs?limit=${workerLogLimit}&format=object`);
       if (logsRes.ok) {
         const logsData = await logsRes.json();
-        setWorkerLogs(logsData);
+        const incomingLogs = Array.isArray(logsData) ? logsData : (logsData.logs || []);
+        setWorkerLogs(incomingLogs);
       }
     } catch (err) {
       console.warn('[Admin Coursework] Worker fetch error:', err.message);
@@ -55,7 +63,7 @@ export default function AdminCoursework({
     fetchWorkerData();
     const interval = setInterval(fetchWorkerData, 6000); // Poll every 6 seconds
     return () => clearInterval(interval);
-  }, []);
+  }, [workerLogLimit]);
 
   const handleManualRefresh = async () => {
     setIsRefreshingLogs(true);
@@ -134,8 +142,28 @@ export default function AdminCoursework({
     return `${m}m ${String(s).padStart(2, '0')}s`;
   };
 
+  const handleLogContainerScroll = (e) => {
+    if (!e.currentTarget) return;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    // If user is scrolled up > 35px from bottom, they are inspecting earlier logs
+    const isUp = scrollHeight - scrollTop - clientHeight > 35;
+    userScrolledUpRef.current = isUp;
+    setUserScrolledUp(isUp);
+    if (!isUp) {
+      setNewEventsCount(0);
+    }
+  };
+
   const filteredLogs = [...workerLogs]
     .filter(log => {
+      if (workerLogSearch.trim()) {
+        const q = workerLogSearch.toLowerCase();
+        const matchTitle = log.lectureTitle && log.lectureTitle.toLowerCase().includes(q);
+        const matchMsg = log.message && log.message.toLowerCase().includes(q);
+        const matchAction = log.action && log.action.toLowerCase().includes(q);
+        const matchSection = log.section && log.section.toLowerCase().includes(q);
+        if (!matchTitle && !matchMsg && !matchAction && !matchSection) return false;
+      }
       if (logFilter === 'all') return true;
       if (logFilter === 'error') return log.status === 'error' || log.action === 'FAILED_FLAGGED';
       if (logFilter === 'warning') return log.status === 'warning' || log.action === 'RETRYING';
@@ -145,10 +173,18 @@ export default function AdminCoursework({
     .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
 
   useEffect(() => {
-    if (logContainerRef.current) {
+    if (!logContainerRef.current) return;
+    const currentCount = filteredLogs.length;
+    const added = Math.max(0, currentCount - lastEventCountRef.current);
+    lastEventCountRef.current = currentCount;
+
+    // NEVER yank the scroll position if the user is reading earlier logs (scrolled up) or autoScroll is paused!
+    if (autoScroll && !userScrolledUpRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    } else if (userScrolledUpRef.current && added > 0) {
+      setNewEventsCount(prev => prev + added);
     }
-  }, [workerLogs, logFilter]);
+  }, [workerLogs, logFilter, workerLogSearch, autoScroll]);
 
   const metrics = workerStatus?.metrics || {
     totalLectures: videoLectures?.length || 0,
@@ -431,41 +467,111 @@ export default function AdminCoursework({
         {/* ===================================================================== */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
-            <h4 style={{ margin: 0, fontSize: '9pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>Live Ingestion Terminal Console</span>
-              <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'normal', fontFamily: 'Consolas, monospace' }}>
-                ({filteredLogs.length} events)
-              </span>
-            </h4>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {['all', 'error', 'warning', 'success'].map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setLogFilter(tab)}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h4 style={{ margin: 0, fontSize: '9pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>Live Ingestion Terminal Console</span>
+                <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'normal', fontFamily: 'Consolas, monospace' }}>
+                  ({filteredLogs.length} events)
+                </span>
+              </h4>
+
+              {/* Dynamic Log Limit Selector */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: '600' }}>Limit:</span>
+                <select
+                  value={workerLogLimit}
+                  onChange={(e) => setWorkerLogLimit(Number(e.target.value))}
                   style={{
-                    padding: '2px 7px',
                     fontSize: '7.5pt',
+                    padding: '2px 5px',
                     borderRadius: '3px',
-                    border: '1px solid',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: '#ffffff',
+                    color: '#334155',
                     cursor: 'pointer',
-                    textTransform: 'uppercase',
-                    fontWeight: logFilter === tab ? 'bold' : 'normal',
-                    fontFamily: 'Consolas, "Lucida Console", Courier, monospace',
-                    backgroundColor: logFilter === tab ? '#002147' : '#ffffff',
-                    color: logFilter === tab ? '#ffffff' : '#475569',
-                    borderColor: logFilter === tab ? '#002147' : '#cbd5e1'
+                    fontFamily: 'Consolas, monospace'
                   }}
                 >
-                  {tab}
-                </button>
-              ))}
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                </select>
+              </div>
+
+              {/* Auto-Scroll Toggle */}
+              <button
+                type="button"
+                onClick={() => setAutoScroll(prev => !prev)}
+                title={autoScroll ? 'Pause automatic scrolling when new events arrive' : 'Resume automatic scrolling to latest events'}
+                style={{
+                  fontSize: '7pt',
+                  padding: '2px 7px',
+                  borderRadius: '12px',
+                  border: '1px solid',
+                  cursor: 'pointer',
+                  fontWeight: '700',
+                  fontFamily: 'Consolas, monospace',
+                  backgroundColor: autoScroll ? '#dcfce7' : '#fee2e2',
+                  borderColor: autoScroll ? '#86efac' : '#fca5a5',
+                  color: autoScroll ? '#166534' : '#991b1b'
+                }}
+              >
+                Auto-scroll: {autoScroll ? 'ON' : 'PAUSED'}
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {/* Event Search Box */}
+              <input
+                type="text"
+                value={workerLogSearch}
+                onChange={(e) => setWorkerLogSearch(e.target.value)}
+                placeholder="Search events..."
+                style={{
+                  fontSize: '7.5pt',
+                  padding: '3px 7px',
+                  borderRadius: '3px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#ffffff',
+                  color: '#1e293b',
+                  width: '130px',
+                  fontFamily: 'Consolas, monospace'
+                }}
+              />
+
+              <div style={{ display: 'flex', gap: '3px' }}>
+                {['all', 'error', 'warning', 'success'].map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setLogFilter(tab)}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: '7pt',
+                      borderRadius: '3px',
+                      border: '1px solid',
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      fontWeight: logFilter === tab ? 'bold' : 'normal',
+                      fontFamily: 'Consolas, "Lucida Console", Courier, monospace',
+                      backgroundColor: logFilter === tab ? '#002147' : '#ffffff',
+                      color: logFilter === tab ? '#ffffff' : '#475569',
+                      borderColor: logFilter === tab ? '#002147' : '#cbd5e1'
+                    }}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
           <div
             ref={logContainerRef}
+            onScroll={handleLogContainerScroll}
             className="mongo-bson-mono"
             style={{
+              position: 'relative',
               maxHeight: '280px',
               overflowY: 'auto',
               overflowX: 'auto',
@@ -593,6 +699,46 @@ export default function AdminCoursework({
                   })}
                 </tbody>
               </table>
+            )}
+
+            {/* Floating Jump to Latest Button when User is Reading Earlier Logs */}
+            {userScrolledUp && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (logContainerRef.current) {
+                    logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+                  }
+                  userScrolledUpRef.current = false;
+                  setUserScrolledUp(false);
+                  setNewEventsCount(0);
+                }}
+                style={{
+                  position: 'sticky',
+                  bottom: '6px',
+                  float: 'right',
+                  zIndex: 20,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '4px 10px',
+                  borderRadius: '16px',
+                  backgroundColor: '#002147',
+                  color: '#ffffff',
+                  border: '1px solid #3b82f6',
+                  fontSize: '7.5pt',
+                  fontWeight: '700',
+                  boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
+                  cursor: 'pointer'
+                }}
+              >
+                <span>↓ Jump to latest</span>
+                {newEventsCount > 0 && (
+                  <span style={{ backgroundColor: '#2563eb', padding: '1px 5px', borderRadius: '8px', fontSize: '7pt' }}>
+                    +{newEventsCount} new
+                  </span>
+                )}
+              </button>
             )}
           </div>
         </div>

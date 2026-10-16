@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
 const { TestSubmissionModel, TestSignalModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
+const { formatCloudinaryMediaUrl, uploadToCloudinary, useCloudinary } = require('../config/cloudinary');
 
 // 1. Save Live Proctoring Event during test
 router.post('/event/:submissionId', async (req, res) => {
@@ -34,6 +37,8 @@ router.post('/event/:submissionId', async (req, res) => {
                         submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
                     } else if (type === 'TAB_SWITCH') {
                         submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+                    } else if (type === 'CLIPBOARD_ATTEMPT') {
+                        submission.proctoringLog.clipboardAttempts = (submission.proctoringLog.clipboardAttempts || 0) + 1;
                     } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
                         submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
                     }
@@ -79,6 +84,8 @@ router.post('/event/:submissionId', async (req, res) => {
                 submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
             } else if (type === 'TAB_SWITCH') {
                 submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+            } else if (type === 'CLIPBOARD_ATTEMPT') {
+                submission.proctoringLog.clipboardAttempts = (submission.proctoringLog.clipboardAttempts || 0) + 1;
             } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
                 submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
             }
@@ -161,6 +168,118 @@ router.get('/signal/:submissionId', async (req, res) => {
         console.error(e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to read WebRTC signals for submission ${submissionId}: ${e.message || e}`, 'error');
         return res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. Capture & Store Proctoring Snapshot (Cloudinary in prod, local gitignored folder in dev)
+router.post('/snapshot/:submissionId', async (req, res) => {
+    const { submissionId } = req.params;
+    const { image, eventType, details } = req.body;
+
+    if (!image) return res.status(400).json({ error: "Image data is required." });
+    const type = eventType || 'PROCTOR_WARNING';
+
+    try {
+        let submission = null;
+        if (dbState.useMongo) {
+            submission = await TestSubmissionModel.findById(submissionId);
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+        }
+
+        if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+        // Convert base64 data to Buffer
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+        const imageBuffer = Buffer.from(base64Data, 'base64');
+
+        // Item 5: Save snapshots name as a string of numbers 'time+studentid'
+        const rawStudentId = req.body.studentId || submission.studentId || '';
+        const numericStudentId = String(rawStudentId).replace(/\D/g, '') || '0';
+        const filename = `${Date.now()}${numericStudentId}`;
+
+        let finalImageUrl = '';
+
+        if (useCloudinary) {
+            // Upload directly to Cloudinary BICS_2026/proctoring/:submissionId
+            finalImageUrl = await uploadToCloudinary(
+                imageBuffer,
+                `BICS_2026/proctoring/${submissionId}`,
+                'image',
+                filename
+            );
+        } else {
+            // Save locally in backend/public/proctoring/:submissionId
+            const localDir = path.join(__dirname, '../public/proctoring', submissionId);
+            if (!fs.existsSync(localDir)) {
+                fs.mkdirSync(localDir, { recursive: true });
+            }
+            const filePath = path.join(localDir, `${filename}.jpeg`);
+            fs.writeFileSync(filePath, imageBuffer);
+            finalImageUrl = `/public/proctoring/${submissionId}/${filename}.jpeg`;
+        }
+
+        if (dbState.useMongo) {
+            let retries = 5;
+            while (retries > 0) {
+                try {
+                    const latestSub = await TestSubmissionModel.findById(submissionId);
+                    if (!latestSub) return res.status(404).json({ error: "Submission not found." });
+
+                    latestSub.proctoringLog = latestSub.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
+                    latestSub.proctoringLog.snapshots = latestSub.proctoringLog.snapshots || [];
+                    latestSub.proctoringLog.snapshots.push({
+                        timestamp: new Date(),
+                        type,
+                        url: finalImageUrl,
+                        details: details || `Evidence snapshot captured for ${type}`
+                    });
+
+                    if (type === 'BASELINE_REFERENCE' && (!latestSub.baselinePhotoUrl || latestSub.baselinePhotoUrl.startsWith('data:'))) {
+                        latestSub.baselinePhotoUrl = finalImageUrl;
+                    }
+
+                    await latestSub.save();
+                    submission = latestSub;
+                    break;
+                } catch (saveErr) {
+                    if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
+                        retries--;
+                        if (retries === 0) throw saveErr;
+                        await new Promise(resolve => setTimeout(resolve, 50 * (6 - retries)));
+                    } else {
+                        throw saveErr;
+                    }
+                }
+            }
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+            submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
+            submission.proctoringLog.snapshots = submission.proctoringLog.snapshots || [];
+            submission.proctoringLog.snapshots.push({
+                timestamp: new Date(),
+                type,
+                url: finalImageUrl,
+                details: details || `Evidence snapshot captured for ${type}`
+            });
+
+            if (type === 'BASELINE_REFERENCE' && (!submission.baselinePhotoUrl || submission.baselinePhotoUrl.startsWith('data:'))) {
+                submission.baselinePhotoUrl = finalImageUrl;
+            }
+
+            saveJSONData(db);
+        }
+
+        return res.json({ success: true, url: finalImageUrl, snapshotCount: submission.proctoringLog.snapshots.length });
+    } catch (e) {
+        console.error("Proctoring snapshot upload error:", e);
+        return res.status(500).json({ error: e.message || "Failed to process proctoring snapshot." });
     }
 });
 

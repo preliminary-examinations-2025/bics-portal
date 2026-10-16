@@ -3,6 +3,7 @@ import Editor from '@monaco-editor/react';
 import { Maximize2, Play, CheckSquare, Loader2, Check, X } from 'lucide-react';
 import { RichText } from '../common/RichText';
 import { DEFAULT_TEMPLATES } from '../../config/constants';
+import { injectLoopGuards } from '../../utils/codeSandboxGuard';
 
 /**
  * CodeEditor: Renders the right workspace panel containing MCQ selection or Monaco editor
@@ -38,10 +39,46 @@ export const CodeEditor = ({
   handleSaveAndNext,
   triggerCustomConfirm,
   setIsFullWebStudioOpen,
-  webConsoleLogs
+  webConsoleLogs,
+  onClipboardAttempt
 }) => {
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
   if (!currentQuestion) return null;
+
+  const handleEditorMount = (editor, monaco) => {
+    // Intercept keyboard shortcuts in Monaco's internal event loop
+    editor.onKeyDown((e) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (isModifier && (e.keyCode === monaco.KeyCode.KeyC || e.keyCode === monaco.KeyCode.KeyV || e.keyCode === monaco.KeyCode.KeyX || e.keyCode === monaco.KeyCode.Insert)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const act = e.keyCode === monaco.KeyCode.KeyV ? 'paste' : (e.keyCode === monaco.KeyCode.KeyX ? 'cut' : 'copy');
+        onClipboardAttempt?.(act);
+      } else if (e.shiftKey && e.keyCode === monaco.KeyCode.Insert) {
+        e.preventDefault();
+        e.stopPropagation();
+        onClipboardAttempt?.('paste');
+      }
+    });
+
+    // Intercept DOM paste/copy/cut/contextmenu and drag-and-drop events on editor container
+    const domNode = editor.getDomNode();
+    if (domNode) {
+      ['copy', 'cut', 'paste', 'contextmenu', 'dragover', 'dragenter', 'drop'].forEach(evt => {
+        domNode.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+          }
+          if (evt !== 'contextmenu') {
+            const act = (evt === 'dragover' || evt === 'dragenter' || evt === 'drop') ? 'drag_drop' : evt;
+            onClipboardAttempt?.(act);
+          }
+        }, true);
+      });
+    }
+  };
 
   return (
     <div className="cf-card" style={{
@@ -236,6 +273,7 @@ export const CodeEditor = ({
                 height="100%"
                 language={draftLanguage}
                 theme="vs-light"
+                onMount={handleEditorMount}
                 value={draftQIdx === selectedQuestionIndex ? draftCode : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]))}
                 onChange={(value) => {
                   setDraftQIdx(selectedQuestionIndex);
@@ -246,9 +284,11 @@ export const CodeEditor = ({
                   fontSize: 13,
                   fontFamily: 'Consolas, Courier New, monospace',
                   minimap: { enabled: false },
+                  dragAndDrop: false,
                   wordWrap: 'on',
                   lineNumbers: 'on',
                   automaticLayout: true,
+                  contextmenu: false,
                   tabSize: 4,
                   cursorBlinking: 'blink',
                   padding: { top: 10, bottom: 10 },
@@ -260,6 +300,7 @@ export const CodeEditor = ({
                 height="100%"
                 language={webActiveTab === 'js' ? 'javascript' : webActiveTab}
                 theme="vs-light"
+                onMount={handleEditorMount}
                 value={(() => {
                   const isCurrent = (draftQIdx === selectedQuestionIndex);
                   const activeAns = examAnswers[selectedQuestionIndex];
@@ -278,9 +319,11 @@ export const CodeEditor = ({
                   fontSize: 13,
                   fontFamily: 'Consolas, Courier New, monospace',
                   minimap: { enabled: false },
+                  dragAndDrop: false,
                   wordWrap: 'on',
                   lineNumbers: 'on',
                   automaticLayout: true,
+                  contextmenu: false,
                   tabSize: 4,
                   cursorBlinking: 'blink',
                   padding: { top: 10, bottom: 10 },
@@ -531,6 +574,7 @@ export const CodeEditor = ({
                   const livePreviewHtml = isCurrent ? draftHtml : (activeAnsForWeb?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
                   const livePreviewCss = isCurrent ? draftCss : (activeAnsForWeb?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
                   const livePreviewJs = isCurrent ? draftJs : (activeAnsForWeb?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
+                  const safePreviewJs = injectLoopGuards(livePreviewJs, 2000);
 
                   return (
                     <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
@@ -597,7 +641,7 @@ export const CodeEditor = ({
                                 };
                                 document.addEventListener('DOMContentLoaded', function() {
                                   try {
-                                    ${livePreviewJs || ''}
+                                    ${safePreviewJs || ''}
                                   } catch(err) {
                                     console.error(err.message || String(err));
                                   }

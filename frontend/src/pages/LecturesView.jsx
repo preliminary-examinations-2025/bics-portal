@@ -183,7 +183,8 @@ export default function LecturesView({
     activeLectureRef.current = activeLecture;
   }, [activeLecture]);
 
-  const studentId = user?.studentId || user?.username || user?.id || user?._id || '';
+  const candidateObjId = user?.id || user?._id;
+  const studentId = candidateObjId || user?.studentId || user?.username || '127.0.0.1';
 
   // 1. Load YouTube IFrame API script tag once
   useEffect(() => {
@@ -222,9 +223,9 @@ export default function LecturesView({
 
   // 2. Fetch candidate's existing lecture progress on mount and sync with local cache
   useEffect(() => {
-    if (!studentId) return;
+    if (!studentId && !candidateObjId) return;
 
-    fetch(`${API_BASE}/student/lecture-progress?studentId=${encodeURIComponent(studentId)}`)
+    fetch(`${API_BASE}/student/lecture-progress?id=${encodeURIComponent(candidateObjId || studentId)}`)
       .then(r => r.json())
       .then(data => {
         if (data && data.progress) {
@@ -421,7 +422,7 @@ export default function LecturesView({
     // 2. Fetch latest verified chat from database
     let latestHistory = cachedList;
     try {
-      const res = await fetch(`${API_BASE}/video-lectures/${targetId}/chat?studentId=${encodeURIComponent(studentId || 'default_student')}`);
+      const res = await fetch(`${API_BASE}/video-lectures/${targetId}/chat?id=${encodeURIComponent(candidateObjId || studentId || '')}`);
       const data = await res.json();
       if (res.ok && Array.isArray(data.chatHistory)) {
         latestHistory = data.chatHistory;
@@ -596,6 +597,8 @@ export default function LecturesView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: text,
+          candidateId: candidateObjId,
+          id: candidateObjId,
           studentId,
           history: cortexMessages.slice(-6),
           lectureContext: {
@@ -606,8 +609,43 @@ export default function LecturesView({
 
       const data = await res.json();
 
-      if (!res.ok) {
-        throw new Error(data.error || 'BICS Cortex was unable to process your question.');
+      if (!res.ok || data.isError) {
+        setIsCortexThinking(false);
+        setIsCortexStreaming(false);
+        const errorContent = data.answer || data.error || 'BICS Cortex was unable to process your question.';
+        setCortexError(data.error || 'BICS Cortex returned an error notice.');
+
+        // Store assistant error message in chat state and local cache
+        const errorMsg = {
+          role: 'assistant',
+          content: errorContent,
+          timestamp: new Date(),
+          provider: data.provider || 'BICS Cortex (Error)',
+          isError: true
+        };
+
+        setCortexMessages(prev => {
+          const next = [...prev, errorMsg];
+          try {
+            const currentLec = activeLectureRef.current || activeLecture;
+            const targetId = currentLec?._id || currentLec?.id || extractYouTubeId(currentLec?.youtubeUrl || '');
+            if (targetId) {
+              const cacheKey = `bics_cortex_chat_${studentId || 'default'}_${targetId}`;
+              localStorage.setItem(cacheKey, JSON.stringify(next));
+            }
+          } catch (e) {}
+          return next;
+        });
+
+        setTimeout(() => {
+          if (chatMessagesContainerRef.current) {
+            chatMessagesContainerRef.current.scrollTo({
+              top: chatMessagesContainerRef.current.scrollHeight,
+              behavior: 'smooth'
+            });
+          }
+        }, 50);
+        return;
       }
 
       // Stop thinking indicator
@@ -684,9 +722,40 @@ export default function LecturesView({
 
     } catch (err) {
       console.error('[Cortex Ask Error]', err);
-      setCortexError(err.message || 'Failed to connect to BICS Cortex. Please try again.');
       setIsCortexThinking(false);
       setIsCortexStreaming(false);
+      setCortexError(err.message || 'Failed to connect to BICS Cortex. Please try again.');
+
+      // Persist client connection error message into chat stream as well
+      const fallbackErrorMsg = {
+        role: 'assistant',
+        content: `⚠️ **BICS Cortex Connection Error**: ${err.message || 'Failed to connect to BICS Cortex. Please try again.'}`,
+        timestamp: new Date(),
+        provider: 'BICS Cortex (Error)',
+        isError: true
+      };
+
+      setCortexMessages(prev => {
+        const next = [...prev, fallbackErrorMsg];
+        try {
+          const currentLec = activeLectureRef.current || activeLecture;
+          const targetId = currentLec?._id || currentLec?.id || extractYouTubeId(currentLec?.youtubeUrl || '');
+          if (targetId) {
+            const cacheKey = `bics_cortex_chat_${studentId || 'default'}_${targetId}`;
+            localStorage.setItem(cacheKey, JSON.stringify(next));
+          }
+        } catch (e) {}
+        return next;
+      });
+
+      setTimeout(() => {
+        if (chatMessagesContainerRef.current) {
+          chatMessagesContainerRef.current.scrollTo({
+            top: chatMessagesContainerRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      }, 50);
     }
   };
 
@@ -1606,18 +1675,23 @@ export default function LecturesView({
                             borderRadius: '6px',
                             fontSize: '9pt',
                             lineHeight: '1.6',
-                            backgroundColor: isUser ? '#e8eff7' : '#ffffff',
+                            backgroundColor: isUser ? '#e8eff7' : (msg.isError ? '#fff5f5' : '#ffffff'),
                             color: '#1e293b',
-                            border: isUser ? '1px solid #b9c9fe' : '1px solid #cbd5e1',
+                            border: isUser ? '1px solid #b9c9fe' : (msg.isError ? '1px solid #fecaca' : '1px solid #cbd5e1'),
                             boxShadow: isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.03)'
                           }}
                         >
                           {!isUser && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                               <CortexGpuIcon size={14} />
-                              <span style={{ fontSize: '8pt', fontWeight: 'bold', color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              <span style={{ fontSize: '8pt', fontWeight: 'bold', color: msg.isError ? '#b91c1c' : '#1e3a8a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                 BICS CORTEX
                               </span>
+                              {msg.isError && (
+                                <span style={{ fontSize: '7pt', fontWeight: 'bold', color: '#b91c1c', backgroundColor: '#fee2e2', border: '1px solid #fecaca', padding: '1px 5px', borderRadius: '3px' }}>
+                                  NOTICE
+                                </span>
+                              )}
                             </div>
                           )}
 

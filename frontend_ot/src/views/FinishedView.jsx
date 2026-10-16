@@ -2,6 +2,14 @@ import React from 'react';
 import { ShieldAlert, Loader2, Check, X, Play } from 'lucide-react';
 import { API_BASE } from '../config/constants';
 import { CenteredFooter } from '../components/common/CenteredFooter';
+import { 
+  getOfflineSubmission, 
+  deleteOfflineSubmission, 
+  getOfflineSnapshots, 
+  clearOfflineSnapshots, 
+  getOfflineEvents, 
+  clearOfflineEvents 
+} from '../utils/offlineDb';
 
 export function FinishedView({
   finishedStep,
@@ -22,11 +30,22 @@ export function FinishedView({
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f8fafc' }}>
       <header className="app-header">
         <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
-          <span className="pixel-logo">Online Test BICS Terminal</span>
+          <img 
+            src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+            onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+            alt="BICS Logo" 
+            style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
+          />
+          <span className="pixel-logo">BICS Terminal</span>
         </div>
         <div className="header-right">
-          <img src="/logo.png" alt="Portal Logo" className="pe-logo" style={{ height: '34px' }} />
+          <img 
+            src={`${import.meta.env.BASE_URL}logo.png`} 
+            onError={(e) => { e.currentTarget.src = '/logo.png'; }} 
+            alt="Portal Logo" 
+            className="pe-logo" 
+            style={{ height: '34px' }} 
+          />
         </div>
       </header>
 
@@ -158,21 +177,72 @@ export function FinishedView({
                   className="cf-btn-primary"
                   disabled={syncStatus === 'initiating' || syncStatus === 'uploading' || syncStatus === 'processing'}
                   onClick={async () => {
-                    const cachedPayload = localStorage.getItem(pendingSubmitKey);
-                    if (!cachedPayload) return;
+                    let payload = null;
+                    try {
+                      const idbPayload = await getOfflineSubmission(subId);
+                      if (idbPayload) payload = idbPayload;
+                    } catch {}
+
+                    if (!payload) {
+                      const cachedPayload = localStorage.getItem(pendingSubmitKey);
+                      if (cachedPayload) {
+                        try { payload = JSON.parse(cachedPayload); } catch {}
+                      }
+                    }
+
+                    if (!payload) {
+                      triggerCustomAlert("No Cached Data", "No pending offline submission was found in local storage.");
+                      return;
+                    }
+
                     setSyncStatus('initiating');
                     try {
-                      const payload = JSON.parse(cachedPayload);
+                      // Ensure hasEirfFlag is explicitly true for offline recovery pipeline (Item 7)
+                      const finalPayload = {
+                        ...payload,
+                        hasEirfFlag: true
+                      };
+
                       setSyncStatus('uploading');
                       const res = await fetch(`${API_BASE}/tests/submit`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify(finalPayload)
                       });
                       setSyncStatus('processing');
                       const data = await res.json();
                       if (data.success) {
                         localStorage.removeItem(pendingSubmitKey);
+                        await deleteOfflineSubmission(subId).catch(() => {});
+
+                        // Drain queued offline proctoring events
+                        getOfflineEvents(subId).then(events => {
+                          if (events && events.length > 0) {
+                            events.forEach(ev => {
+                              fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(ev)
+                              }).catch(() => {});
+                            });
+                            clearOfflineEvents(subId);
+                          }
+                        });
+
+                        // Drain queued offline proctoring snapshots
+                        getOfflineSnapshots(subId).then(snapshots => {
+                          if (snapshots && snapshots.length > 0) {
+                            snapshots.forEach(snap => {
+                              fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(snap)
+                              }).catch(() => {});
+                            });
+                            clearOfflineSnapshots(subId);
+                          }
+                        });
+
                         setSyncStatus('completed');
                         setHasPendingSubmit(false);
                         setFinishedStep(1);

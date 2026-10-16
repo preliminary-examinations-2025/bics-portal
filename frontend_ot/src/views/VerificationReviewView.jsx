@@ -111,7 +111,12 @@ export function VerificationReviewView({
         gap: '15px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '36px', width: '36px', objectFit: 'contain' }} />
+          <img 
+            src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+            onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+            alt="BICS Logo" 
+            style={{ height: '36px', width: '36px', objectFit: 'contain' }} 
+          />
           <div>
             <div style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f172a', letterSpacing: '0.2px' }}>
               BICS Examination Portal
@@ -361,21 +366,13 @@ export function VerificationReviewView({
 
               {/* Question Text & Description */}
               <div>
-                {q.type === 'mcq' ? (
-                  <div style={{ fontSize: '11pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 10px 0', lineHeight: 1.5 }}>
-                    <RichText text={q.questionText || q.title || q.description || q.question || q.statement || `Question #${idx + 1}`} />
+                <h3 style={{ fontSize: '11.5pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 8px 0', lineHeight: 1.5 }}>
+                  <RichText text={q.title || `Question #${idx + 1}`} />
+                </h3>
+                {(q.description || q.questionText || q.statement) && (
+                  <div style={{ fontSize: '10pt', color: '#334155', lineHeight: 1.6, marginBottom: '10px' }}>
+                    <RichText text={q.description || q.questionText || q.statement} />
                   </div>
-                ) : (
-                  <>
-                    <h3 style={{ fontSize: '11.5pt', color: '#0f172a', fontWeight: 'bold', margin: '0 0 8px 0', lineHeight: 1.5 }}>
-                      <RichText text={q.title || `Problem Statement #${idx + 1}`} />
-                    </h3>
-                    {(q.description || q.questionText) && (
-                      <div style={{ fontSize: '10pt', color: '#334155', lineHeight: 1.6 }}>
-                        <RichText text={q.description || q.questionText} />
-                      </div>
-                    )}
-                  </>
                 )}
               </div>
 
@@ -782,7 +779,12 @@ export function VerificationReviewView({
               borderBottom: '1px solid #e2e8f0'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
+                <img 
+                  src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+                  onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+                  alt="BICS Logo" 
+                  style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
+                />
                 <div>
                   <div style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f172a', letterSpacing: '0.2px' }}>
                     BICS Examination Portal

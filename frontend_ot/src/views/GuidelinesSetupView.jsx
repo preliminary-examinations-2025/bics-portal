@@ -1,172 +1,266 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { BookOpen, ShieldCheck, Clock, FileText, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-react';
 import { getReturnUrl } from '../config/constants';
+import { RichText } from '../components/common/RichText';
+import { TestSetupStepProgress } from '../components/common/TestSetupStepProgress';
 
 export function GuidelinesSetupView({
   test,
-  consentChecked,
-  setConsentChecked,
-  setupReady,
-  webcamGranted,
-  webcamStream,
-  calibVideoRef,
-  micGranted,
-  micStream,
-  isFocused,
+  candidate,
   isFullscreen,
-  handleAuthorizeCamera,
+  handleLockFullscreen,
+  onBackToBiometrics,
   handleStartExam
 }) {
+  const triggerFullscreen = async () => {
+    if (handleLockFullscreen) {
+      handleLockFullscreen();
+      return;
+    }
+    try {
+      const elem = document.documentElement;
+      if (elem.requestFullscreen) await elem.requestFullscreen();
+      else if (elem.webkitRequestFullscreen) await elem.webkitRequestFullscreen();
+      else if (elem.mozRequestFullScreen) await elem.mozRequestFullScreen();
+      else if (elem.msRequestFullscreen) await elem.msRequestFullscreen();
+    } catch (e) {
+      console.warn("Fullscreen request notice:", e);
+    }
+  };
+
+  // 1.00 Minute (60 Seconds) Test Environment Preparation Holding Timer (Matching Image 1)
+  const [prepSecondsRemaining, setPrepSecondsRemaining] = useState(60);
+  const [prepCompleted, setPrepCompleted] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPrepSecondsRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setPrepCompleted(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const canStartTest = prepCompleted && isFullscreen;
+
   return (
-    <div style={{ padding: '20px', backgroundColor: '#f8fafc', minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div className="cf-card" style={{ maxWidth: '1000px', width: '100%', margin: '0 auto', padding: '0', overflow: 'hidden' }}>
+    <div style={{ padding: '20px', backgroundColor: '#f8fafc', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      
+      {/* Main Outerbox Container (Exact Codeforces / BICS Card) */}
+      <div className="cf-card" style={{ maxWidth: '1020px', width: '100%', margin: '0 auto', padding: '15px' }}>
         
-        {/* Card Header Bar */}
-        <div className="cf-card-title" style={{ fontSize: '10.5pt', margin: 0, borderBottom: '1px solid var(--cf-border)', padding: '10px 15px' }}>
-          Proctoring Verification &amp; Setup: {test?.title}
-        </div>
-        
-        {/* Important Notice */}
-        <div style={{ backgroundColor: '#eff6ff', borderLeft: '4px solid #3b5998', padding: '12px 15px', color: '#1e3a8a', fontSize: '9.5pt', margin: '20px', borderRadius: '4px', lineHeight: '1.5' }}>
-          <strong>Important Notice:</strong> This examination session is strictly proctored. You must authorize your webcam stream, enable fullscreen lock, and satisfy all security check status parameters below.
+        {/* Exact Main Portal Card Title Bar: Clean view name only */}
+        <div className="cf-card-title">
+          <BookOpen size={16} style={{ color: '#3b5998' }} />
+          <span>Proctoring and test instructions</span>
         </div>
 
-        {/* Guidelines Body side-by-side splits */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '25px', padding: '0 20px 20px 20px' }}>
-          
-          {/* Left guidelines column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', margin: 0 }}>Examination Guidelines:</h4>
-            <ul style={{ listStyleType: 'disc', paddingLeft: '20px', fontSize: '9pt', color: '#333', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <li>The time limit for this exam is <strong>{test?.duration} minutes</strong>.</li>
-              <li>Exiting <strong>Fullscreen Mode</strong> will trigger a warning. Exiting more than 3 times will result in <strong>automatic submission</strong>.</li>
-              <li>Changing browser tabs, closing the window, or losing window focus is tracked and classified as a malpractice violation.</li>
-              <li>Ensure your web camera is active, unblocked, and captures your face clearly at all times.</li>
-              <li>You must click <strong>Save &amp; Next</strong> to record each answer. Draft options or code changes are not submitted unless explicitly saved.</li>
-              <li>All actions are logged in real-time. Do not open developer tools or attempt to copy-paste test questions.</li>
-            </ul>
+        {/* 4-Step Test Setup Progress Bar */}
+        <TestSetupStepProgress currentStep={4} />
 
-            <div style={{ marginTop: '10px' }}>
-              <h5 style={{ fontSize: '9pt', color: '#002147', fontWeight: 'bold', marginBottom: '6px' }}>Initial Instructions:</h5>
-              <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', padding: '10px', borderRadius: '4px', fontSize: '9pt', color: '#555', minHeight: '50px', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
-                {test?.instructions || 'No instructions provided.'}
-              </div>
-            </div>
+        {/* 1.00 Minute Preparation Timer vs Ready Banner with Smooth Transition */}
+        <style>{`
+          @keyframes cfFadeSlideIn {
+            0% {
+              opacity: 0;
+              transform: translateY(-8px);
+            }
+            100% {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+          .cf-prep-ready-banner {
+            animation: cfFadeSlideIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            transition: all 0.4s ease;
+          }
+        `}</style>
 
-            <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', cursor: 'pointer', marginTop: '15px', fontSize: '9pt', fontWeight: 'bold', color: '#333' }}>
-              <input 
-                type="checkbox" 
-                checked={consentChecked} 
-                disabled={!setupReady} 
-                onChange={e => setConsentChecked(e.target.checked)} 
-              />
-              <span style={{ color: setupReady ? '#333' : '#94a3b8' }}>
-                I accept and agree to the examination terms, proctoring consent, and code of conduct parameters.
-              </span>
-            </label>
-          </div>
-
-          {/* Right webcam stream calibration column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '10pt', margin: 0 }}>Camera Calibration:</h4>
-            
-            <div style={{ backgroundColor: '#000', borderRadius: '4px', overflow: 'hidden', aspectRatio: '4/3', width: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', border: '1px solid var(--cf-border)' }}>
-              {webcamStream && webcamGranted ? (
-                <video ref={calibVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-              ) : (
-                <div style={{ color: '#fff', fontSize: '9.5pt', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }}></span>
-                  Stream Not Calibrated
-                </div>
-              )}
-            </div>
-
-            {/* Proctoring Verification Parameters Checklist */}
-            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <h5 style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', margin: '0 0 4px 0' }}>System Check Indicators:</h5>
-              
-              {/* Parameter 1: Focus */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
-                <span style={{ color: '#555' }}>1. Focus (No other tabs/apps):</span>
-                {isFocused ? (
-                  <span style={{ color: '#10b981', fontWeight: 'bold' }}>Verified</span>
-                ) : (
-                  <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Focus Lost!</span>
-                )}
-              </div>
-
-              {/* Parameter 2: Camera */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
-                <span style={{ color: '#555' }}>2. Camera Proctored:</span>
-                {webcamGranted ? (
-                  <span style={{ color: '#10b981', fontWeight: 'bold' }}>Active</span>
-                ) : (
-                  <span style={{ color: '#f59e0b', fontWeight: 'bold' }}>Awaiting Access</span>
-                )}
-              </div>
-
-              {/* Parameter 3: Microphone */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
-                <span style={{ color: '#555' }}>3. Microphone Proctored:</span>
-                {micGranted ? (
-                  <span style={{ color: '#10b981', fontWeight: 'bold' }}>Active</span>
-                ) : (
-                  <span style={{ color: '#f59e0b', fontWeight: 'bold' }}>Awaiting Access</span>
-                )}
-              </div>
-
-              {/* Parameter 4: Fullscreen */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt' }}>
-                <span style={{ color: '#555' }}>4. Fullscreen Mode:</span>
-                {isFullscreen ? (
-                  <span style={{ color: '#10b981', fontWeight: 'bold' }}>Locked</span>
-                ) : (
-                  <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Not Fullscreen</span>
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <button 
-                className="cf-btn-primary" 
-                style={{ padding: '8px 10px', fontSize: '8.5pt', fontWeight: 'bold', border: '1px solid #ccc' }} 
-                onClick={handleAuthorizeCamera}
-              >
-                Authorize Cam &amp; Mic
-              </button>
-              <button 
-                className="cf-btn-primary" 
-                style={{ padding: '8px 10px', fontSize: '8.5pt', fontWeight: 'bold', border: '1px solid #ccc' }} 
-                onClick={async () => {
-                  const elem = document.documentElement;
-                  if (elem.requestFullscreen) {
-                    await elem.requestFullscreen().catch(err => console.warn(err));
-                  }
-                }}
-              >
-                Lock Fullscreen Mode
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer actions row inside the card */}
-        <div style={{ borderTop: '1px solid var(--cf-border)', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', backgroundColor: '#f8fafc' }}>
-          <button className="cf-btn-secondary" style={{ padding: '6px 20px', fontSize: '9pt' }} onClick={() => {
-            if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
-            if (micStream) micStream.getTracks().forEach(t => t.stop());
-            window.location.href = getReturnUrl('/coursework/online-tests');
+        {!prepCompleted ? (
+          <div style={{
+            backgroundColor: '#eff6ff',
+            border: '1px solid #bfdbfe',
+            borderRadius: '6px',
+            padding: '12px 16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            marginBottom: '16px',
+            transition: 'opacity 0.4s ease'
           }}>
-            Cancel
-          </button>
-          <button 
-            className="cf-btn-primary" 
-            disabled={!consentChecked || !setupReady} 
-            style={{ padding: '6px 20px', fontSize: '9pt', fontWeight: 'bold' }} 
-            onClick={handleStartExam}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Clock size={15} /> Setting up secure test environment... Please review instructions while environment prepares
+              </span>
+              <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#1e40af', fontFamily: "'Roboto Mono', monospace" }}>
+                0:{prepSecondsRemaining < 10 ? `0${prepSecondsRemaining}` : prepSecondsRemaining} remaining
+              </span>
+            </div>
+            {/* Animated Progress Bar */}
+            <div style={{ width: '100%', height: '5px', backgroundColor: '#dbeafe', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{
+                width: `${((60 - prepSecondsRemaining) / 60) * 100}%`,
+                height: '100%',
+                backgroundColor: '#3b5998',
+                transition: 'width 1s linear'
+              }} />
+            </div>
+          </div>
+        ) : (
+          <div 
+            className="cf-prep-ready-banner"
+            style={{
+              backgroundColor: '#f0fdf4',
+              border: '1px solid #bbf7d0',
+              borderRadius: '6px',
+              padding: '12px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              color: '#15803d',
+              fontSize: '9pt',
+              fontWeight: '600',
+              marginBottom: '16px',
+              boxShadow: '0 1px 3px rgba(22, 163, 74, 0.1)'
+            }}
           >
-            Start Test
-          </button>
+            <CheckCircle2 size={18} style={{ color: '#16a34a', flexShrink: 0 }} />
+            <span>You can start the test now.</span>
+          </div>
+        )}
+
+        {/* Fullscreen Alert Reminder if fullscreen dropped */}
+        {!isFullscreen && (
+          <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#991b1b', fontSize: '8.5pt', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
+              <span><strong>Fullscreen Mode Required:</strong> You must maintain locked fullscreen mode throughout the test session.</span>
+            </div>
+            <button
+              className="cf-btn-primary"
+              onClick={async () => {
+                const elem = document.documentElement;
+                if (elem.requestFullscreen) await elem.requestFullscreen().catch(() => {});
+                else if (elem.webkitRequestFullscreen) await elem.webkitRequestFullscreen().catch(() => {});
+              }}
+              style={{ padding: '4px 12px', fontSize: '8pt', fontWeight: 'bold' }}
+            >
+              Re-lock Fullscreen
+            </button>
+          </div>
+        )}
+
+        {/* Content Section: Test Instructions + General Regulations */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
+          
+          {/* Test Specific Instructions (Database-Fetched with Markdown & LaTeX KaTeX) */}
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--cf-border)', borderRadius: '4px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <FileText size={15} style={{ color: '#3b5998' }} /> About this test &amp; Specific Instructions:
+            </h4>
+
+            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', padding: '12px 14px', borderRadius: '3px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+              <RichText 
+                text={
+                  test?.instructions && test.instructions.trim().length > 0
+                    ? test.instructions
+                    : `This assessment (**${test?.title || 'Examination'}**) is scheduled for **${test?.duration || 60} minutes**.
+
+- **Attempt All Questions:** Carefully review each question in the question palette before submitting.
+- **Save Answers:** You must explicitly click **Save & Next** on each problem to record and lock your answers on the server.
+- **Code Execution:** For coding questions, compile and verify your code against visible test cases prior to advancing.
+- **Session Protection:** All progress is encrypted and cached locally (\`.eirf\`) to ensure resilience against unexpected network interruptions.
+- **Final Submission:** Review all answered items thoroughly before completing the assessment.`
+                } 
+              />
+            </div>
+          </div>
+
+          {/* General Examination Regulations */}
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid var(--cf-border)', borderRadius: '4px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <h4 style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#002147', margin: 0 }}>
+              General Examination Regulations:
+            </h4>
+
+            <ul style={{ listStyleType: 'disc', paddingLeft: '20px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+              <li>The allocated time limit for this exam is <strong>{test?.duration || 60} minutes</strong>. An automated countdown timer is displayed during the test.</li>
+              <li>Exiting Fullscreen or switching browser tabs will record a violation. Accumulating <strong>3 warnings results in instant automatic submission</strong>.</li>
+              <li>Dual automated AI proctors (Vision and Audio) monitor your session. Keep your face centered, do not speak, and ensure no secondary voices or background chatter are present.</li>
+              <li>You must explicitly click <strong>Save &amp; Next</strong> to record each answer. Draft answers or unsubmitted code will not be scored.</li>
+              <li>Opening developer tools, secondary displays, or attempting clipboard shortcuts is strictly tracked as a violation.</li>
+            </ul>
+          </div>
+
         </div>
+
+        {/* Footer Action Bar */}
+        <div style={{
+          borderTop: '1px solid var(--cf-border)',
+          margin: '0 -15px -15px -15px',
+          padding: '12px 15px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#f8fafc',
+          borderBottomLeftRadius: '3px',
+          borderBottomRightRadius: '3px'
+        }}>
+          <button 
+            className="cf-btn-secondary" 
+            style={{ padding: '6px 18px', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '6px' }} 
+            onClick={onBackToBiometrics || (() => {
+              window.location.href = getReturnUrl('/coursework/online-tests');
+            })}
+          >
+            <ArrowLeft size={14} />
+            <span>Back</span>
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {!isFullscreen && (
+              <span style={{ color: '#dc2626', fontSize: '8pt', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <AlertTriangle size={13} style={{ color: '#dc2626' }} />
+                Fullscreen lock is mandatory
+              </span>
+            )}
+            <button 
+              className="cf-btn-primary" 
+              disabled={!prepCompleted} 
+              style={{ 
+                padding: '6px 26px', 
+                fontSize: '8.5pt', 
+                fontWeight: 'bold',
+                cursor: prepCompleted ? 'pointer' : 'not-allowed',
+                opacity: prepCompleted ? 1 : 0.6,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }} 
+              onClick={() => {
+                if (!isFullscreen) {
+                  triggerFullscreen();
+                  return;
+                }
+                if (!canStartTest) return;
+                handleStartExam();
+              }}
+            >
+              {!prepCompleted ? (
+                <span>Preparing Environment (0:{prepSecondsRemaining < 10 ? `0${prepSecondsRemaining}` : prepSecondsRemaining})</span>
+              ) : !isFullscreen ? (
+                <span>Lock Fullscreen to Start</span>
+              ) : (
+                <span>Start test</span>
+              )}
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   );

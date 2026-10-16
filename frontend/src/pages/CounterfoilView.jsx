@@ -19,7 +19,8 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
   const [marks, setMarks] = useState({});
   const [notice, setNotice] = useState({ type: '', msg: '' });
 
-  const studentId = studentProfile?.studentId || user?.studentId || user?.username || 'STU1001';
+  const candidateObjId = user?.id || user?._id || studentProfile?.id || studentProfile?._id;
+  const studentId = candidateObjId || studentProfile?.studentId || user?.studentId || user?.username || 'STU1001';
   const studentName = studentProfile?.preferredName || studentProfile?.name || user?.name || 'Demo Candidate';
 
   const isCounterfoilActive = systemConfig?.counterfoilActive !== false;
@@ -36,7 +37,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
   const fetchSubmissions = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/counterfoil/my-submissions/${encodeURIComponent(studentId)}`);
+      const res = await fetch(`${API_BASE}/counterfoil/my-submissions/${encodeURIComponent(candidateObjId || studentId)}`);
       if (res.ok) {
         const data = await res.json();
         setSubmissions(data || []);
@@ -50,7 +51,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
 
   useEffect(() => {
     fetchSubmissions();
-  }, [studentId]);
+  }, [candidateObjId, studentId]);
 
   // Load marks state when active course changes or submissions update
   useEffect(() => {
@@ -139,6 +140,7 @@ export default function CounterfoilView({ user, studentProfile, systemConfig }) 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          candidateId: candidateObjId,
           studentId,
           studentName,
           courseCode: activeCourse.code,

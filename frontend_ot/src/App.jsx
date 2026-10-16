@@ -9,11 +9,28 @@ import Editor from '@monaco-editor/react';
 // Modularized Views and Components
 import { VerifyLoginView } from './views/VerifyLoginView';
 import { LobbyLoadingView } from './views/LobbyLoadingView';
+import { TermsConditionsView } from './views/TermsConditionsView';
+import { SystemChecksView } from './views/SystemChecksView';
+import { BiometricCheckView } from './views/BiometricCheckView';
 import { GuidelinesSetupView } from './views/GuidelinesSetupView';
 import { ActiveExamView } from './views/ActiveExamView';
 import { EirfFormView } from './views/EirfFormView';
 import { VerificationReviewView } from './views/VerificationReviewView';
 import { FinishedView } from './views/FinishedView';
+import { extractComprehensiveClientSecurity } from './utils/clientSecurity';
+import { encryptEirfEnvelope, encryptPendingStorage, decryptPendingStorage } from './utils/eirfCrypto';
+import { 
+  saveOfflineSubmission, 
+  getOfflineSubmission, 
+  saveOfflineSnapshot, 
+  getOfflineSnapshots, 
+  clearOfflineSnapshots, 
+  saveOfflineEvent, 
+  getOfflineEvents, 
+  clearOfflineEvents,
+  saveOfflineDraft,
+  getOfflineDraft
+} from './utils/offlineDb';
 
 const API_BASE = (() => {
   const envBase = import.meta.env.VITE_API_BASE;
@@ -55,47 +72,7 @@ const getReturnUrl = (targetPath = '/coursework/online-tests') => {
   return `${cleanBase}${subPath}`;
 };
 
-// Automatically attach apiSecret query parameter to all frontend_ot backend API requests
-if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_patched) {
-  window.__bics_ot_fetch_patched = true;
-  const originalFetch = window.fetch;
-  window.fetch = function(resource, init) {
-    const secret = API_ACCESS_SECRET || 
-                   localStorage.getItem('portal_api_secret') || 
-                   window.__BICS_API_SECRET__ || 
-                   'qwertty';
 
-    let urlString = '';
-    if (typeof resource === 'string') {
-      urlString = resource;
-    } else if (resource && typeof resource.url === 'string') {
-      urlString = resource.url;
-    }
-
-    const isExternal = urlString.includes('tfhub.dev') || 
-                       urlString.includes('googleapis.com') || 
-                       urlString.includes('jsdelivr.net') || 
-                       urlString.includes('unpkg.com') ||
-                       urlString.includes('cloudinary.com');
-
-    const isBackendApi = (urlString.startsWith('/api') || 
-                          urlString.includes('/api/') || 
-                          (typeof API_BASE !== 'undefined' && API_BASE && urlString.startsWith(API_BASE)) ||
-                          urlString.startsWith(window.location.origin) ||
-                          (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
-
-    if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
-      const separator = urlString.includes('?') ? '&' : '?';
-      const targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
-      if (typeof resource === 'string') {
-        return originalFetch.call(this, targetUrl, init);
-      } else if (resource && typeof resource === 'object') {
-        return originalFetch.call(this, new Request(targetUrl, resource), init);
-      }
-    }
-    return originalFetch.call(this, resource, init);
-  };
-}
 
 const DEFAULT_TEMPLATES = {
   c: ``,
@@ -117,10 +94,26 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     let placeholderIndex = 0;
     let formatted = String(raw).replace(/\r\n/g, '\n');
 
+    const escapeHtml = (str) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    };
+
     // Extract markdown images BEFORE HTML escaping: ![alt](url)
     formatted = formatted.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
       const placeholder = `%%IMAGEBLOCK${placeholderIndex++}%%`;
-      imageBlocks.push({ placeholder, alt: alt || 'Question Image', src: src.trim() });
+      const cleanSrc = (src || '').trim();
+      const isSafeUrl = /^(https?:\/\/|\/|data:image\/)/i.test(cleanSrc);
+      imageBlocks.push({
+        placeholder,
+        alt: escapeHtml(alt || 'Question Image'),
+        src: isSafeUrl ? escapeHtml(cleanSrc) : 'about:blank'
+      });
       return placeholder;
     });
 
@@ -131,31 +124,31 @@ const RichText = React.memo(function RichText({ text, style, className }) {
       return placeholder;
     });
 
-    // Temporarily extract double-dollar display math blocks
-    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match) => {
+    // Temporarily extract double-dollar display math blocks with HTML escaping
+    formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `$$${escapeHtml(mathContent)}$$` });
       return placeholder;
     });
 
-    // Temporarily extract single-dollar inline math blocks
-    formatted = formatted.replace(/\$(.*?)\$/g, (match) => {
+    // Temporarily extract single-dollar inline math blocks with HTML escaping
+    formatted = formatted.replace(/\$(.*?)\$/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `$${escapeHtml(mathContent)}$` });
       return placeholder;
     });
 
-    // Temporarily extract \[...\] display math
-    formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match) => {
+    // Temporarily extract \[...\] display math with HTML escaping
+    formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `\\[${escapeHtml(mathContent)}\\]` });
       return placeholder;
     });
 
-    // Temporarily extract \(...\) inline math
-    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match) => {
+    // Temporarily extract \(...\) inline math with HTML escaping
+    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: match });
+      mathBlocks.push({ placeholder, content: `\\(${escapeHtml(mathContent)}\\)` });
       return placeholder;
     });
 
@@ -443,6 +436,33 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isFocused, setIsFocused] = useState(true);
   const [consentChecked, setConsentChecked] = useState(false);
+  const [consentRulesChecked, setConsentRulesChecked] = useState(false);
+  const [consentProctoringChecked, setConsentProctoringChecked] = useState(false);
+  const [baselinePhoto, setBaselinePhoto] = useState(null);
+  const [securityMetadata, setSecurityMetadata] = useState(null);
+  const [ambientNoiseFloorDb, setAmbientNoiseFloorDb] = useState(30);
+  const [multiDisplayDetected, setMultiDisplayDetected] = useState(false);
+  const [systemChecksCompleted, setSystemChecksCompleted] = useState(false);
+  const [biometricsCache, setBiometricsCache] = useState(null);
+
+  // Early Client Security Metadata & Display Configuration Detection
+  useEffect(() => {
+    let isMounted = true;
+    extractComprehensiveClientSecurity()
+      .then(meta => {
+        if (isMounted && meta) {
+          if (meta.isExtendedDisplay) setMultiDisplayDetected(true);
+          setSecurityMetadata(prev => ({ ...meta, ...(prev || {}) }));
+        }
+      })
+      .catch(err => {
+        console.warn("Client security metadata notice:", err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Active Exam states
   const [examAnswers, setExamAnswers] = useState([]);
@@ -477,7 +497,7 @@ export default function App() {
   const [webStudioViewportMode, setWebStudioViewportMode] = useState('desktop'); // 'desktop' | 'tablet' | 'mobile'
   const [webStudioConsoleOpen, setWebStudioConsoleOpen] = useState(false);
   const [examTimeLeft, setExamTimeLeft] = useState(0);
-  const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0 });
+  const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showQuestionInfoModal, setShowQuestionInfoModal] = useState(false);
   const [submittingExam, setSubmittingExam] = useState(false);
@@ -485,6 +505,40 @@ export default function App() {
   const [runResults, setRunResults] = useState(null);
   const [compileError, setCompileError] = useState(null);
   const [consoleTab, setConsoleTab] = useState('testcase'); // 'testcase' or 'result'
+
+  // Toast Notification for Blocked Actions & Alerts (Item B6)
+  const [toastNotification, setToastNotification] = useState({ visible: false, message: '', title: 'Action Blocked', type: 'error' });
+  const toastTimeoutRef = useRef(null);
+  const showToast = (message, title = 'Action Blocked', type = 'error') => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastNotification({ visible: true, message, title, type });
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastNotification(prev => ({ ...prev, visible: false }));
+    }, 4500);
+  };
+
+  // Cooldown window refs for Deduplication of Fullscreen Exit & Blur (Item 3.1)
+  const lastFullscreenExitTimeRef = useRef(0);
+  const lastWindowBlurTimeRef = useRef(0);
+  const DEDUPLICATION_WINDOW_MS = 600;
+
+  // Auto-commit draft tracking refs (Item 3)
+  const prevSelectedQuestionIndexRef = useRef(0);
+  const examAnswersRef = useRef(examAnswers);
+  const draftMCQRef = useRef(draftMCQ);
+  const draftCodeRef = useRef(draftCode);
+  const draftLanguageRef = useRef(draftLanguage);
+  const draftHtmlRef = useRef(draftHtml);
+  const draftCssRef = useRef(draftCss);
+  const draftJsRef = useRef(draftJs);
+
+  useEffect(() => { examAnswersRef.current = examAnswers; }, [examAnswers]);
+  useEffect(() => { draftMCQRef.current = draftMCQ; }, [draftMCQ]);
+  useEffect(() => { draftCodeRef.current = draftCode; }, [draftCode]);
+  useEffect(() => { draftLanguageRef.current = draftLanguage; }, [draftLanguage]);
+  useEffect(() => { draftHtmlRef.current = draftHtml; }, [draftHtml]);
+  useEffect(() => { draftCssRef.current = draftCss; }, [draftCss]);
+  useEffect(() => { draftJsRef.current = draftJs; }, [draftJs]);
 
   // Custom Modal dialog system (replaces browser alert/confirm to prevent fullscreen loss)
   const [customModal, setCustomModal] = useState({
@@ -644,10 +698,10 @@ export default function App() {
   // Computed setup condition
   const setupReady = webcamGranted && micGranted && isFullscreen && isFocused;
 
-  // Set Google ecosystem font starting at the proctoring page ('guidelines_setup') onwards.
+  // Set Google ecosystem font starting at the terms page ('terms_conditions') onwards.
   // The login page ('verify_login') strictly retains the main portal's font (verdana, arial, sans-serif).
   useEffect(() => {
-    const isProctoringOrLater = ['guidelines_setup', 'active_exam', 'finished', 'verification_review'].includes(flow);
+    const isProctoringOrLater = ['terms_conditions', 'system_checks', 'biometric_check', 'guidelines_setup', 'active_exam', 'finished', 'verification_review'].includes(flow);
     if (isProctoringOrLater) {
       document.body.classList.add('ot-google-font');
     } else {
@@ -824,58 +878,82 @@ export default function App() {
 
   // 1. Initial Load: Parse path and query parameters for test, verification, or EIRF route
   useEffect(() => {
-    const path = window.location.pathname;
+    const rawPath = window.location.pathname;
     const searchParams = new URLSearchParams(window.location.search);
-    
-    // Check if route is for EIRF filing (e.g. /terminal/eirf/:submissionId or /eirf/:submissionId)
-    if (path.includes('/eirf/') || path.includes('/terminal/eirf/')) {
-      const parts = path.split('/').filter(Boolean);
-      const eirfIdx = parts.findIndex(p => p === 'eirf');
-      let eirfSubId = null;
-      if (eirfIdx !== -1 && parts[eirfIdx + 1]) {
-        eirfSubId = parts[eirfIdx + 1];
-      }
-      if (!eirfSubId) {
-        eirfSubId = searchParams.get('submissionId') || searchParams.get('id');
-      }
+    const hostname = window.location.hostname;
+
+    const isLocal = hostname === 'localhost' || 
+                    hostname === '127.0.0.1' || 
+                    hostname.startsWith('192.168.') || 
+                    hostname.startsWith('10.') || 
+                    hostname.startsWith('172.');
+
+    // 1. Strict Domain Enforcement: Production tests must run strictly on bicsportal.netlify.app
+    if (!isLocal && hostname !== 'bicsportal.netlify.app') {
+      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
+      setLoading(false);
+      return;
+    }
+
+    // Normalize path by stripping /terminal prefix if present
+    let normPath = rawPath.replace(/^\/terminal/, '') || '/';
+    if (!normPath.startsWith('/')) normPath = `/${normPath}`;
+    if (normPath.length > 1 && normPath.endsWith('/')) {
+      normPath = normPath.slice(0, -1);
+    }
+
+    // 2. EIRF route (e.g. /terminal/eirf/:submissionId or /eirf/:submissionId)
+    if (normPath.startsWith('/eirf/')) {
+      const parts = normPath.split('/').filter(Boolean);
+      const eirfSubId = parts[1] || searchParams.get('submissionId') || searchParams.get('id');
       if (eirfSubId) {
         loadEirfDetails(eirfSubId);
         return;
       }
-    }
-
-    // Check if route is for submission verification (e.g. /verification/6a92..., /submissions/6a92..., /submission/6a92...)
-    let subId = null;
-    if (path.includes('/verification/') || path.includes('/submissions/') || path.includes('/submission/')) {
-      const parts = path.split('/').filter(Boolean);
-      const verifIdx = parts.findIndex(p => p === 'verification' || p === 'submissions' || p === 'submission');
-      if (verifIdx !== -1 && parts[verifIdx + 1]) {
-        subId = parts[verifIdx + 1];
-      }
-    }
-    if (!subId) {
-      subId = searchParams.get('submissionId') || searchParams.get('id');
-    }
-
-    if (path.includes('/verification') || path.includes('/submissions') || path.includes('/submission') || (subId && !searchParams.get('token'))) {
-      if (!subId) {
-        setVerifyError("Invalid Submission Link. Missing examination submission reference.");
-        setLoading(false);
-        return;
-      }
-      loadSubmissionVerification(subId);
-      return;
-    }
-
-    // Online Exam Route (handles /test?token=..., /?token=..., /test/?token=...)
-    const parsedToken = searchParams.get('token');
-    if (!parsedToken) {
-      setVerifyError("Authorization Token Missing. Online tests must be launched from your Student Portal dashboard.");
+      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
       setLoading(false);
       return;
     }
-    setToken(parsedToken);
-    verifyExamToken(parsedToken);
+
+    // 3. Submission verification route (e.g. /terminal/verification/:submissionId or /verification/:submissionId)
+    if (normPath.startsWith('/verification/') || normPath.startsWith('/submissions/') || normPath.startsWith('/submission/')) {
+      const parts = normPath.split('/').filter(Boolean);
+      const subId = parts[1] || searchParams.get('submissionId') || searchParams.get('id');
+      if (subId) {
+        loadSubmissionVerification(subId);
+        return;
+      }
+      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
+      setLoading(false);
+      return;
+    }
+
+    // 4. Strict Assessment Route: Must be /assessment with valid token query parameter
+    if (normPath === '/assessment') {
+      const parsedToken = searchParams.get('token');
+      const urlAuthToken = searchParams.get('authToken') || searchParams.get('jwt');
+      if (urlAuthToken) {
+        localStorage.setItem('bics_auth_token', urlAuthToken);
+        sessionStorage.setItem('bics_auth_token', urlAuthToken);
+        if (typeof window !== 'undefined') window.__BICS_AUTH_TOKEN__ = urlAuthToken;
+      }
+      if (parsedToken) {
+        sessionStorage.setItem('bics_exam_token', parsedToken);
+        if (typeof window !== 'undefined') window.__BICS_EXAM_TOKEN__ = parsedToken;
+      }
+      if (!parsedToken) {
+        setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
+        setLoading(false);
+        return;
+      }
+      setToken(parsedToken);
+      verifyExamToken(parsedToken);
+      return;
+    }
+
+    // 5. Any other link/path is strictly rejected with server forbidden error
+    setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
+    setLoading(false);
   }, []);
 
   // Dynamically update browser tab title based on route and examination/verification state
@@ -903,9 +981,9 @@ export default function App() {
       }
     } else {
       if (test?.title) {
-        document.title = `Online Examination Terminal - ${test.title} | BICS Portal`;
+        document.title = `BICS Terminal - ${test.title} | BICS Portal`;
       } else {
-        document.title = "Online Examination Terminal - BICS Portal";
+        document.title = "BICS Terminal";
       }
     }
   }, [flow, test, eirfDetails, verifyError]);
@@ -962,6 +1040,14 @@ export default function App() {
       setCandidate(data.candidate);
       setTest(data.test);
       if (data.submission) setSubmission(data.submission);
+
+      if (data.authToken || data.token) {
+        const tokenVal = data.authToken || data.token;
+        localStorage.setItem('bics_auth_token', tokenVal);
+        sessionStorage.setItem('bics_auth_token', tokenVal);
+        localStorage.setItem('token', tokenVal);
+        if (typeof window !== 'undefined') window.__BICS_AUTH_TOKEN__ = tokenVal;
+      }
       
       // Load pre-existing state or localStorage cache tied strictly to unique submission attempt
       const subId = data.submission?.id || data.submission?._id || 'new_attempt';
@@ -1007,10 +1093,10 @@ export default function App() {
     
     const messages = [
       "Securing network routing tunnel...",
-      "Acquiring biometric authorization credentials...",
-      "Syncing facial verification hashes...",
-      "Activating real-time telemetry logs...",
-      "Redirecting candidate to proctoring setup..."
+      "Acquiring examination token credentials...",
+      "Validating candidate authorization...",
+      "Activating secure testing protocol...",
+      "Redirecting to Test Setup (Step 1: Terms and conditions)..."
     ];
 
     let step = 0;
@@ -1022,9 +1108,36 @@ export default function App() {
         setLobbyMessage(messages[step]);
       } else {
         clearInterval(interval);
-        setFlow('guidelines_setup');
+        setFlow('terms_conditions');
       }
-    }, 450);
+    }, 400);
+  };
+
+  const handleLockFullscreen = async () => {
+    try {
+      const elem = document.documentElement;
+      if (elem.requestFullscreen) await elem.requestFullscreen();
+      else if (elem.webkitRequestFullscreen) await elem.webkitRequestFullscreen();
+      else if (elem.mozRequestFullScreen) await elem.mozRequestFullScreen();
+      else if (elem.msRequestFullscreen) await elem.msRequestFullscreen();
+      setIsFullscreen(true);
+    } catch (e) {
+      console.warn("Fullscreen request notice:", e);
+    }
+  };
+
+  const handleCompleteBiometricGate = (data) => {
+    const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+    if (!isCurrentlyFullscreen) {
+      setIsFullscreen(false);
+      return;
+    }
+    const { baselinePhoto: photo, securityMetadata: meta, ambientFloorDb } = data || {};
+    if (photo) setBaselinePhoto(photo);
+    if (meta) setSecurityMetadata(meta);
+    if (ambientFloorDb) setAmbientNoiseFloorDb(ambientFloorDb);
+    setBiometricsCache(prev => ({ ...prev, ...data }));
+    setFlow('guidelines_setup');
   };
 
   // 3. Proctoring Permissions Setup (Requests camera and microphone concurrently)
@@ -1053,13 +1166,14 @@ export default function App() {
   };
 
   // Refs to track logged warnings and prevent duplicate logs or duplicate auto-submits
-  const lastLoggedWarnings = useRef({ fullscreenExits: 0, tabSwitches: 0 });
+  const lastLoggedWarnings = useRef({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
   const isAutoSubmittedRef = useRef(false);
   const proctoringEventsRef = useRef([]);
 
   const getProctoringLogPayload = (warningsObj) => ({
     fullscreenExits: warningsObj?.fullscreenExits || 0,
     tabSwitches: warningsObj?.tabSwitches || 0,
+    inspectAttempts: warningsObj?.inspectAttempts || 0,
     webcamStatus: warningsObj?.webcamStatus || 'active',
     events: proctoringEventsRef.current || []
   });
@@ -1068,23 +1182,30 @@ export default function App() {
   useEffect(() => {
     if (flow !== 'active_exam') return;
     
-    const { fullscreenExits, tabSwitches } = proctoringWarnings;
-    const total = fullscreenExits + tabSwitches;
+    const { fullscreenExits, tabSwitches, inspectAttempts } = proctoringWarnings;
+    const total = (fullscreenExits || 0) + (tabSwitches || 0) + (inspectAttempts || 0);
     if (total === 0) return;
 
     // Check if we need to auto-submit
     if (total >= 3) {
       if (!isAutoSubmittedRef.current) {
         isAutoSubmittedRef.current = true;
-        const newFS = fullscreenExits > lastLoggedWarnings.current.fullscreenExits;
-        const newTab = tabSwitches > lastLoggedWarnings.current.tabSwitches;
-        const finalEventType = newFS ? 'FULLSCREEN_EXIT' : 'TAB_SWITCH';
-        const finalMsg = newFS 
-          ? `Candidate exited fullscreen mode. Total warnings: 3 / 3 (Auto-Submission Triggered)`
-          : `Candidate switched tab or lost focus. Total warnings: 3 / 3 (Auto-Submission Triggered)`;
+        const newFS = (fullscreenExits || 0) > (lastLoggedWarnings.current.fullscreenExits || 0);
+        const newTab = (tabSwitches || 0) > (lastLoggedWarnings.current.tabSwitches || 0);
+        const newInspect = (inspectAttempts || 0) > (lastLoggedWarnings.current.inspectAttempts || 0);
+        let finalEventType = 'DEVTOOLS_OPENED';
+        let finalMsg = `Candidate accessed developer tools / inspect element. Total warnings: 3 / 3 (Auto-Submission Triggered)`;
+        if (newFS) {
+          finalEventType = 'FULLSCREEN_EXIT';
+          finalMsg = `Candidate exited fullscreen mode. Total warnings: 3 / 3 (Auto-Submission Triggered)`;
+        } else if (newTab) {
+          finalEventType = 'TAB_SWITCH';
+          finalMsg = `Candidate switched tab or lost focus. Total warnings: 3 / 3 (Auto-Submission Triggered)`;
+        }
         
-        lastLoggedWarnings.current.fullscreenExits = fullscreenExits;
-        lastLoggedWarnings.current.tabSwitches = tabSwitches;
+        lastLoggedWarnings.current.fullscreenExits = fullscreenExits || 0;
+        lastLoggedWarnings.current.tabSwitches = tabSwitches || 0;
+        lastLoggedWarnings.current.inspectAttempts = inspectAttempts || 0;
 
         syncProctoringLogs(proctoringWarnings, finalEventType, finalMsg).finally(() => {
           autoSubmitExam(proctoringWarnings);
@@ -1094,23 +1215,28 @@ export default function App() {
     }
 
     // Check if we have new warnings to log
-    const newFS = fullscreenExits > lastLoggedWarnings.current.fullscreenExits;
-    const newTab = tabSwitches > lastLoggedWarnings.current.tabSwitches;
+    const newFS = (fullscreenExits || 0) > (lastLoggedWarnings.current.fullscreenExits || 0);
+    const newTab = (tabSwitches || 0) > (lastLoggedWarnings.current.tabSwitches || 0);
+    const newInspect = (inspectAttempts || 0) > (lastLoggedWarnings.current.inspectAttempts || 0);
 
-    if (newFS || newTab) {
+    if (newFS || newTab || newInspect) {
       setShowWarningModal(true);
       if (newFS) {
-        lastLoggedWarnings.current.fullscreenExits = fullscreenExits;
+        lastLoggedWarnings.current.fullscreenExits = fullscreenExits || 0;
         syncProctoringLogs(proctoringWarnings, 'FULLSCREEN_EXIT', `Candidate exited fullscreen mode. Total warnings: ${total} / 3`);
       }
       if (newTab) {
-        lastLoggedWarnings.current.tabSwitches = tabSwitches;
+        lastLoggedWarnings.current.tabSwitches = tabSwitches || 0;
         syncProctoringLogs(proctoringWarnings, 'TAB_SWITCH', `Candidate switched tab or lost focus. Total warnings: ${total} / 3`);
+      }
+      if (newInspect) {
+        lastLoggedWarnings.current.inspectAttempts = inspectAttempts || 0;
+        syncProctoringLogs(proctoringWarnings, 'DEVTOOLS_OPENED', `Candidate attempted to open developer tools / inspect element. Total warnings: ${total} / 3`);
       }
     }
   }, [proctoringWarnings, flow]);
 
-  // Check Fullscreen state with duration tracking
+  // Check Fullscreen state with duration tracking & Deduplication (Item 3.1)
   useEffect(() => {
     const onFSChange = () => {
       const fs = !!document.fullscreenElement;
@@ -1118,8 +1244,22 @@ export default function App() {
       
       if (flow === 'active_exam') {
         if (!fs) {
-          fsExitStartTimeRef.current = Date.now();
-          setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
+          const now = Date.now();
+          fsExitStartTimeRef.current = now;
+          lastFullscreenExitTimeRef.current = now;
+
+          // Deduplication: If a window blur occurred within the last 600ms, merge into a single incident
+          const timeSinceBlur = now - lastWindowBlurTimeRef.current;
+          if (timeSinceBlur < DEDUPLICATION_WINDOW_MS) {
+            console.log(`[Proctoring Deduplication] Fullscreen exit within ${timeSinceBlur}ms of blur. Reconciled as single incident.`);
+            syncProctoringLogs(
+              proctoringWarnings,
+              'FULLSCREEN_EXIT',
+              `Candidate exited fullscreen mode (reconciled with window blur incident).`
+            );
+          } else {
+            setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
+          }
         } else if (fsExitStartTimeRef.current) {
           const startTime = fsExitStartTimeRef.current;
           const endTime = Date.now();
@@ -1141,7 +1281,7 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFSChange);
   }, [flow, proctoringWarnings]);
 
-  // Check Window Focus state with duration tracking
+  // Check Window Focus state with duration tracking & Deduplication (Item 3.1)
   useEffect(() => {
     const onBlur = () => {
       setIsFocused(false);
@@ -1151,7 +1291,22 @@ export default function App() {
           return;
         }
         if (flow === 'active_exam') {
-          tabExitStartTimeRef.current = Date.now();
+          const now = Date.now();
+          tabExitStartTimeRef.current = now;
+          lastWindowBlurTimeRef.current = now;
+
+          // Deduplication: If fullscreen was exited within the last 600ms, merge and suppress double-warning
+          const timeSinceFS = now - lastFullscreenExitTimeRef.current;
+          if (timeSinceFS < DEDUPLICATION_WINDOW_MS) {
+            console.log(`[Proctoring Deduplication] Window blur within ${timeSinceFS}ms of fullscreen exit. Suppressed second warning.`);
+            syncProctoringLogs(
+              proctoringWarnings,
+              'TAB_SWITCH',
+              `Candidate lost window focus during fullscreen exit transition.`
+            );
+            return;
+          }
+
           setProctoringWarnings(prev => ({ ...prev, tabSwitches: prev.tabSwitches + 1 }));
         }
       }, 100);
@@ -1185,16 +1340,35 @@ export default function App() {
 
   // Start active exam and transition (Calls backend to register submission only when Start Test is clicked)
   const handleStartExam = async () => {
-    if (!setupReady || !consentChecked) return;
+    const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+    if (!consentRulesChecked || !consentProctoringChecked || !isCurrentlyFullscreen) {
+      if (!isCurrentlyFullscreen) setIsFullscreen(false);
+      return;
+    }
     
     try {
+      const activeToken = localStorage.getItem('bics_auth_token') || 
+                          sessionStorage.getItem('bics_auth_token') || 
+                          localStorage.getItem('token') || 
+                          token || '';
+      const examSecurityToken = sessionStorage.getItem('bics_exam_token') || 
+                                token || 
+                                searchParams.get('token') || '';
+
+      const reqHeaders = { 'Content-Type': 'application/json' };
+      if (activeToken) reqHeaders['Authorization'] = `Bearer ${activeToken}`;
+      if (examSecurityToken) reqHeaders['x-exam-token'] = examSecurityToken;
+
       const res = await fetch(`${API_BASE}/tests/start/${test.id || test._id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify({
           candidateId: candidate.id || candidate._id,
           candidateName: candidate.name,
-          studentId: candidate.studentId
+          studentId: candidate.studentId,
+          token: examSecurityToken,
+          baselinePhotoUrl: baselinePhoto || '',
+          securityMetadata: securityMetadata || {}
         })
       });
       const data = await res.json();
@@ -1209,7 +1383,21 @@ export default function App() {
       // Log initial proctoring events
       logProctoringEvent(data.submission, 'TEST_STARTED', `${candidate.name || 'Candidate'} started the test.`);
       logProctoringEvent(data.submission, 'PROCTORING_ALLOWED', 'Webcam and microphone access allowed.');
-      logProctoringEvent(data.submission, 'CONSENT_ACCEPTED', 'Malpractice undertaking consent accepted.');
+      logProctoringEvent(data.submission, 'CONSENT_ACCEPTED', 'Malpractice undertaking (Clause 4) & Proctoring consent (Clause 2) accepted.');
+
+      // Upload baseline photograph to server / Cloudinary
+      if (baselinePhoto && data.submission) {
+        const subId = data.submission.id || data.submission._id;
+        fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: baselinePhoto,
+            eventType: 'BASELINE_REFERENCE',
+            details: 'Initial biometric reference portrait captured during onboarding.'
+          })
+        }).catch(err => console.warn("Baseline photo background upload notice:", err));
+      }
 
       setFlow('active_exam');
       setTimeout(() => {
@@ -1241,13 +1429,193 @@ export default function App() {
     return () => clearInterval(timer);
   }, [flow, proctoringWarnings]);
 
+  // Minor proctoring warning counter (Continuous warnings counted per second - Item 3)
+  const minorWarningSecondsRef = useRef(0);
+  const [minorWarningCount, setMinorWarningCount] = useState(0);
+  const hasTriggered40sEirfRef = useRef(false);
+
+  const incrementMinorWarning = (reason = 'minor_violation') => {
+    minorWarningSecondsRef.current += 1;
+    const count = minorWarningSecondsRef.current;
+    setMinorWarningCount(count);
+
+    if (count >= 40 && !hasTriggered40sEirfRef.current) {
+      hasTriggered40sEirfRef.current = true;
+      console.warn(`[PROCTORING_THRESHOLD]: 40 seconds of cumulative minor proctoring warnings reached (${reason}). Setting EIRF flag to true.`);
+
+      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+
+      logProctoringEvent(
+        submission,
+        'MINOR_WARNINGS_EXCEEDED',
+        `Cumulative minor proctoring violations reached threshold: ${count} seconds (${reason}). EIRF incident flag activated.`
+      );
+
+      setWebcamProctorWarning(`Proctor Alert: Compliance warning threshold reached (${count}s). An Emergency Incident Report (EIRF) flag has been activated.`);
+
+      if (submission) {
+        saveOfflineSubmission({
+          submissionId: submission._id || submission.id,
+          candidateName: candidate?.name || submission.candidateName,
+          studentId: candidate?.studentId || submission.studentId,
+          answers: examAnswers || [],
+          proctoringLog: getProctoringLogPayload(proctoringWarnings),
+          hasEirfFlag: true,
+          eirfStatus: 'pending'
+        }).catch(() => {});
+        downloadEirfBackupFile(submission, candidate, examAnswers, proctoringWarnings);
+      }
+    }
+  };
+
+  // Proctoring snapshot capture helper & violation dispatcher
+  const lastSnapshotTimeRef = useRef({});
+  const voiceWarningExpiryRef = useRef(0);
+
+  const captureEvidenceSnapshot = (eventType, details) => {
+    try {
+      if (!submission) return;
+      const subId = submission.id || submission._id;
+      if (!subId) return;
+
+      const vid = examVideoRef.current;
+      if (!vid || vid.readyState < 2) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+
+      // Mirror video frame to match user perspective
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // Security watermark band
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(0, canvas.height - 26, canvas.width, 26);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10.5px Roboto, sans-serif';
+      const timeStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const studentLabel = candidate?.studentId || candidate?.name || 'Candidate';
+      ctx.fillText(`BICS SECURE PROCTOR [${studentLabel}] • ${eventType} • ${timeStr} UTC`, 12, canvas.height - 9);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      const studentId = candidate?.studentId || submission?.studentId || '';
+
+      if (isOnline) {
+        fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: dataUrl,
+            eventType,
+            details,
+            studentId
+          })
+        }).then(res => {
+          if (!res.ok) {
+            saveOfflineSnapshot({ submissionId: subId, image: dataUrl, eventType, details, studentId }).catch(() => {});
+          }
+        }).catch(() => {
+          saveOfflineSnapshot({ submissionId: subId, image: dataUrl, eventType, details, studentId }).catch(() => {});
+        });
+      } else {
+        saveOfflineSnapshot({ submissionId: subId, image: dataUrl, eventType, details, studentId }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn("Evidence snapshot capture error:", err);
+    }
+  };
+
+  const logProctoringEvent = async (subObj, type, details, startTime, endTime, durationSeconds) => {
+    try {
+      const targetSub = subObj || submission;
+      if (!targetSub) return;
+      const subId = targetSub.id || targetSub._id;
+
+      const evtObj = {
+        type,
+        details,
+        timestamp: new Date().toISOString(),
+        startTime: startTime ? new Date(startTime).toISOString() : null,
+        endTime: endTime ? new Date(endTime).toISOString() : null,
+        durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+      };
+
+      if (!proctoringEventsRef.current) proctoringEventsRef.current = [];
+      proctoringEventsRef.current.push(evtObj);
+
+      if (isOnline) {
+        fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(evtObj)
+        }).catch(() => {
+          saveOfflineEvent({ submissionId: subId, ...evtObj }).catch(() => {});
+        });
+      } else {
+        saveOfflineEvent({ submissionId: subId, ...evtObj }).catch(() => {});
+      }
+    } catch (e) {
+      console.error("Failed to log proctoring event:", e);
+    }
+  };
+
+  // Dispatch violation warning to candidate, take snapshot immediately on first call,
+  // and continue taking snapshots every 10s if the warning is continuous.
+  const handleProctorViolation = (eventType, warningMessage, logDetails) => {
+    setWebcamProctorWarning(warningMessage);
+    const now = Date.now();
+    const lastTime = lastSnapshotTimeRef.current[eventType] || 0;
+    if (lastTime === 0 || now - lastTime >= 10000) {
+      lastSnapshotTimeRef.current[eventType] = now;
+      captureEvidenceSnapshot(eventType, logDetails);
+      logProctoringEvent(submission, eventType, logDetails);
+    }
+  };
+
+  // Reset violation tracking when resolved so next occurrence triggers snapshot immediately on first call
+  const handleProctorResolved = (eventType) => {
+    lastSnapshotTimeRef.current[eventType] = 0;
+  };
+
+  // Handle major proctoring violations for Inspect / Developer Tools access
+  const lastInspectWarningTimeRef = useRef(0);
+  const handleInspectViolation = (vector = 'devtools', detail = '') => {
+    if (flow !== 'active_exam') return;
+    const now = Date.now();
+    // 4-second debouncing to prevent multiple strikes for a single inspection action
+    if (now - lastInspectWarningTimeRef.current < 4000) return;
+    lastInspectWarningTimeRef.current = now;
+
+    showToast(
+      "Developer Tools & Inspect Element are strictly forbidden. A major proctoring violation has been recorded.",
+      "Proctoring Violation: Inspect Attempt",
+      "error"
+    );
+
+    captureEvidenceSnapshot('DEVTOOLS_OPENED', `DevTools / Inspect element detected via ${vector}: ${detail}`);
+    logProctoringEvent(
+      submission,
+      'DEVTOOLS_OPENED',
+      `Candidate opened or attempted to inspect exam environment via ${vector} (${detail}).`
+    );
+
+    setProctoringWarnings(prev => ({
+      ...prev,
+      inspectAttempts: (prev.inspectAttempts || 0) + 1
+    }));
+  };
+
   // ML webcam face proctoring loop
   useEffect(() => {
     if (flow !== 'active_exam' || !submission) return;
     
     let active = true;
     let frameId;
-    let lastLogTime = 0; // Throttle server proctoring warning logs
     
     const trackFace = async () => {
       if (!active) return;
@@ -1263,34 +1631,31 @@ export default function App() {
           if (!active) return;
           
           if (predictions.length === 0) {
-            // No face detected!
+            // No face detected! (Continuous per-second warning count)
             faceAwayDurationRef.current += 1;
+            incrementMinorWarning('FACE_MISSING');
             
             if (faceAwayDurationRef.current >= 3) { // 3 seconds at 1 FPS
-              setWebcamProctorWarning("Proctor Reminder: No face detected. Please ensure you are visible to the webcam.");
-              
-              // Throttle database logging
-              const now = Date.now();
-              if (now - lastLogTime > 15000) {
-                logProctoringEvent(submission, 'PROCTOR_WARNING', 'No face detected in webcam stream.');
-                lastLogTime = now;
-              }
+              handleProctorViolation(
+                'FACE_MISSING',
+                'Proctor Reminder: No face detected. Please ensure you are visible to the webcam.',
+                'No face detected in webcam stream.'
+              );
             }
           } else if (predictions.length > 1) {
-            // Multiple faces detected!
+            // Multiple faces detected! (Continuous per-second warning count)
             faceAwayDurationRef.current += 1;
+            incrementMinorWarning('MULTI_FACE');
             
             if (faceAwayDurationRef.current >= 3) {
-              setWebcamProctorWarning("Proctor Reminder: Multiple faces detected in webcam frame.");
-              
-              const now = Date.now();
-              if (now - lastLogTime > 15000) {
-                logProctoringEvent(submission, 'PROCTOR_WARNING', 'Multiple faces detected in webcam stream.');
-                lastLogTime = now;
-              }
+              handleProctorViolation(
+                'MULTI_FACE',
+                'Proctor Reminder: Multiple faces detected in webcam frame.',
+                'Multiple faces detected in webcam stream.'
+              );
             }
           } else {
-            // Exactly one face detected. Let's inspect landmarks!
+            // Exactly one face detected. Inspect landmarks!
             const prediction = predictions[0];
             const landmarks = prediction.landmarks; // [right_eye, left_eye, nose, mouth, right_ear, left_ear]
             
@@ -1305,36 +1670,68 @@ export default function App() {
               if (eyeDistance > 0) {
                 const offsetRatio = (nose[0] - eyeCenterX) / eyeDistance;
                 
-                // If nose offset is too far left or right (looking away)
-                if (Math.abs(offsetRatio) > 0.25) {
+                // Widescreen monitor recalibration: 0.36 yaw ratio cutoff with >= 4.0s sustained dwell time
+                const LOOKING_AWAY_YAW_RATIO = 0.36;
+                const LOOKING_AWAY_SUSTAINED_FRAMES = 4;
+                if (Math.abs(offsetRatio) > LOOKING_AWAY_YAW_RATIO) {
                   faceAwayDurationRef.current += 1;
+                  incrementMinorWarning('LOOKING_AWAY');
                   
-                  if (faceAwayDurationRef.current >= 3) {
-                    setWebcamProctorWarning("Proctor Reminder: Please keep facing forward. Looking away is prohibited.");
-                    
-                    const now = Date.now();
-                    if (now - lastLogTime > 15000) {
-                      logProctoringEvent(submission, 'PROCTOR_WARNING', 'Candidate is turned away / looking away from screen.');
-                      lastLogTime = now;
-                    }
+                  if (faceAwayDurationRef.current >= LOOKING_AWAY_SUSTAINED_FRAMES) {
+                    handleProctorViolation(
+                      'LOOKING_AWAY',
+                      'Proctor Reminder: Please keep facing forward. Looking away is prohibited.',
+                      'Candidate is turned away / looking away from screen.'
+                    );
                   }
                 } else {
                   // Face is facing forward and valid!
                   faceAwayDurationRef.current = 0;
-                  setWebcamProctorWarning('');
+                  handleProctorResolved('FACE_MISSING');
+                  handleProctorResolved('MULTI_FACE');
+                  handleProctorResolved('LOOKING_AWAY');
+                  setWebcamProctorWarning(prev => {
+                    if (prev.includes('face') || prev.includes('facing')) return '';
+                    return prev;
+                  });
                 }
               } else {
                 faceAwayDurationRef.current = 0;
-                setWebcamProctorWarning('');
+                handleProctorResolved('FACE_MISSING');
+                handleProctorResolved('MULTI_FACE');
+                handleProctorResolved('LOOKING_AWAY');
+                setWebcamProctorWarning(prev => {
+                  if (prev.includes('face') || prev.includes('facing')) return '';
+                  return prev;
+                });
               }
             } else {
               faceAwayDurationRef.current = 0;
-              setWebcamProctorWarning('');
+              handleProctorResolved('FACE_MISSING');
+              handleProctorResolved('MULTI_FACE');
+              handleProctorResolved('LOOKING_AWAY');
+              setWebcamProctorWarning(prev => {
+                if (prev.includes('face') || prev.includes('facing')) return '';
+                return prev;
+              });
             }
           }
         } catch (e) {
           console.warn("[PROCTOR_ML_LOOP_ERROR]: Face prediction loop caught exception:", e.message);
         }
+      }
+
+      // Continuous monitor for fullscreen exits and tab switches
+      if (!document.fullscreenElement && fsExitStartTimeRef.current) {
+        handleProctorViolation('FULLSCREEN_EXIT', 'Proctor Warning: Fullscreen exit detected', 'Candidate is outside fullscreen mode.');
+      } else {
+        handleProctorResolved('FULLSCREEN_EXIT');
+      }
+
+      if (tabExitStartTimeRef.current) {
+        handleProctorViolation('TAB_SWITCH', 'Proctor Warning: Window focus lost', 'Candidate switched tabs or window.');
+      } else {
+        handleProctorResolved('TAB_SWITCH');
       }
       
       if (active) {
@@ -1349,6 +1746,303 @@ export default function App() {
       active = false;
       clearTimeout(initDelay);
       clearTimeout(frameId);
+    };
+  }, [flow, submission, isOnline]);
+
+  // Web Audio API ambient voice proctoring loop during active exam
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission || !webcamStream) return;
+
+    let active = true;
+    let audioCtx = null;
+    let intervalId = null;
+    let sustainedVoiceCount = 0;
+
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        audioCtx = new AudioContextClass();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume().catch(() => {});
+        }
+
+        const resumeAudio = () => {
+          if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+          }
+        };
+        window.addEventListener('click', resumeAudio);
+        window.addEventListener('keydown', resumeAudio);
+
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.3;
+
+        // Vocal Bandpass Filtering (300 Hz - 3000 Hz human speech formant isolation - Item 3.3)
+        const highpass = audioCtx.createBiquadFilter();
+        highpass.type = 'highpass';
+        highpass.frequency.setValueAtTime(300, audioCtx.currentTime);
+
+        const lowpass = audioCtx.createBiquadFilter();
+        lowpass.type = 'lowpass';
+        lowpass.frequency.setValueAtTime(3000, audioCtx.currentTime);
+
+        const source = audioCtx.createMediaStreamSource(webcamStream);
+        source.connect(highpass);
+        highpass.connect(lowpass);
+        lowpass.connect(analyser);
+
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+        const timeData = new Uint8Array(analyser.fftSize);
+
+        // Safe floor baseline: clamp between 20 and 32 dB
+        const safeFloor = Math.min(32, Math.max(20, ambientNoiseFloorDb || 26));
+
+        intervalId = setInterval(() => {
+          if (!active) return;
+
+          // 1. Time-domain RMS & Peak Amplitude for Crest Factor Impulse Rejection (Item 3.3)
+          analyser.getByteTimeDomainData(timeData);
+          let sumSquares = 0;
+          let peakAmplitude = 0;
+          for (let i = 0; i < timeData.length; i++) {
+            const norm = Math.abs((timeData[i] - 128) / 128);
+            if (norm > peakAmplitude) peakAmplitude = norm;
+            sumSquares += norm * norm;
+          }
+          const rms = Math.sqrt(sumSquares / timeData.length);
+
+          // Crest Factor = Peak / RMS
+          // Mechanical keyboard typing & mouse/trackpad clicks create brief sharp impulse spikes (Crest Factor >= 4.5)
+          // Voiced human speech exhibits continuous harmonic formants with moderate Crest Factor (2.2 - 3.8)
+          const crestFactor = rms > 0.005 ? (peakAmplitude / rms) : 0;
+          const isMechanicalImpulse = crestFactor >= 4.5;
+
+          // 2. Speech frequency band energy (bins 3 [~280 Hz] to 32 [~3000 Hz])
+          analyser.getByteFrequencyData(freqData);
+          let speechSum = 0;
+          let speechBinCount = Math.min(32, freqData.length);
+          let peakSpeechEnergy = 0;
+          for (let i = 3; i < speechBinCount; i++) {
+            speechSum += freqData[i];
+            if (freqData[i] > peakSpeechEnergy) peakSpeechEnergy = freqData[i];
+          }
+          const speechAvg = speechSum / Math.max(1, speechBinCount - 3);
+
+          // 3. Calibrated decibel metric (22 dB to 100 dB)
+          const currentDb = Math.min(100, Math.round(
+            22 + Math.min(78, (rms * 160) + (speechAvg / 255) * 35)
+          ));
+
+          // 4. Voice vs Impulse Rejection (Requires continuous non-impulsive human speech)
+          const isShouting = !isMechanicalImpulse && (currentDb >= 62 || (rms >= 0.18 && speechAvg >= 70));
+          const isVoicedSpeech = !isMechanicalImpulse && (currentDb >= Math.max(48, safeFloor + 16) || (rms >= 0.08 && speechAvg >= 45));
+
+          if (isShouting || isVoicedSpeech) {
+            sustainedVoiceCount += isShouting ? 2 : 1;
+            // Sustained speech requirement: require >= 1.0s continuous vocal speech (10 intervals of 100ms)
+            if (sustainedVoiceCount >= 10) {
+              voiceWarningExpiryRef.current = Date.now() + 5000; // Keep visible for at least 5 seconds
+              // Increment minor warning counter every continuous second of detected voice (Item 3)
+              if (sustainedVoiceCount % 10 === 0) {
+                incrementMinorWarning('VOICE_DETECTED');
+              }
+              handleProctorViolation(
+                'VOICE_DETECTED',
+                `Proctor Reminder: High voice / ambient noise detected (${currentDb} dB). Strict silence is required.`,
+                `High voice detected (${currentDb} dB, RMS: ${rms.toFixed(2)}, Crest Factor: ${crestFactor.toFixed(2)}).`
+              );
+            }
+          } else {
+            sustainedVoiceCount = Math.max(0, sustainedVoiceCount - 1);
+            if (sustainedVoiceCount === 0 && Date.now() > voiceWarningExpiryRef.current) {
+              handleProctorResolved('VOICE_DETECTED');
+              setWebcamProctorWarning(prev => (prev.includes('voice detected') || prev.includes('High voice') ? '' : prev));
+            }
+          }
+        }, 100);
+      }
+    } catch (e) {
+      console.warn("Active exam audio proctoring init error:", e);
+    }
+
+    return () => {
+      active = false;
+      if (intervalId) clearInterval(intervalId);
+      if (audioCtx && audioCtx.state !== 'closed') {
+        audioCtx.close().catch(() => {});
+      }
+    };
+  }, [flow, submission, webcamStream, ambientNoiseFloorDb]);
+
+  // Strict Copy-Paste & Right-Click Lockdown during Active Examination (Item B6)
+  const clipboardWarningExpiryRef = useRef(0);
+  const handleClipboardAttempt = (action = 'clipboard_action') => {
+    const actionLabel = (action || 'action').toUpperCase();
+    const toastMsg = "Action Blocked: Copy-pasting and dragging external text are strictly prohibited during the active examination environment. This attempt has been logged.";
+    showToast(toastMsg, 'Action Blocked', 'error');
+
+    const warningMsg = `CLIPBOARD LOCKDOWN: Copying and pasting is strictly prohibited during the examination. Your ${actionLabel} action was blocked and reported.`;
+    clipboardWarningExpiryRef.current = Date.now() + 6000;
+    handleProctorViolation(
+      'CLIPBOARD_ATTEMPT',
+      warningMsg,
+      `Candidate attempted unauthorized clipboard or drag-drop operation (${actionLabel}) in active exam workspace.`
+    );
+  };
+
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+
+    const blockEvent = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      handleClipboardAttempt(e.type);
+      return false;
+    };
+
+    const blockDragDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      if (e.type === 'drop') {
+        handleClipboardAttempt('drag_drop');
+      }
+      return false;
+    };
+
+    const blockKeydown = (e) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      const key = (e.key || '').toLowerCase();
+      const isInsert = e.key === 'Insert';
+
+      // Block Inspect / Developer Tools / View Source shortcuts
+      if (
+        key === 'f12' || e.keyCode === 123 ||
+        (isModifier && e.shiftKey && (key === 'i' || key === 'j' || key === 'c' || key === 'k')) ||
+        (isModifier && key === 'u') ||
+        (isModifier && e.altKey && (key === 'i' || key === 'j' || key === 'c'))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
+        handleInspectViolation('KEYBOARD_SHORTCUT', e.key || 'DevTools shortcut');
+        return false;
+      }
+
+      if (
+        (isModifier && (key === 'c' || key === 'v' || key === 'x' || isInsert)) ||
+        (e.shiftKey && isInsert)
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
+        const action = (key === 'v' || (e.shiftKey && isInsert)) ? 'paste' : (key === 'x' ? 'cut' : 'copy');
+        handleClipboardAttempt(action);
+        return false;
+      }
+    };
+
+    const blockContextMenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    };
+
+    window.addEventListener('copy', blockEvent, true);
+    window.addEventListener('cut', blockEvent, true);
+    window.addEventListener('paste', blockEvent, true);
+    window.addEventListener('dragover', blockDragDrop, true);
+    window.addEventListener('dragenter', blockDragDrop, true);
+    window.addEventListener('drop', blockDragDrop, true);
+    window.addEventListener('keydown', blockKeydown, true);
+    window.addEventListener('contextmenu', blockContextMenu, true);
+
+    document.addEventListener('copy', blockEvent, true);
+    document.addEventListener('cut', blockEvent, true);
+    document.addEventListener('paste', blockEvent, true);
+    document.addEventListener('dragover', blockDragDrop, true);
+    document.addEventListener('dragenter', blockDragDrop, true);
+    document.addEventListener('drop', blockDragDrop, true);
+    document.addEventListener('contextmenu', blockContextMenu, true);
+
+    const dismissInterval = setInterval(() => {
+      if (clipboardWarningExpiryRef.current && Date.now() > clipboardWarningExpiryRef.current) {
+        clipboardWarningExpiryRef.current = 0;
+        handleProctorResolved('CLIPBOARD_ATTEMPT');
+        setWebcamProctorWarning(prev => (prev.includes('CLIPBOARD LOCKDOWN') ? '' : prev));
+      }
+    }, 1000);
+
+    return () => {
+      window.removeEventListener('copy', blockEvent, true);
+      window.removeEventListener('cut', blockEvent, true);
+      window.removeEventListener('paste', blockEvent, true);
+      window.removeEventListener('dragover', blockDragDrop, true);
+      window.removeEventListener('dragenter', blockDragDrop, true);
+      window.removeEventListener('drop', blockDragDrop, true);
+      window.removeEventListener('keydown', blockKeydown, true);
+      window.removeEventListener('contextmenu', blockContextMenu, true);
+
+      document.removeEventListener('copy', blockEvent, true);
+      document.removeEventListener('cut', blockEvent, true);
+      document.removeEventListener('paste', blockEvent, true);
+      document.removeEventListener('dragover', blockDragDrop, true);
+      document.removeEventListener('dragenter', blockDragDrop, true);
+      document.removeEventListener('drop', blockDragDrop, true);
+      document.removeEventListener('contextmenu', blockContextMenu, true);
+      clearInterval(dismissInterval);
+    };
+  }, [flow, submission]);
+
+  // Real-time Developer Tools / Inspect Element Detection (Docked & Undocked)
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+
+    let active = true;
+
+    // 1. Docked DevTools Detection via Viewport & Screen Dimension Delta
+    const checkDockedDevTools = () => {
+      if (!active) return;
+      const widthDelta = window.outerWidth - window.innerWidth;
+      const heightDelta = window.outerHeight - window.innerHeight;
+      if (widthDelta > 160 || heightDelta > 160) {
+        handleInspectViolation('DOCKED_DEVTOOLS_WINDOW', `Delta W:${widthDelta} H:${heightDelta}`);
+      }
+    };
+
+    // 2. Detached / Floating DevTools Console Inspection Trap
+    // When DevTools is opened, the browser's console formatting engine evaluates custom toString()
+    const devtoolsDetector = /./;
+    devtoolsDetector.toString = function() {
+      if (active) {
+        handleInspectViolation('CONSOLE_INSPECTION_TRAP', 'Console formatting evaluation triggered');
+      }
+      return '';
+    };
+
+    const intervalId = setInterval(() => {
+      checkDockedDevTools();
+      try {
+        console.debug(devtoolsDetector);
+      } catch (_) {}
+    }, 1000);
+
+    window.addEventListener('resize', checkDockedDevTools);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+      window.removeEventListener('resize', checkDockedDevTools);
     };
   }, [flow, submission]);
 
@@ -1459,7 +2153,7 @@ export default function App() {
 
     const checkAdminMessages = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE}/tests/submitted?candidateId=${candidate?.id || candidate?._id}`);
+        const res = await fetch(`${API_BASE}/tests/submitted?id=${candidate?.id || candidate?._id}`);
         if (res.ok && active) {
           const subs = await res.json();
           const match = subs.find(s => (s.submission?.id || s.submission?._id) === subId);
@@ -1498,10 +2192,52 @@ export default function App() {
     };
   }, [flow, submission, candidate]);
 
-  // Sync current question values into draft buffers
+  // Auto-commit previous question draft buffers and sync current question values into draft buffers (Item 3)
   useEffect(() => {
-    if (test && test.questions?.[selectedQuestionIndex]) {
-      const activeAns = examAnswers[selectedQuestionIndex];
+    if (!test || !test.questions) return;
+
+    const prevIndex = prevSelectedQuestionIndexRef.current;
+    let currentAnswers = examAnswersRef.current;
+
+    // If switching away from a valid previous question index, auto-commit the active drafts
+    if (
+      prevIndex !== undefined &&
+      prevIndex !== null &&
+      prevIndex !== selectedQuestionIndex &&
+      test.questions[prevIndex]
+    ) {
+      const updated = [...currentAnswers];
+      if (updated[prevIndex]) {
+        updated[prevIndex] = {
+          ...updated[prevIndex],
+          selectedOptionIndex: draftMCQRef.current,
+          submittedCode: draftCodeRef.current,
+          selectedLanguage: draftLanguageRef.current,
+          submittedHtml: draftHtmlRef.current,
+          submittedCss: draftCssRef.current,
+          submittedJs: draftJsRef.current
+        };
+        currentAnswers = updated;
+        setExamAnswers(updated);
+
+        // Immediate background cache update in localStorage
+        const subId = submission?.id || submission?._id || 'new_attempt';
+        const storageKey = `bics_draft_${test.id}_${candidate?.id}_${subId}`;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(updated));
+        } catch (_) {}
+
+        // Auto-save to server draft
+        saveServerDraft(updated);
+      }
+    }
+
+    // Now update prevIndex to current selectedQuestionIndex
+    prevSelectedQuestionIndexRef.current = selectedQuestionIndex;
+
+    // Load active question drafts from the latest answers state
+    if (test.questions[selectedQuestionIndex]) {
+      const activeAns = currentAnswers[selectedQuestionIndex];
       const activeQuest = test.questions[selectedQuestionIndex];
       setDraftMCQ(activeAns?.selectedOptionIndex ?? null);
       setDraftCode(activeAns?.submittedCode ?? '');
@@ -1516,7 +2252,7 @@ export default function App() {
       setCompileError(null);
       setConsoleTab('testcase');
     }
-  }, [selectedQuestionIndex]);
+  }, [selectedQuestionIndex, test]);
 
   // Listen for iframe log and error events from HTML/CSS/JS preview
   useEffect(() => {
@@ -1591,6 +2327,70 @@ export default function App() {
     return () => clearInterval(interval);
   }, [test, candidate, examAnswers, selectedQuestionIndex, draftMCQ, draftCode, draftLanguage, draftHtml, draftCss, draftJs]);
 
+  // Liveness Heartbeat for Server Dead-Man's Switch (Item 2.4)
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+
+    const subId = submission._id || submission.id;
+    if (!subId) return;
+
+    const sendHeartbeat = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/tests/heartbeat/${subId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // If server finalized submission due to timeout or proctor action, transition to finished
+          if (data.status && data.status !== 'started') {
+            setFlow('finished');
+            setFinishedStep(1);
+          }
+        }
+      } catch (_) {}
+    };
+
+    // Immediate ping + periodic 12-second pulse
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 12000);
+    return () => clearInterval(interval);
+  }, [flow, submission]);
+
+  // Navigator.sendBeacon auto-finalization on browser close / page navigation (Item 2.4)
+  useEffect(() => {
+    if (flow !== 'active_exam' || !submission) return;
+
+    const subId = submission._id || submission.id;
+    if (!subId) return;
+
+    const handleDisconnect = () => {
+      try {
+        if (navigator.sendBeacon) {
+          const payload = JSON.stringify({
+            submissionId: subId,
+            status: 'auto-submitted',
+            reason: 'PAGEHIDE_DISCONNECT',
+            answers: examAnswersRef.current,
+            proctoringLog: getProctoringLogPayload(proctoringWarnings)
+          });
+          const blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon(`${API_BASE}/tests/beacon-disconnect`, blob);
+        }
+      } catch (err) {
+        console.warn("sendBeacon failed:", err);
+      }
+    };
+
+    window.addEventListener('pagehide', handleDisconnect);
+    window.addEventListener('beforeunload', handleDisconnect);
+
+    return () => {
+      window.removeEventListener('pagehide', handleDisconnect);
+      window.removeEventListener('beforeunload', handleDisconnect);
+    };
+  }, [flow, submission, proctoringWarnings]);
+
   // Auto-sync pending submissions when connection comes back online
   useEffect(() => {
     if (!submission) return;
@@ -1606,7 +2406,8 @@ export default function App() {
         const syncDraft = async () => {
           setSyncStatus('initiating');
           try {
-            const payload = JSON.parse(cachedPayload);
+            const payload = await decryptPendingStorage(cachedPayload, subId);
+            if (!payload) throw new Error("Unable to decrypt cached offline payload");
             setSyncStatus('uploading');
             const res = await fetch(`${API_BASE}/tests/submit`, {
               method: 'POST',
@@ -1677,33 +2478,6 @@ export default function App() {
     }
   };
 
-  const logProctoringEvent = async (subObj, type, details, startTime, endTime, durationSeconds) => {
-    try {
-      const targetSub = subObj || submission;
-      if (!targetSub) return;
-      const subId = targetSub.id || targetSub._id;
-
-      const evtObj = {
-        type,
-        details,
-        timestamp: new Date().toISOString(),
-        startTime: startTime ? new Date(startTime).toISOString() : null,
-        endTime: endTime ? new Date(endTime).toISOString() : null,
-        durationSeconds: durationSeconds ? Number(durationSeconds) : 0
-      };
-
-      if (!proctoringEventsRef.current) proctoringEventsRef.current = [];
-      proctoringEventsRef.current.push(evtObj);
-
-      await fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(evtObj)
-      });
-    } catch (e) {
-      console.error("Failed to log proctoring event:", e);
-    }
-  };
 
   const handleRunCode = async () => {
     const activeQuestion = test?.questions?.[selectedQuestionIndex];
@@ -1726,7 +2500,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceCode: draftCode,
-          testCases: allCases
+          testCases: allCases,
+          timeLimitMs: activeQuestion.timeLimitMs || 2000,
+          memoryLimitMb: activeQuestion.memoryLimitMb || 128
         })
       });
       const data = await res.json();
@@ -1860,60 +2636,9 @@ export default function App() {
 
   const encryptEirfPayloadClient = async (payloadObj, studentId, submissionId) => {
     try {
-      const jsonStr = JSON.stringify(payloadObj);
-      const secret = 'bics_secret_key_2026';
-      const saltStr = 'bics_salt_2026';
-      const passphrase = String(submissionId) + secret + String(studentId);
-
-      const encoder = new TextEncoder();
-      const passphraseBytes = encoder.encode(passphrase);
-      const saltBytes = encoder.encode(saltStr);
-
-      const baseKey = await window.crypto.subtle.importKey(
-        'raw',
-        passphraseBytes,
-        'PBKDF2',
-        false,
-        ['deriveKey']
-      );
-
-      const aesKey = await window.crypto.subtle.deriveKey(
-        {
-          name: 'PBKDF2',
-          salt: saltBytes,
-          iterations: 100000,
-          hash: 'SHA-256'
-        },
-        baseKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt']
-      );
-
-      const iv = window.crypto.getRandomValues(new Uint8Array(12));
-      const dataBytes = encoder.encode(jsonStr);
-
-      const encryptedBuf = await window.crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv, tagLength: 128 },
-        aesKey,
-        dataBytes
-      );
-
-      const encryptedBytes = new Uint8Array(encryptedBuf);
-      const tagLength = 16;
-      const ciphertextBytes = encryptedBytes.subarray(0, encryptedBytes.length - tagLength);
-      const authTagBytes = encryptedBytes.subarray(encryptedBytes.length - tagLength);
-
-      const bufToHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-
-      return JSON.stringify({
-        version: '1.0',
-        iv: bufToHex(iv),
-        authTag: bufToHex(authTagBytes),
-        data: bufToHex(ciphertextBytes)
-      });
+      return await encryptEirfEnvelope(payloadObj, API_BASE);
     } catch (err) {
-      console.error("Client-side EIRF payload encryption error:", err);
+      console.error("Client-side asymmetric EIRF payload encryption error:", err);
       return JSON.stringify(payloadObj);
     }
   };
@@ -1973,6 +2698,19 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+
+      // Guarantee EIRF flag is marked true on payload download (Item 7 & 8)
+      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+      saveOfflineSubmission({
+        submissionId: subId,
+        studentId,
+        candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
+        testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
+        answers: answersArr || [],
+        proctoringLog: pLogPayload,
+        hasEirfFlag: true,
+        eirfStatus: 'pending'
+      }).catch(() => {});
     } catch (err) {
       console.error("Failed to generate .eirf backup payload file:", err);
     }
@@ -1998,12 +2736,28 @@ export default function App() {
       const pendingSubmitKey = `bics_pending_submit_${subId}`;
       const payload = {
         submissionId: subId,
+        studentId: candidate?.studentId || submission?.studentId || '',
+        candidateName: candidate?.name || submission?.candidateName || 'Candidate',
+        testTitle: submission?.testTitle || test?.title || 'BICS Examination',
         answers: answersList,
         proctoringLog: fullPLog,
-        status: statusVal
+        status: statusVal,
+        hasEirfFlag: true,
+        eirfStatus: 'pending'
       };
-      localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+
+      // 1. High-capacity IndexedDB persistence (Item 8)
+      saveOfflineSubmission(payload).catch(() => {});
+
+      // 2. Encrypted fallback in localStorage
+      try {
+        const encryptedPending = await encryptPendingStorage(payload, subId);
+        localStorage.setItem(pendingSubmitKey, encryptedPending);
+      } catch (storageErr) {
+        localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+      }
       setHasPendingSubmit(true);
+      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
       
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -2023,13 +2777,15 @@ export default function App() {
           submissionId: subId,
           answers: answersList,
           proctoringLog: fullPLog,
-          status: statusVal
+          status: statusVal,
+          hasEirfFlag: Boolean(submission?.hasEirfFlag || hasWarnings || !isOnline)
         })
       });
       const data = await res.json();
       if (data.success) {
         await logProctoringEvent(submission, 'TEST_SUBMITTED', `Candidate finalized and submitted exam (Status: ${statusVal}).`);
         localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+        await deleteOfflineSubmission(subId).catch(() => {});
         
         if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
         if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -2049,16 +2805,31 @@ export default function App() {
         triggerCustomAlert("Submission Failed", data.error || "An error occurred during submission. Please try again.");
       }
     } catch (err) {
-      console.error("Submission fetch crashed, caching payload locally:", err);
+      console.error("Submission fetch crashed, caching payload locally in IndexedDB:", err);
       const pendingSubmitKey = `bics_pending_submit_${subId}`;
       const payload = {
         submissionId: subId,
+        studentId: candidate?.studentId || submission?.studentId || '',
+        candidateName: candidate?.name || submission?.candidateName || 'Candidate',
+        testTitle: submission?.testTitle || test?.title || 'BICS Examination',
         answers: answersList,
         proctoringLog: fullPLog,
-        status: statusVal
+        status: statusVal,
+        hasEirfFlag: true,
+        eirfStatus: 'pending'
       };
-      localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+
+      // High-capacity IndexedDB persistence
+      saveOfflineSubmission(payload).catch(() => {});
+      try {
+        const encryptedPending = await encryptPendingStorage(payload, subId);
+        localStorage.setItem(pendingSubmitKey, encryptedPending);
+      } catch (storageErr) {
+        localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+      }
       setHasPendingSubmit(true);
+      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+      downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
       
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -2070,6 +2841,59 @@ export default function App() {
       setSubmittingExam(false);
     }
   };
+
+  // Active exam network listener: keep proctoring active, download payload, mark EIRF flag, and sync on reconnect (Items 7 & 8)
+  useEffect(() => {
+    if (!submission) return;
+    const subId = submission.id || submission._id;
+
+    const onOnline = () => {
+      // Drain queued offline proctoring events
+      getOfflineEvents(subId).then(events => {
+        if (events && events.length > 0) {
+          events.forEach(ev => {
+            fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(ev)
+            }).catch(() => {});
+          });
+          clearOfflineEvents(subId);
+        }
+      });
+
+      // Drain queued offline proctoring snapshots
+      getOfflineSnapshots(subId).then(snapshots => {
+        if (snapshots && snapshots.length > 0) {
+          snapshots.forEach(snap => {
+            fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(snap)
+            }).catch(() => {});
+          });
+          clearOfflineSnapshots(subId);
+        }
+      });
+    };
+
+    const onOffline = () => {
+      if (flow === 'active_exam') {
+        logProctoringEvent(submission, 'NETWORK_OFFLINE', 'Candidate network disconnected during active examination session.');
+        setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+        downloadEirfBackupFile(submission, candidate, examAnswers, proctoringWarnings);
+        setWebcamProctorWarning("Network Offline: Local proctoring remains active. Your answers and proctoring telemetry are secured.");
+      }
+    };
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, [submission, flow, candidate, examAnswers, proctoringWarnings]);
 
   const formatTimer = (totalSeconds) => {
     const mins = Math.floor(totalSeconds / 60);
@@ -2092,11 +2916,22 @@ export default function App() {
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f1f5f9' }}>
         <header className="app-header">
           <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <img src="/bics_logo.png" alt="BICS Logo" style={{ height: '34px', width: '34px', objectFit: 'contain' }} />
-            <span className="pixel-logo">Online Test BICS Terminal</span>
+            <img 
+              src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+              onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+              alt="BICS Logo" 
+              style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
+            />
+            <span className="pixel-logo">BICS Terminal</span>
           </div>
           <div className="header-right">
-            <img src="/logo.png" alt="Portal Logo" className="pe-logo" style={{ height: '34px' }} />
+            <img 
+              src={`${import.meta.env.BASE_URL}logo.png`} 
+              onError={(e) => { e.currentTarget.src = '/logo.png'; }} 
+              alt="Portal Logo" 
+              className="pe-logo" 
+              style={{ height: '34px' }} 
+            />
           </div>
         </header>
         
@@ -2190,21 +3025,77 @@ export default function App() {
     );
   }
 
-  // VIEW: Guidelines & Calibration Setup
-  if (flow === 'guidelines_setup') {
+  // VIEW: Step 2 - Terms and Conditions & Undertaking
+  if (flow === 'terms_conditions') {
     return (
-      <GuidelinesSetupView
+      <TermsConditionsView
+        test={test}
+        candidate={candidate}
+        consentRulesChecked={consentRulesChecked}
+        setConsentRulesChecked={setConsentRulesChecked}
+        consentProctoringChecked={consentProctoringChecked}
+        setConsentProctoringChecked={setConsentProctoringChecked}
+        onProceedToSystemChecks={() => setFlow('system_checks')}
+      />
+    );
+  }
+
+  // VIEW: Step 3 - System & Hardware Compatibility Checks
+  if (flow === 'system_checks') {
+    return (
+      <SystemChecksView
+        test={test}
+        candidate={candidate}
+        securityMetadata={securityMetadata}
+        multiDisplayDetected={multiDisplayDetected}
+        isFullscreen={isFullscreen}
+        isFocused={isFocused}
+        webcamGranted={webcamGranted}
+        micGranted={micGranted}
+        systemChecksCompleted={systemChecksCompleted}
+        onCompleteSystemChecks={() => setSystemChecksCompleted(true)}
+        handleAuthorizeCamera={handleAuthorizeCamera}
+        handleLockFullscreen={handleLockFullscreen}
+        onBackToTerms={() => setFlow('terms_conditions')}
+        onProceedToBiometrics={() => {
+          setSystemChecksCompleted(true);
+          setFlow('biometric_check');
+        }}
+      />
+    );
+  }
+
+  // VIEW: Step 4 - Biometric & Hardware Verification Gate
+  if (flow === 'biometric_check') {
+    return (
+      <BiometricCheckView
+        candidate={candidate}
         test={test}
         webcamStream={webcamStream}
         webcamGranted={webcamGranted}
         micGranted={micGranted}
-        isFocused={isFocused}
         isFullscreen={isFullscreen}
-        calibVideoRef={calibVideoRef}
-        consentChecked={consentChecked}
-        setConsentChecked={setConsentChecked}
-        setupReady={setupReady}
+        isFocused={isFocused}
+        savedBiometrics={biometricsCache}
+        onSaveBiometricsCache={(update) => setBiometricsCache(prev => ({ ...prev, ...update }))}
+        blazefaceModelRef={blazefaceModelRef}
         handleAuthorizeCamera={handleAuthorizeCamera}
+        handleLockFullscreen={handleLockFullscreen}
+        onBackToSystemChecks={() => setFlow('system_checks')}
+        onCompleteBiometricGate={handleCompleteBiometricGate}
+      />
+    );
+  }
+
+  // VIEW: Step 5 - Guidelines & Proctoring Setup (With 1.00 min holding countdown)
+  if (flow === 'guidelines_setup') {
+    return (
+      <GuidelinesSetupView
+        test={test}
+        candidate={candidate}
+        isFullscreen={isFullscreen}
+        handleLockFullscreen={handleLockFullscreen}
+        onBackToBiometrics={() => setFlow('biometric_check')}
         handleStartExam={handleStartExam}
       />
     );
@@ -2213,67 +3104,100 @@ export default function App() {
   // VIEW: Active Proctoring Examination Workspace (Image 3 style)
   if (flow === 'active_exam') {
     return (
-      <ActiveExamView
-        test={test}
-        candidate={candidate}
-        examTimeLeft={examTimeLeft}
-        isOnline={isOnline}
-        submittingExam={submittingExam}
-        handleManualSubmitExam={handleManualSubmitExam}
-        webcamProctorWarning={webcamProctorWarning}
-        examVideoRef={examVideoRef}
-        isSidebarOpen={isSidebarOpen}
-        setIsSidebarOpen={setIsSidebarOpen}
-        showQuestionPalette={showQuestionPalette}
-        setShowQuestionPalette={setShowQuestionPalette}
-        selectedQuestionIndex={selectedQuestionIndex}
-        setSelectedQuestionIndex={setSelectedQuestionIndex}
-        examAnswers={examAnswers}
-        setExamAnswers={setExamAnswers}
-        draftMCQ={draftMCQ}
-        setDraftMCQ={setDraftMCQ}
-        draftCode={draftCode}
-        setDraftCode={setDraftCode}
-        draftLanguage={draftLanguage}
-        draftQIdx={draftQIdx}
-        setDraftQIdx={setDraftQIdx}
-        handleLanguageChange={handleLanguageChange}
-        webActiveTab={webActiveTab}
-        setWebActiveTab={setWebActiveTab}
-        draftHtml={draftHtml}
-        setDraftHtml={setDraftHtml}
-        draftCss={draftCss}
-        setDraftCss={setDraftCss}
-        draftJs={draftJs}
-        setDraftJs={setDraftJs}
-        consoleTab={consoleTab}
-        setConsoleTab={setConsoleTab}
-        isRunningCode={isRunningCode}
-        handleRunCode={handleRunCode}
-        runResults={runResults}
-        compileError={compileError}
-        handleSaveAndNext={handleSaveAndNext}
-        triggerCustomConfirm={triggerCustomConfirm}
-        showQuestionInfoModal={showQuestionInfoModal}
-        setShowQuestionInfoModal={setShowQuestionInfoModal}
-        showWarningModal={showWarningModal}
-        setShowWarningModal={setShowWarningModal}
-        proctoringWarnings={proctoringWarnings}
-        customModal={customModal}
-        setCustomModal={setCustomModal}
-        isFullWebStudioOpen={isFullWebStudioOpen}
-        setIsFullWebStudioOpen={setIsFullWebStudioOpen}
-        webStudioViewportMode={webStudioViewportMode}
-        setWebStudioViewportMode={setWebStudioViewportMode}
-        webStudioConsoleOpen={webStudioConsoleOpen}
-        setWebStudioConsoleOpen={setWebStudioConsoleOpen}
-        webConsoleLogs={webConsoleLogs}
-        setWebConsoleLogs={setWebConsoleLogs}
-        saveServerDraft={saveServerDraft}
-        activeQuestionBtnRef={activeQuestionBtnRef}
-        navTrackRef={navTrackRef}
-        setTest={setTest}
-      />
+      <>
+        <ActiveExamView
+          test={test}
+          candidate={candidate}
+          examTimeLeft={examTimeLeft}
+          isOnline={isOnline}
+          submittingExam={submittingExam}
+          handleManualSubmitExam={handleManualSubmitExam}
+          webcamProctorWarning={webcamProctorWarning}
+          examVideoRef={examVideoRef}
+          isSidebarOpen={isSidebarOpen}
+          setIsSidebarOpen={setIsSidebarOpen}
+          showQuestionPalette={showQuestionPalette}
+          setShowQuestionPalette={setShowQuestionPalette}
+          selectedQuestionIndex={selectedQuestionIndex}
+          setSelectedQuestionIndex={setSelectedQuestionIndex}
+          examAnswers={examAnswers}
+          setExamAnswers={setExamAnswers}
+          draftMCQ={draftMCQ}
+          setDraftMCQ={setDraftMCQ}
+          draftCode={draftCode}
+          setDraftCode={setDraftCode}
+          draftLanguage={draftLanguage}
+          draftQIdx={draftQIdx}
+          setDraftQIdx={setDraftQIdx}
+          handleLanguageChange={handleLanguageChange}
+          webActiveTab={webActiveTab}
+          setWebActiveTab={setWebActiveTab}
+          draftHtml={draftHtml}
+          setDraftHtml={setDraftHtml}
+          draftCss={draftCss}
+          setDraftCss={setDraftCss}
+          draftJs={draftJs}
+          setDraftJs={setDraftJs}
+          consoleTab={consoleTab}
+          setConsoleTab={setConsoleTab}
+          isRunningCode={isRunningCode}
+          handleRunCode={handleRunCode}
+          runResults={runResults}
+          compileError={compileError}
+          handleSaveAndNext={handleSaveAndNext}
+          triggerCustomConfirm={triggerCustomConfirm}
+          showQuestionInfoModal={showQuestionInfoModal}
+          setShowQuestionInfoModal={setShowQuestionInfoModal}
+          showWarningModal={showWarningModal}
+          setShowWarningModal={setShowWarningModal}
+          proctoringWarnings={proctoringWarnings}
+          customModal={customModal}
+          setCustomModal={setCustomModal}
+          isFullWebStudioOpen={isFullWebStudioOpen}
+          setIsFullWebStudioOpen={setIsFullWebStudioOpen}
+          webStudioViewportMode={webStudioViewportMode}
+          setWebStudioViewportMode={setWebStudioViewportMode}
+          webStudioConsoleOpen={webStudioConsoleOpen}
+          setWebStudioConsoleOpen={setWebStudioConsoleOpen}
+          webConsoleLogs={webConsoleLogs}
+          setWebConsoleLogs={setWebConsoleLogs}
+          saveServerDraft={saveServerDraft}
+          activeQuestionBtnRef={activeQuestionBtnRef}
+          navTrackRef={navTrackRef}
+          setTest={setTest}
+          onClipboardAttempt={handleClipboardAttempt}
+        />
+
+        {/* Bottom-right toast notification for blocked actions & proctoring alerts (Item B6) */}
+        {toastNotification.visible && (
+          <div
+            role="alert"
+            className="fixed bottom-6 right-6 z-[99999] max-w-md w-full bg-slate-900 border-2 border-red-500 text-white rounded-xl shadow-2xl p-4 flex items-start gap-3.5 animate-bounce-subtle pointer-events-auto transition-all duration-300"
+            style={{
+              boxShadow: '0 20px 25px -5px rgba(239, 68, 68, 0.4), 0 8px 10px -6px rgba(239, 68, 68, 0.3)'
+            }}
+          >
+            <div className="w-8 h-8 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0 border border-red-500/30">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-red-400 tracking-wide uppercase">{toastNotification.title}</div>
+              <div className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">{toastNotification.message}</div>
+            </div>
+            <button
+              onClick={() => setToastNotification(prev => ({ ...prev, visible: false }))}
+              className="text-slate-400 hover:text-white p-1 rounded-md transition-colors shrink-0"
+              title="Dismiss"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </>
     );
   }
 

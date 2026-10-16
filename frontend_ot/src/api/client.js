@@ -19,15 +19,33 @@ export const API_BASE = (() => {
 
 export const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
 
-// Automatically attach apiSecret query parameter to all backend API requests
+// Auto-extract URL auth tokens on initialization
+if (typeof window !== 'undefined') {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const urlAuth = params.get('authToken') || params.get('jwt');
+    if (urlAuth) {
+      localStorage.setItem('bics_auth_token', urlAuth);
+      sessionStorage.setItem('bics_auth_token', urlAuth);
+      window.__BICS_AUTH_TOKEN__ = urlAuth;
+    }
+    const urlExamToken = params.get('token');
+    if (urlExamToken) {
+      sessionStorage.setItem('bics_exam_token', urlExamToken);
+      window.__BICS_EXAM_TOKEN__ = urlExamToken;
+    }
+  } catch (_) {}
+}
+
+// Enterprise fetch wrapper with automatic JWT & Exam Token authentication
 if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_patched) {
   window.__bics_ot_fetch_patched = true;
   const originalFetch = window.fetch;
   window.fetch = function(resource, init) {
     const secret = API_ACCESS_SECRET || 
-                   localStorage.getItem('portal_api_secret') || 
+                   sessionStorage.getItem('portal_api_secret') || 
                    window.__BICS_API_SECRET__ || 
-                   'qwertty';
+                   '';
 
     let urlString = '';
     if (typeof resource === 'string') {
@@ -48,15 +66,48 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
                           urlString.startsWith(window.location.origin) ||
                           (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
 
+    let targetUrl = urlString;
     if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
       const separator = urlString.includes('?') ? '&' : '?';
-      const targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
+      targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
+    }
+
+    if (isBackendApi) {
+      const token = localStorage.getItem('bics_auth_token') || 
+                    sessionStorage.getItem('bics_auth_token') || 
+                    localStorage.getItem('token') || 
+                    window.__BICS_AUTH_TOKEN__ || 
+                    '';
+      const examToken = sessionStorage.getItem('bics_exam_token') || 
+                        window.__BICS_EXAM_TOKEN__ || 
+                        '';
+
+      let reqInit = init ? { ...init } : {};
+      let headersObj = new Headers(reqInit.headers || (resource instanceof Request ? resource.headers : {}));
+
+      if (token && !headersObj.has('Authorization')) {
+        headersObj.set('Authorization', `Bearer ${token}`);
+      }
+      if (examToken && !headersObj.has('x-exam-token')) {
+        headersObj.set('x-exam-token', examToken);
+      }
+      reqInit.headers = headersObj;
+
+      if (typeof resource === 'string') {
+        return originalFetch.call(this, targetUrl, reqInit);
+      } else if (resource && typeof resource === 'object') {
+        return originalFetch.call(this, new Request(targetUrl, reqInit), reqInit);
+      }
+    }
+
+    if (targetUrl !== urlString) {
       if (typeof resource === 'string') {
         return originalFetch.call(this, targetUrl, init);
       } else if (resource && typeof resource === 'object') {
         return originalFetch.call(this, new Request(targetUrl, resource), init);
       }
     }
+
     return originalFetch.call(this, resource, init);
   };
 }

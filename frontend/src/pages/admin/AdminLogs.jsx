@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { RefreshCw, Terminal, Table } from 'lucide-react';
+import { RefreshCw, Terminal, Table, Download, Search } from 'lucide-react';
 
 export default function AdminLogs({
   fetchSystemLogs,
@@ -11,18 +11,37 @@ export default function AdminLogs({
   logFilterSeverity,
   setLogFilterSeverity,
   systemLogs,
+  systemLogsMeta,
+  systemLogLimit,
+  setSystemLogLimit,
+  logSearch,
+  setLogSearch,
   logPage
 }) {
   const [viewMode, setViewMode] = useState('terminal'); // 'terminal' (default light console) or 'table'
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
+  const userScrolledUpRef = useRef(false);
   const terminalScrollRef = useRef(null);
+
+  const currentLimit = systemLogLimit || 50;
 
   const handleRefresh = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
     const start = Date.now();
     try {
-      if (fetchSystemLogs) await fetchSystemLogs();
+      if (fetchSystemLogs) {
+        await fetchSystemLogs({
+          page: logPage || 1,
+          limit: currentLimit,
+          actor: logFilterActor,
+          action: logFilterAction,
+          severity: logFilterSeverity,
+          search: logSearch
+        });
+      }
     } finally {
       const elapsed = Date.now() - start;
       if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed));
@@ -30,36 +49,96 @@ export default function AdminLogs({
     }
   };
 
-  // Filter logs based on actor, action, and severity
-  let filteredLogs = [...(systemLogs || [])];
-  if (logFilterActor?.trim()) {
-    const q = logFilterActor.toLowerCase();
-    filteredLogs = filteredLogs.filter(l => l.actor && l.actor.toLowerCase().includes(q));
-  }
-  if (logFilterAction !== 'ALL') {
-    filteredLogs = filteredLogs.filter(l => l.action === logFilterAction);
-  }
-  if (logFilterSeverity !== 'ALL') {
-    filteredLogs = filteredLogs.filter(l => l.severity === logFilterSeverity);
-  }
+  const handlePageChange = (newPage) => {
+    if (newPage < 1 || newPage > maxPage) return;
+    setLogPage(newPage);
+    if (fetchSystemLogs) {
+      fetchSystemLogs({
+        page: newPage,
+        limit: currentLimit,
+        actor: logFilterActor,
+        action: logFilterAction,
+        severity: logFilterSeverity,
+        search: logSearch
+      });
+    }
+  };
 
-  const limit = 20;
-  const totalCount = filteredLogs.length;
-  const maxPage = Math.ceil(totalCount / limit) || 1;
+  const handleLimitChange = (newLimit) => {
+    if (setSystemLogLimit) setSystemLogLimit(newLimit);
+    setLogPage(1);
+    if (fetchSystemLogs) {
+      fetchSystemLogs({
+        page: 1,
+        limit: newLimit,
+        actor: logFilterActor,
+        action: logFilterAction,
+        severity: logFilterSeverity,
+        search: logSearch
+      });
+    }
+  };
+
+  const handleFilterChange = (updates = {}) => {
+    setLogPage(1);
+    if (fetchSystemLogs) {
+      fetchSystemLogs({
+        page: 1,
+        limit: currentLimit,
+        actor: updates.actor !== undefined ? updates.actor : logFilterActor,
+        action: updates.action !== undefined ? updates.action : logFilterAction,
+        severity: updates.severity !== undefined ? updates.severity : logFilterSeverity,
+        search: updates.search !== undefined ? updates.search : logSearch
+      });
+    }
+  };
+
+  const handleTerminalScroll = (e) => {
+    if (!e.currentTarget) return;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    const isUp = scrollHeight - scrollTop - clientHeight > 35;
+    userScrolledUpRef.current = isUp;
+    setUserScrolledUp(isUp);
+  };
+
+  // Determine if server-side metadata is available
+  const isServerPaged = !!systemLogsMeta;
+  const totalCount = isServerPaged ? (systemLogsMeta.totalCount || 0) : (systemLogs || []).length;
+  const maxPage = isServerPaged ? (systemLogsMeta.totalPages || 1) : (Math.ceil(totalCount / currentLimit) || 1);
   const pageIndex = Math.min(logPage || 1, maxPage);
-  // Slice the page and order oldest-at-top -> newest-at-bottom
-  const paginatedList = [...filteredLogs.slice((pageIndex - 1) * limit, pageIndex * limit)].sort(
-    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
-  );
-  const startIdx = totalCount === 0 ? 0 : (pageIndex - 1) * limit + 1;
-  const endIdx = Math.min(pageIndex * limit, totalCount);
 
-  // Auto-scroll to bottom so newest logs at the bottom are immediately visible
+  // When server-side paged, systemLogs is already the current page
+  const paginatedList = isServerPaged
+    ? [...(systemLogs || [])].sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
+    : [...(systemLogs || [])]
+        .filter(l => {
+          if (logFilterActor?.trim() && !l.actor?.toLowerCase().includes(logFilterActor.toLowerCase())) return false;
+          if (logFilterAction !== 'ALL' && l.action !== logFilterAction) return false;
+          if (logFilterSeverity !== 'ALL' && l.severity !== logFilterSeverity) return false;
+          return true;
+        })
+        .slice((pageIndex - 1) * currentLimit, pageIndex * currentLimit)
+        .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+
+  const startIdx = isServerPaged ? (systemLogsMeta.startIndex || 0) : (totalCount === 0 ? 0 : (pageIndex - 1) * currentLimit + 1);
+  const endIdx = isServerPaged ? (systemLogsMeta.endIndex || 0) : Math.min(pageIndex * currentLimit, totalCount);
+
+  // Smart auto-scroll: Only scroll to bottom if autoScroll is enabled AND user has not scrolled up!
   useEffect(() => {
-    if (terminalScrollRef.current) {
+    if (autoScroll && !userScrolledUpRef.current && terminalScrollRef.current) {
       terminalScrollRef.current.scrollTop = terminalScrollRef.current.scrollHeight;
     }
-  }, [systemLogs, pageIndex, logFilterActor, logFilterAction, logFilterSeverity, viewMode]);
+  }, [systemLogs, pageIndex, autoScroll]);
+
+  const exportLogsToJson = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(systemLogs, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `bics_system_logs_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
 
   // Subtle light theme severity styles (no dark, no neon/bright colors)
   const getSeverityStyle = (sev) => {
@@ -170,44 +249,76 @@ export default function AdminLogs({
         </div>
       </div>
 
-      {/* FILTERS TOOLBAR */}
+      {/* FILTERS & DYNAMIC CONTROLS TOOLBAR */}
       <div style={{
         display: 'flex',
         gap: '12px',
         flexWrap: 'wrap',
+        alignItems: 'flex-end',
         backgroundColor: '#f8fafc',
         padding: '12px 14px',
         borderRadius: '6px',
         marginBottom: '16px',
         border: '1px solid #e2e8f0'
       }}>
+        {/* Search Content / Details */}
         <div style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '8pt', fontWeight: 'bold', color: '#475569' }}>Search Message / Details</label>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <input
+              type="text"
+              className="cf-input"
+              style={{ fontSize: '8.5pt', padding: '5px 8px 5px 24px', width: '100%', fontFamily: 'Consolas, monospace' }}
+              placeholder="Search details, IP, resource..."
+              value={logSearch || ''}
+              onChange={e => {
+                if (setLogSearch) setLogSearch(e.target.value);
+                handleFilterChange({ search: e.target.value });
+              }}
+            />
+            <Search size={13} style={{ position: 'absolute', left: '7px', color: '#94a3b8' }} />
+          </div>
+        </div>
+
+        {/* Search Actor */}
+        <div style={{ flex: '1 1 150px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '8pt', fontWeight: 'bold', color: '#475569' }}>Search Actor / User</label>
           <input
             type="text"
             className="cf-input"
             style={{ fontSize: '8.5pt', padding: '5px 8px', fontFamily: 'Consolas, "Lucida Console", Courier, monospace' }}
             placeholder="e.g. admin, student..."
-            value={logFilterActor}
-            onChange={e => { setLogFilterActor(e.target.value); setLogPage(1); }}
+            value={logFilterActor || ''}
+            onChange={e => {
+              setLogFilterActor(e.target.value);
+              handleFilterChange({ actor: e.target.value });
+            }}
           />
         </div>
 
-        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {/* Action Type */}
+        <div style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '8pt', fontWeight: 'bold', color: '#475569' }}>Action Type</label>
           <select
             className="cf-input"
             style={{ fontSize: '8.5pt', padding: '5px 8px', height: '32px', fontFamily: 'Consolas, "Lucida Console", Courier, monospace' }}
             value={logFilterAction}
-            onChange={e => { setLogFilterAction(e.target.value); setLogPage(1); }}
+            onChange={e => {
+              setLogFilterAction(e.target.value);
+              handleFilterChange({ action: e.target.value });
+            }}
           >
             <option value="ALL">ALL ACTIONS</option>
+            <option value="MARKS_LEDGER_CDC">MARKS_LEDGER_CDC</option>
+            <option value="ADMIN_DB_VIEWER_INSPECT">ADMIN_DB_VIEWER_INSPECT</option>
+            <option value="SECURITY_LOCKOUT">SECURITY_LOCKOUT</option>
+            <option value="SECURITY_WARNING">SECURITY_WARNING</option>
+            <option value="EXAM_SUBMISSION_DEADLINE_EXCEEDED">EXAM_SUBMISSION_DEADLINE_EXCEEDED</option>
             <option value="USER_SIGN_IN">USER_SIGN_IN</option>
             <option value="USER_SIGN_OUT">USER_SIGN_OUT</option>
             <option value="SIGN_IN_FAILED">SIGN_IN_FAILED</option>
             <option value="REGISTRATION_COMPLETE">REGISTRATION_COMPLETE</option>
             <option value="REGISTRATION_FAILED">REGISTRATION_FAILED</option>
-            <option value="REGISTRATION_CONNECTION_FAILED">REGISTRATION_CONNECTION_FAILED</option>
             <option value="PROCTOR_ALERT_FULLSCREEN_EXIT">PROCTOR_ALERT_FULLSCREEN_EXIT</option>
             <option value="PROCTOR_ALERT_TAB_SWITCH">PROCTOR_ALERT_TAB_SWITCH</option>
             <option value="TECHNICAL_ERROR">TECHNICAL_ERROR</option>
@@ -217,19 +328,87 @@ export default function AdminLogs({
           </select>
         </div>
 
-        <div style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {/* Severity */}
+        <div style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '8pt', fontWeight: 'bold', color: '#475569' }}>Severity</label>
           <select
             className="cf-input"
             style={{ fontSize: '8.5pt', padding: '5px 8px', height: '32px' }}
             value={logFilterSeverity}
-            onChange={e => { setLogFilterSeverity(e.target.value); setLogPage(1); }}
+            onChange={e => {
+              setLogFilterSeverity(e.target.value);
+              handleFilterChange({ severity: e.target.value });
+            }}
           >
             <option value="ALL">All Severities</option>
             <option value="info">Info</option>
             <option value="warning">Warning</option>
             <option value="error">Error</option>
           </select>
+        </div>
+
+        {/* Dynamic Limit Selector */}
+        <div style={{ flex: '0 0 110px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '8pt', fontWeight: 'bold', color: '#475569' }}>Rows Per Page</label>
+          <select
+            className="cf-input"
+            style={{ fontSize: '8.5pt', padding: '5px 8px', height: '32px', fontFamily: 'Consolas, monospace' }}
+            value={currentLimit}
+            onChange={e => handleLimitChange(Number(e.target.value))}
+          >
+            <option value={25}>25 rows</option>
+            <option value={50}>50 rows</option>
+            <option value={100}>100 rows</option>
+            <option value={250}>250 rows</option>
+            <option value={500}>500 rows</option>
+          </select>
+        </div>
+
+        {/* Action Buttons: Auto-scroll & Export */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '32px' }}>
+          <button
+            type="button"
+            onClick={() => setAutoScroll(prev => !prev)}
+            title={autoScroll ? 'Pause auto-scrolling' : 'Enable auto-scrolling'}
+            style={{
+              padding: '6px 10px',
+              fontSize: '7.5pt',
+              fontWeight: '700',
+              fontFamily: 'Consolas, monospace',
+              borderRadius: '4px',
+              border: '1px solid',
+              cursor: 'pointer',
+              backgroundColor: autoScroll ? '#dcfce7' : '#fee2e2',
+              borderColor: autoScroll ? '#86efac' : '#fca5a5',
+              color: autoScroll ? '#166534' : '#991b1b',
+              height: '32px'
+            }}
+          >
+            Auto-scroll: {autoScroll ? 'ON' : 'PAUSED'}
+          </button>
+
+          <button
+            type="button"
+            onClick={exportLogsToJson}
+            title="Export filtered logs to JSON"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '6px 10px',
+              fontSize: '8pt',
+              fontWeight: '600',
+              borderRadius: '4px',
+              border: '1px solid #cbd5e1',
+              backgroundColor: '#ffffff',
+              color: '#334155',
+              cursor: 'pointer',
+              height: '32px'
+            }}
+          >
+            <Download size={12} />
+            <span>Export</span>
+          </button>
         </div>
       </div>
 
@@ -247,8 +426,10 @@ export default function AdminLogs({
           /* VIEW MODE 1: BORDERLESS TABULAR SYSTEM LOG CONSOLE */
           <div
             ref={terminalScrollRef}
+            onScroll={handleTerminalScroll}
             className="mongo-bson-mono"
             style={{
+              position: 'relative',
               background: '#f8fafc',
               border: '1px solid #cbd5e1',
               borderRadius: '6px',
@@ -397,6 +578,41 @@ export default function AdminLogs({
                 </tbody>
               </table>
             )}
+
+            {/* Floating Jump to Latest Button when User is Reading Earlier Logs */}
+            {userScrolledUp && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (terminalScrollRef.current) {
+                    terminalScrollRef.current.scrollTop = terminalScrollRef.current.scrollHeight;
+                  }
+                  userScrolledUpRef.current = false;
+                  setUserScrolledUp(false);
+                }}
+                style={{
+                  position: 'sticky',
+                  bottom: '6px',
+                  float: 'right',
+                  zIndex: 20,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '4px 10px',
+                  borderRadius: '16px',
+                  backgroundColor: '#002147',
+                  color: '#ffffff',
+                  border: '1px solid #3b82f6',
+                  fontSize: '7.5pt',
+                  fontWeight: '700',
+                  fontFamily: 'Consolas, monospace',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                  cursor: 'pointer'
+                }}
+              >
+                ↓ Jump to latest
+              </button>
+            )}
           </div>
         ) : (
           /* VIEW MODE 2: BORDERLESS STRUCTURED TABLE WITH HORIZONTAL ROW DIVIDERS */
@@ -519,24 +735,45 @@ export default function AdminLogs({
         color: '#64748b'
       }}>
         <span>
-          Showing {startIdx} to {endIdx} of {totalCount} log records
+          Showing {startIdx} to {endIdx} of {totalCount} log records {maxPage > 1 ? `(Page ${pageIndex} of ${maxPage})` : ''}
         </span>
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
             className="cf-btn-secondary"
             disabled={pageIndex <= 1}
-            onClick={() => setLogPage(pageIndex - 1)}
+            onClick={() => handlePageChange(1)}
+            style={{ padding: '3px 8px', fontSize: '8pt', margin: 0, fontFamily: 'Consolas, monospace' }}
+            title="First page"
+          >
+            &laquo;
+          </button>
+          <button
+            className="cf-btn-secondary"
+            disabled={pageIndex <= 1}
+            onClick={() => handlePageChange(pageIndex - 1)}
             style={{ padding: '3px 9px', fontSize: '8pt', margin: 0, fontFamily: 'Consolas, monospace' }}
           >
-            &lt; Previous
+            &lt; Prev
+          </button>
+          <span style={{ padding: '3px 6px', fontSize: '8pt', fontWeight: 'bold', color: '#002147' }}>
+            {pageIndex} / {maxPage}
+          </span>
+          <button
+            className="cf-btn-secondary"
+            disabled={pageIndex >= maxPage}
+            onClick={() => handlePageChange(pageIndex + 1)}
+            style={{ padding: '3px 9px', fontSize: '8pt', margin: 0, fontFamily: 'Consolas, monospace' }}
+          >
+            Next &gt;
           </button>
           <button
             className="cf-btn-secondary"
             disabled={pageIndex >= maxPage}
-            onClick={() => setLogPage(pageIndex + 1)}
-            style={{ padding: '3px 9px', fontSize: '8pt', margin: 0, fontFamily: 'Consolas, monospace' }}
+            onClick={() => handlePageChange(maxPage)}
+            style={{ padding: '3px 8px', fontSize: '8pt', margin: 0, fontFamily: 'Consolas, monospace' }}
+            title="Last page"
           >
-            Next &gt;
+            &raquo;
           </button>
         </div>
       </div>

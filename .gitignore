@@ -32,6 +32,8 @@ yarn-error.log*
 
 # Local uploads
 backend/public/uploads/
+backend/public/proctoring/
+public/proctoring/
 backend/temp_runs/
 
 # Sensitive Quiz Payloads & Deploy Scripts
@@ -42,3 +44,17 @@ backend/deploy_all_local.js
 # Temporary Scratch Files
 scratch/
 
+# Cryptographic Private Keys
+backend/keys/*.pem
+backend/keys/
+
+# AI Agent & IDE Internal Metadata
+.agents/
+.claude/
+agent/
+skills-lock.json
+
+# Sandbox temp execution binaries
+backend/sandbox/*.cpp
+backend/sandbox/*.out
+backend/sandbox/*.exe

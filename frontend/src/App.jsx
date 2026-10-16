@@ -62,7 +62,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || (() => {
 
 const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
 
-// Automatically attach apiSecret query parameter to all backend API requests
+// Automatically attach apiSecret query parameter and Bearer JWT token to all backend API requests
 if (typeof window !== 'undefined' && window.fetch && !window.__bics_fetch_patched) {
   window.__bics_fetch_patched = true;
   const originalFetch = window.fetch;
@@ -91,9 +91,28 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_fetch_patche
                           urlString.startsWith(window.location.origin) ||
                           (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
 
+    let targetUrl = urlString;
     if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
       const separator = urlString.includes('?') ? '&' : '?';
-      const targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
+      targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
+    }
+
+    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token');
+    if (isBackendApi && token) {
+      let reqInit = init ? { ...init } : {};
+      let headersObj = new Headers(reqInit.headers || (resource instanceof Request ? resource.headers : {}));
+      if (!headersObj.has('Authorization')) {
+        headersObj.set('Authorization', `Bearer ${token}`);
+      }
+      reqInit.headers = headersObj;
+      if (typeof resource === 'string') {
+        return originalFetch.call(this, targetUrl, reqInit);
+      } else if (resource && typeof resource === 'object') {
+        return originalFetch.call(this, new Request(targetUrl, reqInit), reqInit);
+      }
+    }
+
+    if (targetUrl !== urlString) {
       if (typeof resource === 'string') {
         return originalFetch.call(this, targetUrl, init);
       } else if (resource && typeof resource === 'object') {
@@ -128,6 +147,8 @@ export default function App() {
 
   const [user, setUser] = useState(() => {
     try {
+      const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+      if (!token) return null;
       const stored = localStorage.getItem('bics_session');
       if (stored) {
         const parsed = JSON.parse(stored);
@@ -135,6 +156,7 @@ export default function App() {
           return parsed.user;
         } else {
           localStorage.removeItem('bics_session');
+          localStorage.removeItem('bics_auth_token');
         }
       }
       const temp = sessionStorage.getItem('bics_session');
@@ -488,6 +510,23 @@ export default function App() {
   const [changePasswordEmailCode, setChangePasswordEmailCode] = useState('');
   const [changePasswordCodeSent, setChangePasswordCodeSent] = useState(false);
   const [sendingChangePasswordCode, setSendingChangePasswordCode] = useState(false);
+  const [changePasswordCooldown, setChangePasswordCooldown] = useState(0);
+
+  useEffect(() => {
+    if (changePasswordCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setChangePasswordCooldown(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [changePasswordCooldown]);
+
+  // Admin access guard: prevent admin from accessing change password view
+  useEffect(() => {
+    if (user?.role === 'admin' && view === 'changepassword') {
+      setView('admin');
+      setAdminError && setAdminError("Admin credentials are configuration-authoritative and managed strictly via .env");
+    }
+  }, [user, view]);
 
   const generateChangePasswordCaptcha = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -721,6 +760,9 @@ export default function App() {
 
   // Admin System Logs & Live Proctoring Monitoring states
   const [systemLogs, setSystemLogs] = useState([]);
+  const [systemLogsMeta, setSystemLogsMeta] = useState(null);
+  const [systemLogLimit, setSystemLogLimit] = useState(100);
+  const [logSearch, setLogSearch] = useState('');
   const [liveSubmissions, setLiveSubmissions] = useState([]);
   const [selectedProctorTest, setSelectedProctorTest] = useState(null);
   const [selectedProctorStudent, setSelectedProctorStudent] = useState(null);
@@ -773,13 +815,52 @@ export default function App() {
     }
   };
 
-  const fetchSystemLogs = async () => {
+  const fetchSystemLogs = async (params = {}) => {
     setLoadingMessage("Loading system audit logs...");
     try {
-      const res = await fetch(`${API_BASE}/admin/system-logs`);
+      const page = params.page || logPage || 1;
+      const limit = params.limit || systemLogLimit || 100;
+      const actor = params.actor !== undefined ? params.actor : (logFilterActor || '');
+      const action = params.action !== undefined ? params.action : (logFilterAction || 'ALL');
+      const severity = params.severity !== undefined ? params.severity : (logFilterSeverity || 'ALL');
+      const search = params.search !== undefined ? params.search : (logSearch || '');
+
+      const q = new URLSearchParams();
+      q.set('page', String(page));
+      q.set('limit', String(limit));
+      if (actor) q.set('actor', actor);
+      if (action && action !== 'ALL') q.set('action', action);
+      if (severity && severity !== 'ALL') q.set('severity', severity);
+      if (search) q.set('search', search);
+
+      const token = localStorage.getItem('token');
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_BASE}/admin/system-logs?${q.toString()}`, { headers });
       if (res.ok) {
         const data = await res.json();
-        setSystemLogs(data || []);
+        if (Array.isArray(data)) {
+          setSystemLogs(data);
+          setSystemLogsMeta({
+            totalCount: data.length,
+            page: 1,
+            limit: data.length,
+            totalPages: 1,
+            startIndex: data.length > 0 ? 1 : 0,
+            endIndex: data.length
+          });
+        } else if (data && Array.isArray(data.logs)) {
+          setSystemLogs(data.logs);
+          setSystemLogsMeta({
+            totalCount: data.totalCount || 0,
+            page: data.page || page,
+            limit: data.limit || limit,
+            totalPages: data.totalPages || 1,
+            startIndex: data.startIndex || 0,
+            endIndex: data.endIndex || 0
+          });
+        }
       }
     } catch (e) {
       console.error("Error fetching system logs:", e);
@@ -848,7 +929,7 @@ export default function App() {
   const [submissionsLoading, setSubmissionsLoading] = useState(true);
 
   const fetchStudentSubmissions = async (paramStudentId) => {
-    const rawId = studentProfile?.studentId || user?.studentId || (user?.username !== 'admin' ? user?.username : null) || paramStudentId;
+    const rawId = studentProfile?.id || studentProfile?._id || user?.id || user?._id || paramStudentId;
     if (!rawId || rawId === 'STU1001' || rawId === 'admin') {
       setSubmissionsLoading(false);
       return;
@@ -996,6 +1077,8 @@ export default function App() {
   const [editingQuestionIdx, setEditingQuestionIdx] = useState(null); // null = Question list view, index = specific question editor
   const [editingTestConfigId, setEditingTestConfigId] = useState(null); // null = new, string = existing test ID
   const [newExamTitle, setNewExamTitle] = useState('');
+  const [newExamCourse, setNewExamCourse] = useState('');
+  const [newExamCourseCode, setNewExamCourseCode] = useState('');
   const [newExamMarks, setNewExamMarks] = useState(100);
   const [newExamInstructions, setNewExamInstructions] = useState('');
   const [newExamDuration, setNewExamDuration] = useState(60);
@@ -1015,7 +1098,7 @@ export default function App() {
     const targetId = candId || (user?.id || user?._id);
     if (!targetId) return;
     try {
-      const res = await fetch(`${API_BASE}/tests/objections/student?candidateId=${targetId}`);
+      const res = await fetch(`${API_BASE}/tests/objections/student?id=${targetId}`);
       if (res.ok) {
         const data = await res.json();
         setStudentObjectionsList(Array.isArray(data) ? data : []);
@@ -1505,7 +1588,7 @@ int main() {
   const fetchStudentActiveTests = async () => {
     try {
       const candId = user ? (user.id || user._id) : '';
-      const res = await fetch(`${API_BASE}/tests/active?candidateId=${candId}`);
+      const res = await fetch(`${API_BASE}/tests/active?id=${candId}`);
       const data = await res.json();
       setActiveStudentTests(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -1527,7 +1610,7 @@ int main() {
 
   const fetchSubmittedTestsList = async (candidateId) => {
     try {
-      const res = await fetch(`${API_BASE}/tests/submitted?candidateId=${candidateId}`);
+      const res = await fetch(`${API_BASE}/tests/submitted?id=${candidateId}`);
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
       const getTime = (st) => {
@@ -1665,9 +1748,9 @@ int main() {
       const otBaseUrl = window.location.origin.includes('localhost')
         ? 'http://localhost:5174/terminal'
         : `${window.location.origin}/terminal`;
-      const examUrl = otBaseUrl.includes('?') 
-        ? `${otBaseUrl}&token=${data.token}`
-        : `${otBaseUrl}/test?token=${data.token}`;
+      const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+      const authParam = userToken ? `&authToken=${encodeURIComponent(userToken)}` : '';
+      const examUrl = `${otBaseUrl}/assessment?token=${data.token}${authParam}`;
       
       setTimeout(() => {
         window.location.href = examUrl;
@@ -1848,6 +1931,8 @@ int main() {
         body: JSON.stringify({
           _id: editingTestConfigId,
           title: newExamTitle,
+          course: newExamCourse,
+          courseCode: newExamCourseCode,
           marks: Number(newExamMarks || 0),
           instructions: newExamInstructions,
           duration: Number(newExamDuration || 60),
@@ -1860,6 +1945,8 @@ int main() {
       if (data.success) {
         showModalAlert("Test Configured", editingTestConfigId ? "Online practice test configuration has been updated successfully!" : "Online practice test has been configured and created successfully!");
         setNewExamTitle('');
+        setNewExamCourse('');
+        setNewExamCourseCode('');
         setNewExamMarks(100);
         setNewExamInstructions('');
         setNewExamDuration(60);
@@ -1883,6 +1970,8 @@ int main() {
   const handleEditTest = (test) => {
     setEditingTestConfigId(test._id || test.id);
     setNewExamTitle(test.title || '');
+    setNewExamCourse(test.course || '');
+    setNewExamCourseCode(test.courseCode || '');
     setNewExamMarks(test.marks || 100);
     setNewExamInstructions(test.instructions || '');
     setNewExamDuration(test.duration || 60);
@@ -2125,33 +2214,55 @@ int main() {
     generateCaptcha();
 
     // Session restoration
-    const stored = localStorage.getItem('bics_session');
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Date.now() < parsed.expiry) {
-          setUser(parsed.user);
-          if (view === 'login') {
-            setView(parsed.user.role === 'admin' ? 'admin' : 'announcements');
-          }
-        } else {
-          localStorage.removeItem('bics_session');
-        }
-      } catch (e) {
-        localStorage.removeItem('bics_session');
-      }
+    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+    if (!token) {
+      localStorage.removeItem('bics_session');
+      sessionStorage.removeItem('bics_session');
+      setUser(null);
     } else {
-      const temp = sessionStorage.getItem('bics_session');
-      if (temp) {
+      const stored = localStorage.getItem('bics_session');
+      if (stored) {
         try {
-          const parsed = JSON.parse(temp);
-          setUser(parsed.user);
-          if (view === 'login') {
-            setView(parsed.user.role === 'admin' ? 'admin' : 'announcements');
+          const parsed = JSON.parse(stored);
+          if (Date.now() < parsed.expiry) {
+            setUser(parsed.user);
+            if (view === 'login') {
+              setView(parsed.user.role === 'admin' ? 'admin' : 'announcements');
+            }
+          } else {
+            localStorage.removeItem('bics_session');
+            localStorage.removeItem('bics_auth_token');
+            setUser(null);
           }
-        } catch (e) {}
+        } catch (e) {
+          localStorage.removeItem('bics_session');
+          localStorage.removeItem('bics_auth_token');
+          setUser(null);
+        }
+      } else {
+        const temp = sessionStorage.getItem('bics_session');
+        if (temp) {
+          try {
+            const parsed = JSON.parse(temp);
+            setUser(parsed.user);
+            if (view === 'login') {
+              setView(parsed.user.role === 'admin' ? 'admin' : 'announcements');
+            }
+          } catch (e) {}
+        }
       }
     }
+  }, []);
+
+  // Listen for session expiry event from API client interceptor
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setStudentProfile(null);
+      setView('login');
+    };
+    window.addEventListener('bics_auth_expired', handleAuthExpired);
+    return () => window.removeEventListener('bics_auth_expired', handleAuthExpired);
   }, []);
 
   useEffect(() => {
@@ -2349,7 +2460,7 @@ int main() {
       const res = await fetch(`${API_BASE}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginCreds)
+        body: JSON.stringify({ ...loginCreds, rememberMe })
       });
       const data = await res.json();
       
@@ -2367,16 +2478,29 @@ int main() {
           setUser(userObj);
           setView(userObj.role === 'admin' ? 'admin' : 'announcements');
 
-          // Store session
+          // Store session: 7 days if rememberMe is checked, 24 hours if unchecked
+          const sessionDurationMs = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
           const sessionData = {
             user: userObj,
-            expiry: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
+            expiry: Date.now() + sessionDurationMs
           };
+
+          if (data.token) {
+            if (rememberMe) {
+              localStorage.setItem('bics_auth_token', data.token);
+              sessionStorage.removeItem('bics_auth_token');
+            } else {
+              sessionStorage.setItem('bics_auth_token', data.token);
+              localStorage.removeItem('bics_auth_token');
+            }
+          }
 
           if (rememberMe) {
             localStorage.setItem('bics_session', JSON.stringify(sessionData));
+            sessionStorage.removeItem('bics_session');
           } else {
             sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
+            localStorage.removeItem('bics_session');
           }
         } else {
           setLoginError(data.error);
@@ -2416,6 +2540,8 @@ int main() {
       setIsMobileSidebarOpen(false);
       localStorage.removeItem('bics_session');
       sessionStorage.removeItem('bics_session');
+      localStorage.removeItem('bics_auth_token');
+      sessionStorage.removeItem('bics_auth_token');
       setShowLogoutModal(false);
     }, 900);
   };
@@ -2860,6 +2986,11 @@ int main() {
     setPwdError('');
     setPwdMessage('');
 
+    if (user?.role === 'admin') {
+      setPwdError("Admin credentials are configuration-authoritative and managed strictly via .env");
+      return;
+    }
+
     // Captcha validation
     if (changePasswordCaptchaInput.toUpperCase() !== changePasswordCaptchaCode) {
       setPwdError("Captcha incorrect. Please try again.");
@@ -2965,6 +3096,7 @@ int main() {
   };
 
   const handleSendChangePasswordCode = async () => {
+    if (changePasswordCooldown > 0) return;
     setSendingChangePasswordCode(true);
     setPwdError('');
     setPwdMessage('');
@@ -2976,8 +3108,12 @@ int main() {
       const data = await res.json();
       if (res.ok) {
         setChangePasswordCodeSent(true);
+        setChangePasswordCooldown(data.cooldownSec || 60);
         setPwdMessage("Verification code sent to your registered email address.");
       } else {
+        if (data.waitSec) {
+          setChangePasswordCooldown(data.waitSec);
+        }
         setPwdError(data.error || "Failed to send verification code.");
       }
     } catch (err) {
@@ -3557,7 +3693,7 @@ int main() {
                 />
               )}
 
-              {view === 'changepassword' && (
+              {view === 'changepassword' && user?.role !== 'admin' && (
                 <ChangePassword
                   pwdMessage={pwdMessage}
                   pwdError={pwdError}
@@ -3566,6 +3702,7 @@ int main() {
                   studentProfile={studentProfile}
                   changePasswordCodeSent={changePasswordCodeSent}
                   sendingChangePasswordCode={sendingChangePasswordCode}
+                  changePasswordCooldown={changePasswordCooldown}
                   handleSendChangePasswordCode={handleSendChangePasswordCode}
                   changePasswordEmailCode={changePasswordEmailCode}
                   setChangePasswordEmailCode={setChangePasswordEmailCode}
@@ -3664,6 +3801,10 @@ int main() {
                   setEditingTestConfigId={setEditingTestConfigId}
                   newExamTitle={newExamTitle}
                   setNewExamTitle={setNewExamTitle}
+                  newExamCourse={newExamCourse}
+                  setNewExamCourse={setNewExamCourse}
+                  newExamCourseCode={newExamCourseCode}
+                  setNewExamCourseCode={setNewExamCourseCode}
                   newExamMarks={newExamMarks}
                   setNewExamMarks={setNewExamMarks}
                   newExamInstructions={newExamInstructions}
@@ -3712,6 +3853,11 @@ int main() {
                   logFilterSeverity={logFilterSeverity}
                   setLogFilterSeverity={setLogFilterSeverity}
                   systemLogs={systemLogs}
+                  systemLogsMeta={systemLogsMeta}
+                  systemLogLimit={systemLogLimit}
+                  setSystemLogLimit={setSystemLogLimit}
+                  logSearch={logSearch}
+                  setLogSearch={setLogSearch}
                   logPage={logPage}
                 />
               )}

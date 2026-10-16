@@ -477,6 +477,58 @@ export default function AdminDatabaseViewer({ API_BASE }) {
   const [globalExpandCmd, setGlobalExpandCmd] = useState(null);
   const [inspectedDoc, setInspectedDoc] = useState(null);
 
+  // BICS ObjId Decryptor & Universal Document Lookup State
+  const [bicsInput, setBicsInput] = useState('');
+  const [bicsResult, setBicsResult] = useState(null);
+  const [bicsLoading, setBicsLoading] = useState(false);
+  const [bicsError, setBicsError] = useState('');
+  const [bicsCopiedField, setBicsCopiedField] = useState(null);
+  const [bicsDocViewMode, setBicsDocViewMode] = useState('list');
+
+  const handleBicsLookup = async (overrideVal = null) => {
+    const queryVal = (overrideVal !== null ? overrideVal : bicsInput).trim();
+    if (!queryVal) {
+      setBicsError('Please provide a 23-character BICS ObjId (xxxxxx-xxxx-xxxx-xxxxxx) or a 24-character hexadecimal MongoDB ObjectId.');
+      setBicsResult(null);
+      return;
+    }
+    setBicsLoading(true);
+    setBicsError('');
+    try {
+      const token = localStorage.getItem('token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${API_BASE}/admin/db/bics/lookup/${encodeURIComponent(queryVal)}`, { headers });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setBicsError(data.error || 'Failed to resolve identifier.');
+        setBicsResult(null);
+      } else {
+        setBicsResult(data);
+        setBicsError('');
+      }
+    } catch (err) {
+      setBicsError(err.message || 'Network error communicating with BICS lookup engine.');
+      setBicsResult(null);
+    } finally {
+      setBicsLoading(false);
+    }
+  };
+
+  const copyBicsText = (text, fieldName) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setBicsCopiedField(fieldName);
+    setTimeout(() => setBicsCopiedField(null), 2000);
+  };
+
+  const handleJumpToCollectionDocument = () => {
+    if (!bicsResult || !bicsResult.collection || !bicsResult.mongoId) return;
+    setSelectedCollection(bicsResult.collection);
+    setFilterInput(`{ _id: ObjectId('${bicsResult.mongoId}') }`);
+    setActiveTab('documents');
+  };
+
   // 1. Load all collections on mount
   const fetchCollectionsList = useCallback(async (keepSelection = true) => {
     setLoadingCollections(true);
@@ -971,10 +1023,64 @@ export default function AdminDatabaseViewer({ API_BASE }) {
                 {indexes.length || activeColMeta?.indexCount || 1}
               </span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('bics_decryptor')}
+              style={{
+                padding: '12px 2px',
+                border: 'none',
+                borderBottom: activeTab === 'bics_decryptor' ? '3px solid #00684a' : '3px solid transparent',
+                background: 'transparent',
+                color: activeTab === 'bics_decryptor' ? '#00684a' : '#475569',
+                fontWeight: activeTab === 'bics_decryptor' ? '700' : '500',
+                fontSize: '9.5pt',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <KeyIcon size={13} style={{ color: activeTab === 'bics_decryptor' ? '#00684a' : '#64748b' }} />
+              <span>BICS Decryptor</span>
+              <span
+                style={{
+                  backgroundColor: activeTab === 'bics_decryptor' ? '#dcfce7' : '#e0f2fe',
+                  color: activeTab === 'bics_decryptor' ? '#00684a' : '#0369a1',
+                  fontSize: '10px',
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  fontWeight: '700'
+                }}
+              >
+                Tool
+              </span>
+            </button>
           </div>
 
-          {/* Collection Path & Read-Only Pill */}
+          {/* Collection Path, BICS Decryptor Shortcut & Read-Only Pill */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('bics_decryptor')}
+              title="Open BICS ObjectID Decryptor"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                backgroundColor: activeTab === 'bics_decryptor' ? '#00684a' : '#ffffff',
+                border: '1px solid #cbd5e1',
+                color: activeTab === 'bics_decryptor' ? '#ffffff' : '#0f172a',
+                fontSize: '7.5pt',
+                fontWeight: '700',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              <KeyIcon size={11} style={{ color: activeTab === 'bics_decryptor' ? '#ffffff' : '#00684a' }} />
+              <span>BICS DECRYPTOR</span>
+            </button>
             <span
               className="mongo-bson-mono"
               style={{
@@ -1649,6 +1755,476 @@ export default function AdminDatabaseViewer({ API_BASE }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: BICS OBJECTID DECRYPTOR & UNIVERSAL DOCUMENT FINDER */}
+        {activeTab === 'bics_decryptor' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '24px', backgroundColor: '#f8fafc' }}>
+            <div style={{ maxWidth: '960px', margin: '0 auto' }}>
+              {/* Card Header */}
+              <div style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '20px 24px',
+                marginBottom: '20px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    backgroundColor: '#dcfce7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#00684a'
+                  }}>
+                    <KeyIcon size={18} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '13pt', color: '#001e2b', fontWeight: '700' }}>
+                      BICS ObjId Cryptographic Decryptor &amp; Document Finder
+                    </h3>
+                    <p style={{ margin: '2px 0 0', fontSize: '8.5pt', color: '#64748b' }}>
+                      Reversibly decrypt opaque 23-char candidate tokens into internal 24-hex MongoDB ObjectIds and locate documents across all database collections.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Input Search Form */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleBicsLookup();
+                  }}
+                  style={{ marginTop: '16px' }}
+                >
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      backgroundColor: '#f8fafc',
+                      padding: '8px 12px'
+                    }}>
+                      <Search size={15} style={{ color: '#64748b', flexShrink: 0 }} />
+                      <input
+                        type="text"
+                        className="mongo-bson-mono"
+                        value={bicsInput}
+                        onChange={(e) => {
+                          setBicsInput(e.target.value);
+                          if (bicsError) setBicsError('');
+                        }}
+                        placeholder="Enter BICS ObjId (xxxxxx-xxxx-xxxx-xxxxxx) or 24-hex Mongo ObjectId..."
+                        style={{
+                          flex: 1,
+                          border: 'none',
+                          outline: 'none',
+                          backgroundColor: 'transparent',
+                          fontSize: '11pt',
+                          color: '#001e2b'
+                        }}
+                      />
+                      {bicsInput && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBicsInput('');
+                            setBicsResult(null);
+                            setBicsError('');
+                          }}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#94a3b8',
+                            cursor: 'pointer',
+                            padding: '2px',
+                            display: 'flex',
+                            alignItems: 'center'
+                          }}
+                        >
+                          <X size={15} />
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={bicsLoading}
+                      style={{
+                        padding: '9px 18px',
+                        backgroundColor: '#00684a',
+                        color: '#ffffff',
+                        border: '1px solid #00684a',
+                        borderRadius: '6px',
+                        fontSize: '9pt',
+                        fontWeight: '700',
+                        cursor: bicsLoading ? 'wait' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <RefreshCw size={13} className={bicsLoading ? 'spin-smooth' : ''} />
+                      <span>{bicsLoading ? 'Resolving...' : 'Decrypt & Find'}</span>
+                    </button>
+                  </div>
+                </form>
+
+                {/* Error Banner */}
+                {bicsError && (
+                  <div style={{
+                    marginTop: '12px',
+                    padding: '10px 14px',
+                    borderRadius: '6px',
+                    backgroundColor: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    color: '#991b1b',
+                    fontSize: '8.5pt',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <span>⚠️</span>
+                    <span>{bicsError}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Decrypted Results Card */}
+              {bicsResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* Cryptographic Pair & Timestamp */}
+                  <div style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    padding: '18px 20px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                      <span style={{
+                        fontSize: '8pt',
+                        fontWeight: '700',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        color: '#64748b'
+                      }}>
+                        Bi-Directional Cryptographic Pair
+                      </span>
+                      <span style={{
+                        backgroundColor: '#dcfce7',
+                        color: '#166534',
+                        border: '1px solid #bbf7d0',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        fontSize: '7.5pt',
+                        fontWeight: '700'
+                      }}>
+                        ✓ VALID REVERSIBLE IDENTIFIER
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px' }}>
+                      {/* BICS ObjId Box */}
+                      <div style={{
+                        backgroundColor: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        padding: '12px 14px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '8pt', color: '#475569', fontWeight: '700' }}>
+                            BICS ObjId (Client-Facing Token)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyBicsText(bicsResult.bicsId, 'bicsId')}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              color: bicsCopiedField === 'bicsId' ? '#166534' : '#0284c7',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '8pt',
+                              fontWeight: '600'
+                            }}
+                          >
+                            {bicsCopiedField === 'bicsId' ? <Check size={12} /> : <Copy size={12} />}
+                            <span>{bicsCopiedField === 'bicsId' ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        </div>
+                        <div
+                          className="mongo-bson-mono"
+                          style={{
+                            fontSize: '12pt',
+                            fontWeight: '700',
+                            color: '#00684a',
+                            letterSpacing: '0.5px',
+                            wordBreak: 'break-all'
+                          }}
+                        >
+                          {bicsResult.bicsId}
+                        </div>
+                        <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '4px' }}>
+                          Format: 6-4-4-6 base36 with HMAC checksum
+                        </div>
+                      </div>
+
+                      {/* Mongo ObjectId Box */}
+                      <div style={{
+                        backgroundColor: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        padding: '12px 14px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '8pt', color: '#475569', fontWeight: '700' }}>
+                            MongoDB ObjectId (Internal Database Key)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyBicsText(bicsResult.mongoId, 'mongoId')}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              color: bicsCopiedField === 'mongoId' ? '#166534' : '#0284c7',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '8pt',
+                              fontWeight: '600'
+                            }}
+                          >
+                            {bicsCopiedField === 'mongoId' ? <Check size={12} /> : <Copy size={12} />}
+                            <span>{bicsCopiedField === 'mongoId' ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        </div>
+                        <div
+                          className="mongo-bson-mono"
+                          style={{
+                            fontSize: '12pt',
+                            fontWeight: '700',
+                            color: '#016bf8',
+                            letterSpacing: '0.5px',
+                            wordBreak: 'break-all'
+                          }}
+                        >
+                          ObjectId(&apos;{bicsResult.mongoId}&apos;)
+                        </div>
+                        <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '4px' }}>
+                          24-character hexadecimal (12 bytes)
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Timestamp & Epoch Metadata */}
+                    {bicsResult.timestamp && (
+                      <div style={{
+                        marginTop: '14px',
+                        paddingTop: '12px',
+                        borderTop: '1px solid #f1f5f9',
+                        display: 'flex',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '16px',
+                        fontSize: '8pt',
+                        color: '#64748b'
+                      }}>
+                        <span>
+                          <strong style={{ color: '#334155' }}>Decoded Timestamp (IST):</strong>{' '}
+                          <span className="mongo-bson-mono" style={{ color: '#00684a', fontWeight: '600' }}>
+                            {bicsResult.timestamp.ist}
+                          </span>
+                        </span>
+                        <span>
+                          <strong style={{ color: '#334155' }}>UTC ISO:</strong>{' '}
+                          <span className="mongo-bson-mono">{bicsResult.timestamp.iso}</span>
+                        </span>
+                        <span>
+                          <strong style={{ color: '#334155' }}>Epoch:</strong>{' '}
+                          <span className="mongo-bson-mono">{bicsResult.timestamp.epoch}s</span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Document Lookup Result */}
+                  <div style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                  }}>
+                    {bicsResult.found ? (
+                      <div>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          flexWrap: 'wrap',
+                          gap: '12px',
+                          marginBottom: '16px',
+                          paddingBottom: '12px',
+                          borderBottom: '1px solid #e2e8f0'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '50%',
+                              backgroundColor: '#dcfce7',
+                              color: '#166534',
+                              fontSize: '12px',
+                              fontWeight: 'bold'
+                            }}>
+                              ✓
+                            </span>
+                            <div>
+                              <h4 style={{ margin: 0, fontSize: '10.5pt', color: '#001e2b' }}>
+                                Document Located in Collection: <span style={{ color: '#00684a', fontWeight: '700' }}>{bicsResult.collection}</span>
+                              </h4>
+                              <p style={{ margin: '1px 0 0', fontSize: '8pt', color: '#64748b' }}>
+                                Found exact document matching _id: ObjectId(&apos;{bicsResult.mongoId}&apos;).
+                              </p>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {/* Toggle List/JSON */}
+                            <div style={{
+                              display: 'inline-flex',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '4px',
+                              overflow: 'hidden'
+                            }}>
+                              <button
+                                type="button"
+                                onClick={() => setBicsDocViewMode('list')}
+                                style={{
+                                  padding: '4px 8px',
+                                  border: 'none',
+                                  backgroundColor: bicsDocViewMode === 'list' ? '#001e2b' : '#ffffff',
+                                  color: bicsDocViewMode === 'list' ? '#ffffff' : '#475569',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                                title="BSON Tree View"
+                              >
+                                <List size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setBicsDocViewMode('json')}
+                                style={{
+                                  padding: '4px 8px',
+                                  border: 'none',
+                                  borderLeft: '1px solid #cbd5e1',
+                                  backgroundColor: bicsDocViewMode === 'json' ? '#001e2b' : '#ffffff',
+                                  color: bicsDocViewMode === 'json' ? '#ffffff' : '#475569',
+                                  cursor: 'pointer',
+                                  fontSize: '10px',
+                                  fontWeight: 'bold'
+                                }}
+                                title="Raw JSON View"
+                              >
+                                {'{}'}
+                              </button>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleJumpToCollectionDocument}
+                              style={{
+                                padding: '6px 12px',
+                                backgroundColor: '#002147',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '4px',
+                                fontSize: '8pt',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}
+                            >
+                              <span>Open in Collection Viewer</span>
+                              <ChevronRight size={13} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Document Content Display */}
+                        <div style={{
+                          maxHeight: '440px',
+                          overflowY: 'auto',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '6px',
+                          padding: '14px 16px',
+                          backgroundColor: '#f8fafc'
+                        }}>
+                          {bicsDocViewMode === 'list' ? (
+                            Object.entries(bicsResult.bsonDocument || {}).map(([k, v]) => (
+                              <BsonFieldRow
+                                key={k}
+                                fieldKey={k}
+                                value={v}
+                                isArrayElement={false}
+                                depth={0}
+                                forceExpandState="expand"
+                              />
+                            ))
+                          ) : (
+                            <pre
+                              className="mongo-bson-mono"
+                              style={{
+                                margin: 0,
+                                fontSize: '11px',
+                                color: '#001e2b',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-all'
+                              }}
+                            >
+                              {JSON.stringify(bicsResult.document, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        padding: '24px 16px',
+                        textAlign: 'center',
+                        color: '#64748b'
+                      }}>
+                        <div style={{ fontSize: '20px', marginBottom: '8px' }}>🔍</div>
+                        <div style={{ fontSize: '9.5pt', fontWeight: '700', color: '#334155' }}>
+                          No Active Document Found
+                        </div>
+                        <div style={{ fontSize: '8.5pt', marginTop: '4px', maxWidth: '520px', margin: '4px auto 0' }}>
+                          The identifier is cryptographically valid and decrypted to <span className="mongo-bson-mono" style={{ color: '#016bf8' }}>ObjectId(&apos;{bicsResult.mongoId}&apos;)</span>, but no matching record exists in any of the {bicsResult.checkedCollectionsCount || 0} checked collections. It may have been deleted, archived, or not yet created.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -5,10 +5,11 @@ const { EIRFReportModel, TestSubmissionModel, CandidateModel, TestConfigModel } 
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { generateEirfReportId } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
-const { encryptEirfPayload, decryptEirfPayload } = require('../utils/cipher');
+const { encryptEirfPayload, decryptEirfPayload, getPublicKeyPem, getPublicKeyDerBase64 } = require('../utils/cipher');
 const { formatISTDate, sendEirfVerdictEmail } = require('../utils/email');
 const { generateEirfVerdictPdfBuffer, generateDigitalVerdictHash } = require('../utils/pdfGenerator');
 const { uploadToCloudinary, cloudinary } = require('../config/cloudinary');
+const { requireAdmin } = require('../middleware/auth');
 
 // 1. Get EIRF Incident Details & Breakdown by Submission ID
 router.get('/test/eirf/details/:submissionId', async (req, res) => {
@@ -213,6 +214,22 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
     }
 });
 
+// 1.1 Expose Server RSA Public Key for client-side asymmetric EIRF backup encryption
+router.get('/test/eirf/public-key', (req, res) => {
+    try {
+        return res.json({
+            success: true,
+            algorithm: 'RSA-OAEP-2048',
+            hash: 'SHA-256',
+            publicKeyPem: getPublicKeyPem(),
+            publicKeyDerBase64: getPublicKeyDerBase64()
+        });
+    } catch (e) {
+        console.error("Public key export error:", e);
+        return res.status(500).json({ error: "Failed to retrieve encryption public key." });
+    }
+});
+
 // 2. Generate & save encrypted database payload for EIRF backup (.eirf)
 router.post('/test/eirf/generate-payload', async (req, res) => {
     const { submissionId, studentId: reqStudentId, answers, proctoringLog } = req.body;
@@ -261,6 +278,10 @@ router.post('/test/eirf/generate-payload', async (req, res) => {
 
         const encryptedPayload = encryptEirfPayload(dbPayloadObj, studentId, String(submission._id || submission.id));
         submission.encryptedDbPayload = encryptedPayload;
+        submission.hasEirfFlag = true;
+        if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+            submission.eirfStatus = 'pending';
+        }
 
         if (dbState.useMongo) {
             await submission.save();
@@ -525,7 +546,7 @@ router.post('/test/eirf/submit', async (req, res) => {
 });
 
 // 4. Admin: List All EIRF Reports
-router.get('/admin/eirf/list', async (req, res) => {
+router.get('/admin/eirf/list', requireAdmin, async (req, res) => {
     try {
         if (dbState.useMongo) {
             const reports = await EIRFReportModel.find()
@@ -546,7 +567,7 @@ router.get('/admin/eirf/list', async (req, res) => {
 });
 
 // 5. Admin: Approve or Reject EIRF Incident Report
-router.post('/admin/eirf/action/:reportId', async (req, res) => {
+router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
     const { reportId } = req.params;
     let { status, action, adminRemarks, courseCode, courseName, resolutionCategory, remediationAction, reviewerName, reviewerTitle } = req.body;
 

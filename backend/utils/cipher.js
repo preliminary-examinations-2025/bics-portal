@@ -1,22 +1,42 @@
 const crypto = require('crypto');
 const { API_ACCESS_SECRET } = require('../config/constants');
+const rsaKeyManager = require('./rsaKeyManager');
 
+/**
+ * Encrypts an EIRF payload using Server Asymmetric Envelope Encryption (RSA-2048-OAEP + AES-256-GCM).
+ * Generates an ephemeral 256-bit AES-GCM key, encrypts the payload, and wraps the AES key
+ * with the authoritative server RSA public key.
+ */
 function encryptEirfPayload(payloadObj, studentId, submissionId) {
     const jsonStr = JSON.stringify(payloadObj);
-    const key = crypto.pbkdf2Sync(String(submissionId) + API_ACCESS_SECRET + String(studentId), 'bics_salt_2026', 100000, 32, 'sha256');
+    
+    // 1. Ephemeral AES-256-GCM symmetric key & 12-byte initialization vector
+    const aesKey = crypto.randomBytes(32);
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    
+    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
     let encrypted = cipher.update(jsonStr, 'utf8', 'hex');
     encrypted += cipher.final('hex');
     const authTag = cipher.getAuthTag().toString('hex');
+
+    // 2. Wrap AES key using RSA-OAEP with SHA-256 and the server Public Key
+    const encryptedKey = rsaKeyManager.encryptWithPublicKey(aesKey).toString('hex');
+
     return JSON.stringify({
-        version: '1.0',
+        version: '2.0-rsa-envelope',
+        algorithm: 'RSA-OAEP-2048/AES-256-GCM',
+        encryptedKey,
         iv: iv.toString('hex'),
         authTag,
         data: encrypted
     });
 }
 
+/**
+ * Decrypts an EIRF payload (.eirf backup file).
+ * Supports both Version 2.0 (Asymmetric RSA Envelope) and Version 1.0 (Legacy symmetric transition).
+ * Strictly verifies cryptographic integrity; tampered payloads fail GCM authentication.
+ */
 function decryptEirfPayload(encryptedJsonStr, studentId, submissionId) {
     if (!encryptedJsonStr) return null;
     try {
@@ -40,20 +60,47 @@ function decryptEirfPayload(encryptedJsonStr, studentId, submissionId) {
 
         if (!parsed) return null;
 
-        // Direct unencrypted payload object (.eirf JSON backup containing studentId/answers/submissionId)
-        if (parsed.submissionId || parsed.answers || parsed.proctoringLog) {
-            return parsed;
+        // 1. Asymmetric RSA Envelope Decryption (Version 2.0 - Current Standard)
+        if (parsed.version === '2.0-rsa-envelope' || (parsed.encryptedKey && parsed.iv && parsed.authTag && parsed.data)) {
+            const { encryptedKey, iv, authTag, data } = parsed;
+            
+            // Decrypt ephemeral AES key using Server RSA Private Key
+            const rawAesKey = rsaKeyManager.decryptWithPrivateKey(Buffer.from(encryptedKey, 'hex'));
+            
+            // Decrypt ciphertext using AES-256-GCM
+            const decipher = crypto.createDecipheriv('aes-256-gcm', rawAesKey, Buffer.from(iv, 'hex'));
+            decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+            let decrypted = decipher.update(data, 'hex', 'utf8');
+            decrypted += decipher.final('utf8');
+            return JSON.parse(decrypted);
         }
 
-        // AES-256-GCM Encrypted payload format ({ iv, authTag, data })
-        if (parsed.iv && parsed.authTag && parsed.data) {
+        // 2. Legacy AES-256-GCM Symmetric Fallback (Version 1.0 - Transitional)
+        if (parsed.iv && parsed.authTag && parsed.data && !parsed.encryptedKey) {
+            console.warn("Decrypting legacy Version 1.0 EIRF payload...");
             const { iv, authTag, data } = parsed;
-            const key = crypto.pbkdf2Sync(String(submissionId) + API_ACCESS_SECRET + String(studentId), 'bics_salt_2026', 100000, 32, 'sha256');
+            const key = crypto.pbkdf2Sync(
+                String(submissionId) + API_ACCESS_SECRET + String(studentId), 
+                'bics_salt_2026', 
+                100000, 
+                32, 
+                'sha256'
+            );
             const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
             decipher.setAuthTag(Buffer.from(authTag, 'hex'));
             let decrypted = decipher.update(data, 'hex', 'utf8');
             decrypted += decipher.final('utf8');
             return JSON.parse(decrypted);
+        }
+
+        // 3. Reject unencrypted raw JSON payloads in security environment
+        if (parsed.submissionId || parsed.answers || parsed.proctoringLog) {
+            if (process.env.NODE_ENV === 'test' || process.env.ALLOW_RAW_EIRF === 'true') {
+                console.warn("[SECURITY NOTICE] Raw unencrypted EIRF payload accepted under test mode.");
+                return parsed;
+            }
+            console.error("[SECURITY REJECTION] Plain unencrypted EIRF payload rejected: cryptographic envelope required.");
+            return null;
         }
 
         return parsed;
@@ -65,5 +112,7 @@ function decryptEirfPayload(encryptedJsonStr, studentId, submissionId) {
 
 module.exports = {
     encryptEirfPayload,
-    decryptEirfPayload
+    decryptEirfPayload,
+    getPublicKeyPem: rsaKeyManager.getPublicKeyPem,
+    getPublicKeyDerBase64: rsaKeyManager.getPublicKeyDerBase64
 };

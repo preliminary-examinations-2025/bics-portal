@@ -3,10 +3,11 @@ const router = express.Router();
 const { TicketModel, CandidateModel, SystemLogModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
+const { requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
 
-// 1. Create a new helpdesk ticket (Student portal submit)
-router.post('/candidate/tickets/:candidateId', async (req, res) => {
-    const { candidateId } = req.params;
+// 1. Create a new helpdesk ticket (Student portal submit - accepts BICS ObjectID :id)
+router.post(['/candidate/tickets/:id', '/candidate/tickets/:candidateId'], requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
+    const candidateId = req.params.id || req.params.candidateId;
     const { category, subject, message } = req.body;
     if (!category || !subject || !message) {
         return res.status(400).json({ error: "Category, subject, and message are required." });
@@ -76,9 +77,9 @@ router.post('/candidate/tickets/:candidateId', async (req, res) => {
     }
 });
 
-// 2. Fetch student's own tickets (Student portal history view)
-router.get('/candidate/tickets/list/:candidateId', async (req, res) => {
-    const { candidateId } = req.params;
+// 2. Fetch student's own tickets (Student portal history view - accepts BICS ObjectID :id)
+router.get(['/candidate/tickets/list/:id', '/candidate/tickets/list/:candidateId'], requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
+    const candidateId = req.params.id || req.params.candidateId;
     try {
         let tickets = [];
         if (dbState.useMongo) {
@@ -99,7 +100,7 @@ router.get('/candidate/tickets/list/:candidateId', async (req, res) => {
 });
 
 // 3. Fetch all tickets (Admin dashboard view)
-router.get('/admin/tickets', async (req, res) => {
+router.get('/admin/tickets', requireAdmin, async (req, res) => {
     try {
         let tickets = [];
         if (dbState.useMongo) {
@@ -118,7 +119,7 @@ router.get('/admin/tickets', async (req, res) => {
 });
 
 // 4. Resolve/Update ticket status (Admin dashboard resolution)
-router.post('/admin/tickets/resolve/:ticketId', async (req, res) => {
+router.post('/admin/tickets/resolve/:ticketId', requireAdmin, async (req, res) => {
     const { ticketId } = req.params;
     const { status, resolutionFeedback } = req.body;
     if (!status) return res.status(400).json({ error: "Status is required." });
@@ -158,18 +159,101 @@ router.post('/admin/tickets/resolve/:ticketId', async (req, res) => {
     }
 });
 
-// 5. Fetch System Logs (Admin only)
-router.get('/admin/system-logs', async (req, res) => {
+// 5. Fetch System Logs (Admin only - Dynamic Log Viewer)
+router.get('/admin/system-logs', requireAdmin, async (req, res) => {
     try {
-        let logs = [];
+        const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 100));
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const search = (req.query.search || '').trim();
+        const action = (req.query.action || 'ALL').trim();
+        const severity = (req.query.severity || 'ALL').trim();
+        const actor = (req.query.actor || '').trim();
+        const skip = (page - 1) * limit;
+
         if (dbState.useMongo) {
-            logs = await SystemLogModel.find({}).sort({ timestamp: -1 }).limit(100);
+            const filter = {};
+            if (action && action !== 'ALL') {
+                filter.action = action;
+            }
+            if (severity && severity !== 'ALL') {
+                filter.severity = severity;
+            }
+            if (actor) {
+                const escapedActor = actor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                filter.actor = new RegExp(escapedActor, 'i');
+            }
+            if (search) {
+                const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const sRegex = new RegExp(escapedSearch, 'i');
+                filter.$or = [
+                    { actor: sRegex },
+                    { actorId: sRegex },
+                    { action: sRegex },
+                    { details: sRegex },
+                    { resourceType: sRegex },
+                    { resourceId: sRegex },
+                    { ipAddress: sRegex }
+                ];
+            }
+
+            const totalCount = await SystemLogModel.countDocuments(filter);
+            const logs = await SystemLogModel.find(filter)
+                .sort({ timestamp: -1 })
+                .skip(skip)
+                .limit(limit);
+
+            const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+
+            return res.json({
+                logs,
+                totalCount,
+                page,
+                limit,
+                totalPages,
+                startIndex: totalCount === 0 ? 0 : skip + 1,
+                endIndex: Math.min(skip + logs.length, totalCount)
+            });
         } else {
             const db = getJSONData();
             db.systemLogs = db.systemLogs || [];
-            logs = [...db.systemLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 100);
+            let filtered = [...db.systemLogs];
+
+            if (action && action !== 'ALL') {
+                filtered = filtered.filter(l => l.action === action);
+            }
+            if (severity && severity !== 'ALL') {
+                filtered = filtered.filter(l => l.severity === severity);
+            }
+            if (actor) {
+                const q = actor.toLowerCase();
+                filtered = filtered.filter(l => l.actor && l.actor.toLowerCase().includes(q));
+            }
+            if (search) {
+                const q = search.toLowerCase();
+                filtered = filtered.filter(l =>
+                    (l.actor && l.actor.toLowerCase().includes(q)) ||
+                    (l.action && l.action.toLowerCase().includes(q)) ||
+                    (l.details && l.details.toLowerCase().includes(q)) ||
+                    (l.ipAddress && l.ipAddress.toLowerCase().includes(q)) ||
+                    (l.resourceType && l.resourceType.toLowerCase().includes(q))
+                );
+            }
+
+            const totalCount = filtered.length;
+            const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+            const sorted = filtered.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            const logs = sorted.slice(skip, skip + limit);
+
+            return res.json({
+                logs,
+                totalCount,
+                page,
+                limit,
+                totalPages,
+                startIndex: totalCount === 0 ? 0 : skip + 1,
+                endIndex: Math.min(skip + logs.length, totalCount)
+            });
         }
-        return res.json(logs);
     } catch (e) {
         return res.status(500).json({ error: e.message });
     }

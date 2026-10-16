@@ -30,6 +30,7 @@ const TestSubmissionSchema = new mongoose.Schema({
     testTitle: String,
     startedAt: { type: Date, default: Date.now },
     submittedAt: Date,
+    lastHeartbeatAt: { type: Date, default: Date.now },
     status: { type: String, default: 'started' }, // 'started', 'submitted', 'auto-submitted', 'evaluated'
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
@@ -37,16 +38,26 @@ const TestSubmissionSchema = new mongoose.Schema({
     proctoringLog: {
         fullscreenExits: { type: Number, default: 0 },
         tabSwitches: { type: Number, default: 0 },
+        inspectAttempts: { type: Number, default: 0 },
+        clipboardAttempts: { type: Number, default: 0 },
         webcamStatus: { type: String, default: 'active' },
         events: [{
             timestamp: { type: Date, default: Date.now },
             startTime: Date,
             endTime: Date,
             durationSeconds: { type: Number, default: 0 },
-            type: { type: String }, // "TAB_SWITCH", "FULLSCREEN_EXIT", "WEBCAM_LOST", "MIC_MUTED", "MIC_UNMUTED", "CAM_GRANTED", "CAM_DENIED", "NETWORK_OFFLINE", "EMERGENCY_SUBMISSION"
+            type: { type: String }, // "TAB_SWITCH", "FULLSCREEN_EXIT", "WEBCAM_LOST", "MIC_MUTED", "MIC_UNMUTED", "CAM_GRANTED", "CAM_DENIED", "NETWORK_OFFLINE", "EMERGENCY_SUBMISSION", "VOICE_DETECTED", "PROCTOR_WARNING"
+            details: String
+        }],
+        snapshots: [{
+            timestamp: { type: Date, default: Date.now },
+            type: { type: String },
+            url: String,
             details: String
         }]
     },
+    baselinePhotoUrl: { type: String, default: '' },
+    securityMetadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     hasEirfFlag: { type: Boolean, default: false },
     eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },
     encryptedDbPayload: { type: String, default: '' },
@@ -82,6 +93,15 @@ const TestSubmissionSchema = new mongoose.Schema({
         resolvedAt: Date
     }]
 });
+
+// Single-attempt compound unique index (prevents parallel double-attempt race conditions)
+TestSubmissionSchema.index(
+    { candidateId: 1, testId: 1 },
+    { unique: true, partialFilterExpression: { isDeleted: false, candidateId: { $type: "objectId" } } }
+);
+
+// High-speed index for dead-man's switch reaper worker
+TestSubmissionSchema.index({ status: 1, lastHeartbeatAt: 1, isDeleted: 1 });
 
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
 

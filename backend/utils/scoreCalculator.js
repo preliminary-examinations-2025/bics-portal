@@ -160,7 +160,12 @@ async function recalculateCodingScore(submission, test) {
 
             codingTasks.push((async () => {
                 try {
-                    const runRes = await executeCode(ans.submittedCode, quest.testCases || []);
+                    const runRes = await executeCode(
+                        ans.submittedCode, 
+                        quest.testCases || [], 
+                        quest.timeLimitMs || 2000, 
+                        quest.memoryLimitMb || 128
+                    );
                     let codingPoints = 0;
                     if (runRes && runRes.success && runRes.results) {
                         runRes.results.forEach((res, resIdx) => {
