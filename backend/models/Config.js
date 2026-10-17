@@ -34,6 +34,7 @@ const ConfigSchema = new mongoose.Schema({
     hallTicketUrl: { type: String, default: '/public/textbooks/CS_Introduction_Textbook.pdf' },
     timetableNotice: { type: String, default: 'Mid semester test for BICS 2026 will be held in mid-August' },
     examType: { type: String, default: 'midsem' }, // 'midsem' or 'endsem'
+    devModeActive: { type: Boolean, default: false }, // Development mode: skips 1-min prep wait & disables 3-strike proctoring auto-submit
     timetable: [TimetableSubSchema],
     classTests: [ClassTestSubSchema],
     announcements: [AnnouncementSubSchema]

@@ -13,7 +13,8 @@ export const ExamHeader = ({
   isOnline,
   submittingExam,
   handleManualSubmitExam,
-  webcamProctorWarning
+  webcamProctorWarning,
+  devModeActive
 }) => {
   return (
     <>
@@ -42,7 +43,14 @@ export const ExamHeader = ({
       {/* Floating Header Card */}
       <div className="cf-card" style={{ margin: 0, padding: '12px 20px', display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', borderLeft: '5px solid #3b5998', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
         <div>
-          <h3 style={{ fontSize: '12.5pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test?.title}</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h3 style={{ fontSize: '12.5pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>{test?.title}</h3>
+            {devModeActive && (
+              <span style={{ fontSize: '7.5pt', fontWeight: 'bold', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '2px 6px', borderRadius: '4px' }}>
+                DEV MODE
+              </span>
+            )}
+          </div>
           <span style={{ fontSize: '8.5pt', color: '#666' }}>
             Candidate: <strong>{candidate?.name} ({candidate?.studentId})</strong>
           </span>

@@ -497,6 +497,7 @@ export default function App() {
   const [webStudioViewportMode, setWebStudioViewportMode] = useState('desktop'); // 'desktop' | 'tablet' | 'mobile'
   const [webStudioConsoleOpen, setWebStudioConsoleOpen] = useState(false);
   const [examTimeLeft, setExamTimeLeft] = useState(0);
+  const [devModeActive, setDevModeActive] = useState(false);
   const [proctoringWarnings, setProctoringWarnings] = useState({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showQuestionInfoModal, setShowQuestionInfoModal] = useState(false);
@@ -716,7 +717,13 @@ export default function App() {
   useEffect(() => {
     const pingBackend = async () => {
       try {
-        await fetch(`${API_BASE}/config`);
+        const res = await fetch(`${API_BASE}/config`);
+        if (res.ok) {
+          const cfg = await res.json();
+          if (cfg && cfg.devModeActive !== undefined) {
+            setDevModeActive(!!cfg.devModeActive);
+          }
+        }
       } catch (err) {
         console.warn("Config fetch failed:", err);
       }
@@ -1039,6 +1046,9 @@ export default function App() {
 
       setCandidate(data.candidate);
       setTest(data.test);
+      if (data.devModeActive !== undefined) {
+        setDevModeActive(!!data.devModeActive);
+      }
       if (data.submission) setSubmission(data.submission);
 
       if (data.authToken || data.token) {
@@ -1188,6 +1198,31 @@ export default function App() {
 
     // Check if we need to auto-submit
     if (total >= 3) {
+      if (devModeActive) {
+        // Dev Mode Active: Bypass auto-submit on >= 3 warnings to facilitate developer testing & auditing!
+        console.log(`[DEV MODE ACTIVE] Major proctoring violations reached ${total} >= 3. Auto-submit bypassed.`);
+        const newFS = (fullscreenExits || 0) > (lastLoggedWarnings.current.fullscreenExits || 0);
+        const newTab = (tabSwitches || 0) > (lastLoggedWarnings.current.tabSwitches || 0);
+        const newInspect = (inspectAttempts || 0) > (lastLoggedWarnings.current.inspectAttempts || 0);
+
+        if (newFS || newTab || newInspect) {
+          setShowWarningModal(true);
+          if (newFS) {
+            lastLoggedWarnings.current.fullscreenExits = fullscreenExits || 0;
+            syncProctoringLogs(proctoringWarnings, 'FULLSCREEN_EXIT', `[DEV MODE] Candidate exited fullscreen mode. Total warnings: ${total} (Auto-submit bypassed)`);
+          }
+          if (newTab) {
+            lastLoggedWarnings.current.tabSwitches = tabSwitches || 0;
+            syncProctoringLogs(proctoringWarnings, 'TAB_SWITCH', `[DEV MODE] Candidate switched tab or lost focus. Total warnings: ${total} (Auto-submit bypassed)`);
+          }
+          if (newInspect) {
+            lastLoggedWarnings.current.inspectAttempts = inspectAttempts || 0;
+            syncProctoringLogs(proctoringWarnings, 'DEVTOOLS_OPENED', `[DEV MODE] Candidate accessed developer tools. Total warnings: ${total} (Auto-submit bypassed)`);
+          }
+        }
+        return;
+      }
+
       if (!isAutoSubmittedRef.current) {
         isAutoSubmittedRef.current = true;
         const newFS = (fullscreenExits || 0) > (lastLoggedWarnings.current.fullscreenExits || 0);
@@ -1234,7 +1269,7 @@ export default function App() {
         syncProctoringLogs(proctoringWarnings, 'DEVTOOLS_OPENED', `Candidate attempted to open developer tools / inspect element. Total warnings: ${total} / 3`);
       }
     }
-  }, [proctoringWarnings, flow]);
+  }, [proctoringWarnings, flow, devModeActive]);
 
   // Check Fullscreen state with duration tracking & Deduplication (Item 3.1)
   useEffect(() => {
@@ -1379,6 +1414,11 @@ export default function App() {
       
       setSubmission(data.submission);
       setExamTimeLeft(Number(test.duration) * 60);
+
+      // Clean slate on exam start: prevent any state leakage from previous sessions
+      isAutoSubmittedRef.current = false;
+      lastLoggedWarnings.current = { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 };
+      setProctoringWarnings({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
 
       // Log initial proctoring events
       logProctoringEvent(data.submission, 'TEST_STARTED', `${candidate.name || 'Candidate'} started the test.`);
@@ -3097,6 +3137,7 @@ export default function App() {
         handleLockFullscreen={handleLockFullscreen}
         onBackToBiometrics={() => setFlow('biometric_check')}
         handleStartExam={handleStartExam}
+        devModeActive={devModeActive}
       />
     );
   }
@@ -3106,6 +3147,7 @@ export default function App() {
     return (
       <>
         <ActiveExamView
+          devModeActive={devModeActive}
           test={test}
           candidate={candidate}
           examTimeLeft={examTimeLeft}

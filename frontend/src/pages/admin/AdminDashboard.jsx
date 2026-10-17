@@ -89,6 +89,16 @@ export default function AdminDashboard({
             </label>
             <span style={{ fontWeight: 'bold', fontSize: '9.5pt' }}>Counterfoil Marks Entry Active</span>
           </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <label className="switch">
+              <input type="checkbox" checked={!!systemConfig?.devModeActive} onChange={e => handleToggleSetting('devModeActive', e.target.checked)} />
+              <span className="slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', fontSize: '9.5pt', color: systemConfig?.devModeActive ? '#d97706' : 'inherit' }}>
+              Development Mode {systemConfig?.devModeActive ? '(Active: Skips 1m wait & 3-strike kick)' : '(Bypass 1m wait & auto-submit)'}
+            </span>
+          </div>
         </div>
       </div>
 

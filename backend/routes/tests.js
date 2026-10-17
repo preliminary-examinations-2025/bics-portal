@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel } = require('../models');
+const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
@@ -778,10 +778,21 @@ router.post('/verify-token', async (req, res) => {
             return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
         }
 
+        let sysConfig = null;
+        try {
+            if (dbState.useMongo) {
+                sysConfig = await ConfigModel.findOne().lean();
+            } else {
+                sysConfig = getJSONData().config;
+            }
+        } catch (_) {}
+        const devModeActive = !!sysConfig?.devModeActive;
+
         return res.json({
             success: true,
             token: authToken,
             authToken: authToken,
+            devModeActive,
             candidate: {
                 id: student._id || student.id,
                 name: student.name,

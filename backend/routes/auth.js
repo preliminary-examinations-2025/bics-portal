@@ -261,6 +261,7 @@ router.get('/config', async (req, res) => {
                 configObj = { ...db.config };
             }
         }
+        configObj.devModeActive = !!configObj.devModeActive;
         return res.json(configObj);
     } catch (e) {
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to fetch system configuration: ${e.message || e}`, 'error');
@@ -270,7 +271,7 @@ router.get('/config', async (req, res) => {
 
 // Update System Configuration (Admin Only)
 router.post('/admin/config', async (req, res) => {
-    const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, counterfoilActive, timetable, timetableNotice, announcements, hallTicketUrl, examType, classTests } = req.body;
+    const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, counterfoilActive, timetable, timetableNotice, announcements, hallTicketUrl, examType, classTests, devModeActive } = req.body;
 
     if (dbState.useMongo) {
         try {
@@ -288,6 +289,7 @@ router.post('/admin/config', async (req, res) => {
             if (timetableNotice !== undefined) conf.timetableNotice = timetableNotice;
             if (hallTicketUrl !== undefined) conf.hallTicketUrl = hallTicketUrl;
             if (examType !== undefined) conf.examType = examType;
+            if (devModeActive !== undefined) conf.devModeActive = devModeActive;
             
             if (timetable !== undefined) {
                 conf.timetable = timetable;
@@ -321,6 +323,7 @@ router.post('/admin/config', async (req, res) => {
         if (hallTicketUrl !== undefined) db.config.hallTicketUrl = hallTicketUrl;
         if (examType !== undefined) db.config.examType = examType;
         if (classTests !== undefined) db.config.classTests = classTests;
+        if (devModeActive !== undefined) db.config.devModeActive = devModeActive;
         saveJSONData(db);
         return res.json({ success: true, config: db.config });
     }

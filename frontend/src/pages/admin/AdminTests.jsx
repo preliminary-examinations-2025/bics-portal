@@ -17,6 +17,7 @@ export default function AdminTests({
   showModalAlert,
   showModalConfirm,
   systemConfig,
+  handleToggleSetting,
   adminMessage,
   adminError,
   adminTests = [],
@@ -109,9 +110,31 @@ export default function AdminTests({
 
               {/* ADMIN - ONLINE TEST CREATOR & BUILDER */}
               <div className="cf-card">
-                <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <ClipboardList size={18} style={{ color: '#3b82f6' }} />
-                  <span>Online Test Configurations Manager</span>
+                <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ClipboardList size={18} style={{ color: '#3b82f6' }} />
+                    <span>Online Test Configurations Manager</span>
+                  </div>
+                  {handleToggleSetting && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '9pt', fontWeight: 'bold' }}>
+                      <span style={{ color: systemConfig?.devModeActive ? '#d97706' : '#64748b' }}>
+                        Dev Mode (Skip 1m wait &amp; 3-strike kick):
+                      </span>
+                      <label className="switch" style={{ transform: 'scale(0.85)', margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={!!systemConfig?.devModeActive}
+                          onChange={e => handleToggleSetting('devModeActive', e.target.checked)}
+                        />
+                        <span className="slider"></span>
+                      </label>
+                      {systemConfig?.devModeActive && (
+                        <span style={{ backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '2px 6px', borderRadius: '4px', fontSize: '7.5pt' }}>
+                          ACTIVE
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 
                 {/* Active Test Configurations */}

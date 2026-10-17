@@ -179,6 +179,7 @@ const initialDB = {
         hallTicketUrl: '/public/textbooks/CS_Introduction_Textbook.pdf',
         timetableNotice: 'Mid semester test for BICS 2026 will be held in mid-August',
         examType: 'midsem',
+        devModeActive: false,
         timetable: [
             { code: "R526CS01T", course: "Introduction to Computer Science", date: "2026-09-11", time: "03:15 PM to 04:45 PM", marks: 100 },
             { code: "R526CS02T", course: "Programming Fundamentals with C++", date: "2026-09-12", time: "03:15 PM to 04:45 PM", marks: 100 },

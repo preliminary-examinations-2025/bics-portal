@@ -10,7 +10,8 @@ export function GuidelinesSetupView({
   isFullscreen,
   handleLockFullscreen,
   onBackToBiometrics,
-  handleStartExam
+  handleStartExam,
+  devModeActive
 }) {
   const triggerFullscreen = async () => {
     if (handleLockFullscreen) {
@@ -29,10 +30,19 @@ export function GuidelinesSetupView({
   };
 
   // 1.00 Minute (60 Seconds) Test Environment Preparation Holding Timer (Matching Image 1)
-  const [prepSecondsRemaining, setPrepSecondsRemaining] = useState(60);
-  const [prepCompleted, setPrepCompleted] = useState(false);
+  // When devModeActive is true, immediately bypass the 60-second wait!
+  const [prepSecondsRemaining, setPrepSecondsRemaining] = useState(devModeActive ? 0 : 60);
+  const [prepCompleted, setPrepCompleted] = useState(!!devModeActive);
 
   useEffect(() => {
+    if (devModeActive) {
+      setPrepSecondsRemaining(0);
+      setPrepCompleted(true);
+      return;
+    }
+    // Strict production mode: Reset holding states to ensure zero leakage from any dev mode session
+    setPrepCompleted(false);
+    setPrepSecondsRemaining(60);
     const timer = setInterval(() => {
       setPrepSecondsRemaining(prev => {
         if (prev <= 1) {
@@ -44,7 +54,7 @@ export function GuidelinesSetupView({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [devModeActive]);
 
   const canStartTest = prepCompleted && isFullscreen;
 
@@ -115,22 +125,29 @@ export function GuidelinesSetupView({
           <div 
             className="cf-prep-ready-banner"
             style={{
-              backgroundColor: '#f0fdf4',
-              border: '1px solid #bbf7d0',
+              backgroundColor: devModeActive ? '#fffbeb' : '#f0fdf4',
+              border: devModeActive ? '1px solid #fde68a' : '1px solid #bbf7d0',
               borderRadius: '6px',
               padding: '12px 16px',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              color: '#15803d',
+              justifyContent: 'space-between',
+              color: devModeActive ? '#b45309' : '#15803d',
               fontSize: '9pt',
               fontWeight: '600',
               marginBottom: '16px',
-              boxShadow: '0 1px 3px rgba(22, 163, 74, 0.1)'
+              boxShadow: devModeActive ? '0 1px 3px rgba(217, 119, 6, 0.1)' : '0 1px 3px rgba(22, 163, 74, 0.1)'
             }}
           >
-            <CheckCircle2 size={18} style={{ color: '#16a34a', flexShrink: 0 }} />
-            <span>You can start the test now.</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CheckCircle2 size={18} style={{ color: devModeActive ? '#d97706' : '#16a34a', flexShrink: 0 }} />
+              <span>You can start the test now.</span>
+            </div>
+            {devModeActive && (
+              <span style={{ fontSize: '8pt', backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '4px', border: '1px solid #fcd34d' }}>
+                ⚡ Dev Mode: 1-Min Wait Bypassed
+              </span>
+            )}
           </div>
         )}
 

@@ -11,7 +11,8 @@ export const ExamProctorOverlay = ({
   setShowWarningModal,
   proctoringWarnings,
   customModal,
-  setCustomModal
+  setCustomModal,
+  devModeActive
 }) => {
   return (
     <>
@@ -46,7 +47,7 @@ export const ExamProctorOverlay = ({
               The system logged a major proctoring violation (tab switch, fullscreen escape, or unauthorized developer tools / inspect element attempt). Candidates are strictly forbidden from leaving fullscreen, opening external tabs, or inspecting code during the test.
             </p>
             <div style={{ padding: '10px', backgroundColor: '#ffe4e6', color: '#be123c', border: '1px solid #fda4af', borderRadius: '4px', fontSize: '9.5pt', fontWeight: 'bold', marginBottom: '20px' }}>
-              Total Warnings: {(proctoringWarnings?.fullscreenExits || 0) + (proctoringWarnings?.tabSwitches || 0) + (proctoringWarnings?.inspectAttempts || 0)} / 3. Exceeding 3 will force automatic submission.
+              Total Warnings: {(proctoringWarnings?.fullscreenExits || 0) + (proctoringWarnings?.tabSwitches || 0) + (proctoringWarnings?.inspectAttempts || 0)} / 3. {devModeActive ? '⚡ (Dev Mode: Auto-submit bypassed for testing)' : 'Exceeding 3 will force automatic submission.'}
             </div>
             <button
               className="cf-btn-primary"

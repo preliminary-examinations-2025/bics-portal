@@ -11,6 +11,7 @@ import { ProctorToast } from '../components/exam/ProctorToast';
  * ActiveExamView: Assembles all subcomponents of the active proctored examination workspace.
  */
 export const ActiveExamView = ({
+  devModeActive,
   test,
   candidate,
   examTimeLeft,
@@ -102,6 +103,7 @@ export const ActiveExamView = ({
         submittingExam={submittingExam}
         handleManualSubmitExam={handleManualSubmitExam}
         webcamProctorWarning={webcamProctorWarning}
+        devModeActive={devModeActive}
       />
 
       {/* 2. Main split workspace layout */}
@@ -187,6 +189,7 @@ export const ActiveExamView = ({
         proctoringWarnings={proctoringWarnings}
         customModal={customModal}
         setCustomModal={setCustomModal}
+        devModeActive={devModeActive}
       />
 
       {/* 4. Full Web Studio modal, Question Info guidelines modal, and Submission screen loader */}

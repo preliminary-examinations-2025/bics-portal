@@ -3782,6 +3782,7 @@ int main() {
                   showModalAlert={showModalAlert}
                   showModalConfirm={showModalConfirm}
                   systemConfig={systemConfig}
+                  handleToggleSetting={handleToggleSetting}
                   adminMessage={adminMessage}
                   adminError={adminError}
                   adminTests={adminTests}
