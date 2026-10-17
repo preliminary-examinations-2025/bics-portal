@@ -20,7 +20,10 @@ export const ActiveExamView = ({
   handleManualSubmitExam,
   webcamProctorWarning,
   onDismissProctorWarning,
+  activeProctorToasts,
+  onDismissProctorToast,
   examVideoRef,
+  webcamStream,
   isSidebarOpen,
   setIsSidebarOpen,
   showQuestionPalette,
@@ -184,6 +187,7 @@ export const ActiveExamView = ({
       {/* 3. Background video tracker & proctor alert modals */}
       <ExamProctorOverlay
         examVideoRef={examVideoRef}
+        webcamStream={webcamStream}
         showWarningModal={showWarningModal}
         setShowWarningModal={setShowWarningModal}
         proctoringWarnings={proctoringWarnings}
@@ -224,8 +228,10 @@ export const ActiveExamView = ({
 
       {/* 5. Bottom Right Floating Proctor Warning Toast (Reference Design) */}
       <ProctorToast
+        toasts={activeProctorToasts}
         message={webcamProctorWarning}
         onDismiss={onDismissProctorWarning}
+        onDismissToast={onDismissProctorToast}
       />
     </div>
   );

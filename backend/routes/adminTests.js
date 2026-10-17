@@ -1,11 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const { TestConfigModel, TestSubmissionModel, RecycleBinModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
-const { resolveToObjectId } = require('../utils/bicsId');
+const { resolveToObjectId, isBicsId, isMongoId, toBicsId, toMongoId } = require('../utils/bicsId');
 
 const findTestConfig = async (id) => {
     if (!id) return null;
@@ -343,6 +345,74 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+// Helper: Auto-reconcile physical violation evidence snapshots from disk into proctoringLog.snapshots
+function reconcileDiskSnapshotsForSubmission(sub) {
+    if (!sub) return;
+    const mongoId = String(sub._id || sub.id || '');
+    const bicsId = toBicsId(mongoId) || mongoId;
+    if (!sub.proctoringLog) sub.proctoringLog = {};
+    if (!Array.isArray(sub.proctoringLog.snapshots)) sub.proctoringLog.snapshots = [];
+
+    const existingUrls = new Set(sub.proctoringLog.snapshots.map(s => s.url).filter(Boolean));
+    const diskDirs = [
+        path.join(__dirname, '../public/proctoring', bicsId),
+        path.join(__dirname, '../public/proctoring', mongoId)
+    ];
+
+    let diskFiles = [];
+    diskDirs.forEach(dir => {
+        if (fs.existsSync(dir)) {
+            try {
+                const files = fs.readdirSync(dir);
+                files.forEach(f => {
+                    if (/\.(jpe?g|png|webp)$/i.test(f) && !diskFiles.includes(f)) {
+                        diskFiles.push(f);
+                        // Consolidate into bicsId directory if missing
+                        const bicsDir = path.join(__dirname, '../public/proctoring', bicsId);
+                        if (!fs.existsSync(bicsDir)) {
+                            fs.mkdirSync(bicsDir, { recursive: true });
+                        }
+                        const bicsPath = path.join(bicsDir, f);
+                        const srcPath = path.join(dir, f);
+                        if (!fs.existsSync(bicsPath)) {
+                            try { fs.copyFileSync(srcPath, bicsPath); } catch (_) {}
+                        }
+                    }
+                });
+            } catch (_) {}
+        }
+    });
+
+    let addedAny = false;
+    diskFiles.forEach(f => {
+        const url = `/public/proctoring/${bicsId}/${f}`;
+        if (!existingUrls.has(url)) {
+            existingUrls.add(url);
+            const tsMatch = f.match(/^(\d{13})/);
+            const ts = tsMatch ? new Date(Number(tsMatch[1])) : (sub.startedAt || new Date());
+            const matchingEv = (sub.proctoringLog?.events || []).find(e => {
+                const et = new Date(e.timestamp || e.startTime || 0).getTime();
+                return Math.abs(et - ts.getTime()) < 30000;
+            });
+            const type = matchingEv ? matchingEv.type : 'PROCTOR_WARNING';
+            sub.proctoringLog.snapshots.push({
+                timestamp: ts,
+                type,
+                url,
+                details: matchingEv ? matchingEv.details : `Evidence snapshot captured for ${type}`
+            });
+            addedAny = true;
+        }
+    });
+
+    if (addedAny && dbState.useMongo && sub._id) {
+        TestSubmissionModel.findByIdAndUpdate(
+            sub._id,
+            { $set: { 'proctoringLog.snapshots': sub.proctoringLog.snapshots } }
+        ).catch(e => console.warn("[Admin Snapshots Reconciliation] DB sync notice:", e.message));
+    }
+}
+
 // 7. Fetch candidate submissions for a test (Admin only)
 router.get('/submissions/:testId', async (req, res) => {
     const { testId } = req.params;
@@ -392,7 +462,15 @@ router.get('/submissions/:testId', async (req, res) => {
             });
             saveJSONData(db);
         }
-        return res.json(subs || []);
+
+        const finalSubs = (subs || []).map(sub => {
+            reconcileDiskSnapshotsForSubmission(sub);
+            const obj = sub.toObject ? sub.toObject() : { ...sub };
+            obj.bicsId = toBicsId(sub._id || sub.id);
+            return obj;
+        });
+
+        return res.json(finalSubs);
     } catch (e) {
         console.error("Error fetching test submissions:", e);
         return res.status(200).json([]);

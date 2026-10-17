@@ -304,8 +304,11 @@ function sanitizeQuestionForCandidate(q) {
  *    blocking client-side attempts to zero out violations during final submit.
  */
 function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
-    const log = { ...existingLog };
-    log.events = Array.isArray(log.events) ? [...log.events] : [];
+    const rawExisting = (existingLog && typeof existingLog.toObject === 'function') 
+        ? existingLog.toObject() 
+        : (existingLog || {});
+    const log = { ...rawExisting };
+    log.events = Array.isArray(rawExisting.events) ? [...rawExisting.events] : [];
 
     // 1. Merge incoming events cleanly without duplicates
     if (incomingLog && Array.isArray(incomingLog.events) && incomingLog.events.length > 0) {
@@ -319,7 +322,26 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
         });
     }
 
+    // 1b. Explicitly preserve & merge evidence snapshots (prevent accidental erasure during submit/heartbeats)
+    const existingSnapshots = Array.isArray(rawExisting.snapshots) ? rawExisting.snapshots : [];
+    const incomingSnapshots = Array.isArray(incomingLog?.snapshots) ? incomingLog.snapshots : [];
+    const snapshotMap = new Map();
+    existingSnapshots.forEach(s => {
+        if (!s) return;
+        const key = s.url || `${new Date(s.timestamp || Date.now()).getTime()}_${s.type}`;
+        snapshotMap.set(key, s);
+    });
+    incomingSnapshots.forEach(s => {
+        if (!s) return;
+        const key = s.url || `${new Date(s.timestamp || Date.now()).getTime()}_${s.type}`;
+        if (!snapshotMap.has(key)) {
+            snapshotMap.set(key, s);
+        }
+    });
+    log.snapshots = Array.from(snapshotMap.values());
+
     // 2. Count authoritative violations from persisted events log
+    // Notice: RIGHT_CLICK_BLOCKED is a minor warning, NOT counted towards major inspectAttempts
     const eventFullscreenExits = log.events.filter(e => e.type === 'FULLSCREEN_EXIT').length;
     const eventTabSwitches = log.events.filter(e => e.type === 'TAB_SWITCH').length;
     const eventInspectAttempts = log.events.filter(e => e.type === 'DEVTOOLS_OPENED' || e.type === 'INSPECT_ATTEMPT').length;
@@ -327,26 +349,26 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
 
     // 3. Monotonic high-water mark: max of (existing in DB, client report, count of events in log)
     log.fullscreenExits = Math.max(
-        Number(existingLog.fullscreenExits || 0),
+        Number(rawExisting.fullscreenExits || 0),
         Number(incomingLog?.fullscreenExits || 0),
         eventFullscreenExits
     );
     log.tabSwitches = Math.max(
-        Number(existingLog.tabSwitches || 0),
+        Number(rawExisting.tabSwitches || 0),
         Number(incomingLog?.tabSwitches || 0),
         eventTabSwitches
     );
     log.inspectAttempts = Math.max(
-        Number(existingLog.inspectAttempts || 0),
+        Number(rawExisting.inspectAttempts || 0),
         Number(incomingLog?.inspectAttempts || 0),
         eventInspectAttempts
     );
     log.clipboardAttempts = Math.max(
-        Number(existingLog.clipboardAttempts || 0),
+        Number(rawExisting.clipboardAttempts || 0),
         Number(incomingLog?.clipboardAttempts || 0),
         eventClipboardAttempts
     );
-    log.webcamStatus = incomingLog?.webcamStatus || existingLog.webcamStatus || 'active';
+    log.webcamStatus = incomingLog?.webcamStatus || rawExisting.webcamStatus || 'active';
 
     return log;
 }
@@ -548,8 +570,11 @@ router.post('/start/:id', requireAuth, async (req, res) => {
             saveJSONData(db);
         }
 
+        const subPayload = submission.toObject ? submission.toObject() : { ...submission };
+        subPayload.bicsId = toBicsId(submission._id || submission.id);
+
         await logSystemAction(candidateName || studentId || 'Candidate', 'TEST_STARTED', `Candidate started the examination "${test.title}" (${id})`, 'info');
-        return res.json({ success: true, submission });
+        return res.json({ success: true, submission: subPayload });
     } catch (e) {
         console.error(e);
         if (e.code === 11000 || (e.name === 'MongoServerError' && e.code === 11000)) {
@@ -564,12 +589,13 @@ router.post('/start/:id', requireAuth, async (req, res) => {
 router.post('/heartbeat/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
+    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
     try {
         const now = new Date();
         if (dbState.useMongo) {
             const sub = await TestSubmissionModel.findByIdAndUpdate(
-                submissionId,
+                targetSubId,
                 { $set: { lastHeartbeatAt: now } },
                 { new: true, select: 'status startedAt' }
             );
@@ -578,7 +604,7 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            const sub = db.testSubmissions.find(s => String(s.id || s._id) === String(submissionId));
+            const sub = db.testSubmissions.find(s => String(s.id || s._id) === String(targetSubId) || String(s.id || s._id) === String(submissionId));
             if (!sub) return res.status(404).json({ error: "Submission session not found" });
             sub.lastHeartbeatAt = now;
             saveJSONData(db);
@@ -598,10 +624,11 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
     }
     const { submissionId, answers, proctoringLog } = payload || {};
     if (!submissionId) return res.status(400).json({ error: "Submission ID required" });
+    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
     try {
         if (dbState.useMongo) {
-            const submission = await TestSubmissionModel.findById(submissionId);
+            const submission = await TestSubmissionModel.findById(targetSubId);
             if (submission && submission.status === 'started') {
                 submission.status = 'auto-submitted';
                 submission.submittedAt = new Date();
@@ -683,8 +710,8 @@ router.post('/generate-token', requireAuth, async (req, res) => {
             db.testSubmissions = db.testSubmissions || [];
             submission = db.testSubmissions.find(s => s.candidateId === candidateId && s.testId === testId);
         }
-        if (submission && submission.status !== 'started') {
-            return res.status(400).json({ error: "You have already completed and submitted this examination. Re-attempts are not permitted." });
+        if (submission) {
+            return res.status(400).json({ error: "You have already started or completed this examination. Re-attempts are not permitted." });
         }
 
         const tokenStr = crypto.randomBytes(24).toString('hex');
@@ -808,7 +835,11 @@ router.post('/verify-token', async (req, res) => {
                 instructions: test.instructions,
                 questions: qSanitized
             },
-            submission: submission
+            submission: submission ? (() => {
+                const sp = submission.toObject ? submission.toObject() : { ...submission };
+                sp.bicsId = toBicsId(submission._id || submission.id);
+                return sp;
+            })() : null
         });
     } catch (err) {
         console.error("Token verification failed:", err);
@@ -821,14 +852,16 @@ router.post('/submit', async (req, res) => {
     const { submissionId, answers, proctoringLog, status } = req.body;
 
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
+    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
     const isFinalSubmission = status !== 'started';
 
     if (isFinalSubmission) {
-        if (activeSubmissionsProcessing.has(submissionId)) {
+        if (activeSubmissionsProcessing.has(submissionId) || activeSubmissionsProcessing.has(targetSubId)) {
             return res.status(429).json({ error: "Submission is already being processed. Please wait." });
         }
         activeSubmissionsProcessing.add(submissionId);
+        activeSubmissionsProcessing.add(targetSubId);
     }
 
     try {
@@ -837,11 +870,13 @@ router.post('/submit', async (req, res) => {
             let retries = 5;
             while (retries > 0) {
                 try {
-                    submission = await TestSubmissionModel.findById(submissionId);
+                    submission = await TestSubmissionModel.findById(targetSubId);
                     if (!submission) return res.status(404).json({ error: "Submission not found" });
 
                     if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
-                        return res.json({ success: true, submission });
+                        const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                        earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                        return res.json({ success: true, submission: earlyPayload });
                     }
 
                     submission.answers = answers;
@@ -887,6 +922,42 @@ router.post('/submit', async (req, res) => {
                     }
 
                     const sStudId = submission.studentId || 'Candidate';
+
+                    // 1. Authoritative EIRF incident calculation (processed before atomic save to eliminate duplicate DB roundtrips)
+                    if (isFinalSubmission) {
+                        const fsExits = submission.proctoringLog?.fullscreenExits || 0;
+                        const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
+                        const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
+                        const totalWarnings = fsExits + tabSwitches + inspectAttempts;
+                        const events = submission.proctoringLog?.events || [];
+
+                        let maxFsSec = 0;
+                        let maxTabSec = 0;
+                        let hasNetworkOffline = false;
+                        let hasMinorThreshold = false;
+                        events.forEach(ev => {
+                            let dur = Number(ev.durationSeconds || 0);
+                            if (!dur && ev.details) {
+                                const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                                if (match && match[1]) dur = parseInt(match[1], 10);
+                            }
+                            if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
+                            if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+                            if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
+                            if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
+                        });
+
+                        const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
+                        const isFlagged = submission.status === 'auto-submitted' || totalWarnings >= 1 || hasLongExit || hasNetworkOffline || hasMinorThreshold || Boolean(req.body.hasEirfFlag);
+
+                        if (isFlagged) {
+                            submission.hasEirfFlag = true;
+                            if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                                submission.eirfStatus = 'pending';
+                            }
+                        }
+                    }
+
                     const dbPayloadSnap = {
                         submissionId: String(submission._id || submission.id),
                         studentId: sStudId,
@@ -913,11 +984,13 @@ router.post('/submit', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            submission = db.testSubmissions.find(s => s.id === targetSubId || s._id === targetSubId || s.id === submissionId || s._id === submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
             if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
-                return res.json({ success: true, submission });
+                const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                return res.json({ success: true, submission: earlyPayload });
             }
 
             submission.answers = answers;
@@ -962,6 +1035,41 @@ router.post('/submit', async (req, res) => {
                 };
             }
 
+            // 1. Authoritative EIRF incident calculation (processed before save to eliminate duplicate writes)
+            if (isFinalSubmission) {
+                const fsExits = submission.proctoringLog?.fullscreenExits || 0;
+                const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
+                const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
+                const totalWarnings = fsExits + tabSwitches + inspectAttempts;
+                const events = submission.proctoringLog?.events || [];
+
+                let maxFsSec = 0;
+                let maxTabSec = 0;
+                let hasNetworkOffline = false;
+                let hasMinorThreshold = false;
+                events.forEach(ev => {
+                    let dur = Number(ev.durationSeconds || 0);
+                    if (!dur && ev.details) {
+                        const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                        if (match && match[1]) dur = parseInt(match[1], 10);
+                    }
+                    if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
+                    if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+                    if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
+                    if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
+                });
+
+                const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
+                const isFlagged = submission.status === 'auto-submitted' || totalWarnings >= 1 || hasLongExit || hasNetworkOffline || hasMinorThreshold || Boolean(req.body.hasEirfFlag);
+
+                if (isFlagged) {
+                    submission.hasEirfFlag = true;
+                    if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                        submission.eirfStatus = 'pending';
+                    }
+                }
+            }
+
             const sStudId = submission.studentId || 'Candidate';
             const dbPayloadSnap = {
                 submissionId: String(submission._id || submission.id),
@@ -977,87 +1085,74 @@ router.post('/submit', async (req, res) => {
             saveJSONData(db);
         }
 
+        // Asynchronous post-submission side effects (non-blocking so candidate UI returns in milliseconds)
         if (status !== 'started') {
-            await logSystemAction(submission?.candidateName || 'Candidate', status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', `Candidate submitted examination answers for "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'}) with status ${status || 'submitted'}`, 'info');
-        }
+            logSystemAction(
+                submission?.candidateName || 'Candidate', 
+                status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', 
+                `Candidate submitted examination answers for "${submission?.testTitle || 'Exam'}" (${submission?.testId || 'ID'}) with status ${status || 'submitted'}`, 
+                'info'
+            ).catch(() => {});
 
-        if (status !== 'started') {
-            const fsExits = submission.proctoringLog?.fullscreenExits || 0;
-            const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
-            const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
-            const totalWarnings = fsExits + tabSwitches + inspectAttempts;
-            const events = submission.proctoringLog?.events || [];
-
-            let maxFsSec = 0;
-            let maxTabSec = 0;
-            let hasNetworkOffline = false;
-            let hasMinorThreshold = false;
-            events.forEach(ev => {
-                let dur = Number(ev.durationSeconds || 0);
-                if (!dur && ev.details) {
-                    const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
-                    if (match && match[1]) dur = parseInt(match[1], 10);
-                }
-                if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
-                if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
-                if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
-                if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
-            });
-
-            const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
-            const isFlagged = status === 'auto-submitted' || totalWarnings >= 1 || hasLongExit || hasNetworkOffline || hasMinorThreshold || Boolean(req.body.hasEirfFlag);
-
-            if (isFlagged) {
-                submission.hasEirfFlag = true;
-                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
-                    submission.eirfStatus = 'pending';
-                }
-
-                if (!submission.eirfNoticeEmailSent) {
-                    submission.eirfNoticeEmailSent = true;
-
-                    let recipientEmail = submission.candidateEmail;
-                    if (!recipientEmail && submission.studentId) {
-                        const cand = dbState.useMongo
-                            ? await CandidateModel.findOne({ $or: [{ studentId: submission.studentId }, { _id: submission.candidateId }] })
-                            : (getJSONData().candidates || []).find(c => c.studentId === submission.studentId || c.id === submission.studentId);
-                        if (cand) {
-                            recipientEmail = cand.personalEmail || cand.registrationData?.personalEmail || cand.email;
+            if (submission.hasEirfFlag && !submission.eirfNoticeEmailSent) {
+                submission.eirfNoticeEmailSent = true;
+                (async () => {
+                    try {
+                        let recipientEmail = submission.candidateEmail;
+                        if (!recipientEmail && submission.studentId) {
+                            const cand = dbState.useMongo
+                                ? await CandidateModel.findOne({ $or: [{ studentId: submission.studentId }, { _id: submission.candidateId }] })
+                                : (getJSONData().candidates || []).find(c => c.studentId === submission.studentId || c.id === submission.studentId);
+                            if (cand) {
+                                recipientEmail = cand.personalEmail || cand.registrationData?.personalEmail || cand.email;
+                            }
                         }
+                        if (!recipientEmail) recipientEmail = 'preliminaryexaminations@gmail.com';
+
+                        const fsExits = submission.proctoringLog?.fullscreenExits || 0;
+                        const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
+                        const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
+                        const totalWarnings = fsExits + tabSwitches + inspectAttempts;
+                        const events = submission.proctoringLog?.events || [];
+                        let maxFsSec = 0;
+                        let maxTabSec = 0;
+                        events.forEach(ev => {
+                            let dur = Number(ev.durationSeconds || 0);
+                            if (!dur && ev.details) {
+                                const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                                if (match && match[1]) dur = parseInt(match[1], 10);
+                            }
+                            if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
+                            if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+                        });
+
+                        const incidentParts = [];
+                        if (fsExits > 0) incidentParts.push(`${fsExits} Fullscreen Exit(s) (Max: ${maxFsSec}s)`);
+                        if (tabSwitches > 0) incidentParts.push(`${tabSwitches} Tab Switch(es) / Focus Loss (Max: ${maxTabSec}s)`);
+                        if (inspectAttempts > 0) incidentParts.push(`${inspectAttempts} Developer Tools / Inspect Element Attempt(s)`);
+                        if (status === 'auto-submitted') incidentParts.push(`Attempt Auto-Submitted due to reaching 3 compliance warnings`);
+
+                        const consolidatedSummary = incidentParts.length > 0
+                            ? `Recorded Session Incidents: ${incidentParts.join('; ')}.`
+                            : `Proctoring alert flagged for post-exam incident review (${totalWarnings} total warnings).`;
+
+                        await sendEirfNoticeEmail(
+                            recipientEmail,
+                            submission.candidateName || 'Candidate',
+                            submission.testTitle || 'BICS Examination',
+                            consolidatedSummary,
+                            submission._id || submission.id
+                        );
+                    } catch (e) {
+                        console.error("EIRF single consolidated notice email error:", e);
                     }
-                    if (!recipientEmail) {
-                        recipientEmail = 'preliminaryexaminations@gmail.com';
-                    }
-
-                    const incidentParts = [];
-                    if (fsExits > 0) incidentParts.push(`${fsExits} Fullscreen Exit(s) (Max: ${maxFsSec}s)`);
-                    if (tabSwitches > 0) incidentParts.push(`${tabSwitches} Tab Switch(es) / Focus Loss (Max: ${maxTabSec}s)`);
-                    if (inspectAttempts > 0) incidentParts.push(`${inspectAttempts} Developer Tools / Inspect Element Attempt(s)`);
-                    if (status === 'auto-submitted') incidentParts.push(`Attempt Auto-Submitted due to reaching 3 compliance warnings`);
-
-                    const consolidatedSummary = incidentParts.length > 0
-                        ? `Recorded Session Incidents: ${incidentParts.join('; ')}.`
-                        : `Proctoring alert flagged for post-exam incident review (${totalWarnings} total warnings).`;
-
-                    sendEirfNoticeEmail(
-                        recipientEmail,
-                        submission.candidateName || 'Candidate',
-                        submission.testTitle || 'BICS Examination',
-                        consolidatedSummary,
-                        submission._id || submission.id
-                    ).catch(e => console.error("EIRF single consolidated notice email error:", e));
-                }
-
-                if (dbState.useMongo && submission.save) {
-                    await submission.save();
-                } else if (!dbState.useMongo) {
-                    const db = getJSONData();
-                    saveJSONData(db);
-                }
+                })();
             }
         }
 
-        return res.json({ success: true, submission });
+        const subPayload = submission.toObject ? submission.toObject() : { ...submission };
+        subPayload.bicsId = toBicsId(submission._id || submission.id);
+        return res.json({ success: true, submission: subPayload });
     } catch (e) {
         console.error("POST /api/tests/submit failed:", e);
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to process exam submission for candidate submission ID ${submissionId}: ${e.message || e}`, 'error');
@@ -1065,6 +1160,7 @@ router.post('/submit', async (req, res) => {
     } finally {
         if (isFinalSubmission) {
             activeSubmissionsProcessing.delete(submissionId);
+            activeSubmissionsProcessing.delete(targetSubId);
         }
     }
 });

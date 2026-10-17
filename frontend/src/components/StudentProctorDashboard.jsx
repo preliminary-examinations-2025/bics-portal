@@ -15,6 +15,15 @@ const PRESET_COURSES = [
   { code: 'CUSTOM', name: 'Other / Custom Course Code...' }
 ];
 
+const resolveSnapshotUrl = (url) => {
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  const backendBase = (API_BASE || '').replace(/\/api\/?$/, '');
+  return `${backendBase}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   const [activeTab, setActiveTab] = useState('proctoring'); // 'proctoring' | 'eirf'
   const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
@@ -399,7 +408,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
             </div>
             <div style={{ backgroundColor: '#0f172a', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '360px' }}>
               <img 
-                src={selectedSnapshot.url} 
+                src={resolveSnapshotUrl(selectedSnapshot.url)} 
                 alt="Proctoring Snapshot" 
                 style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain' }}
               />
@@ -510,7 +519,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 {baselinePhotoUrl ? (
                   <>
                     <img 
-                      src={baselinePhotoUrl} 
+                      src={resolveSnapshotUrl(baselinePhotoUrl)} 
                       alt="Baseline Identity" 
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
@@ -687,10 +696,30 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED') || log.type?.includes('WARNING') || log.type?.includes('VOICE') || log.type?.includes('CLIPBOARD');
                       
                       // Match snapshot by time or category if available
-                      const matchingSnapshot = snapshots.find(s => 
-                        s.type === log.type && 
-                        Math.abs(new Date(s.timestamp).getTime() - new Date(log.timestamp).getTime()) < 30000
-                      );
+                      const matchingSnapshots = snapshots.filter(s => {
+                        const typeMatches = s.type === log.type || 
+                          (s.type === 'FULLSCREEN_EXIT' && (log.type?.includes('FULLSCREEN') || log.type?.includes('EXIT'))) ||
+                          (s.type === 'TAB_SWITCH' && (log.type?.includes('TAB') || log.type?.includes('FOCUS'))) ||
+                          (s.type === 'DEVTOOLS_OPENED' && (log.type?.includes('DEVTOOLS') || log.type?.includes('INSPECT'))) ||
+                          (s.type === 'CLIPBOARD_ATTEMPT' && (log.type?.includes('CLIPBOARD') || log.type?.includes('COPY'))) ||
+                          (s.type === 'VOICE_DETECTED' && log.type?.includes('VOICE')) ||
+                          (s.type === 'FACE_MISSING' && log.type?.includes('FACE_MISSING')) ||
+                          (s.type === 'MULTI_FACE' && log.type?.includes('MULTI_FACE')) ||
+                          (s.type === 'LOOKING_AWAY' && log.type?.includes('LOOKING_AWAY')) ||
+                          (s.type === 'MINOR_WARNINGS_EXCEEDED' && log.type?.includes('MINOR_WARNINGS'));
+                        if (!typeMatches) return false;
+                        const timeDiff = Math.abs(new Date(s.timestamp).getTime() - new Date(log.timestamp).getTime());
+                        return timeDiff < 60000;
+                      });
+
+                      let matchingSnapshot = null;
+                      if (matchingSnapshots.length > 0) {
+                        matchingSnapshot = matchingSnapshots.reduce((closest, curr) => {
+                          const closestDiff = Math.abs(new Date(closest.timestamp).getTime() - new Date(log.timestamp).getTime());
+                          const currDiff = Math.abs(new Date(curr.timestamp).getTime() - new Date(log.timestamp).getTime());
+                          return currDiff < closestDiff ? curr : closest;
+                        });
+                      }
 
                       return (
                         <div 
@@ -778,7 +807,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       >
                         <div style={{ width: '100%', height: '110px', backgroundColor: '#0f172a', overflow: 'hidden' }}>
                           <img 
-                            src={snap.url} 
+                            src={resolveSnapshotUrl(snap.url)} 
                             alt={snap.type} 
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />

@@ -7,6 +7,7 @@ import { ShieldAlert, AlertTriangle } from 'lucide-react';
  */
 export const ExamProctorOverlay = ({
   examVideoRef,
+  webcamStream,
   showWarningModal,
   setShowWarningModal,
   proctoringWarnings,
@@ -14,11 +15,29 @@ export const ExamProctorOverlay = ({
   setCustomModal,
   devModeActive
 }) => {
+  React.useEffect(() => {
+    if (examVideoRef?.current && webcamStream) {
+      if (examVideoRef.current.srcObject !== webcamStream) {
+        examVideoRef.current.srcObject = webcamStream;
+      }
+      examVideoRef.current.play().catch(() => {});
+    }
+  }, [examVideoRef, webcamStream]);
+
   return (
     <>
       {/* Offscreen video tracker - continuously active for BlazeFace ML and forensic evidence snapshots */}
       <div style={{ position: 'fixed', top: -9999, left: -9999, width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', zIndex: -100 }}>
-        <video ref={examVideoRef} autoPlay playsInline muted style={{ width: '640px', height: '480px' }} />
+        <video 
+          ref={examVideoRef} 
+          autoPlay 
+          playsInline 
+          muted 
+          onLoadedMetadata={(e) => {
+            e.target.play().catch(() => {});
+          }}
+          style={{ width: '640px', height: '480px' }} 
+        />
       </div>
 
       {/* Warning proctor alert modal */}

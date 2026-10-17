@@ -241,7 +241,9 @@ const authorizeApiRequest = async (req, res, next) => {
         fullPath.includes('/api/tests/proctoring') || 
         fullPath.includes('/api/tests/heartbeat') || 
         fullPath.includes('/api/tests/run') || 
-        fullPath.includes('/api/tests/submit')
+        fullPath.includes('/api/tests/submit') ||
+        fullPath.includes('/api/tests/submitted') ||
+        fullPath.includes('/api/test/eirf')
     )) {
         const examToken = req.headers['x-exam-token'] || req.query.token || (req.body && req.body.token);
         if (examToken && typeof examToken === 'string') {
@@ -265,6 +267,34 @@ const authorizeApiRequest = async (req, res, next) => {
                     req.isExamTokenAuth = true;
                 }
             } catch (err) {}
+        }
+
+        // Resilient fallback for liveness heartbeat pings on active examination sessions
+        if (!req.user && fullPath.includes('/api/tests/heartbeat/')) {
+            const parts = fullPath.split('/');
+            const subId = parts[parts.length - 1];
+            if (subId && subId.length >= 8) {
+                try {
+                    const { TestSubmissionModel } = require('../models');
+                    const { dbState, getJSONData } = require('../config/db');
+                    let activeSub = null;
+                    if (dbState.useMongo) {
+                        activeSub = await TestSubmissionModel.findById(subId).select('candidateId studentId status').lean();
+                    } else {
+                        const db = getJSONData();
+                        activeSub = (db.testSubmissions || []).find(s => String(s.id || s._id) === String(subId));
+                    }
+                    if (activeSub && activeSub.status === 'started') {
+                        req.user = {
+                            id: String(activeSub.candidateId || activeSub.studentId),
+                            role: 'candidate',
+                            studentId: String(activeSub.studentId || activeSub.candidateId),
+                            username: 'candidate'
+                        };
+                        req.isExamTokenAuth = true;
+                    }
+                } catch (_) {}
+            }
         }
     }
 

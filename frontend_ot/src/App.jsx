@@ -506,16 +506,49 @@ export default function App() {
   const [runResults, setRunResults] = useState(null);
   const [compileError, setCompileError] = useState(null);
   const [consoleTab, setConsoleTab] = useState('testcase'); // 'testcase' or 'result'
+  const [activeProctorToasts, setActiveProctorToasts] = useState({});
 
-  // Toast Notification for Blocked Actions & Alerts (Item B6)
-  const [toastNotification, setToastNotification] = useState({ visible: false, message: '', title: 'Action Blocked', type: 'error' });
-  const toastTimeoutRef = useRef(null);
-  const showToast = (message, title = 'Action Blocked', type = 'error') => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    setToastNotification({ visible: true, message, title, type });
-    toastTimeoutRef.current = setTimeout(() => {
-      setToastNotification(prev => ({ ...prev, visible: false }));
-    }, 4500);
+  // Helper functions for persistent multi-toast proctoring alerts
+  const addProctorToast = (id, toastData) => {
+    setActiveProctorToasts(prev => ({
+      ...prev,
+      [id]: {
+        id,
+        title: toastData.title || 'Proctor Reminder',
+        message: toastData.message || toastData.body || '',
+        type: toastData.type || 'warning',
+        persistent: toastData.persistent !== false,
+        duration: toastData.duration || 6000,
+        timestamp: Date.now(),
+        ...toastData
+      }
+    }));
+  };
+
+  const removeProctorToast = (id) => {
+    setActiveProctorToasts(prev => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const clearAllProctorToasts = () => {
+    setActiveProctorToasts({});
+  };
+
+  // Toast Notification for Blocked Actions & Minor Proctoring Alerts
+  const showToast = (message, title = 'Proctor Warning', type = 'warning', persistent = false, duration = 6000) => {
+    const toastId = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    addProctorToast(toastId, {
+      title,
+      message,
+      type,
+      persistent,
+      duration
+    });
+    setWebcamProctorWarning({ title, message, type });
   };
 
   // Cooldown window refs for Deduplication of Fullscreen Exit & Blur (Item 3.1)
@@ -1283,6 +1316,13 @@ export default function App() {
           fsExitStartTimeRef.current = now;
           lastFullscreenExitTimeRef.current = now;
 
+          // Trigger proctor warning toast and evidence snapshot capture immediately
+          handleProctorViolation(
+            'FULLSCREEN_EXIT',
+            'The examination must be taken in full-screen mode. Please return to full-screen view.',
+            'Candidate exited fullscreen mode.'
+          );
+
           // Deduplication: If a window blur occurred within the last 600ms, merge into a single incident
           const timeSinceBlur = now - lastWindowBlurTimeRef.current;
           if (timeSinceBlur < DEDUPLICATION_WINDOW_MS) {
@@ -1300,6 +1340,7 @@ export default function App() {
           const endTime = Date.now();
           const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
           fsExitStartTimeRef.current = null;
+          handleProctorResolved('FULLSCREEN_EXIT');
           syncProctoringLogs(
             proctoringWarnings,
             'FULLSCREEN_EXIT',
@@ -1330,6 +1371,13 @@ export default function App() {
           tabExitStartTimeRef.current = now;
           lastWindowBlurTimeRef.current = now;
 
+          // Trigger proctor warning toast and evidence snapshot capture immediately
+          handleProctorViolation(
+            'TAB_SWITCH',
+            'Navigating away from the active examination window is not permitted. Please keep this tab focused.',
+            'Candidate lost window focus / switched tabs.'
+          );
+
           // Deduplication: If fullscreen was exited within the last 600ms, merge and suppress double-warning
           const timeSinceFS = now - lastFullscreenExitTimeRef.current;
           if (timeSinceFS < DEDUPLICATION_WINDOW_MS) {
@@ -1349,6 +1397,7 @@ export default function App() {
     
     const onFocus = () => {
       setIsFocused(true);
+      handleProctorResolved('TAB_SWITCH');
       if (flow === 'active_exam' && tabExitStartTimeRef.current) {
         const startTime = tabExitStartTimeRef.current;
         const endTime = Date.now();
@@ -1491,7 +1540,19 @@ export default function App() {
         `Cumulative minor proctoring violations reached threshold: ${count} seconds (${reason}). EIRF incident flag activated.`
       );
 
-      setWebcamProctorWarning(`Proctor Alert: Compliance warning threshold reached (${count}s). An Emergency Incident Report (EIRF) flag has been activated.`);
+      captureEvidenceSnapshot(
+        'MINOR_WARNINGS_EXCEEDED',
+        `Cumulative minor proctoring violations reached threshold: ${count} seconds (${reason}). EIRF incident flag activated.`
+      );
+
+      addProctorToast('MINOR_WARNINGS_EXCEEDED', {
+        id: 'MINOR_WARNINGS_EXCEEDED',
+        title: 'System Security Notice',
+        message: 'Multiple system security notices have been logged for this session.',
+        persistent: true
+      });
+
+      setWebcamProctorWarning('Multiple system security notices have been logged for this session.');
 
       if (submission) {
         saveOfflineSubmission({
@@ -1508,29 +1569,92 @@ export default function App() {
     }
   };
 
+  // Continuously ensure active exam video element is linked to webcam stream & playing
+  useEffect(() => {
+    if (flow === 'active_exam' && webcamStream && examVideoRef.current) {
+      if (examVideoRef.current.srcObject !== webcamStream) {
+        examVideoRef.current.srcObject = webcamStream;
+      }
+      examVideoRef.current.play().catch(e => console.warn("[ExamVideoPlayNotice]:", e.message));
+    }
+  }, [flow, webcamStream]);
+
   // Proctoring snapshot capture helper & violation dispatcher
   const lastSnapshotTimeRef = useRef({});
   const voiceWarningExpiryRef = useRef(0);
 
-  const captureEvidenceSnapshot = (eventType, details) => {
+  const captureEvidenceSnapshot = async (eventType, details, retryCount = 0) => {
     try {
       if (!submission) return;
-      const subId = submission.id || submission._id;
+      const subId = submission.bicsId || submission.id || submission._id;
       if (!subId) return;
-
-      const vid = examVideoRef.current;
-      if (!vid || vid.readyState < 2) return;
 
       const canvas = document.createElement('canvas');
       canvas.width = 640;
       canvas.height = 480;
       const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-      // Mirror video frame to match user perspective
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      let frameDrawn = false;
+
+      // Method 1: Direct ImageCapture from live webcam video track (highest reliability, bypasses DOM buffering)
+      if (webcamStream) {
+        const videoTrack = webcamStream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled !== false);
+        if (videoTrack && typeof window.ImageCapture === 'function') {
+          try {
+            const imageCapture = new window.ImageCapture(videoTrack);
+            const bitmap = await imageCapture.grabFrame();
+            if (bitmap && bitmap.width > 0) {
+              ctx.translate(canvas.width, 0);
+              ctx.scale(-1, 1);
+              ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              frameDrawn = true;
+            }
+          } catch (icErr) {
+            console.warn("[Snapshot ImageCapture notice]:", icErr.message);
+          }
+        }
+      }
+
+      // Method 2: Fallback to examVideoRef element
+      if (!frameDrawn) {
+        let vid = examVideoRef.current;
+        if (vid) {
+          if (webcamStream && vid.srcObject !== webcamStream) {
+            vid.srcObject = webcamStream;
+            vid.play().catch(() => {});
+          }
+          if (vid.readyState >= 2) {
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            frameDrawn = true;
+          } else if (webcamStream && retryCount < 3) {
+            // Buffer wait retry
+            setTimeout(() => {
+              captureEvidenceSnapshot(eventType, details, retryCount + 1);
+            }, 250);
+            return;
+          }
+        }
+      }
+
+      // Method 3: Fallback security frame if camera track momentarily dropped
+      if (!frameDrawn) {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 15px Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('CAMERA FRAME BUFFERING AT INCIDENT TIMESTAMP', canvas.width / 2, canvas.height / 2 - 12);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px Roboto, sans-serif';
+        ctx.fillText(`Violation: ${eventType}`, canvas.width / 2, canvas.height / 2 + 12);
+        ctx.textAlign = 'left';
+        frameDrawn = true;
+      }
 
       // Security watermark band
       ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
@@ -1545,6 +1669,8 @@ export default function App() {
       const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
       const studentId = candidate?.studentId || submission?.studentId || '';
 
+      console.log(`[Evidence Snapshot Captured]: ${eventType} -> Uploading to server for ${subId}`);
+
       if (isOnline) {
         fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
           method: 'POST',
@@ -1555,9 +1681,12 @@ export default function App() {
             details,
             studentId
           })
-        }).then(res => {
+        }).then(async res => {
           if (!res.ok) {
             saveOfflineSnapshot({ submissionId: subId, image: dataUrl, eventType, details, studentId }).catch(() => {});
+          } else {
+            const data = await res.json().catch(() => ({}));
+            console.log(`[Snapshot Saved]: Successfully stored ${eventType} snapshot #${data.snapshotCount}`);
           }
         }).catch(() => {
           saveOfflineSnapshot({ submissionId: subId, image: dataUrl, eventType, details, studentId }).catch(() => {});
@@ -1605,12 +1734,53 @@ export default function App() {
   };
 
   // Dispatch violation warning to candidate, take snapshot immediately on first call,
-  // and continue taking snapshots every 10s if the warning is continuous.
+  // and continue taking snapshots for persistent warnings.
   const handleProctorViolation = (eventType, warningMessage, logDetails) => {
-    setWebcamProctorWarning(warningMessage);
+    const title = 'System Security Notice';
+    let persistent = true;
+
+    if (
+      eventType === 'DEVTOOLS_OPENED' || 
+      eventType === 'CLIPBOARD_ATTEMPT' || 
+      eventType === 'RIGHT_CLICK_BLOCKED'
+    ) {
+      persistent = false; // Transient 6-second notice
+    } else if (
+      eventType === 'NETWORK_OFFLINE' || 
+      eventType === 'EIRF_FLAG' || 
+      eventType === 'MINOR_WARNINGS_EXCEEDED' ||
+      eventType === 'FACE_MISSING' ||
+      eventType === 'MULTI_FACE' ||
+      eventType === 'LOOKING_AWAY' ||
+      eventType === 'VOICE_DETECTED'
+    ) {
+      persistent = true;
+    }
+
+    // Do NOT trigger toast notifications for FULLSCREEN_EXIT and TAB_SWITCH
+    // since there is already a dedicated modal dialog (ExamProctorOverlay) alerting the candidate.
+    const isModalMajorViolation = eventType === 'FULLSCREEN_EXIT' || eventType === 'TAB_SWITCH';
+    if (!isModalMajorViolation) {
+      addProctorToast(eventType, {
+        id: eventType,
+        title,
+        message: warningMessage || '',
+        persistent,
+        duration: persistent ? 0 : 6000
+      });
+
+      setWebcamProctorWarning(warningMessage);
+    }
     const now = Date.now();
     const lastTime = lastSnapshotTimeRef.current[eventType] || 0;
-    if (lastTime === 0 || now - lastTime >= 10000) {
+    const isDiscreteAction = eventType === 'CLIPBOARD_ATTEMPT' || 
+                             eventType === 'RIGHT_CLICK_BLOCKED' ||
+                             eventType === 'DEVTOOLS_OPENED' || 
+                             eventType === 'FULLSCREEN_EXIT' || 
+                             eventType === 'TAB_SWITCH';
+    const cooldownMs = isDiscreteAction ? 2000 : 10000;
+
+    if (lastTime === 0 || (now - lastTime) >= cooldownMs) {
       lastSnapshotTimeRef.current[eventType] = now;
       captureEvidenceSnapshot(eventType, logDetails);
       logProctoringEvent(submission, eventType, logDetails);
@@ -1620,6 +1790,7 @@ export default function App() {
   // Reset violation tracking when resolved so next occurrence triggers snapshot immediately on first call
   const handleProctorResolved = (eventType) => {
     lastSnapshotTimeRef.current[eventType] = 0;
+    removeProctorToast(eventType);
   };
 
   // Handle major proctoring violations for Inspect / Developer Tools access
@@ -1627,21 +1798,14 @@ export default function App() {
   const handleInspectViolation = (vector = 'devtools', detail = '') => {
     if (flow !== 'active_exam') return;
     const now = Date.now();
-    // 4-second debouncing to prevent multiple strikes for a single inspection action
-    if (now - lastInspectWarningTimeRef.current < 4000) return;
+    // 2-second debouncing to prevent multiple strikes for a single inspection action
+    if (now - lastInspectWarningTimeRef.current < 2000) return;
     lastInspectWarningTimeRef.current = now;
 
-    showToast(
-      "Developer Tools & Inspect Element are strictly forbidden. A major proctoring violation has been recorded.",
-      "Proctoring Violation: Inspect Attempt",
-      "error"
-    );
-
-    captureEvidenceSnapshot('DEVTOOLS_OPENED', `DevTools / Inspect element detected via ${vector}: ${detail}`);
-    logProctoringEvent(
-      submission,
+    handleProctorViolation(
       'DEVTOOLS_OPENED',
-      `Candidate opened or attempted to inspect exam environment via ${vector} (${detail}).`
+      'Developer tools and inspection shortcuts are disabled by the system in active test environment.',
+      `DevTools / Inspect element detected via ${vector}: ${detail}`
     );
 
     setProctoringWarnings(prev => ({
@@ -1663,7 +1827,7 @@ export default function App() {
       const video = examVideoRef.current;
       const model = blazefaceModelRef.current;
       
-      if (video && model && video.readyState === 4) {
+      if (video && model && video.readyState >= 2) {
         try {
           // Detect faces in the video frame
           const predictions = await model.estimateFaces(video, false);
@@ -1678,7 +1842,7 @@ export default function App() {
             if (faceAwayDurationRef.current >= 3) { // 3 seconds at 1 FPS
               handleProctorViolation(
                 'FACE_MISSING',
-                'Proctor Reminder: No face detected. Please ensure you are visible to the webcam.',
+                'Your face is not clearly visible in the camera frame. Please position yourself facing the webcam.',
                 'No face detected in webcam stream.'
               );
             }
@@ -1690,7 +1854,7 @@ export default function App() {
             if (faceAwayDurationRef.current >= 3) {
               handleProctorViolation(
                 'MULTI_FACE',
-                'Proctor Reminder: Multiple faces detected in webcam frame.',
+                'More than one face was detected in the camera frame. Please ensure you are alone in the room.',
                 'Multiple faces detected in webcam stream.'
               );
             }
@@ -1720,7 +1884,7 @@ export default function App() {
                   if (faceAwayDurationRef.current >= LOOKING_AWAY_SUSTAINED_FRAMES) {
                     handleProctorViolation(
                       'LOOKING_AWAY',
-                      'Proctor Reminder: Please keep facing forward. Looking away is prohibited.',
+                      'Gaze deviation was detected. Please keep your attention focused forward on the test screen.',
                       'Candidate is turned away / looking away from screen.'
                     );
                   }
@@ -1763,15 +1927,11 @@ export default function App() {
 
       // Continuous monitor for fullscreen exits and tab switches
       if (!document.fullscreenElement && fsExitStartTimeRef.current) {
-        handleProctorViolation('FULLSCREEN_EXIT', 'Proctor Warning: Fullscreen exit detected', 'Candidate is outside fullscreen mode.');
-      } else {
-        handleProctorResolved('FULLSCREEN_EXIT');
+        handleProctorViolation('FULLSCREEN_EXIT', 'The examination must be taken in full-screen mode. Please return to full-screen view.', 'Candidate is outside fullscreen mode.');
       }
 
       if (tabExitStartTimeRef.current) {
-        handleProctorViolation('TAB_SWITCH', 'Proctor Warning: Window focus lost', 'Candidate switched tabs or window.');
-      } else {
-        handleProctorResolved('TAB_SWITCH');
+        handleProctorViolation('TAB_SWITCH', 'Navigating away from the active examination window is not permitted. Please keep this tab focused.', 'Candidate switched tabs or window.');
       }
       
       if (active) {
@@ -1889,7 +2049,7 @@ export default function App() {
               }
               handleProctorViolation(
                 'VOICE_DETECTED',
-                `Proctor Reminder: High voice / ambient noise detected (${currentDb} dB). Strict silence is required.`,
+                'Background audio or voice activity was detected by the proctoring system. Please maintain silence.',
                 `High voice detected (${currentDb} dB, RMS: ${rms.toFixed(2)}, Crest Factor: ${crestFactor.toFixed(2)}).`
               );
             }
@@ -1897,7 +2057,7 @@ export default function App() {
             sustainedVoiceCount = Math.max(0, sustainedVoiceCount - 1);
             if (sustainedVoiceCount === 0 && Date.now() > voiceWarningExpiryRef.current) {
               handleProctorResolved('VOICE_DETECTED');
-              setWebcamProctorWarning(prev => (prev.includes('voice detected') || prev.includes('High voice') ? '' : prev));
+              setWebcamProctorWarning(prev => (prev.includes('voice') || prev.includes('audio') || prev.includes('High voice') ? '' : prev));
             }
           }
         }, 100);
@@ -1918,16 +2078,20 @@ export default function App() {
   // Strict Copy-Paste & Right-Click Lockdown during Active Examination (Item B6)
   const clipboardWarningExpiryRef = useRef(0);
   const handleClipboardAttempt = (action = 'clipboard_action') => {
-    const actionLabel = (action || 'action').toUpperCase();
-    const toastMsg = "Action Blocked: Copy-pasting and dragging external text are strictly prohibited during the active examination environment. This attempt has been logged.";
-    showToast(toastMsg, 'Action Blocked', 'error');
-
-    const warningMsg = `CLIPBOARD LOCKDOWN: Copying and pasting is strictly prohibited during the examination. Your ${actionLabel} action was blocked and reported.`;
+    const act = String(action || 'copy').toLowerCase();
+    let warningMsg = 'The copy action is blocked by the system in active test environment.';
+    if (act.includes('paste')) {
+      warningMsg = 'The paste action is blocked by the system in active test environment.';
+    } else if (act.includes('cut')) {
+      warningMsg = 'The cut action is blocked by the system in active test environment.';
+    } else if (act.includes('drag') || act.includes('drop')) {
+      warningMsg = 'Drag and drop operations are blocked by the system in active test environment.';
+    }
     clipboardWarningExpiryRef.current = Date.now() + 6000;
     handleProctorViolation(
       'CLIPBOARD_ATTEMPT',
       warningMsg,
-      `Candidate attempted unauthorized clipboard or drag-drop operation (${actionLabel}) in active exam workspace.`
+      `Candidate attempted unauthorized clipboard operation (${act}) in active exam workspace.`
     );
   };
 
@@ -1995,6 +2159,16 @@ export default function App() {
     const blockContextMenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      // Requirement 2: Simply block right click and treat as minor warning (do NOT increment major inspectAttempts)
+      incrementMinorWarning('RIGHT_CLICK_BLOCKED');
+      handleProctorViolation(
+        'RIGHT_CLICK_BLOCKED',
+        'The right-click menu is blocked by the system in active test environment.',
+        'Right-click context menu attempt blocked in active exam workspace.'
+      );
       return false;
     };
 
@@ -2041,48 +2215,6 @@ export default function App() {
       document.removeEventListener('drop', blockDragDrop, true);
       document.removeEventListener('contextmenu', blockContextMenu, true);
       clearInterval(dismissInterval);
-    };
-  }, [flow, submission]);
-
-  // Real-time Developer Tools / Inspect Element Detection (Docked & Undocked)
-  useEffect(() => {
-    if (flow !== 'active_exam' || !submission) return;
-
-    let active = true;
-
-    // 1. Docked DevTools Detection via Viewport & Screen Dimension Delta
-    const checkDockedDevTools = () => {
-      if (!active) return;
-      const widthDelta = window.outerWidth - window.innerWidth;
-      const heightDelta = window.outerHeight - window.innerHeight;
-      if (widthDelta > 160 || heightDelta > 160) {
-        handleInspectViolation('DOCKED_DEVTOOLS_WINDOW', `Delta W:${widthDelta} H:${heightDelta}`);
-      }
-    };
-
-    // 2. Detached / Floating DevTools Console Inspection Trap
-    // When DevTools is opened, the browser's console formatting engine evaluates custom toString()
-    const devtoolsDetector = /./;
-    devtoolsDetector.toString = function() {
-      if (active) {
-        handleInspectViolation('CONSOLE_INSPECTION_TRAP', 'Console formatting evaluation triggered');
-      }
-      return '';
-    };
-
-    const intervalId = setInterval(() => {
-      checkDockedDevTools();
-      try {
-        console.debug(devtoolsDetector);
-      } catch (_) {}
-    }, 1000);
-
-    window.addEventListener('resize', checkDockedDevTools);
-
-    return () => {
-      active = false;
-      clearInterval(intervalId);
-      window.removeEventListener('resize', checkDockedDevTools);
     };
   }, [flow, submission]);
 
@@ -2433,7 +2565,7 @@ export default function App() {
 
   // Auto-sync pending submissions when connection comes back online
   useEffect(() => {
-    if (!submission) return;
+    if (!submission || submittingExam) return;
     
     const subId = submission._id || submission.id;
     const pendingSubmitKey = `bics_pending_submit_${subId}`;
@@ -2458,6 +2590,7 @@ export default function App() {
             const data = await res.json();
             if (data.success) {
               localStorage.removeItem(pendingSubmitKey);
+              await deleteOfflineSubmission(subId).catch(() => {});
               setSyncStatus('completed');
               setHasPendingSubmit(false);
               setFlow('finished');
@@ -2475,7 +2608,7 @@ export default function App() {
     } else {
       setHasPendingSubmit(false);
     }
-  }, [isOnline, submission]);
+  }, [isOnline, submission, submittingExam]);
 
   // Switch editor language and auto-populate default templates if editor is blank/default
   const handleLanguageChange = (newLang) => {
@@ -2634,6 +2767,13 @@ export default function App() {
 
       if (eventType) {
         await logProctoringEvent(submission, eventType, eventDetails, startTime, endTime, durationSeconds);
+        // Fail-safe snapshot capture for any logged warning event
+        const now = Date.now();
+        const lastTime = lastSnapshotTimeRef.current[eventType] || 0;
+        if (now - lastTime >= 2000) {
+          lastSnapshotTimeRef.current[eventType] = now;
+          captureEvidenceSnapshot(eventType, eventDetails);
+        }
       }
 
       const pLogPayload = getProctoringLogPayload(warningsObj);
@@ -2765,14 +2905,18 @@ export default function App() {
     }
 
     const fullPLog = getProctoringLogPayload(warningsObj);
+    const isActuallyOnline = Boolean(navigator.onLine && isOnline);
 
-    // Auto-generate .eirf payload file on network drop or proctoring warning triggers
-    const hasWarnings = (warningsObj?.fullscreenExits || 0) > 0 || (warningsObj?.tabSwitches || 0) > 0 || statusVal === 'auto-submitted' || !isOnline;
-    if (hasWarnings) {
-      downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
+    // Auto-generate .eirf backup file ONLY on genuine network drop or auto-submit violation termination
+    if (!isActuallyOnline || statusVal === 'auto-submitted') {
+      try {
+        downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
+      } catch (eirfErr) {
+        console.warn("EIRF backup generation failed:", eirfErr);
+      }
     }
 
-    if (!isOnline) {
+    if (!isActuallyOnline) {
       const pendingSubmitKey = `bics_pending_submit_${subId}`;
       const payload = {
         submissionId: subId,
@@ -2809,77 +2953,111 @@ export default function App() {
       return;
     }
 
-    try {
-      const res = await fetch(`${API_BASE}/tests/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          submissionId: subId,
-          answers: answersList,
-          proctoringLog: fullPLog,
-          status: statusVal,
-          hasEirfFlag: Boolean(submission?.hasEirfFlag || hasWarnings || !isOnline)
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        await logProctoringEvent(submission, 'TEST_SUBMITTED', `Candidate finalized and submitted exam (Status: ${statusVal}).`);
-        localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
-        await deleteOfflineSubmission(subId).catch(() => {});
-        
-        if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
-        if (micStream) micStream.getTracks().forEach(t => t.stop());
-        
-        // Clean up any lingering offline pending submit items
-        for (let i = localStorage.length - 1; i >= 0; i--) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith('bics_pending_submit_')) {
-            localStorage.removeItem(k);
-          }
-        }
-        setHasPendingSubmit(false);
+    // Authoritative online submission pipeline with retry & collision prevention
+    let submitSuccess = false;
+    let submitErrorMsg = null;
+    const maxRetries = 3;
 
-        setFlow('finished');
-        setFinishedStep(1);
-      } else {
-        triggerCustomAlert("Submission Failed", data.error || "An error occurred during submission. Please try again.");
-      }
-    } catch (err) {
-      console.error("Submission fetch crashed, caching payload locally in IndexedDB:", err);
-      const pendingSubmitKey = `bics_pending_submit_${subId}`;
-      const payload = {
-        submissionId: subId,
-        studentId: candidate?.studentId || submission?.studentId || '',
-        candidateName: candidate?.name || submission?.candidateName || 'Candidate',
-        testTitle: submission?.testTitle || test?.title || 'BICS Examination',
-        answers: answersList,
-        proctoringLog: fullPLog,
-        status: statusVal,
-        hasEirfFlag: true,
-        eirfStatus: 'pending'
-      };
-
-      // High-capacity IndexedDB persistence
-      saveOfflineSubmission(payload).catch(() => {});
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const encryptedPending = await encryptPendingStorage(payload, subId);
-        localStorage.setItem(pendingSubmitKey, encryptedPending);
-      } catch (storageErr) {
-        localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+        const res = await fetch(`${API_BASE}/tests/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            submissionId: subId,
+            answers: answersList,
+            proctoringLog: fullPLog,
+            status: statusVal,
+            hasEirfFlag: Boolean(
+              submission?.hasEirfFlag || 
+              (warningsObj?.fullscreenExits || 0) > 0 || 
+              (warningsObj?.tabSwitches || 0) > 0 || 
+              statusVal === 'auto-submitted'
+            )
+          })
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          submitSuccess = true;
+          break;
+        } else if (data.error && data.error.includes("already being processed")) {
+          // Concurrent save collision on server (e.g. background heartbeat was saving doc), wait and retry
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 600));
+          } else {
+            submitErrorMsg = data.error;
+          }
+        } else {
+          submitErrorMsg = data.error || "Submission rejected by server.";
+          break;
+        }
+      } catch (fetchErr) {
+        console.warn(`Submission attempt ${attempt} encountered network error:`, fetchErr);
+        submitErrorMsg = fetchErr.message || "Network request failed";
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 500 * attempt));
+        }
       }
-      setHasPendingSubmit(true);
-      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
-      downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
-      
+    }
+
+    if (submitSuccess) {
+      logProctoringEvent(submission, 'TEST_SUBMITTED', `Candidate finalized and submitted exam (Status: ${statusVal}).`).catch(() => {});
+
+      localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+      deleteOfflineSubmission(subId).catch(() => {});
+
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
-      localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
 
+      // Deterministically purge any lingering offline pending submit items
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('bics_pending_submit_')) {
+          localStorage.removeItem(k);
+        }
+      }
+
+      setHasPendingSubmit(false);
       setFlow('finished');
       setFinishedStep(1);
-    } finally {
       setSubmittingExam(false);
+      return;
     }
+
+    // Only if all online submission attempts failed:
+    console.error("Submission failed across all attempts, caching payload locally in IndexedDB:", submitErrorMsg);
+    const pendingSubmitKey = `bics_pending_submit_${subId}`;
+    const payload = {
+      submissionId: subId,
+      studentId: candidate?.studentId || submission?.studentId || '',
+      candidateName: candidate?.name || submission?.candidateName || 'Candidate',
+      testTitle: submission?.testTitle || test?.title || 'BICS Examination',
+      answers: answersList,
+      proctoringLog: fullPLog,
+      status: statusVal,
+      hasEirfFlag: true,
+      eirfStatus: 'pending'
+    };
+
+    saveOfflineSubmission(payload).catch(() => {});
+    try {
+      const encryptedPending = await encryptPendingStorage(payload, subId);
+      localStorage.setItem(pendingSubmitKey, encryptedPending);
+    } catch (storageErr) {
+      localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
+    }
+    setHasPendingSubmit(true);
+    setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+    downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
+
+    if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+
+    setFlow('finished');
+    setFinishedStep(1);
+    setSubmittingExam(false);
   };
 
   // Active exam network listener: keep proctoring active, download payload, mark EIRF flag, and sync on reconnect (Items 7 & 8)
@@ -3155,7 +3333,11 @@ export default function App() {
           submittingExam={submittingExam}
           handleManualSubmitExam={handleManualSubmitExam}
           webcamProctorWarning={webcamProctorWarning}
+          onDismissProctorWarning={() => setWebcamProctorWarning('')}
+          activeProctorToasts={activeProctorToasts}
+          onDismissProctorToast={(id) => removeProctorToast(id)}
           examVideoRef={examVideoRef}
+          webcamStream={webcamStream}
           isSidebarOpen={isSidebarOpen}
           setIsSidebarOpen={setIsSidebarOpen}
           showQuestionPalette={showQuestionPalette}
@@ -3209,36 +3391,6 @@ export default function App() {
           setTest={setTest}
           onClipboardAttempt={handleClipboardAttempt}
         />
-
-        {/* Bottom-right toast notification for blocked actions & proctoring alerts (Item B6) */}
-        {toastNotification.visible && (
-          <div
-            role="alert"
-            className="fixed bottom-6 right-6 z-[99999] max-w-md w-full bg-slate-900 border-2 border-red-500 text-white rounded-xl shadow-2xl p-4 flex items-start gap-3.5 animate-bounce-subtle pointer-events-auto transition-all duration-300"
-            style={{
-              boxShadow: '0 20px 25px -5px rgba(239, 68, 68, 0.4), 0 8px 10px -6px rgba(239, 68, 68, 0.3)'
-            }}
-          >
-            <div className="w-8 h-8 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0 border border-red-500/30">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-red-400 tracking-wide uppercase">{toastNotification.title}</div>
-              <div className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">{toastNotification.message}</div>
-            </div>
-            <button
-              onClick={() => setToastNotification(prev => ({ ...prev, visible: false }))}
-              className="text-slate-400 hover:text-white p-1 rounded-md transition-colors shrink-0"
-              title="Dismiss"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
       </>
     );
   }

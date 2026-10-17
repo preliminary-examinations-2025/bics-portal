@@ -7,6 +7,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      '/public': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true
+      },
       '/media': {
         target: 'https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026',
         changeOrigin: true,
