@@ -820,8 +820,13 @@ const { INITIAL_FORMA_QUESTIONS } = require('./seedFormaQuestions');
 
 /**
  * Seeds the Question Bank with 8 questions per category A-E for both Shin and Forma.
+ * Automatic execution disabled to preserve customized / personalized question banks.
+ * Pass force = true if an explicit manual re-seed is desired.
  */
-async function seedQuestionBankIfNeeded() {
+async function seedQuestionBankIfNeeded(force = false) {
+    if (!force) {
+        return;
+    }
     try {
         const shinCount = await KataQuestionBankModel.countDocuments({ track: 'shin' });
         const formaCount = await KataQuestionBankModel.countDocuments({ track: 'forma' });

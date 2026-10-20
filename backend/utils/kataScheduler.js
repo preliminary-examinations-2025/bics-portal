@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const { KataContestModel } = require('../models/KataContest');
 const { KataQuestionBankModel } = require('../models/KataQuestionBank');
-const { seedQuestionBankIfNeeded } = require('./kataSeedBank');
+// Automatic question bank seeding disabled so custom and personalised questions are preserved
+// const { seedQuestionBankIfNeeded } = require('./kataSeedBank');
 
 /**
  * Distributed Lock Schema for multi-process / cluster concurrency safety.
@@ -115,8 +116,6 @@ async function generateContestForTrack(track, contestDate, roundNumberOverride =
             });
             if (existingAfterWait) return existingAfterWait;
         }
-
-        await seedQuestionBankIfNeeded();
 
         // 3. Resolve round number
         let roundNumber = roundNumberOverride;
@@ -335,7 +334,6 @@ async function runKataSchedulerTick() {
  */
 async function configureWeeklyContests(force = false) {
     try {
-        await seedQuestionBankIfNeeded();
         const now = new Date();
         const dayOfWeek = now.getDay(); // 0 is Sunday, 4 is Thursday, 5 is Friday, 6 is Saturday
 
