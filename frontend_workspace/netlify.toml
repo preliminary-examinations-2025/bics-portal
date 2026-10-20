@@ -1,0 +1,31 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Proxy API requests to backend server on Render
+[[redirects]]
+  from = "/api/*"
+  to = "https://bics-portal.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# Root URL redirect to /workspace/kata
+[[redirects]]
+  from = "/"
+  to = "/workspace/kata"
+  status = 302
+
+# SPA client-side routing fallback for /workspace/*
+[[redirects]]
+  from = "/workspace/*"
+  to = "/index.html"
+  status = 200
+
+# General SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
