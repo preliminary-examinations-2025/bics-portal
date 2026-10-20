@@ -17,6 +17,8 @@ const {
     findCounterfoilForStudent, 
     calculateMarksLedgerEntry 
 } = require('../utils/scoreCalculator');
+const { requireAdmin } = require('../middleware/auth');
+const { syncContestNormalizedMarks, syncCandidateNormalizedMarks } = require('../utils/taNormalizedMarks');
 
 // 1. Get Course List & Status
 router.get('/courses', async (req, res) => {
@@ -665,6 +667,86 @@ router.get('/master-transcripts', async (req, res) => {
     } catch (e) {
         console.error("Failed to generate master transcripts:", e);
         return res.status(500).json({ error: e.message });
+    }
+});
+
+/**
+ * GET /api/marks-ledger/kata-ta-normalized
+ * Retrieves TA evaluation normalized contest marks across candidates.
+ * Admin-only: strictly concealed from candidates.
+ * Query params: contestId, track ('shin' | 'forma'), studentId
+ */
+router.get('/kata-ta-normalized', requireAdmin, async (req, res) => {
+    try {
+        const { contestId, track, studentId } = req.query;
+        const cleanContestId = contestId ? String(contestId).trim().toUpperCase() : null;
+
+        let candidates = [];
+        if (dbState.useMongo) {
+            const query = {};
+            if (studentId) {
+                query.$or = [{ studentId }, { username: studentId }];
+            }
+            candidates = await CandidateModel.find(query)
+                .select('name studentId username rollNo +taNormalizedContestMarks')
+                .lean();
+        } else {
+            const db = getJSONData();
+            candidates = (db.candidates || []).filter(c => {
+                if (studentId) {
+                    return c.studentId === studentId || c.username === studentId;
+                }
+                return true;
+            });
+        }
+
+        const formatted = candidates.map(cand => {
+            const taMarks = cand.taNormalizedContestMarks || { shin: [], forma: [] };
+            let shinEntries = taMarks.shin || [];
+            let formaEntries = taMarks.forma || [];
+
+            if (cleanContestId) {
+                shinEntries = shinEntries.filter(e => String(e.contestId).toUpperCase() === cleanContestId);
+                formaEntries = formaEntries.filter(e => String(e.contestId).toUpperCase() === cleanContestId);
+            }
+
+            return {
+                studentId: cand.studentId || '',
+                username: cand.username || '',
+                name: cand.name || cand.registrationData?.fullName || '',
+                rollNo: cand.rollNo || cand.studentId || '',
+                ...(track === 'shin' ? { shin: shinEntries } : {}),
+                ...(track === 'forma' ? { forma: formaEntries } : {}),
+                ...(!track ? { shin: shinEntries, forma: formaEntries } : {})
+            };
+        });
+
+        return res.json({
+            success: true,
+            count: formatted.length,
+            trackFilter: track || 'all',
+            contestFilter: cleanContestId || 'all',
+            candidates: formatted
+        });
+    } catch (err) {
+        console.error('[MarksLedger] Error retrieving TA normalized marks:', err);
+        return res.status(500).json({ error: 'Failed to retrieve TA normalized marks' });
+    }
+});
+
+/**
+ * POST /api/marks-ledger/kata-ta-normalized/sync/:contestId
+ * Manually or on-demand triggers synchronization of TA normalized contest marks for all participants.
+ * Admin-only.
+ */
+router.post('/kata-ta-normalized/sync/:contestId', requireAdmin, async (req, res) => {
+    try {
+        const { contestId } = req.params;
+        const result = await syncContestNormalizedMarks(contestId);
+        return res.json(result);
+    } catch (err) {
+        console.error('[MarksLedger] Error triggering TA normalized marks sync:', err);
+        return res.status(500).json({ error: 'Failed to trigger normalized marks sync' });
     }
 });
 

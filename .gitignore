@@ -58,3 +58,9 @@ skills-lock.json
 backend/sandbox/*.cpp
 backend/sandbox/*.out
 backend/sandbox/*.exe
+
+# Scratch & test scripts
+crop_*.png
+test_*.js
+.VSCodeCounter/
+

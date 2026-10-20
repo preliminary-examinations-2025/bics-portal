@@ -3,7 +3,7 @@ import {
   Settings, Users, FileText, BookOpen, Activity, Video, Ticket, 
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
-  GraduationCap, Key, LogOut, Wrench, Scale, Database
+  GraduationCap, Key, LogOut, Wrench, Scale, Database, Code, Sparkles
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -88,6 +88,21 @@ export default function Sidebar({
             <button className={`sidebar-item ${view === 'admin_attendance' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_attendance'); setIsMobileSidebarOpen(false); fetchCandidates && fetchCandidates(); }}>
               <FileText size={16} /> Examination Attendance
             </button>
+            <button className={`sidebar-item ${view === 'admin_kata' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_kata'); setIsMobileSidebarOpen(false); }}>
+              <svg 
+                viewBox="0 0 240 140" 
+                width="22" 
+                height="13" 
+                style={{ verticalAlign: 'middle', display: 'inline-block', flexShrink: 0 }}
+              >
+                <path d="M 60 35 L 30 70 L 60 105" fill="none" stroke="#0c2340" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" />
+                <line x1="90" y1="105" x2="90" y2="70" stroke="#faba2b" strokeWidth="20" strokeLinecap="round" />
+                <line x1="125" y1="105" x2="125" y2="48" stroke="#2c7be5" strokeWidth="20" strokeLinecap="round" />
+                <line x1="160" y1="105" x2="160" y2="25" stroke="#fa4b4b" strokeWidth="20" strokeLinecap="round" />
+                <path d="M 190 35 L 220 70 L 190 105" fill="none" stroke="#0c2340" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" />
+              </svg> Kata Contests & Question Bank
+            </button>
+
 
             {/* 4. VERIFICATION */}
             <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>Verification</div>
@@ -196,24 +211,94 @@ export default function Sidebar({
               </div>
             )}
 
-            {/* Workspace Tools Section (Disabled Coming Soon) */}
-            <div className="sidebar-category">Workspace Tools</div>
-            <button 
-              className="sidebar-item" 
-              disabled 
-              style={{ 
-                opacity: 0.6, 
-                cursor: 'not-allowed', 
-                color: '#94a3b8', 
-                justifyContent: 'flex-start', 
-                gap: '8px', 
-                backgroundColor: 'transparent',
-                border: 'none',
-                width: '100%'
-              }}
-            >
-              <Wrench size={16} /> Coming Soon ...
+            <div className="sidebar-category">Workspace tools</div>
+            <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, workspace: !dropdowns.workspace})}>
+              Menu Links {dropdowns.workspace ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
+            {dropdowns.workspace && (
+              <div className="dropdown-container">
+                <button 
+                  className="dropdown-item" 
+                  disabled 
+                  title="coming soon"
+                  style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                >
+                  <Sparkles size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Cortex
+                </button>
+                <button 
+                  className="dropdown-item" 
+                  onClick={() => {
+                    const token = localStorage.getItem('bics_auth_token') || 
+                                  sessionStorage.getItem('bics_auth_token') || 
+                                  localStorage.getItem('token') || 
+                                  sessionStorage.getItem('token') || '';
+                    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                    const baseTarget = isLocal ? 'http://localhost:5175/workspace/kata' : '/workspace/kata';
+                    const fullTarget = token ? `${baseTarget}?authToken=${encodeURIComponent(token)}` : baseTarget;
+                    window.location.href = fullTarget;
+                  }}
+                >
+                  <svg 
+                    viewBox="0 0 240 140" 
+                    width="26" 
+                    height="16" 
+                    style={{ marginRight: '6px', verticalAlign: 'middle', display: 'inline-block', flexShrink: 0 }}
+                  >
+                    {/* Left Angle Bracket (<) */}
+                    <path 
+                      d="M 60 35 L 30 70 L 60 105" 
+                      fill="none" 
+                      stroke="#0c2340" 
+                      strokeWidth="16" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                    />
+
+                    {/* First Bar: Yellow / Short */}
+                    <line 
+                      x1="90" y1="105" x2="90" y2="70" 
+                      stroke="#faba2b" 
+                      strokeWidth="20" 
+                      strokeLinecap="round" 
+                    />
+
+                    {/* Second Bar: Blue / Medium */}
+                    <line 
+                      x1="125" y1="105" x2="125" y2="48" 
+                      stroke="#2c7be5" 
+                      strokeWidth="20" 
+                      strokeLinecap="round" 
+                    />
+
+                    {/* Third Bar: Red / Tall */}
+                    <line 
+                      x1="160" y1="105" x2="160" y2="25" 
+                      stroke="#fa4b4b" 
+                      strokeWidth="20" 
+                      strokeLinecap="round" 
+                    />
+
+                    {/* Right Angle Bracket (>) */}
+                    <path 
+                      d="M 190 35 L 220 70 L 190 105" 
+                      fill="none" 
+                      stroke="#0c2340" 
+                      strokeWidth="16" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                    />
+                  </svg> Kata Contest
+                </button>
+                <button 
+                  className="dropdown-item" 
+                  disabled 
+                  title="coming soon"
+                  style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                >
+                  <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Forum
+                </button>
+              </div>
+            )}
 
             <div className="sidebar-category">Examination</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, exam: !dropdowns.exam})}>

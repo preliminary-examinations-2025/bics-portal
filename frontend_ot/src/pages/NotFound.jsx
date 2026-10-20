@@ -12,10 +12,11 @@ export default function NotFound() {
   const displayPath = fromPath || location.pathname;
 
   const handleReturnToPortal = () => {
+    const isLocal = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1');
     const dashboardUrl = import.meta.env.VITE_DASHBOARD_URL || (
-      window.location.origin.includes('localhost')
-        ? 'http://localhost:5173/'
-        : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')
+      isLocal
+        ? 'http://localhost:5173/main/home'
+        : `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/main/home`
     );
     window.location.href = dashboardUrl;
   };

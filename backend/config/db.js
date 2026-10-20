@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+mongoose.set('bufferCommands', false);
 const fs = require('fs');
 const path = require('path');
 
@@ -274,7 +275,11 @@ const connectDB = async (models = {}) => {
     try {
         console.log("--> Connecting to MongoDB Atlas...");
         await mongoose.connect(MONGO_URI, { 
-            serverSelectionTimeoutMS: 3000,
+            serverSelectionTimeoutMS: 5000,
+            connectTimeoutMS: 10000,
+            socketTimeoutMS: 45000,
+            maxPoolSize: 20,
+            minPoolSize: 2,
             bufferCommands: false
         });
         dbState.isConnected = true;

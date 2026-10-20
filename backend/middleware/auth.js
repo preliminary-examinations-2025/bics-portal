@@ -1,5 +1,9 @@
+const mongoose = require('mongoose');
+const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { verifyToken } = require('../utils/jwt');
 const { toMongoId, toBicsId, isBicsId } = require('../utils/bicsId');
+const { CandidateModel } = require('../models/Candidate');
+const { logSystemAction } = require('../utils/logger');
 
 const FORBIDDEN_HTML_PAGE = `<!DOCTYPE html>
 <html lang="en">
@@ -65,7 +69,7 @@ const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.startsWith('Bearer ') 
         ? authHeader.slice(7).trim() 
-        : null;
+        : (req.query?.authToken || req.query?.token || null);
 
     if (!token) {
         // Direct browser navigation gets HTML error
@@ -192,7 +196,8 @@ const isWhitelisted = (urlPath, method = 'GET') => {
         fullPath.startsWith('/api/tests/submission-verification') ||
         fullPath === '/api/tests/beacon-disconnect' ||
         fullPath === '/api/test/eirf/public-key' ||
-        fullPath === '/api/log-client-error'
+        fullPath === '/api/log-client-error' ||
+        fullPath.startsWith('/api/kata/')
     );
 };
 
@@ -206,9 +211,9 @@ const authorizeApiRequest = async (req, res, next) => {
     const fullPath = (req.originalUrl || req.path).split('?')[0].toLowerCase();
     const relativePath = req.path.toLowerCase();
 
-    // 1. Process Authorization Bearer token or query token for direct browser downloads
+    // 1. Process Authorization Bearer token or query authToken/token for direct browser downloads
     const authHeader = req.headers['authorization'];
-    const queryToken = req.query.token;
+    const queryAuthToken = req.query?.authToken || req.query?.token;
     const bearerToken = authHeader && authHeader.startsWith('Bearer ') 
         ? authHeader.slice(7).trim() 
         : null;
@@ -223,8 +228,8 @@ const authorizeApiRequest = async (req, res, next) => {
                 error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
             });
         }
-    } else if (queryToken) {
-        const decoded = verifyToken(String(queryToken).trim());
+    } else if (queryAuthToken) {
+        const decoded = verifyToken(String(queryAuthToken).trim());
         if (decoded) {
             req.user = decoded;
         }
@@ -337,11 +342,152 @@ const authorizeApiRequest = async (req, res, next) => {
     });
 };
 
+/**
+ * Strict gatekeeper middleware for Kata competitive workspace:
+ * - Requires an active, valid JWT token.
+ * - If role is 'admin', grants access immediately.
+ * - If role is 'student', verifies that the candidate exists in the database
+ *   and is an active, enrolled BICS candidate (registrationStatus !== 'Rejected').
+ * - Updates lastWorkspaceAccessAt and lastWorkspaceIp for security tracking.
+ * - Records unauthorized access attempts in SystemLog for security audits.
+ */
+const requireBicsStudentOrAdmin = async (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') 
+        ? authHeader.slice(7).trim() 
+        : null;
+
+    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || 'unknown';
+    const userAgent = req.headers['user-agent'] || '';
+
+    if (!token) {
+        logSystemAction({
+            actor: 'unauthenticated',
+            actorId: 'guest',
+            actorRole: 'guest',
+            action: 'UNAUTHORIZED_KATA_ACCESS',
+            resourceType: 'kata_workspace',
+            details: `Unauthenticated access blocked on ${req.method} ${req.originalUrl} from IP ${clientIp}`,
+            ipAddress: clientIp,
+            userAgent: userAgent,
+            severity: 'warning'
+        }).catch(() => {});
+
+        return res.status(401).json({
+            success: false,
+            error: "401 Unauthorized: Access to the Kata workspace requires an active BICS student or administrator session. Please sign in."
+        });
+    }
+
+    const decoded = verifyToken(token);
+    if (!decoded) {
+        logSystemAction({
+            actor: 'unauthenticated',
+            actorId: 'invalid_token',
+            actorRole: 'guest',
+            action: 'INVALID_TOKEN_KATA_ACCESS',
+            resourceType: 'kata_workspace',
+            details: `Invalid or expired session token presented on ${req.method} ${req.originalUrl} from IP ${clientIp}`,
+            ipAddress: clientIp,
+            userAgent: userAgent,
+            severity: 'warning'
+        }).catch(() => {});
+
+        return res.status(401).json({
+            success: false,
+            error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
+        });
+    }
+
+    req.user = decoded;
+
+    // Administrators have full access
+    if (decoded.role === 'admin') {
+        return next();
+    }
+
+    // Verify student exists and is active in database
+    try {
+        const orClauses = [];
+        if (typeof decoded.username === 'string' && decoded.username.trim()) {
+            orClauses.push({ username: decoded.username.trim() });
+        }
+        if (typeof decoded.studentId === 'string' && decoded.studentId.trim()) {
+            orClauses.push({ studentId: decoded.studentId.trim() });
+        }
+        if (typeof decoded.id === 'string' && mongoose.Types.ObjectId.isValid(decoded.id)) {
+            orClauses.push({ _id: decoded.id });
+        }
+
+        if (orClauses.length === 0) {
+            return res.status(401).json({
+                success: false,
+                error: "401 Unauthorized: Malformed student identity in session token."
+            });
+        }
+
+        let candidate = null;
+        if (dbState.useMongo && mongoose.connection.readyState === 1) {
+            candidate = await CandidateModel.findOne({ $or: orClauses });
+        } else {
+            const db = getJSONData();
+            candidate = (db.candidates || []).find(c =>
+                (decoded.username && c.username === decoded.username) ||
+                (decoded.studentId && c.studentId === decoded.studentId) ||
+                String(c.id || c._id) === String(decoded.id)
+            );
+        }
+
+        if (!candidate) {
+            logSystemAction({
+                actor: decoded.username || 'unknown',
+                actorId: decoded.id || 'unknown',
+                actorRole: 'student',
+                action: 'NON_STUDENT_KATA_ACCESS',
+                resourceType: 'kata_workspace',
+                details: `Non-enrolled access attempt by ${decoded.username} on ${req.method} ${req.originalUrl} from IP ${clientIp}`,
+                ipAddress: clientIp,
+                userAgent: userAgent,
+                severity: 'warning'
+            }).catch(() => {});
+
+            return res.status(403).json({
+                success: false,
+                error: "403 Forbidden: Only registered BICS students are permitted access to the Kata workspace."
+            });
+        }
+
+        if (candidate.registrationStatus === 'Rejected') {
+            return res.status(403).json({
+                success: false,
+                error: "403 Forbidden: Your BICS candidate registration has been rejected. Access denied."
+            });
+        }
+
+        // Record workspace access
+        candidate.lastWorkspaceAccessAt = new Date();
+        candidate.lastWorkspaceIp = clientIp;
+        if (typeof candidate.save === 'function') {
+            await candidate.save();
+        } else {
+            const db = getJSONData();
+            saveJSONData(db);
+        }
+
+        req.candidate = candidate;
+        return next();
+    } catch (err) {
+        console.error('[requireBicsStudentOrAdmin] Error verifying candidate:', err);
+        return res.status(500).json({ success: false, error: "Server error verifying BICS student authorization." });
+    }
+};
+
 module.exports = {
     authenticateToken,
     requireAdmin,
     requireAuth,
     requireOwnerOrAdmin,
+    requireBicsStudentOrAdmin,
     authorizeApiRequest,
     isWhitelisted,
     FORBIDDEN_HTML_PAGE

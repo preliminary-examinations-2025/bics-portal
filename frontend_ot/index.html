@@ -16,9 +16,88 @@
     <!-- TensorFlow.js and BlazeFace pre-trained model -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js"></script>
+    <!-- Global Uncopyable Protection -->
+    <style>
+      html, body, *:not(input):not(textarea) {
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+        user-select: none !important;
+        -webkit-touch-callout: none !important;
+      }
+      input, textarea {
+        -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
+        user-select: text;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (function() {
+        // Enforce strict uncopyable protections across the entire website
+        document.addEventListener('copy', function(e) {
+          e.preventDefault();
+          if (e.clipboardData) e.clipboardData.clearData();
+          return false;
+        }, true);
+
+        document.addEventListener('cut', function(e) {
+          e.preventDefault();
+          if (e.clipboardData) e.clipboardData.clearData();
+          return false;
+        }, true);
+
+        document.addEventListener('contextmenu', function(e) {
+          e.preventDefault();
+          return false;
+        }, true);
+
+        document.addEventListener('selectstart', function(e) {
+          var target = e.target;
+          if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+            return true;
+          }
+          e.preventDefault();
+          return false;
+        }, true);
+
+        document.addEventListener('dragstart', function(e) {
+          e.preventDefault();
+          return false;
+        }, true);
+
+        document.addEventListener('keydown', function(e) {
+          // Block Ctrl+C, Cmd+C (Copy)
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+            e.preventDefault();
+            return false;
+          }
+          // Block Ctrl+X, Cmd+X (Cut)
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+            e.preventDefault();
+            return false;
+          }
+          // Block Ctrl+U, Cmd+U (View Source)
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'u' || e.key === 'U')) {
+            e.preventDefault();
+            return false;
+          }
+          // Block Ctrl+S, Cmd+S (Save Page)
+          if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+            e.preventDefault();
+            return false;
+          }
+          // Block Ctrl+P, Cmd+P (Print Page)
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+            e.preventDefault();
+            return false;
+          }
+        }, true);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

@@ -15,10 +15,11 @@ if (typeof process.getBuiltinModule !== 'function') {
     };
 }
 
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 
 const { connectDB, dbState } = require('./config/db');
 const { authorizeApiRequest, authenticateToken, requireAdmin } = require('./middleware/auth');
@@ -39,6 +40,7 @@ const counterfoilRouter = require('./routes/counterfoil');
 const marksLedgerRouter = require('./routes/marksLedger');
 const ticketsRouter = require('./routes/tickets');
 const adminDbViewerRouter = require('./routes/adminDbViewer');
+const kataRouter = require('./routes/kata');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -47,10 +49,13 @@ const PORT = process.env.PORT || 5000;
 const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:5175',
     'http://127.0.0.1:5173',
     'http://127.0.0.1:5174',
+    'http://127.0.0.1:5175',
     'https://bicsportal.netlify.app',
     'https://otbicsexam.netlify.app',
+    'https://bicsworkspace.netlify.app',
     'https://bics-portal.onrender.com',
     process.env.FRONTEND_URL
 ].filter(Boolean);
@@ -80,10 +85,7 @@ app.use((req, res, next) => {
             retryAfter: 15
         });
     }
-    // Non-blocking background reconnection trigger if disconnected and cooldown expired
-    if (!dbState.isConnected && !isProduction) {
-        connectDB().catch(() => {});
-    }
+    // Requests never invoke DB reconnect synchronously; background worker manages pool health
     next();
 });
 
@@ -108,6 +110,7 @@ app.use('/api', counterfoilRouter);
 app.use('/api/admin/marks-ledger', marksLedgerRouter);
 app.use('/api', ticketsRouter);
 app.use('/api/admin/db', adminDbViewerRouter);
+app.use('/api/kata', kataRouter);
 
 // Global Technical Error Handling Middleware
 app.use(async (err, req, res, next) => {
@@ -129,6 +132,10 @@ app.use(async (err, req, res, next) => {
 const { startIngestionWorker } = require('./services/lectureIngestionWorker');
 // Dead-Man's Switch Background Reaper Worker (Item 2.4)
 const { startSubmissionReaper } = require('./workers/submissionReaper');
+// Kata Contests Automated Weekend Scheduler & Reconciler
+const { startKataScheduler } = require('./utils/kataScheduler');
+// Kata AI Hourly Evaluator & Plagiarism Detector (Gemini Direct API)
+const { startKataAiHourlyWorker } = require('./services/kataAiEvaluator');
 
 // Global Unhandled Rejection & Uncaught Exception Safety Guards
 process.on('unhandledRejection', (reason, promise) => {
@@ -142,16 +149,32 @@ process.on('uncaughtException', (err) => {
 // Start Express Server
 if (process.env.NODE_ENV !== 'test' && (process.env.NODE_ENV !== 'production' || !process.env.VERCEL)) {
     const server = app.listen(PORT, '0.0.0.0', () => {
-        console.log(`BICS Portal Backend server running on port ${PORT} (0.0.0.0)`);
+        // Non-blocking initial database connection attempt
+        connectDB().catch(err => {
+            console.warn("--> Initial MongoDB connection pending, retrying in background:", err.message);
+        });
+
+        // Periodic decoupled reconnection timer (runs every 15s when disconnected, never blocks HTTP)
+        setInterval(() => {
+            if (!dbState.isConnected && require('mongoose').connection.readyState === 0) {
+                connectDB().catch(() => {});
+            }
+        }, 15000);
+
         // Start autonomous FIFO knowledge base ingestion loop in background
         startIngestionWorker();
         // Start dead-man's switch reaper worker for abandoned exam sessions
         startSubmissionReaper();
+        // Start Kata weekly contests scheduler
+        startKataScheduler();
+        // Start Kata AI hourly evaluation worker
+        startKataAiHourlyWorker();
     });
 
     // Ensure idle keep-alive connections don't abruptly close or cause connection timeouts
     server.keepAliveTimeout = 65000;
     server.headersTimeout = 66000;
+    server.requestTimeout = 30000; // 30s max request duration to eliminate hanging connections
 }
 
 module.exports = app;

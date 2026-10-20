@@ -16,8 +16,11 @@ const { encryptEirfPayload } = require('../utils/cipher');
 const { recalculateMCQScore, calculateCodingScoreFast } = require('../routes/tests');
 
 let reaperIntervalId = null;
+let isReaping = false;
 
 async function reapAbandonedSubmissions(maxIdleMs = 45000) {
+    if (isReaping) return;
+    isReaping = true;
     const cutoffTime = new Date(Date.now() - maxIdleMs);
 
     try {
@@ -123,6 +126,8 @@ async function reapAbandonedSubmissions(maxIdleMs = 45000) {
         }
     } catch (err) {
         console.error("[DEAD-MAN REAPER] Error running reaper job:", err.message);
+    } finally {
+        isReaping = false;
     }
 }
 

@@ -217,7 +217,7 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
 
         // Compile with standard optimization and modern C++ standard
         exec(`g++ -O2 -std=c++17 "${codeFile}" -o "${execFile}"`, { timeout: 15000 }, async (compileErr, stdout, stderr) => {
-            if (compileErr || stderr) {
+            if (compileErr) {
                 try {
                     if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
                 } catch (unlinkErr) {
@@ -250,8 +250,19 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
                                 return runResolve({ status: 'Runtime Error', stdout: '', stderr: runStderr || runErr.message });
                             }
 
-                            const cleanExpected = (tc.output || tc.expectedOutput || '').trim().replace(/\r\n/g, '\n');
-                            const cleanActual = (runStdout || '').trim().replace(/\r\n/g, '\n');
+                            const normalizeOutput = (str) => {
+                                if (!str || typeof str !== 'string') return '';
+                                return str
+                                    .replace(/\r\n/g, '\n')
+                                    .replace(/\r/g, '\n')
+                                    .split('\n')
+                                    .map(line => line.trimEnd())
+                                    .join('\n')
+                                    .trim();
+                            };
+
+                            const cleanExpected = normalizeOutput(tc.output || tc.expectedOutput || '');
+                            const cleanActual = normalizeOutput(runStdout || '');
                             const isCorrect = cleanActual === cleanExpected;
 
                             runResolve({

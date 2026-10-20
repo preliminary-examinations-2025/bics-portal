@@ -15,6 +15,9 @@ const { CounterfoilSubmissionModel, CounterfoilSubmissionSchema } = require('./C
 const { AcademicMarksLedgerModel, AcademicMarksLedgerSchema } = require('./AcademicMarksLedger');
 const { LectureChatModel, LectureChatSchema } = require('./LectureChat');
 const { WorkerLogModel, WorkerLogSchema } = require('./WorkerLog');
+const { KataQuestionBankModel, KataQuestionBankSchema } = require('./KataQuestionBank');
+const { KataContestModel, KataContestSchema } = require('./KataContest');
+const { KataSubmissionModel, KataSubmissionSchema } = require('./KataSubmission');
 
 module.exports = {
     CandidateModel,
@@ -55,5 +58,12 @@ module.exports = {
     LectureChatModel,
     LectureChatSchema,
     WorkerLogModel,
-    WorkerLogSchema
+    WorkerLogSchema,
+    KataQuestionBankModel,
+    KataQuestionBankSchema,
+    KataContestModel,
+    KataContestSchema,
+    KataSubmissionModel,
+    KataSubmissionSchema
 };
+

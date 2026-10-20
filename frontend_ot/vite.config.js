@@ -6,6 +6,7 @@ export default defineConfig({
   base: '/terminal/',
   plugins: [react()],
   server: {
+    port: 5174,
     proxy: {
       '/public': {
         target: 'http://127.0.0.1:5000',

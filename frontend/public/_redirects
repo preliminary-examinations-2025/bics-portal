@@ -5,6 +5,10 @@
 /terminal    https://otbicsexam.netlify.app/              200!
 /terminal/*  https://otbicsexam.netlify.app/:splat        200!
 
+# Proxy Workspace & Kata requests to the separate Workspace deployment site
+/workspace    https://bicsworkspace.netlify.app/workspace/kata  200!
+/workspace/*  https://bicsworkspace.netlify.app/workspace/:splat  200!
+
 # Netlify Proxy Redirects for Cloudinary Media Storage (BICS_2026)
 /media/v:ver/*  https://res.cloudinary.com/dl7xqcnmr/image/upload/v:ver/BICS_2026/:splat  200!
 /media/raw/*    https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/:splat          200!

@@ -24,6 +24,7 @@ const sanitizeCandidate = (c) => {
     // Explicitly delete sensitive credentials
     delete obj.password;
     delete obj.verificationCode;
+    delete obj.taNormalizedContestMarks; // strictly internal for TA evaluation
 
     if (obj.midSemFeedback instanceof Map) {
         obj.midSemFeedback = Object.fromEntries(obj.midSemFeedback);

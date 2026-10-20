@@ -188,7 +188,7 @@ export default function HallTicketView({
                   className="cf-btn-primary" 
                   onClick={() => {
                     const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-                    window.open(`${API_BASE}/candidate/generate-hallticket/${studentProfile.id || studentProfile._id}?type=${systemConfig.examType === 'midsem' ? 'mid' : 'end'}&token=${encodeURIComponent(token)}&t=${Date.now()}`, '_blank');
+                    window.open(`${API_BASE}/candidate/generate-hallticket/${studentProfile.id || studentProfile._id}?type=${systemConfig.examType === 'midsem' ? 'mid' : 'end'}&authToken=${encodeURIComponent(token)}&t=${Date.now()}`, '_blank');
                   }}
                   style={{ padding: '12px 24px', fontSize: '10.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                 >

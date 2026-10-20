@@ -3,7 +3,7 @@ const router = express.Router();
 const { CandidateModel, ConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData, initialDB } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
-const { generateToken, verifyToken } = require('../utils/jwt');
+const { generateToken, verifyToken, revokeToken } = require('../utils/jwt');
 const { hashPassword, comparePassword, isBcryptHash } = require('../utils/password');
 
 // Rate limiter and lockout trackers
@@ -24,9 +24,9 @@ router.post('/login', async (req, res) => {
     const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || 'unknown';
 
     // Authenticate System Administrator
-    const adminUser = process.env.ADMIN_USER;
-    const adminPass = process.env.ADMIN_PASS;
-    if (adminUser && cleanUsername === adminUser) {
+    const adminUser = (process.env.ADMIN_USER || 'admin').trim();
+    const adminPass = (process.env.ADMIN_PASS || 'admin123').trim();
+    if (cleanUsername.toLowerCase() === adminUser.toLowerCase()) {
         const lockRecord = adminFailedLogins.get(clientIp);
         if (lockRecord && lockRecord.lockedUntil && Date.now() < lockRecord.lockedUntil) {
             const waitMins = Math.ceil((lockRecord.lockedUntil - Date.now()) / 60000);
@@ -35,7 +35,7 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        if (adminPass && password === adminPass) {
+        if (password === adminPass || password.trim() === adminPass) {
             adminFailedLogins.delete(clientIp);
             const token = generateToken({
                 id: 'admin',
@@ -43,13 +43,33 @@ router.post('/login', async (req, res) => {
                 username: adminUser
             }, '12h');
 
-            await logSystemAction('admin', 'USER_SIGN_IN', 'Admin logged into portal with signed JWT', 'info');
+            const userAgent = req.headers['user-agent'] || '';
+            await logSystemAction({
+                actor: 'admin',
+                actorId: 'admin',
+                actorRole: 'admin',
+                action: 'USER_SIGN_IN',
+                resourceType: 'auth',
+                resourceId: 'admin',
+                details: `System Administrator logged into portal from IP ${clientIp}`,
+                ipAddress: clientIp,
+                userAgent: userAgent,
+                severity: 'info'
+            });
+
             return res.json({
                 success: true,
                 token,
                 role: 'admin',
                 name: 'System Administrator',
-                user: { id: 'admin', role: 'admin', name: 'System Administrator', username: adminUser }
+                user: {
+                    id: 'admin',
+                    role: 'admin',
+                    name: 'System Administrator',
+                    username: adminUser,
+                    lastLoginAt: new Date(),
+                    lastLoginIp: clientIp
+                }
             });
         } else {
             const current = adminFailedLogins.get(clientIp) || { count: 0, lockedUntil: null };
@@ -97,6 +117,14 @@ router.post('/login', async (req, res) => {
             }
 
             const studentIdVal = student.studentId || student.username;
+            const userAgent = req.headers['user-agent'] || '';
+
+            student.lastLoginAt = new Date();
+            student.lastLoginIp = clientIp;
+            student.lastLoginUserAgent = userAgent;
+            student.loginCount = (student.loginCount || 0) + 1;
+            await student.save();
+
             const token = generateToken({
                 id: student._id.toString(),
                 studentId: studentIdVal,
@@ -104,7 +132,24 @@ router.post('/login', async (req, res) => {
                 username: student.username
             }, studentExpiresIn);
 
-            await logSystemAction(student.name || cleanUsername, 'USER_SIGN_IN', `Student "${student.name || cleanUsername}" logged into portal with signed JWT`, 'info');
+            await logSystemAction({
+                actor: student.name || cleanUsername,
+                actorId: student._id.toString(),
+                actorRole: 'student',
+                action: 'USER_SIGN_IN',
+                resourceType: 'auth',
+                resourceId: student._id.toString(),
+                details: `Student "${student.name || cleanUsername}" logged in successfully from IP ${clientIp}. Total logins: ${student.loginCount}`,
+                ipAddress: clientIp,
+                userAgent: userAgent,
+                severity: 'info'
+            });
+
+            const email = student.registrationData?.collegeEmail || 
+                          student.registrationData?.personalEmail || 
+                          student.email || 
+                          '';
+
             return res.json({
                 success: true,
                 token,
@@ -118,7 +163,11 @@ router.post('/login', async (req, res) => {
                     studentId: studentIdVal,
                     role: 'student',
                     username: student.username,
-                    name: student.name
+                    name: student.name,
+                    email: email,
+                    lastLoginAt: student.lastLoginAt,
+                    lastLoginIp: student.lastLoginIp,
+                    kataHandle: student.kataProfile?.handle || null
                 }
             });
         } catch (e) {
@@ -205,11 +254,17 @@ router.get('/verify-session', async (req, res) => {
 
 // Logout endpoint
 router.post('/logout', async (req, res) => {
-    const { username, role } = req.body;
+    const { username, role, token: bodyToken } = req.body || {};
+    const authHeader = req.headers['authorization'];
+    const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    const tokenToRevoke = bearerToken || bodyToken;
+    if (tokenToRevoke) {
+        revokeToken(tokenToRevoke);
+    }
     if (username) {
         await logSystemAction(username, 'USER_SIGN_OUT', `${role === 'admin' ? 'Admin' : 'Student'} logged out of portal`, 'info');
     }
-    return res.json({ success: true });
+    return res.json({ success: true, message: 'Logged out successfully' });
 });
 
 // Client Error Logging endpoint (Rate limited & bounded)

@@ -39,6 +39,7 @@ import AdminAttendance from './pages/admin/AdminAttendance';
 import AdminCounterfoilView from './pages/admin/AdminCounterfoilView';
 import AdminMarksLedger from './pages/admin/AdminMarksLedger';
 import AdminDatabaseViewer from './pages/admin/AdminDatabaseViewer';
+import AdminKataManager from './pages/admin/AdminKataManager';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
@@ -132,7 +133,154 @@ const COURSES_LIST = [
   "R526CS03L - Basics of Web Development Lab"
 ];
 
+const PATH_TO_VIEW_MAP = {
+  '/': 'login',
+  '': 'login',
+  '/login': 'login',
+  '/main': 'login',
+  '/main/login': 'login',
+  '/home': 'announcements',
+  '/main/home': 'announcements',
+  '/student/course-registration': 'register',
+  '/main/student/course-registration': 'register',
+  '/student/information': 'info',
+  '/main/student/information': 'info',
+  '/student/coc': 'conduct',
+  '/main/student/coc': 'conduct',
+  '/student/information/change-password': 'changepassword',
+  '/main/student/information/change-password': 'changepassword',
+  '/coursework/lectures': 'lectures',
+  '/main/coursework/lectures': 'lectures',
+  '/lectures': 'lectures',
+  '/main/lectures': 'lectures',
+  '/coursework/materials': 'materials',
+  '/main/coursework/materials': 'materials',
+  '/coursework/online-tests': 'tests',
+  '/main/coursework/online-tests': 'tests',
+  '/submissions/classroom': 'submissions',
+  '/main/submissions/classroom': 'submissions',
+  '/submissions/verification': 'verification',
+  '/main/submissions/verification': 'verification',
+  '/submissions/objections': 'objections',
+  '/main/submissions/objections': 'objections',
+  '/submissions/counterfoil': 'counterfoil',
+  '/main/submissions/counterfoil': 'counterfoil',
+  '/examination/schedule': 'schedule',
+  '/main/examination/schedule': 'schedule',
+  '/examination/hall-ticket': 'hallticket',
+  '/main/examination/hall-ticket': 'hallticket',
+  '/examination/objections': 'objections',
+  '/main/examination/objections': 'objections',
+  '/examination/counterfoil': 'counterfoil',
+  '/main/examination/counterfoil': 'counterfoil',
+  '/support/ticket': 'contact',
+  '/main/support/ticket': 'contact',
+  '/support/feedback/general': 'contact',
+  '/main/support/feedback/general': 'contact',
+  '/support/feedback': 'midsem',
+  '/main/support/feedback': 'midsem',
+  '/exit/form': 'exit',
+  '/main/exit/form': 'exit',
+  '/admin/dashboard': 'admin',
+  '/main/admin/dashboard': 'admin',
+  '/admin/candidates': 'admin_candidates',
+  '/admin/attendance': 'admin_attendance',
+  '/admin/coursework': 'admin_coursework',
+  '/admin/logs': 'admin_logs',
+  '/admin/proctoring': 'admin_proctoring',
+  '/admin/tickets': 'admin_tickets',
+  '/admin/submissions': 'admin_submissions',
+  '/admin/tests': 'admin_tests',
+  '/admin/objections': 'admin_objections',
+  '/admin/recyclebin': 'admin_recyclebin',
+  '/admin/counterfoil': 'admin_counterfoil',
+  '/admin/marks-ledger': 'admin_marks_ledger',
+  '/admin/database': 'admin_database',
+  '/admin/kata': 'admin_kata'
+};
+
 // Helper component to render KaTeX math expressions + basic bold/italics/code markdown
+function parseJwtExp(token) {
+  try {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(base64));
+    return json.exp ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseJwtUser(token) {
+  try {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(base64));
+    if (payload && (payload.username || payload.id || payload.role)) {
+      return {
+        id: payload.id || payload.userId || payload.username,
+        username: payload.username || payload.name || payload.id,
+        role: payload.role || 'student',
+        name: payload.name || payload.fullName || payload.username
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeRedirectTarget(target) {
+  if (!target || typeof target !== 'string') return null;
+  let trimmed = target.trim();
+  try {
+    while (trimmed.startsWith('%2F') || trimmed.startsWith('%2f') || trimmed.includes('%2F') || trimmed.includes('%2f')) {
+      const next = decodeURIComponent(trimmed);
+      if (next === trimmed) break;
+      trimmed = next;
+    }
+  } catch (e) {}
+
+  // Unwrap nested redirects (e.g. /login?redirect=/workspace/... or /main/login?redirect=/workspace/...)
+  while (trimmed.includes('redirect=')) {
+    try {
+      const dummyUrl = new URL(trimmed.startsWith('http') ? trimmed : `http://dummy.local${trimmed.startsWith('/') ? '' : '/'}${trimmed}`);
+      const inner = dummyUrl.searchParams.get('redirect') || dummyUrl.searchParams.get('returnUrl');
+      if (inner && inner !== trimmed) {
+        trimmed = inner.trim();
+        try { trimmed = decodeURIComponent(trimmed); } catch (e) {}
+      } else {
+        break;
+      }
+    } catch (e) {
+      break;
+    }
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (
+    !trimmed ||
+    lower.includes('logout') ||
+    lower.includes('clean=1') ||
+    lower === '/' ||
+    lower === '/login' ||
+    lower === '/main' ||
+    lower === '/main/login' ||
+    lower.startsWith('/login') ||
+    lower.startsWith('/main/login') ||
+    lower.startsWith('/?redirect=/login')
+  ) {
+    return null;
+  }
+  return trimmed;
+}
+
 export default function App() {
   const toLocalISOString = (dateOrStr) => {
     if (!dateOrStr) return '';
@@ -143,16 +291,49 @@ export default function App() {
     return localDate.toISOString().substring(0, 16);
   };
 
+  const handleLogoutRef = useRef(null);
 
+  // Synchronous storage purge on clean=1 or /logout URL before any state initialization
+  if (typeof window !== 'undefined') {
+    const isClean = window.location.search.includes('clean=1') || window.location.pathname.includes('/logout');
+    if (isClean) {
+      try {
+        localStorage.removeItem('bics_session');
+        sessionStorage.removeItem('bics_session');
+        localStorage.removeItem('bics_auth_token');
+        sessionStorage.removeItem('bics_auth_token');
+        localStorage.removeItem('token');
+        sessionStorage.removeItem('token');
+        localStorage.removeItem('kata_handle');
+        localStorage.removeItem('bics_token_expiry');
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
+    }
+  }
 
   const [user, setUser] = useState(() => {
     try {
+      const isClean = typeof window !== 'undefined' && (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout'));
+      if (isClean) return null;
+
       const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
       if (!token) return null;
+
+      const expMs = parseJwtExp(token);
+      if (expMs && Date.now() >= expMs) {
+        localStorage.removeItem('bics_session');
+        sessionStorage.removeItem('bics_session');
+        localStorage.removeItem('bics_auth_token');
+        sessionStorage.removeItem('bics_auth_token');
+        localStorage.removeItem('bics_token_expiry');
+        return null;
+      }
+
       const stored = localStorage.getItem('bics_session');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Date.now() < parsed.expiry) {
+        if (!parsed.expiry || Date.now() < parsed.expiry) {
           return parsed.user;
         } else {
           localStorage.removeItem('bics_session');
@@ -164,6 +345,10 @@ export default function App() {
         const parsed = JSON.parse(temp);
         return parsed.user;
       }
+
+      // Synchronously decode user from valid token so user is never null on frame 0
+      const derived = parseJwtUser(token);
+      if (derived) return derived;
     } catch (e) {
       console.error(e);
     }
@@ -176,54 +361,20 @@ export default function App() {
   // Navigation states
   const location = useLocation();
   const navigate = useNavigate();
+  const isRedirectingRef = useRef(false);
 
   const [view, setViewState] = useState(() => {
-    const pathToView = {
-      '/': 'login',
-      '': 'login',
-      '/login': 'login',
-      '/home': 'announcements',
-      '/student/course-registration': 'register',
-      '/student/information': 'info',
-      '/student/coc': 'conduct',
-      '/student/information/change-password': 'changepassword',
-      '/coursework/lectures': 'lectures',
-      '/main/coursework/lectures': 'lectures',
-      '/lectures': 'lectures',
-      '/main/lectures': 'lectures',
-      '/coursework/materials': 'materials',
-      '/coursework/online-tests': 'tests',
-      '/submissions/classroom': 'submissions',
-      '/submissions/verification': 'verification',
-      '/submissions/objections': 'objections',
-      '/main/submissions/objections': 'objections',
-      '/submissions/counterfoil': 'counterfoil',
-      '/main/submissions/counterfoil': 'counterfoil',
-      '/examination/schedule': 'schedule',
-      '/examination/hall-ticket': 'hallticket',
-      '/examination/objections': 'objections',
-      '/main/examination/objections': 'objections',
-      '/examination/counterfoil': 'counterfoil',
-      '/support/ticket': 'contact',
-      '/support/feedback/general': 'contact',
-      '/support/feedback': 'midsem',
-      '/exit/form': 'exit',
-      '/admin/dashboard': 'admin',
-      '/admin/candidates': 'admin_candidates',
-      '/admin/attendance': 'admin_attendance',
-      '/admin/coursework': 'admin_coursework',
-      '/admin/logs': 'admin_logs',
-      '/admin/proctoring': 'admin_proctoring',
-      '/admin/tickets': 'admin_tickets',
-      '/admin/submissions': 'admin_submissions',
-      '/admin/tests': 'admin_tests',
-      '/admin/objections': 'admin_objections',
-      '/admin/recyclebin': 'admin_recyclebin',
-      '/admin/counterfoil': 'admin_counterfoil',
-      '/admin/marks-ledger': 'admin_marks_ledger',
-      '/admin/database': 'admin_database'
-    };
-    const matched = pathToView[location.pathname];
+    const isClean = typeof window !== 'undefined' && (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout'));
+    if (isClean) return 'login';
+
+    const norm = location.pathname.startsWith('/main/') ? location.pathname.replace(/^\/main/, '') : location.pathname;
+    const matched = PATH_TO_VIEW_MAP[location.pathname] !== undefined ? PATH_TO_VIEW_MAP[location.pathname] : PATH_TO_VIEW_MAP[norm];
+
+    // If user is already authenticated and lands on login or root routes, initialize view directly to their home dashboard
+    if (user && (matched === 'login' || location.pathname === '/' || location.pathname === '/main' || location.pathname === '/login' || location.pathname === '/main/login')) {
+      return user.role === 'admin' ? 'admin' : 'announcements';
+    }
+
     return matched !== undefined ? matched : 'not_found';
   });
 
@@ -261,7 +412,8 @@ export default function App() {
     admin_recyclebin: '/admin/recyclebin',
     admin_counterfoil: '/admin/counterfoil',
     admin_marks_ledger: '/admin/marks-ledger',
-    admin_database: '/admin/database'
+    admin_database: '/admin/database',
+    admin_kata: '/admin/kata'
   };
 
   const setView = (newView) => {
@@ -279,7 +431,216 @@ export default function App() {
     }
   };
 
+  const checkRolePermission = (targetView, role) => {
+    if (targetView === 'login') return true;
+    if (targetView === 'changepassword') return true;
+    if (role === 'admin') {
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
+    }
+    if (role === 'student') {
+      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
+    }
+    return false;
+  };
+
+  const handlePostLoginRedirect = (userObj, token) => {
+    let targetRedirect = null;
+    try {
+      targetRedirect = sessionStorage.getItem('bics_redirect_url') || localStorage.getItem('bics_redirect_url');
+    } catch (e) {}
+
+    if (!targetRedirect) {
+      const queryParams = new URLSearchParams(window.location.search);
+      targetRedirect = queryParams.get('redirect') || queryParams.get('returnUrl');
+    }
+
+    const defaultRoleView = userObj?.role === 'admin' ? 'admin' : 'announcements';
+    const defaultRolePath = userObj?.role === 'admin' ? '/admin/dashboard' : '/home';
+
+    if (!targetRedirect || typeof targetRedirect !== 'string') {
+      try {
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
+      isRedirectingRef.current = true;
+      setLoadingMessage("Opening portal...");
+      setViewState(defaultRoleView);
+      navigate(defaultRolePath, { replace: true });
+      setTimeout(() => {
+        isRedirectingRef.current = false;
+        setAuthLoading(false);
+      }, 300);
+      return;
+    }
+
+    const cleanRedirect = sanitizeRedirectTarget(targetRedirect);
+    if (!cleanRedirect) {
+      try {
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
+      isRedirectingRef.current = true;
+      setLoadingMessage("Opening portal...");
+      setViewState(defaultRoleView);
+      navigate(defaultRolePath, { replace: true });
+      setTimeout(() => {
+        isRedirectingRef.current = false;
+        setAuthLoading(false);
+      }, 300);
+      return;
+    }
+
+    // Circuit breaker to halt rapid bouncing on redirect targets
+    try {
+      const now = Date.now();
+      const lastTs = parseInt(sessionStorage.getItem('bics_portal_redirect_ts') || '0', 10);
+      let loopCount = parseInt(sessionStorage.getItem('bics_portal_redirect_count') || '0', 10);
+      if (now - lastTs < 3000) {
+        loopCount += 1;
+      } else {
+        loopCount = 1;
+      }
+      sessionStorage.setItem('bics_portal_redirect_ts', String(now));
+      sessionStorage.setItem('bics_portal_redirect_count', String(loopCount));
+
+      if (loopCount > 3) {
+        console.warn('[CircuitBreaker] Rapid post-login redirect loop detected. Halting at home dashboard.');
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+        isRedirectingRef.current = true;
+        setLoadingMessage("Opening portal...");
+        setViewState(defaultRoleView);
+        navigate(defaultRolePath, { replace: true });
+        setTimeout(() => {
+          isRedirectingRef.current = false;
+          setAuthLoading(false);
+        }, 300);
+        return;
+      }
+    } catch (e) {}
+
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    // A. Workspace URL Redirection (handles both local port 5175 and production proxy /workspace/*)
+    if (cleanRedirect.includes('/workspace')) {
+      try {
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
+      setLoadingMessage("Opening Kata Workspace...");
+
+      const wsIdx = cleanRedirect.indexOf('/workspace');
+      let wsPath = cleanRedirect.slice(wsIdx);
+      if (wsPath === '/workspace' || wsPath === '/workspace/') {
+        wsPath = '/workspace/kata';
+      }
+      try {
+        const dummyUrl = new URL(wsPath, 'http://dummy.local');
+        dummyUrl.searchParams.delete('authToken');
+        dummyUrl.searchParams.delete('token');
+        wsPath = dummyUrl.pathname + (dummyUrl.search ? dummyUrl.search : '') + dummyUrl.hash;
+      } catch (e) {}
+
+      const authToken = token || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+      let finalWsUrl = isLocal ? `http://localhost:5175${wsPath}` : wsPath;
+      if (authToken) {
+        const sep = finalWsUrl.includes('?') ? '&' : '?';
+        finalWsUrl = `${finalWsUrl}${sep}authToken=${encodeURIComponent(authToken)}`;
+      }
+      window.location.replace(finalWsUrl);
+      return;
+    }
+
+    // B. OT Terminal Exam URL Redirection
+    if (cleanRedirect.includes('/terminal')) {
+      try {
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
+      setLoadingMessage("Opening Exam Terminal...");
+
+      const termIdx = cleanRedirect.indexOf('/terminal');
+      let termPath = cleanRedirect.slice(termIdx);
+      try {
+        const dummyUrl = new URL(termPath, 'http://dummy.local');
+        dummyUrl.searchParams.delete('authToken');
+        termPath = dummyUrl.pathname + (dummyUrl.search ? dummyUrl.search : '') + dummyUrl.hash;
+      } catch (e) {}
+
+      const authToken = token || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+      let finalTermUrl = isLocal ? `http://localhost:5174${termPath.replace(/^\/terminal/, '') || '/'}` : termPath;
+      if (authToken) {
+        const sep = finalTermUrl.includes('?') ? '&' : '?';
+        finalTermUrl = `${finalTermUrl}${sep}authToken=${encodeURIComponent(authToken)}`;
+      }
+      window.location.replace(finalTermUrl);
+      return;
+    }
+
+    // C. Main Portal URL Redirection
+    let pathname = cleanRedirect;
+    let search = '';
+    let hash = '';
+    try {
+      if (cleanRedirect.startsWith('http://') || cleanRedirect.startsWith('https://')) {
+        const parsed = new URL(cleanRedirect);
+        pathname = parsed.pathname;
+        search = parsed.search;
+        hash = parsed.hash;
+      } else {
+        const qIdx = cleanRedirect.indexOf('?');
+        const hIdx = cleanRedirect.indexOf('#');
+        if (qIdx !== -1) {
+          pathname = cleanRedirect.slice(0, qIdx);
+          search = hIdx !== -1 ? cleanRedirect.slice(qIdx, hIdx) : cleanRedirect.slice(qIdx);
+        } else if (hIdx !== -1) {
+          pathname = cleanRedirect.slice(0, hIdx);
+        }
+        if (hIdx !== -1) {
+          hash = cleanRedirect.slice(hIdx);
+        }
+      }
+    } catch (e) {
+      pathname = cleanRedirect;
+    }
+
+    const norm = pathname.replace(/^\/main/, '') || '/';
+    const matched = PATH_TO_VIEW_MAP[pathname] !== undefined ? PATH_TO_VIEW_MAP[pathname] : (PATH_TO_VIEW_MAP[norm] !== undefined ? PATH_TO_VIEW_MAP[norm] : undefined);
+
+    try {
+      sessionStorage.removeItem('bics_redirect_url');
+      localStorage.removeItem('bics_redirect_url');
+    } catch (e) {}
+
+    if (matched && matched !== 'not_found' && matched !== 'login' && checkRolePermission(matched, userObj?.role)) {
+      isRedirectingRef.current = true;
+      setLoadingMessage("Loading portal...");
+      setViewState(matched);
+      const relativeTarget = (norm.startsWith('/') ? norm : '/' + norm) + search + hash;
+      navigate(relativeTarget, { replace: true });
+      setTimeout(() => {
+        isRedirectingRef.current = false;
+        setAuthLoading(false);
+      }, 300);
+      return;
+    }
+
+    // Fallback if not matched or unauthorized
+    isRedirectingRef.current = true;
+    setLoadingMessage("Loading portal...");
+    setViewState(defaultRoleView);
+    navigate(defaultRolePath, { replace: true });
+    setTimeout(() => {
+      isRedirectingRef.current = false;
+      setAuthLoading(false);
+    }, 300);
+  };
+
   useEffect(() => {
+    if (isRedirectingRef.current) {
+      return;
+    }
+
     // 1. Strictly strip ?v= query parameter if user is on any non-lectures route
     if (location.pathname !== '/coursework/lectures' && location.pathname !== '/main/coursework/lectures') {
       if (location.search && location.search.includes('v=')) {
@@ -292,64 +653,85 @@ export default function App() {
       return;
     }
 
-    const pathToView = {
-      '/': 'login',
-      '': 'login',
-      '/login': 'login',
-      '/home': 'announcements',
-      '/student/course-registration': 'register',
-      '/student/information': 'info',
-      '/student/coc': 'conduct',
-      '/student/information/change-password': 'changepassword',
-      '/coursework/lectures': 'lectures',
-      '/main/coursework/lectures': 'lectures',
-      '/lectures': 'lectures',
-      '/main/lectures': 'lectures',
-      '/coursework/materials': 'materials',
-      '/coursework/online-tests': 'tests',
-      '/submissions/classroom': 'submissions',
-      '/submissions/verification': 'verification',
-      '/submissions/objections': 'objections',
-      '/main/submissions/objections': 'objections',
-      '/submissions/counterfoil': 'counterfoil',
-      '/main/submissions/counterfoil': 'counterfoil',
-      '/examination/schedule': 'schedule',
-      '/examination/hall-ticket': 'hallticket',
-      '/examination/objections': 'objections',
-      '/main/examination/objections': 'objections',
-      '/examination/counterfoil': 'counterfoil',
-      '/support/ticket': 'contact',
-      '/support/feedback/general': 'contact',
-      '/support/feedback': 'midsem',
-      '/exit/form': 'exit',
-      '/admin/dashboard': 'admin',
-      '/admin/candidates': 'admin_candidates',
-      '/admin/attendance': 'admin_attendance',
-      '/admin/coursework': 'admin_coursework',
-      '/admin/logs': 'admin_logs',
-      '/admin/proctoring': 'admin_proctoring',
-      '/admin/tickets': 'admin_tickets',
-      '/admin/submissions': 'admin_submissions',
-      '/admin/tests': 'admin_tests',
-      '/admin/objections': 'admin_objections',
-      '/admin/recyclebin': 'admin_recyclebin',
-      '/admin/counterfoil': 'admin_counterfoil',
-      '/admin/marks-ledger': 'admin_marks_ledger',
-      '/admin/database': 'admin_database'
-    };
-    const matched = pathToView[location.pathname];
+    const norm = location.pathname.startsWith('/main/') ? location.pathname.replace(/^\/main/, '') : location.pathname;
+    const matched = PATH_TO_VIEW_MAP[location.pathname] !== undefined ? PATH_TO_VIEW_MAP[location.pathname] : PATH_TO_VIEW_MAP[norm];
     const nextView = matched !== undefined ? matched : 'not_found';
 
+    const isLoginPath = location.pathname === '/login' || 
+                        location.pathname === '/main/login' || 
+                        location.pathname === '/' || 
+                        location.pathname === '/main' || 
+                        location.pathname === '';
+
     if (!user) {
-      // If not logged in, redirect for any internal path to /main/login
-      if (location.pathname !== '/login' && location.pathname !== '/' && location.pathname !== '') {
-        navigate('/login', { replace: true });
+      // If not logged in, capture attempted path (including query and hash) and redirect to login
+      if (!isLoginPath) {
+        // Anti-Loop Circuit Breaker
+        try {
+          const now = Date.now();
+          const lastTs = parseInt(sessionStorage.getItem('bics_unauth_redirect_ts') || '0', 10);
+          let loopCount = parseInt(sessionStorage.getItem('bics_unauth_redirect_count') || '0', 10);
+          if (now - lastTs < 3000) {
+            loopCount += 1;
+          } else {
+            loopCount = 1;
+          }
+          sessionStorage.setItem('bics_unauth_redirect_ts', String(now));
+          sessionStorage.setItem('bics_unauth_redirect_count', String(loopCount));
+
+          if (loopCount > 4) {
+            console.warn('[CircuitBreaker] Rapid unauthenticated redirect loop detected. Halting at clean login.');
+            sessionStorage.removeItem('bics_redirect_url');
+            localStorage.removeItem('bics_redirect_url');
+            navigate('/login', { replace: true });
+            setViewState('login');
+            return;
+          }
+        } catch (e) {}
+
+        const fullCurrentPath = location.pathname + location.search + location.hash;
+        const sanitized = sanitizeRedirectTarget(fullCurrentPath);
+        if (sanitized) {
+          try {
+            sessionStorage.setItem('bics_redirect_url', sanitized);
+          } catch (e) {}
+          navigate(`/login?redirect=${encodeURIComponent(sanitized)}`, { replace: true });
+        } else {
+          try {
+            sessionStorage.removeItem('bics_redirect_url');
+            localStorage.removeItem('bics_redirect_url');
+          } catch (e) {}
+          navigate('/login', { replace: true });
+        }
         setViewState('login');
         return;
+      } else {
+        // If landing on login path, check if redirect query param is present
+        const searchParams = new URLSearchParams(location.search);
+        const rawParam = searchParams.get('redirect') || searchParams.get('returnUrl');
+        const sanitized = sanitizeRedirectTarget(rawParam);
+        if (sanitized) {
+          try {
+            sessionStorage.setItem('bics_redirect_url', sanitized);
+          } catch (e) {}
+        } else {
+          try {
+            sessionStorage.removeItem('bics_redirect_url');
+            localStorage.removeItem('bics_redirect_url');
+          } catch (e) {}
+        }
       }
     } else {
-      // When logged in, if wrong path, invalid view, or unauthorized path, redirect to role default page
+      // When logged in, if on login, not_found, or unauthorized path:
       if (nextView === 'not_found' || nextView === 'login' || !isViewAllowed(nextView)) {
+        const searchParams = new URLSearchParams(location.search);
+        const rawParam = searchParams.get('redirect') || searchParams.get('returnUrl') || sessionStorage.getItem('bics_redirect_url');
+        const redirectParam = sanitizeRedirectTarget(rawParam);
+        if (redirectParam) {
+          handlePostLoginRedirect(user, localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token'));
+          return;
+        }
+
         const defaultPath = user.role === 'admin' ? '/admin/dashboard' : '/home';
         const defaultView = user.role === 'admin' ? 'admin' : 'announcements';
         if (location.pathname !== defaultPath) {
@@ -369,6 +751,7 @@ export default function App() {
     student: true,
     coursework: true,
     submissions: true,
+    workspace: true,
     exam: true,
     feedback: true
   });
@@ -383,6 +766,140 @@ export default function App() {
       document.body.style.overflow = '';
     };
   }, [isMobileSidebarOpen]);
+
+  // 1. Cross-portal logout broadcast channel & window message listener
+  useEffect(() => {
+    const handleLogoutEvent = () => {
+      setUser(null);
+      setStudentProfile(null);
+      localStorage.removeItem('bics_session');
+      sessionStorage.removeItem('bics_session');
+      localStorage.removeItem('bics_auth_token');
+      sessionStorage.removeItem('bics_auth_token');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
+      localStorage.removeItem('kata_handle');
+      localStorage.removeItem('bics_token_expiry');
+      sessionStorage.removeItem('bics_redirect_url');
+      localStorage.removeItem('bics_redirect_url');
+      setViewState('login');
+      navigate('/login', { replace: true });
+    };
+
+    const handleMessage = (e) => {
+      if (e.data?.type === 'BICS_LOGOUT' || e.data?.type === 'KATA_LOGOUT_SUCCESS') {
+        handleLogoutEvent();
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
+    let channel = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel('bics_auth_sync');
+        channel.onmessage = (e) => {
+          if (e.data?.type === 'BICS_LOGOUT') {
+            handleLogoutEvent();
+          }
+        };
+      }
+    } catch (e) {}
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      if (channel) {
+        try { channel.close(); } catch (e) {}
+      }
+    };
+  }, [navigate]);
+
+  // Clean up clean=1 query param from address bar without reloading
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('clean=1')) {
+      const cleanSearch = window.location.search.replace(/[?&]clean=1/, '').replace(/^&/, '?');
+      const cleanUrl = window.location.pathname + cleanSearch + (window.location.hash || '');
+      window.history.replaceState({}, document.title, cleanUrl || '/main/login');
+    }
+  }, []);
+
+  // 2. Active session verification with backend on startup to eliminate stale session bounces
+  useEffect(() => {
+    if (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout')) {
+      return;
+    }
+
+    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token');
+    if (!token) return;
+
+    const expMs = parseJwtExp(token);
+    if (expMs && Date.now() >= expMs) {
+      console.warn('[Session] Stored JWT expired by exp claim. Purging session.');
+      localStorage.removeItem('bics_session');
+      sessionStorage.removeItem('bics_session');
+      localStorage.removeItem('bics_auth_token');
+      sessionStorage.removeItem('bics_auth_token');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
+      localStorage.removeItem('bics_token_expiry');
+      setUser(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetch(`${API_BASE}/verify-session`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (!isMounted) return;
+        if (!data || !data.valid) {
+          console.warn('[Session] Backend reported session is invalid or revoked. Clearing credentials.');
+          localStorage.removeItem('bics_session');
+          sessionStorage.removeItem('bics_session');
+          localStorage.removeItem('bics_auth_token');
+          sessionStorage.removeItem('bics_auth_token');
+          localStorage.removeItem('token');
+          sessionStorage.removeItem('token');
+          localStorage.removeItem('bics_token_expiry');
+          setUser(null);
+          setViewState('login');
+          navigate('/login', { replace: true });
+        } else if (data.user) {
+          setUser(prev => prev ? { ...prev, ...data.user } : data.user);
+        }
+      })
+      .catch(err => {
+        console.warn('[Session] verify-session error:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // 3. Proactive expiration timer: Sign out portal automatically when JWT expires
+  useEffect(() => {
+    if (!user) return;
+    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+    const expMs = parseJwtExp(token);
+    if (expMs) {
+      const remaining = expMs - Date.now();
+      if (remaining <= 0) {
+        if (handleLogoutRef.current) {
+          handleLogoutRef.current();
+        }
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (handleLogoutRef.current) {
+          handleLogoutRef.current();
+        }
+      }, remaining);
+      return () => clearTimeout(timer);
+    }
+  }, [user]);
 
   // Heartbeat ping loop to keep Render backend awake
   useEffect(() => {
@@ -2227,7 +2744,7 @@ int main() {
           if (Date.now() < parsed.expiry) {
             setUser(parsed.user);
             if (view === 'login') {
-              setView(parsed.user.role === 'admin' ? 'admin' : 'announcements');
+              handlePostLoginRedirect(parsed.user, token);
             }
           } else {
             localStorage.removeItem('bics_session');
@@ -2246,7 +2763,7 @@ int main() {
             const parsed = JSON.parse(temp);
             setUser(parsed.user);
             if (view === 'login') {
-              setView(parsed.user.role === 'admin' ? 'admin' : 'announcements');
+              handlePostLoginRedirect(parsed.user, token);
             }
           } catch (e) {}
         }
@@ -2465,7 +2982,6 @@ int main() {
       const data = await res.json();
       
       setTimeout(() => {
-        setAuthLoading(false);
         if (data.success) {
           setLoginCreds({ username: '', password: '' });
           let userObj = null;
@@ -2475,38 +2991,41 @@ int main() {
             userObj = { id: data.id, role: 'student', name: 'Student' };
           }
 
-          setUser(userObj);
-          setView(userObj.role === 'admin' ? 'admin' : 'announcements');
-
-          // Store session: 7 days if rememberMe is checked, 24 hours if unchecked
-          const sessionDurationMs = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
+          // Store session: exact server JWT exp timestamp
+          const jwtExp = parseJwtExp(data.token);
+          const sessionExpiry = jwtExp || (Date.now() + (rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000)));
           const sessionData = {
             user: userObj,
-            expiry: Date.now() + sessionDurationMs
+            expiry: sessionExpiry
           };
 
           if (data.token) {
+            localStorage.setItem('bics_auth_token', data.token);
+            if (jwtExp) {
+              localStorage.setItem('bics_token_expiry', String(jwtExp));
+            }
             if (rememberMe) {
-              localStorage.setItem('bics_auth_token', data.token);
               sessionStorage.removeItem('bics_auth_token');
             } else {
               sessionStorage.setItem('bics_auth_token', data.token);
-              localStorage.removeItem('bics_auth_token');
             }
           }
 
+          localStorage.setItem('bics_session', JSON.stringify(sessionData));
           if (rememberMe) {
-            localStorage.setItem('bics_session', JSON.stringify(sessionData));
             sessionStorage.removeItem('bics_session');
           } else {
             sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
-            localStorage.removeItem('bics_session');
           }
+
+          setUser(userObj);
+          handlePostLoginRedirect(userObj, data.token);
         } else {
+          setAuthLoading(false);
           setLoginError(data.error);
           generateCaptcha();
         }
-      }, 1000);
+      }, 700);
     } catch (err) {
       setAuthLoading(false);
       setLoginError("Login connection failed.");
@@ -2521,12 +3040,51 @@ int main() {
     setAuthLoading(true);
     setLoadingMessage("Signing out & clearing session cache...");
     
-    if (user) {
+    const currentToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+    if (user || currentToken) {
       fetch(`${API_BASE}/logout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: user.name || user.id, role: user.role })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': currentToken ? `Bearer ${currentToken}` : ''
+        },
+        body: JSON.stringify({ 
+          username: user?.name || user?.id || '', 
+          role: user?.role || '',
+          token: currentToken
+        })
       }).catch(err => console.error(err));
+    }
+
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const channel = new BroadcastChannel('bics_auth_sync');
+        channel.postMessage({ type: 'BICS_LOGOUT' });
+        channel.close();
+      }
+    } catch (e) {}
+
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocal) {
+      try {
+        const wsIframe = document.createElement('iframe');
+        wsIframe.style.display = 'none';
+        wsIframe.src = 'http://localhost:5175/workspace/logout?clean=1';
+        document.body.appendChild(wsIframe);
+        setTimeout(() => {
+          try { wsIframe.remove(); } catch (e) {}
+        }, 3000);
+      } catch (e) {}
+
+      try {
+        const otIframe = document.createElement('iframe');
+        otIframe.style.display = 'none';
+        otIframe.src = 'http://localhost:5174/terminal/logout?clean=1';
+        document.body.appendChild(otIframe);
+        setTimeout(() => {
+          try { otIframe.remove(); } catch (e) {}
+        }, 3000);
+      } catch (e) {}
     }
     
     setTimeout(() => {
@@ -2542,9 +3100,17 @@ int main() {
       sessionStorage.removeItem('bics_session');
       localStorage.removeItem('bics_auth_token');
       sessionStorage.removeItem('bics_auth_token');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
+      localStorage.removeItem('kata_handle');
+      localStorage.removeItem('bics_token_expiry');
+      sessionStorage.removeItem('bics_redirect_url');
+      localStorage.removeItem('bics_redirect_url');
       setShowLogoutModal(false);
+      navigate('/login', { replace: true });
     }, 900);
   };
+  handleLogoutRef.current = handleLogout;
 
   // Admin Config triggers
   const handleToggleSetting = async (field, value) => {
@@ -3341,7 +3907,7 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
     
     if (user.role === 'student') {
@@ -3381,7 +3947,7 @@ int main() {
   return (
     <div>
       {/* HEADER */}
-      {!(view === 'onlinetest' || view === 'onlinetest_setup' || view === 'login') && (
+      {!(view === 'onlinetest' || view === 'onlinetest_setup' || (view === 'login' && !user)) && (
         <header className="app-header">
           <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {user && (
@@ -3469,7 +4035,7 @@ int main() {
             />
           ) : (
             <>
-              {view === 'login' && (
+              {view === 'login' && !user && (
                 <Login
                   loginError={loginError}
                   loginCreds={loginCreds}
@@ -4002,7 +4568,14 @@ int main() {
                 />
               )}
 
+              {view === 'admin_kata' && (
+                <AdminKataManager
+                  API_BASE={API_BASE}
+                  token={localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || ''}
+                />
+              )}
             </>
+
           )}
         </main>
       </div>
@@ -4300,8 +4873,7 @@ int main() {
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.75)',
-          backdropFilter: 'blur(5px)',
+          backgroundColor: '#ffffff',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
@@ -4320,22 +4892,22 @@ int main() {
             gap: '15px'
           }}>
             <div style={{
-              width: '50px',
-              height: '50px',
-              border: '4px solid rgba(255, 255, 255, 0.1)',
-              borderTopColor: '#ffffff',
+              width: '42px',
+              height: '42px',
+              border: '3px solid #e2e8f0',
+              borderTopColor: '#2563eb',
               borderRadius: '50%',
-              animation: 'spin 1s linear infinite'
+              animation: 'spin 0.8s linear infinite'
             }}></div>
             <div style={{
-              color: '#ffffff',
-              fontSize: '11pt',
-              fontWeight: 'bold',
-              letterSpacing: '0.5px',
+              color: '#334155',
+              fontSize: '13px',
+              fontWeight: '500',
+              letterSpacing: '0.3px',
               textAlign: 'center',
-              fontFamily: 'system-ui, -apple-system, sans-serif'
+              fontFamily: 'Verdana, "Helvetica Neue", Helvetica, Arial, sans-serif'
             }}>
-              {loadingMessage}
+              {loadingMessage || 'Processing...'}
             </div>
           </div>
         </div>

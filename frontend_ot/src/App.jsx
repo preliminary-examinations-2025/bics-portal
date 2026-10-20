@@ -362,7 +362,39 @@ function CandidateWatermark({ email }) {
   );
 }
 
+function LogoutHandler() {
+  useEffect(() => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {}
+
+    const isFramed = typeof window !== 'undefined' && window.self !== window.top;
+    if (isFramed) {
+      try {
+        window.parent.postMessage({ type: 'OT_LOGOUT_SUCCESS' }, '*');
+      } catch (e) {}
+      return;
+    }
+
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const target = isLocal ? 'http://localhost:5173/main/login?clean=1' : '/main/login?clean=1';
+    window.location.replace(target);
+  }, []);
+
+  return <div style={{ minHeight: '100vh', background: '#ffffff' }} />;
+}
+
 export default function App() {
+  const isLogout = typeof window !== 'undefined' && (
+    window.location.pathname.includes('/logout') || 
+    window.location.search.includes('clean=1')
+  );
+
+  if (isLogout) {
+    return <LogoutHandler />;
+  }
+
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [verifyError, setVerifyError] = useState('');
