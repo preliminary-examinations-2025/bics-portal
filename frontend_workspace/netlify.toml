@@ -5,6 +5,27 @@
 [build.environment]
   NODE_VERSION = "20"
 
+# Static assets rewrite from /workspace/ to root assets
+[[redirects]]
+  from = "/workspace/assets/*"
+  to = "/assets/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/workspace/favicon.ico"
+  to = "/favicon.ico"
+  status = 200
+
+[[redirects]]
+  from = "/workspace/kata_icon.png"
+  to = "/kata_icon.png"
+  status = 200
+
+[[redirects]]
+  from = "/workspace/kata_logo.png"
+  to = "/kata_logo.png"
+  status = 200
+
 # Proxy API requests to backend server on Render
 [[redirects]]
   from = "/api/*"

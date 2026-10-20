@@ -1,7 +1,13 @@
+# Static assets rewrite from /workspace/ to root assets
+/workspace/assets/*       /assets/:splat                               200
+/workspace/favicon.ico    /favicon.ico                                 200
+/workspace/kata_icon.png  /kata_icon.png                               200
+/workspace/kata_logo.png  /kata_logo.png                               200
+
 # Proxy API requests to Render backend server
-/api/*       https://bics-portal.onrender.com/api/:splat  200!
+/api/*                    https://bics-portal.onrender.com/api/:splat  200!
 
 # SPA routing fallback for workspace routes
-/            /workspace/kata                              302
-/workspace/* /index.html                                  200
-/*           /index.html                                  200
+/                         /workspace/kata                              302
+/workspace/*              /index.html                                  200
+/*                        /index.html                                  200
