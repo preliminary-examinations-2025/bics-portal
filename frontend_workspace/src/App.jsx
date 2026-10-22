@@ -14,6 +14,7 @@ import KataContestSubmissionsView from './views/KataContestSubmissionsView';
 import KataGymView from './views/KataGymView';
 import KataProblemsetView from './views/KataProblemsetView';
 import KataStandingsView from './views/KataStandingsView';
+import KataContestParticipantsView from './views/KataContestParticipantsView';
 import KataRegisterPage from './views/KataRegisterPage';
 import KataRulesView from './views/KataRulesView';
 import { useAuth } from './context/AuthContext';
@@ -132,6 +133,10 @@ export default function App() {
                         {/* Contest Registration */}
                         <Route path="/kata/contests/:contestId/register" element={<KataContestRegisterView />} />
                         <Route path="/contests/:contestId/register" element={<KataContestRegisterView />} />
+
+                        {/* Contest Participants */}
+                        <Route path="/kata/contests/:contestId/participants" element={<KataContestParticipantsView />} />
+                        <Route path="/contests/:contestId/participants" element={<KataContestParticipantsView />} />
 
                         {/* Virtual Participation Registration */}
                         <Route path="/kata/contests/:contestId/virtual-register" element={<KataVirtualRegisterView />} />

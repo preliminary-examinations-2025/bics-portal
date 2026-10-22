@@ -13,16 +13,22 @@ function getRankInfo(rating = 1200) {
 export default function KataProfileCard({ profile, candidate }) {
     const handle = profile?.handle || candidate?.username || 'siyam-bubere';
     const email = candidate?.email || localStorage.getItem('kata_email') || 'buberesiyam@gmail.com';
-    const shinRating = profile?.shinRating || 1092;
-    const shinMaxRating = profile?.shinMaxRating || 1092;
+    const shinRating = profile?.shinRating || 1200;
+    const shinMaxRating = profile?.shinMaxRating || shinRating;
+    const formaRating = profile?.formaRating || 1200;
+    const formaMaxRating = profile?.formaMaxRating || formaRating;
 
-    const currentRankInfo = getRankInfo(shinRating);
-    const maxRankInfo = getRankInfo(shinMaxRating);
+    // Main rating is the average of both Shin & Forma ratings
+    const mainRating = profile?.rating ?? Math.round((shinRating + formaRating) / 2);
+    const mainMaxRating = profile?.maxRating ?? Math.round((shinMaxRating + formaMaxRating) / 2);
 
-    const shinRank = profile?.shinRank || currentRankInfo.rank;
-    const shinRankColor = profile?.shinRankColor || currentRankInfo.color;
-    const shinMaxRank = profile?.shinMaxRank || maxRankInfo.rank;
-    const shinMaxRankColor = maxRankInfo.color;
+    const currentRankInfo = getRankInfo(mainRating);
+    const maxRankInfo = getRankInfo(mainMaxRating);
+
+    const mainRank = profile?.rank || currentRankInfo.rank;
+    const mainRankColor = profile?.rankColor || currentRankInfo.color;
+    const mainMaxRank = profile?.maxRank || maxRankInfo.rank;
+    const mainMaxRankColor = profile?.maxRankColor || maxRankInfo.color;
 
     // Relative registration text (e.g. "12 months ago")
     const getRegisteredText = () => {
@@ -52,12 +58,12 @@ export default function KataProfileCard({ profile, candidate }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                     {/* Rank title */}
                     <div style={{
-                        color: shinRankColor,
+                        color: mainRankColor,
                         fontSize: '13px',
                         fontWeight: 'bold',
                         marginBottom: '2px'
                     }}>
-                        {shinRank}
+                        {mainRank}
                     </div>
 
                     {/* Handle */}
@@ -65,7 +71,7 @@ export default function KataProfileCard({ profile, candidate }) {
                         margin: '0 0 12px 0',
                         fontSize: '24px',
                         fontWeight: 'bold',
-                        color: shinRankColor,
+                        color: mainRankColor,
                         letterSpacing: '-0.2px'
                     }}>
                         {handle}
@@ -78,16 +84,27 @@ export default function KataProfileCard({ profile, candidate }) {
                         color: '#222222'
                     }}>
                         {/* Rating row with icon */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3182ce" strokeWidth="2.5">
                                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                             </svg>
                             <span>
                                 <strong>Contest rating:</strong>{' '}
-                                <span style={{ color: shinRankColor, fontWeight: 'bold' }}>{shinRating}</span>{' '}
+                                <span style={{ color: mainRankColor, fontWeight: 'bold' }}>{mainRating}</span>{' '}
                                 <span style={{ color: '#777777', fontSize: '11px' }}>
-                                    (max. <span style={{ color: shinMaxRankColor }}>{shinMaxRank.toLowerCase()}</span>, <span style={{ color: shinMaxRankColor, fontWeight: 'bold' }}>{shinMaxRating}</span>)
+                                    (max. <span style={{ color: mainMaxRankColor }}>{mainMaxRank.toLowerCase()}</span>, <span style={{ color: mainMaxRankColor, fontWeight: 'bold' }}>{mainMaxRating}</span>)
                                 </span>
+                            </span>
+                        </div>
+
+                        {/* Dual-Track Breakdown: Shin & Forma */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: '21px', marginBottom: '4px', fontSize: '11px', color: '#555555' }}>
+                            <span>
+                                Shin: <strong style={{ color: profile?.shinRankColor || getRankInfo(shinRating).color }}>{shinRating}</strong>
+                            </span>
+                            <span>•</span>
+                            <span>
+                                Forma: <strong style={{ color: profile?.formaRankColor || getRankInfo(formaRating).color }}>{formaRating}</strong>
                             </span>
                         </div>
 

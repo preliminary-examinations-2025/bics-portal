@@ -59,13 +59,14 @@ export default function KataContestsListView() {
     const formatDateTime = (dateStr) => {
         if (!dateStr) return '';
         const d = new Date(dateStr);
-        return d.toLocaleString('en-US', {
+        return d.toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
             month: 'short',
             day: '2-digit',
             hour: '2-digit',
             minute: '2-digit',
             hour12: false
-        });
+        }) + ' IST';
     };
 
     return (
@@ -110,7 +111,7 @@ export default function KataContestsListView() {
                                     color: '#666',
                                     background: '#fafafa'
                                 }}>
-                                    No contests currently scheduled. Check back on Thursday when the automated system configures the weekend rounds.
+                                    No contests currently scheduled. Check back soon for upcoming weekend rounds.
                                 </div>
                             ) : (
                                 <table style={{
@@ -441,7 +442,7 @@ export default function KataContestsListView() {
                                 </p>
                                 <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: '8px 0' }} />
                                 <div style={{ color: '#666', fontSize: '10px' }}>
-                                    Each contest is worth <strong>1500 points</strong>. Auto-generated every Thursday from the curated Question Bank.
+                                    Each contest is worth <strong>1500 points</strong>.
                                 </div>
                             </div>
                         </div>

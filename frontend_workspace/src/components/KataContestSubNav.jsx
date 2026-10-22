@@ -18,7 +18,7 @@ export default function KataContestSubNav({ contestId, letter, isProblemset, isS
         { label: 'STATUS', path: `/kata/contests/${contestId}/submissions?all=true` }
     ] : isScheduled ? [
         { label: 'OVERVIEW', path: `/kata/contests/${contestId}` },
-        { label: 'REGISTRATION', path: `/kata/contests/${contestId}/register` }
+        { label: 'PARTICIPANTS', path: `/kata/contests/${contestId}/participants` }
     ] : [
         { label: 'PROBLEMS', path: `/kata/contests/${contestId}` },
         { label: 'SUBMIT CODE', path: `/kata/contests/${contestId}/submit` },

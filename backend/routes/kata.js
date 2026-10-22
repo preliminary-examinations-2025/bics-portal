@@ -405,6 +405,12 @@ router.get('/me', async (req, res) => {
                 },
                 profile: {
                     handle: req.user.username || 'admin',
+                    rating: 3000,
+                    maxRating: 3000,
+                    rank: 'Grandmaster',
+                    rankColor: '#ff0000',
+                    maxRank: 'Grandmaster',
+                    maxRankColor: '#ff0000',
                     shinRating: 3000,
                     shinRank: 'Grandmaster',
                     shinRankColor: '#ff0000',
@@ -478,8 +484,18 @@ router.get('/me', async (req, res) => {
             profile = await calculateCandidateKataStats(candidate.studentId || candidate._id, candidate.username, profile);
             await CandidateModel.updateOne({ _id: candidate._id }, { $set: { kataProfile: profile } });
         }
-        const shinTier = getRatingTier(profile.shinRating || 1200);
-        const formaTier = getRatingTier(profile.formaRating || 1200);
+        const shinRating = profile.shinRating || 1200;
+        const formaRating = profile.formaRating || 1200;
+        const shinMaxRating = profile.shinMaxRating || shinRating;
+        const formaMaxRating = profile.formaMaxRating || formaRating;
+
+        const mainRating = Math.round((shinRating + formaRating) / 2);
+        const mainMaxRating = Math.round((shinMaxRating + formaMaxRating) / 2);
+
+        const mainTier = getRatingTier(mainRating);
+        const mainMaxTier = getRatingTier(mainMaxRating);
+        const shinTier = getRatingTier(shinRating);
+        const formaTier = getRatingTier(formaRating);
 
         return res.json({
             authenticated: true,
@@ -487,12 +503,22 @@ router.get('/me', async (req, res) => {
             candidate: candidatePayload,
             profile: {
                 ...profile,
+                rating: mainRating,
+                maxRating: mainMaxRating,
+                rank: mainTier.title,
+                rankColor: mainTier.color,
+                maxRank: mainMaxTier.title,
+                maxRankColor: mainMaxTier.color,
+                shinRating,
+                shinMaxRating,
                 shinRank: shinTier.title,
                 shinRankColor: shinTier.color,
-                shinMaxRank: getRatingTier(profile.shinMaxRating || 1200).title,
+                shinMaxRank: getRatingTier(shinMaxRating).title,
+                formaRating,
+                formaMaxRating,
                 formaRank: formaTier.title,
                 formaRankColor: formaTier.color,
-                formaMaxRank: getRatingTier(profile.formaMaxRating || 1200).title,
+                formaMaxRank: getRatingTier(formaMaxRating).title,
                 globalPercentile: profile.globalPercentile || null,
                 batchPercentile: profile.batchPercentile || null
             }
@@ -1614,6 +1640,96 @@ router.get('/contests/:contestId', async (req, res) => {
     } catch (err) {
         console.error('Error fetching contest details:', err);
         return res.status(500).json({ error: 'Failed to fetch contest details' });
+    }
+});
+
+/**
+ * GET /api/kata/contests/:contestId/participants
+ * Lists registered candidates for this contest with ratings, handles, and registration time
+ */
+router.get('/contests/:contestId/participants', async (req, res) => {
+    try {
+        const contestId = req.params.contestId.toUpperCase();
+        const contest = await KataContestModel.findOne({ contestId }).lean();
+        if (!contest) {
+            return res.status(404).json({ error: 'Contest not found' });
+        }
+
+        const registeredCandidates = contest.registeredCandidates || [];
+        const usernames = registeredCandidates.map(c => c.username).filter(Boolean);
+        const candidateIds = registeredCandidates.map(c => c.candidateId).filter(Boolean);
+
+        // Fetch candidate profile info in bulk
+        const candidateDocs = await CandidateModel.find({
+            $or: [
+                { username: { $in: usernames } },
+                { studentId: { $in: candidateIds } }
+            ]
+        }).lean();
+
+        const candidateMap = new Map();
+        for (const doc of candidateDocs) {
+            if (doc.username) candidateMap.set(doc.username.toLowerCase(), doc);
+            if (doc.studentId) candidateMap.set(doc.studentId.toLowerCase(), doc);
+            if (doc._id) candidateMap.set(String(doc._id), doc);
+        }
+
+        const participants = registeredCandidates.map((reg, idx) => {
+            const matchedDoc = candidateMap.get((reg.username || '').toLowerCase()) ||
+                               candidateMap.get((reg.candidateId || '').toLowerCase()) ||
+                               {};
+            const kp = matchedDoc.kataProfile || {};
+            const shinRating = kp.shinRating || 1200;
+            const formaRating = kp.formaRating || 1200;
+            const mainRating = Math.round((shinRating + formaRating) / 2);
+            const mainTier = getRatingTier(mainRating);
+            const shinTier = getRatingTier(shinRating);
+            const formaTier = getRatingTier(formaRating);
+
+            const displayName = matchedDoc.registrationData?.fullName ||
+                                matchedDoc.name ||
+                                reg.username ||
+                                reg.candidateId;
+
+            return {
+                index: idx + 1,
+                candidateId: reg.candidateId,
+                username: reg.username || reg.candidateId,
+                displayName,
+                registeredAt: reg.registeredAt || contest.createdAt,
+                rating: mainRating,
+                rank: mainTier.title,
+                rankColor: mainTier.color,
+                shinRating,
+                shinRank: shinTier.title,
+                shinRankColor: shinTier.color,
+                formaRating,
+                formaRank: formaTier.title,
+                formaRankColor: formaTier.color,
+                mode: reg.mode || 'individual'
+            };
+        });
+
+        const now = new Date();
+        const isScheduled = now < new Date(contest.startTime);
+
+        return res.json({
+            success: true,
+            contest: {
+                contestId: contest.contestId,
+                title: contest.title,
+                track: contest.track,
+                startTime: contest.startTime,
+                endTime: contest.endTime,
+                status: contest.status,
+                isScheduled,
+                registeredCount: participants.length
+            },
+            participants
+        });
+    } catch (err) {
+        console.error('Error fetching contest participants:', err);
+        return res.status(500).json({ error: 'Failed to fetch contest participants' });
     }
 });
 
@@ -2925,7 +3041,11 @@ router.get('/profile/:handle', async (req, res) => {
         if (dbState.useMongo) {
             const safeHandleRegex = new RegExp(`^${escapeRegex(handle)}$`, 'i');
             candidate = await CandidateModel.findOne({
-                'kataProfile.handle': { $regex: safeHandleRegex }
+                $or: [
+                    { 'kataProfile.handle': { $regex: safeHandleRegex } },
+                    { username: { $regex: safeHandleRegex } },
+                    { studentId: { $regex: safeHandleRegex } }
+                ]
             }).lean();
         } else {
             const db = getJSONData();
@@ -2936,17 +3056,33 @@ router.get('/profile/:handle', async (req, res) => {
             );
         }
 
-        if (!candidate || !candidate.kataProfile) {
+        if (!candidate) {
             return res.status(404).json({ error: `Handle "${handle}" not found` });
         }
 
-        let profile = candidate.kataProfile;
+        let profile = candidate.kataProfile || {
+            handle: candidate.username || handle,
+            shinRating: 1200,
+            shinMaxRating: 1200,
+            formaRating: 1200,
+            formaMaxRating: 1200
+        };
         if (dbState.useMongo) {
             profile = await calculateCandidateKataStats(candidate.studentId || candidate._id, candidate.username, profile);
             await CandidateModel.updateOne({ _id: candidate._id }, { $set: { kataProfile: profile } });
         }
-        const shinTier = getRatingTier(profile.shinRating || 1200);
-        const formaTier = getRatingTier(profile.formaRating || 1200);
+        const shinRating = profile.shinRating || 1200;
+        const formaRating = profile.formaRating || 1200;
+        const shinMaxRating = profile.shinMaxRating || shinRating;
+        const formaMaxRating = profile.formaMaxRating || formaRating;
+
+        const mainRating = Math.round((shinRating + formaRating) / 2);
+        const mainMaxRating = Math.round((shinMaxRating + formaMaxRating) / 2);
+
+        const mainTier = getRatingTier(mainRating);
+        const mainMaxTier = getRatingTier(mainMaxRating);
+        const shinTier = getRatingTier(shinRating);
+        const formaTier = getRatingTier(formaRating);
 
         return res.json({
             success: true,
@@ -2960,12 +3096,22 @@ router.get('/profile/:handle', async (req, res) => {
             },
             profile: {
                 ...profile,
+                rating: mainRating,
+                maxRating: mainMaxRating,
+                rank: mainTier.title,
+                rankColor: mainTier.color,
+                maxRank: mainMaxTier.title,
+                maxRankColor: mainMaxTier.color,
+                shinRating,
+                shinMaxRating,
                 shinRank: shinTier.title,
                 shinRankColor: shinTier.color,
-                shinMaxRank: getRatingTier(profile.shinMaxRating || 1200).title,
+                shinMaxRank: getRatingTier(shinMaxRating).title,
+                formaRating,
+                formaMaxRating,
                 formaRank: formaTier.title,
                 formaRankColor: formaTier.color,
-                formaMaxRank: getRatingTier(profile.formaMaxRating || 1200).title
+                formaMaxRank: getRatingTier(formaMaxRating).title
             }
         });
     } catch (err) {

@@ -53,7 +53,7 @@ export default function KataGymView() {
     const formatDate = (dateStr) => {
         if (!dateStr) return '—';
         const d = new Date(dateStr);
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric' });
     };
 
     return (

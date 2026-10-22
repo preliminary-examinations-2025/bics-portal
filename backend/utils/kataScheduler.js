@@ -132,12 +132,21 @@ async function generateContestForTrack(track, contestDate, roundNumberOverride =
             return existing;
         }
 
-        // 5. Start time and end time (15 hours from 09:00 to 23:59:59)
-        const startTime = new Date(contestDate);
-        startTime.setHours(9, 0, 0, 0);
+        // 5. Start time and end time in IST (UTC+5:30)
+        // Build times as IST by offsetting: 09:00 IST = 03:30 UTC, 23:59:59 IST = 18:29:59 UTC
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 5h 30m in ms
 
-        const endTime = new Date(contestDate);
-        endTime.setHours(23, 59, 59, 999);
+        // Get the date components in IST for the contest date
+        const contestDateIST = new Date(new Date(contestDate).getTime() + IST_OFFSET_MS);
+        const year = contestDateIST.getUTCFullYear();
+        const month = contestDateIST.getUTCMonth();
+        const day = contestDateIST.getUTCDate();
+
+        // 09:00:00 IST = UTC midnight of that day + 9h - 5.5h = UTC 03:30:00
+        const startTime = new Date(Date.UTC(year, month, day, 9, 0, 0, 0) - IST_OFFSET_MS);
+
+        // 23:59:59.999 IST = UTC midnight + 23:59:59.999 - 5.5h = UTC 18:29:59.999
+        const endTime = new Date(Date.UTC(year, month, day, 23, 59, 59, 999) - IST_OFFSET_MS);
 
         // 6. Question Bank single-appearance deduplication:
         // Gather all questionIds that have appeared in ANY contest to date
@@ -251,38 +260,43 @@ async function generateContestForTrack(track, contestDate, roundNumberOverride =
  * Fixes the Sunday calculation bug so Sunday is never computed in the past relative to Saturday.
  */
 function getUpcomingWeekendDates(refDate = new Date()) {
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // IST = UTC+5:30
+
+    // Interpret "now" in IST to get the correct calendar day
     const now = new Date(refDate);
-    const dayOfWeek = now.getDay(); // 0 is Sunday, 1 is Monday, ..., 6 is Saturday
+    const nowIST = new Date(now.getTime() + IST_OFFSET_MS);
+    const dayOfWeek = nowIST.getUTCDay(); // 0=Sun, 6=Sat in IST calendar
 
-    let saturday = new Date(now);
+    // Current IST date components
+    let year = nowIST.getUTCFullYear();
+    let month = nowIST.getUTCMonth();
+    let dayOfMonth = nowIST.getUTCDate();
 
+    // Find upcoming Saturday in IST calendar
+    let daysUntilSaturday;
     if (dayOfWeek === 0) {
-        // On Sunday: check if today's round has ended (past 23:59:59)
-        const sundayEnd = new Date(now);
-        sundayEnd.setHours(23, 59, 59, 999);
-
-        if (now > sundayEnd) {
-            // Sunday round ended: target next weekend's Saturday (in 6 days)
-            saturday.setDate(now.getDate() + 6);
+        // Sunday IST: check if today's round has ended (past 23:59:59 IST)
+        const sundayEndIST = new Date(Date.UTC(year, month, dayOfMonth, 23, 59, 59, 999) - IST_OFFSET_MS);
+        if (now > sundayEndIST) {
+            // Sunday round ended: next Saturday is in 6 days
+            daysUntilSaturday = 6;
         } else {
-            // Sunday round active/today: Saturday was yesterday
-            saturday.setDate(now.getDate() - 1);
+            // Sunday round active: Saturday was yesterday
+            daysUntilSaturday = -1;
         }
     } else if (dayOfWeek === 6) {
-        // On Saturday: Saturday is today
+        daysUntilSaturday = 0; // Today is Saturday
     } else {
-        // Monday (1) through Friday (5): target upcoming Saturday
-        const daysUntilSaturday = 6 - dayOfWeek;
-        saturday.setDate(now.getDate() + daysUntilSaturday);
+        daysUntilSaturday = 6 - dayOfWeek;
     }
 
-    saturday.setHours(9, 0, 0, 0);
+    // Build Saturday as a UTC date representing IST midnight of that day
+    const saturdayDate = new Date(Date.UTC(year, month, dayOfMonth + daysUntilSaturday, 0, 0, 0, 0) - IST_OFFSET_MS);
 
-    // Sunday is ALWAYS strictly 1 day after Saturday (never 6 days in the past!)
-    const sunday = new Date(saturday);
-    sunday.setDate(saturday.getDate() + 1);
+    // Sunday is always strictly 1 day after Saturday
+    const sundayDate = new Date(saturdayDate.getTime() + 24 * 60 * 60 * 1000);
 
-    return { saturday, sunday };
+    return { saturday: saturdayDate, sunday: sundayDate };
 }
 
 let isSchedulerTickRunning = false;

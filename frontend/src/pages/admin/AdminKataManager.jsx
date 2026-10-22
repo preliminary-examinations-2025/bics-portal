@@ -717,7 +717,7 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
                                 Weekly Contest Automated Engine
                             </h3>
                             <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>
-                                Automated cron runs every Thursday at 00:00 UTC, randomly picking 1 question each from A-E categories.
+                                Automated cron runs every Thursday, configuring weekend rounds (Shin on Saturday, Forma on Sunday) from 09:00 to 23:59 IST.
                             </p>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -804,7 +804,7 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
                                             </div>
                                         </td>
                                         <td style={{ padding: '10px 14px', fontSize: '12px', color: '#475569' }}>
-                                            {new Date(c.startTime).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            {new Date(c.startTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })} IST
                                         </td>
                                         <td style={{ padding: '10px 14px' }}>
                                             <span style={{

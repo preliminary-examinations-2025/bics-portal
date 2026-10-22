@@ -732,7 +732,7 @@ export default function KataContestDashboardView() {
                                     {timeLeftStr || 'Calculating...'}
                                 </div>
                                 <div style={{ fontSize: '10px', color: '#888' }}>
-                                    Runs 09:00 - 00:00 continuously
+                                    Runs 09:00 - 00:00 IST continuously
                                 </div>
                             </div>
                         </div>

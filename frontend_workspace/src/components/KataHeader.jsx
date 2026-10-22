@@ -19,7 +19,7 @@ export default function KataHeader({ user, profile, onSearch, track, contestId }
     const [searchVal, setSearchVal] = useState('');
     const handle = profile?.handle || user?.username || '';
     const isAuthenticated = !!profile?.handle;
-    const rankColor = profile?.shinRankColor || '#008000';
+    const rankColor = profile?.rankColor || profile?.shinRankColor || '#008000';
 
     let routerLocation = null;
     try {

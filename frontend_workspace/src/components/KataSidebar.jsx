@@ -5,7 +5,9 @@ import CodeforcesPayAttentionBox from './CodeforcesPayAttentionBox';
 export default function KataSidebar({ profile, candidate, leaderboard, upcomingContests = [], onFindUser }) {
     const handle = profile?.handle || candidate?.username || '';
     const shinRating = profile?.shinRating || 1200;
-    const shinRankColor = profile?.shinRankColor || '#008000';
+    const formaRating = profile?.formaRating || 1200;
+    const mainRating = profile?.rating ?? Math.round((shinRating + formaRating) / 2);
+    const mainRankColor = profile?.rankColor || profile?.shinRankColor || '#008000';
     const [selectedTrack, setSelectedTrack] = useState('shin');
     const [searchHandle, setSearchHandle] = useState('');
 
@@ -84,7 +86,7 @@ export default function KataSidebar({ profile, candidate, leaderboard, upcomingC
                                     <path d="M3 3v18h18" />
                                     <path d="m19 9-5 5-4-4-3 3" />
                                 </svg>
-                                <span>Rating: <strong style={{ color: shinRankColor }}>{shinRating}</strong></span>
+                                <span>Rating: <strong style={{ color: mainRankColor }}>{mainRating}</strong></span>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px' }}>
                                 <span style={{ color: '#3182ce', fontSize: '12px' }}>★</span>

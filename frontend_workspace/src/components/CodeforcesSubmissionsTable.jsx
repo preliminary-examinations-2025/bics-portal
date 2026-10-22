@@ -187,10 +187,20 @@ export function formatCfVerdict(verdict, onCompileErrorClick) {
         );
     }
 
-    if (trimmed === 'In queue' || trimmed === 'Compiling' || trimmed.startsWith('Running')) {
+    if (trimmed.toLowerCase().startsWith('running')) {
+        const textWithDots = trimmed.endsWith('...') ? trimmed : `${trimmed}...`;
         return (
-            <span style={{ color: '#3b88c3', fontWeight: 'bold', fontStyle: 'italic', fontSize: '12px' }}>
-                {trimmed}
+            <span style={{ color: '#666666', fontWeight: 'normal', fontSize: '12px' }}>
+                {textWithDots}
+            </span>
+        );
+    }
+
+    if (trimmed === 'In queue' || trimmed === 'Compiling') {
+        const textWithDots = trimmed.endsWith('...') ? trimmed : `${trimmed}...`;
+        return (
+            <span style={{ color: '#666666', fontWeight: 'normal', fontSize: '12px' }}>
+                {textWithDots}
             </span>
         );
     }

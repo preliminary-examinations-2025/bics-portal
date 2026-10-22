@@ -102,7 +102,19 @@ async function processSubmissionAsync(submissionId) {
         const timeLimitMs = Math.round((question.timeLimit || 1.0) * 1000);
         const memoryLimitMb = question.memoryLimit || 256;
 
-        const execResult = await executeCode(submission.code, testCases, timeLimitMs, memoryLimitMb);
+        const execResult = await executeCode(
+            submission.code,
+            testCases,
+            timeLimitMs,
+            memoryLimitMb,
+            async (testNum) => {
+                submission.verdict = `Running on test ${testNum}`;
+                await KataSubmissionModel.updateOne(
+                    { _id: submission._id },
+                    { $set: { verdict: `Running on test ${testNum}` } }
+                );
+            }
+        );
 
         if (!execResult.success && execResult.compileError) {
             submission.verdict = 'Compilation error';

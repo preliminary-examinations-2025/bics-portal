@@ -101,7 +101,7 @@ const isSafeCode = (sourceCode) => {
 };
 
 // 3. Execution inside Isolated Docker Container
-const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128) => {
+const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128, onTestProgress = null) => {
     const dir = path.resolve(__dirname, '..', 'temp_runs', `docker_${Math.random().toString(36).substring(7)}`);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -134,6 +134,9 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
             try {
                 // Step B: Run each testcase in an isolated, unprivileged, read-only container
                 for (let i = 0; i < testCases.length; i++) {
+                    if (typeof onTestProgress === 'function') {
+                        try { await onTestProgress(i + 1, testCases.length); } catch (e) {}
+                    }
                     const tc = testCases[i];
                     const runRes = await new Promise((runResolve) => {
                         const runCmd = `docker run --rm -i --network none --memory "${memoryLimitMb}m" --memory-swap "${memoryLimitMb}m" --cpus 1.0 --pids-limit 32 --cap-drop ALL -v "${volumePath}:/sandbox:ro" bics-cpp-sandbox /sandbox/runner`;
@@ -203,7 +206,7 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
 };
 
 // 4. Guarded Local Host Process (Robust fallback when Docker daemon is offline/unavailable)
-const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128) => {
+const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128, onTestProgress = null) => {
     return new Promise((resolve) => {
         const dir = path.join(__dirname, '..', 'temp_runs');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -234,6 +237,9 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
             const results = [];
             try {
                 for (let i = 0; i < testCases.length; i++) {
+                    if (typeof onTestProgress === 'function') {
+                        try { await onTestProgress(i + 1, testCases.length); } catch (e) {}
+                    }
                     const tc = testCases[i];
                     const res = await new Promise((runResolve) => {
                         const child = exec(`"${execFile}"`, { 
@@ -391,7 +397,7 @@ const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
 };
 
 // 6. Master Unified Code Execution Engine
-const executeCode = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128) => {
+const executeCode = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128, onTestProgress = null) => {
     // Clamp dynamic limits to safe bounds
     const clampedTimeMs = Math.max(200, Math.min(Number(timeLimitMs) || 2000, 10000));
     const clampedMemoryMb = Math.max(16, Math.min(Number(memoryLimitMb) || 128, 512));
@@ -412,7 +418,7 @@ const executeCode = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
         const imageReady = await ensureDockerImage();
         if (imageReady) {
             console.log(`--> [CodeRunner] Executing in isolated Docker container (Limit: ${clampedTimeMs}ms, ${clampedMemoryMb}MB)`);
-            return await runInDocker(sourceCode, testCases, clampedTimeMs, clampedMemoryMb);
+            return await runInDocker(sourceCode, testCases, clampedTimeMs, clampedMemoryMb, onTestProgress);
         }
     }
 
@@ -420,7 +426,7 @@ const executeCode = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
     const localCompiler = await isGppAvailable();
     if (localCompiler) {
         console.log(`--> [CodeRunner] Executing via guarded local process (Limit: ${clampedTimeMs}ms, ${clampedMemoryMb}MB)`);
-        return await runLocalGuardedProcess(sourceCode, testCases, clampedTimeMs, clampedMemoryMb);
+        return await runLocalGuardedProcess(sourceCode, testCases, clampedTimeMs, clampedMemoryMb, onTestProgress);
     }
 
     // Tier 3: Offload to Judge0 Cloud

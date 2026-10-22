@@ -232,7 +232,7 @@ export default function KataStandingsView() {
                                 {countdownStr || '00:00:00'}
                             </div>
                             <div style={{ fontSize: '11px', color: '#666666', marginTop: '6px' }}>
-                                Scheduled Start: {contest?.startTime ? new Date(contest.startTime).toLocaleString() : 'TBA'}
+                                Scheduled Start: {contest?.startTime ? new Date(contest.startTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) + ' IST' : 'TBA'}
                             </div>
                         </div>
 
@@ -274,7 +274,7 @@ export default function KataStandingsView() {
                             {concealedData.message}
                             {concealedData.releaseTime && (
                                 <div style={{ marginTop: '10px', fontWeight: 'bold', color: '#9a3412', fontSize: '13px' }}>
-                                    Scheduled Release: {new Date(concealedData.releaseTime).toLocaleString()} ({concealedData.remainingHours}h remaining)
+                                    Scheduled Release: {new Date(concealedData.releaseTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} IST ({concealedData.remainingHours}h remaining)
                                 </div>
                             )}
                         </div>

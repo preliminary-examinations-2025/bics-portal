@@ -71,14 +71,16 @@ export default function KataContestSubmissionsView({ isProblemsetRoute }) {
 
     // Live poller for pending submissions: stops polling immediately once all are terminal
     useEffect(() => {
+        const hasRunningTests = submissions.some(s => s.verdict?.toLowerCase().startsWith('running'));
         const hasPending = submissions.some(s => 
-            s.verdict === 'In queue' || s.verdict === 'Compiling' || s.verdict?.startsWith('Running')
+            s.verdict === 'In queue' || s.verdict === 'Compiling' || s.verdict?.toLowerCase().startsWith('running')
         );
 
         if (hasPending) {
+            const intervalMs = hasRunningTests ? 1000 : 2000;
             pollIntervalRef.current = setInterval(() => {
                 fetchSubmissions();
-            }, 2500);
+            }, intervalMs);
         } else {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         }
