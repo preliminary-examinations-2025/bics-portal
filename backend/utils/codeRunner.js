@@ -218,8 +218,12 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
 
         fs.writeFileSync(codeFile, sourceCode);
 
+        // Inject bundled bits/stdc++.h shim so #include<bits/stdc++.h> resolves on
+        // any host regardless of GCC installation completeness (e.g., Render, minimal Alpine).
+        const bitsShimDir = path.resolve(__dirname, '..', 'sandbox');
+
         // Compile with standard optimization and modern C++ standard
-        exec(`g++ -O2 -std=c++17 "${codeFile}" -o "${execFile}"`, { timeout: 15000 }, async (compileErr, stdout, stderr) => {
+        exec(`g++ -O2 -std=c++17 -I"${bitsShimDir}" "${codeFile}" -o "${execFile}"`, { timeout: 15000 }, async (compileErr, stdout, stderr) => {
             if (compileErr) {
                 try {
                     if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
