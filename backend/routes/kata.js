@@ -8,7 +8,7 @@ const { KataContestModel } = require('../models/KataContest');
 const { KataSubmissionModel } = require('../models/KataSubmission');
 const { enqueueSubmission } = require('../utils/judgeEngine');
 const { generateContestForTrack, getUpcomingWeekendDates, configureThursdayWeeklyContests } = require('../utils/kataScheduler');
-const { runHourlyAiEvaluatorTick, evaluateKataFormaSubmission, evaluateKataFormaVirtualWithGroq } = require('../services/kataAiEvaluator');
+const { runHourlyAiEvaluatorTick, evaluateKataFormaSubmission, evaluateKataFormaVirtualWithGroq, restoreDeprecatedShinSubmissions } = require('../services/kataAiEvaluator');
 const { processContestRatings } = require('../utils/ratingEngine');
 const { authenticateToken, requireAdmin, requireBicsStudentOrAdmin } = require('../middleware/auth');
 const { comparePassword } = require('../utils/password');
@@ -2446,12 +2446,16 @@ router.get('/contests/:contestId/standings', async (req, res) => {
         // live: only isLiveSubmission: true
         // virtual: only isVirtual: true
         // all: isLiveSubmission: true OR isVirtual: true
+        const isForma = contest.track === 'forma' || contestId.toUpperCase().includes('FORMA');
         const subFilter = { 
             contestId,
-            isSuperseded: { $ne: true },
-            isLatest: { $ne: false },
-            verdict: { $nin: ['Deprecated', 'Superseded'] }
+            verdict: { $nin: ['Deprecated', 'Superseded', 'In queue', 'Compiling', 'Submitted (Awaiting Evaluation)'] }
         };
+        // Forma: only single authoritative latest submission is counted
+        if (isForma) {
+            subFilter.isSuperseded = { $ne: true };
+            subFilter.isLatest = { $ne: false };
+        }
         if (mode === 'live') {
             subFilter.isLiveSubmission = true;
         } else if (mode === 'virtual') {
@@ -3126,6 +3130,9 @@ router.post('/admin/contests/purge-accidental', async (req, res) => {
                 purgedContestIds.push(contest.contestId);
             }
         }
+
+        // Automatically heal and restore any Shin submissions mistakenly marked 'Deprecated'
+        await restoreDeprecatedShinSubmissions();
 
         return res.json({
             success: true,

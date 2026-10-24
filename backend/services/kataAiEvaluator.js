@@ -801,10 +801,15 @@ async function runFourHourPostContestAuditWorker() {
                 if (!latestSubmissionsMap.has(key)) {
                     latestSubmissionsMap.set(key, s);
                 } else {
-                    // Mark earlier submission as deprecated to prevent any wasted API usage
-                    s.isSuperseded = true;
-                    s.isLatest = false;
-                    s.verdict = 'Deprecated';
+                    // Only FORMA submissions get marked as Deprecated, because only the latest Forma solution is graded.
+                    // SHIN submissions are binary C++ runs (Accepted, WA on test x, TLE, etc.); their authentic verdicts
+                    // must NEVER be overwritten with 'Deprecated'. We simply mark them as plagiarismChecked: true so
+                    // they are not audited by the AI evaluator.
+                    if (contest.track === 'forma') {
+                        s.isSuperseded = true;
+                        s.isLatest = false;
+                        s.verdict = 'Deprecated';
+                    }
                     s.plagiarismChecked = true;
                     await s.save();
                 }
@@ -884,6 +889,47 @@ async function runFourHourPostContestAuditWorker() {
     }
 }
 
+/**
+ * Automatically restores any Shin submissions that were mistakenly marked as 'Deprecated'.
+ * Recomputes authentic verdicts (Accepted, Compilation error, Wrong answer on test X)
+ * based on saved compiler output, testPassed, and totalTests metrics.
+ */
+async function restoreDeprecatedShinSubmissions() {
+    try {
+        const deprecatedShinSubs = await KataSubmissionModel.find({
+            verdict: { $in: ['Deprecated', 'Superseded'] },
+            $or: [
+                { track: 'shin' },
+                { contestId: { $regex: /^SHIN/i } }
+            ]
+        });
+
+        if (deprecatedShinSubs.length === 0) return;
+
+        console.log(`[KataAiEvaluator] Restoring ${deprecatedShinSubs.length} mistakenly deprecated Shin submissions to authentic CP verdicts...`);
+        for (const sub of deprecatedShinSubs) {
+            let restoredVerdict = 'Wrong answer on test 1';
+            if (sub.compileOutput && sub.compileOutput.trim().length > 0) {
+                restoredVerdict = 'Compilation error';
+            } else if (sub.totalTests > 0 && sub.testPassed === sub.totalTests) {
+                restoredVerdict = 'Accepted';
+            } else if (sub.totalTests > 0 && sub.testPassed < sub.totalTests) {
+                restoredVerdict = `Wrong answer on test ${sub.testPassed + 1}`;
+            } else if (sub.testPassed > 0) {
+                restoredVerdict = `Wrong answer on test ${sub.testPassed + 1}`;
+            }
+
+            sub.verdict = restoredVerdict;
+            sub.isSuperseded = false;
+            sub.isLatest = true;
+            await sub.save();
+        }
+        console.log(`[KataAiEvaluator] Successfully restored ${deprecatedShinSubs.length} Shin submissions!`);
+    } catch (err) {
+        console.error('[KataAiEvaluator] Error restoring deprecated Shin submissions:', err);
+    }
+}
+
 let isAiTickRunning = false;
 
 /**
@@ -897,6 +943,9 @@ async function runHourlyAiEvaluatorTick() {
     isAiTickRunning = true;
     console.log('[KataAiEvaluator] Starting hourly evaluation tick...');
     try {
+        // Heal any mistakenly deprecated Shin submissions
+        await restoreDeprecatedShinSubmissions();
+
         // 1. Run 4-hour post-contest audit worker for concluded contests
         await runFourHourPostContestAuditWorker();
 
@@ -941,5 +990,6 @@ module.exports = {
     checkKataFormaPlagiarismAndScore,
     runFourHourPostContestAuditWorker,
     runHourlyAiEvaluatorTick,
-    startKataAiHourlyWorker
+    startKataAiHourlyWorker,
+    restoreDeprecatedShinSubmissions
 };
