@@ -2861,6 +2861,9 @@ router.post('/admin/generate-contest', async (req, res) => {
         const { saturday, sunday } = getUpcomingWeekendDates();
         const targetDate = track === 'shin' ? saturday : sunday;
         const contest = await generateContestForTrack(track, targetDate);
+        if (!contest) {
+            return res.status(400).json({ error: `Track ${track} has already reached the maximum limit of 8 rounds.` });
+        }
         return res.json({ success: true, contest });
     } catch (err) {
         return res.status(500).json({ error: err.message || 'Contest generation failed' });
@@ -3034,6 +3037,105 @@ router.post('/admin/trigger-weekly-config', async (req, res) => {
     } catch (err) {
         console.error('Error triggering weekly config:', err);
         return res.status(500).json({ error: 'Failed to trigger weekly configuration' });
+    }
+});
+
+/**
+ * Admin: Delete a contest and release question bank questions
+ * DELETE /api/kata/admin/contests/:contestId
+ */
+router.delete('/admin/contests/:contestId', async (req, res) => {
+    try {
+        const contestId = req.params.contestId.toUpperCase();
+        const contest = await KataContestModel.findOne({ contestId });
+        if (!contest) {
+            return res.status(404).json({ error: 'Contest not found' });
+        }
+
+        // Extract problem questionIds
+        const questionIds = (contest.problems || [])
+            .map(p => p.questionId)
+            .filter(Boolean);
+
+        if (questionIds.length > 0) {
+            // Remove contestId from appearedInContests
+            await KataQuestionBankModel.updateMany(
+                { _id: { $in: questionIds } },
+                { $pull: { appearedInContests: contestId } }
+            );
+
+            // If question has no more appearances, reset hasAppearedInContest: false
+            await KataQuestionBankModel.updateMany(
+                { _id: { $in: questionIds }, appearedInContests: { $size: 0 } },
+                { $set: { hasAppearedInContest: false } }
+            );
+        }
+
+        // Delete any submissions for this contest
+        await KataSubmissionModel.deleteMany({ contestId });
+
+        // Delete contest
+        await KataContestModel.deleteOne({ contestId });
+
+        return res.json({
+            success: true,
+            message: `Contest ${contestId} and its associated questions were successfully released.`
+        });
+    } catch (err) {
+        console.error('Error deleting contest:', err);
+        return res.status(500).json({ error: 'Failed to delete contest' });
+    }
+});
+
+/**
+ * Admin: Purge accidental auto-generated contests (Round > 1 with 0 registrations & 0 submissions)
+ * and safely release their questions back to the question bank
+ * POST /api/kata/admin/contests/purge-accidental
+ */
+router.post('/admin/contests/purge-accidental', async (req, res) => {
+    try {
+        const candidateContests = await KataContestModel.find({
+            roundNumber: { $gt: 1 }
+        });
+
+        const purgedContestIds = [];
+
+        for (const contest of candidateContests) {
+            const registeredCount = (contest.registeredCandidates || []).length;
+            const subCount = await KataSubmissionModel.countDocuments({ contestId: contest.contestId });
+
+            // Only purge empty accidental contests that have 0 candidates and 0 submissions
+            if (registeredCount === 0 && subCount === 0) {
+                const questionIds = (contest.problems || [])
+                    .map(p => p.questionId)
+                    .filter(Boolean);
+
+                if (questionIds.length > 0) {
+                    await KataQuestionBankModel.updateMany(
+                        { _id: { $in: questionIds } },
+                        { $pull: { appearedInContests: contest.contestId } }
+                    );
+
+                    await KataQuestionBankModel.updateMany(
+                        { _id: { $in: questionIds }, appearedInContests: { $size: 0 } },
+                        { $set: { hasAppearedInContest: false } }
+                    );
+                }
+
+                await KataContestModel.deleteOne({ contestId: contest.contestId });
+                purgedContestIds.push(contest.contestId);
+            }
+        }
+
+        return res.json({
+            success: true,
+            purgedCount: purgedContestIds.length,
+            purgedContests: purgedContestIds,
+            message: `Successfully purged ${purgedContestIds.length} empty accidental contest(s) and restored their questions in the bank.`
+        });
+    } catch (err) {
+        console.error('Error purging accidental contests:', err);
+        return res.status(500).json({ error: 'Failed to purge accidental contests' });
     }
 });
 

@@ -123,6 +123,13 @@ async function generateContestForTrack(track, contestDate, roundNumberOverride =
             const lastContest = await KataContestModel.findOne({ track }).sort({ roundNumber: -1 });
             roundNumber = lastContest ? lastContest.roundNumber + 1 : 1;
         }
+
+        // Hard boundary: maximum 8 rounds (rounds 01-08)
+        if (roundNumber > 8) {
+            console.log(`[KataScheduler] Track ${track} has completed all 8 rounds (attempted round ${roundNumber}). Aborting auto-generation.`);
+            return null;
+        }
+
         const contestId = `${track.toUpperCase()}${String(roundNumber).padStart(2, '0')}`;
 
         // 4. Pre-check if contestId already exists
@@ -341,26 +348,31 @@ async function runKataSchedulerTick() {
 
 /**
  * Weekly auto-scheduler cadence:
- * - On Thursday: Auto-generates upcoming Saturday's Shin contest.
- * - On Friday: Auto-generates upcoming Sunday's Forma contest.
- * - Weekend fallback: Guarantees missing contests are created on Saturday/Sunday if not already generated.
+ * - On Thursday: Auto-generates upcoming Saturday's Shin contest strictly once in IST.
+ * - On Friday: Auto-generates upcoming Sunday's Forma contest strictly once in IST.
+ * - Saturday, Sunday, Monday, Tuesday, Wednesday: No automatic contest generation.
  * - @param {boolean} force - Force configuration of both regardless of day (for Dev Mode / Tests)
  */
 async function configureWeeklyContests(force = false) {
     try {
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
         const now = new Date();
-        const dayOfWeek = now.getDay(); // 0 is Sunday, 4 is Thursday, 5 is Friday, 6 is Saturday
+        const nowIST = new Date(now.getTime() + IST_OFFSET_MS);
+        const dayOfWeekIST = nowIST.getUTCDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
 
         const { saturday, sunday } = getUpcomingWeekendDates(now);
 
-        // Thursday Cadence: Generate Saturday's KataShin contest
-        if (force || dayOfWeek === 4 || dayOfWeek === 6 || dayOfWeek === 0) {
+        // Windows covering the target Saturday and Sunday (in UTC)
+        const satStart = new Date(saturday.getTime() - 1000);
+        const satEnd = new Date(saturday.getTime() + 25 * 60 * 60 * 1000);
+        const sunStart = new Date(sunday.getTime() - 1000);
+        const sunEnd = new Date(sunday.getTime() + 25 * 60 * 60 * 1000);
+
+        // Thursday Cadence: Generate Saturday's KataShin contest ONLY on Thursday (dayOfWeekIST === 4)
+        if (force || dayOfWeekIST === 4) {
             const existingShin = await KataContestModel.findOne({
                 track: 'shin',
-                $or: [
-                    { status: { $in: ['scheduled', 'running'] } },
-                    { endTime: { $gte: now } }
-                ]
+                startTime: { $gte: satStart, $lte: satEnd }
             });
 
             if (!existingShin) {
@@ -369,14 +381,11 @@ async function configureWeeklyContests(force = false) {
             }
         }
 
-        // Friday Cadence: Generate Sunday's KataForma contest
-        if (force || dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0) {
+        // Friday Cadence: Generate Sunday's KataForma contest ONLY on Friday (dayOfWeekIST === 5)
+        if (force || dayOfWeekIST === 5) {
             const existingForma = await KataContestModel.findOne({
                 track: 'forma',
-                $or: [
-                    { status: { $in: ['scheduled', 'running'] } },
-                    { endTime: { $gte: now } }
-                ]
+                startTime: { $gte: sunStart, $lte: sunEnd }
             });
 
             if (!existingForma) {

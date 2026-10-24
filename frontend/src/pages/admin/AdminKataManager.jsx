@@ -407,6 +407,46 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
         }
     };
 
+    const handleDeleteContest = async (contestId) => {
+        if (!window.confirm(`Are you sure you want to delete contest ${contestId}? Associated questions will be released back to the question bank.`)) return;
+        try {
+            const res = await fetch(`${API_BASE}/kata/admin/contests/${contestId}`, {
+                method: 'DELETE',
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            const data = await res.json();
+            if (data.success) {
+                setActionMsg({ type: 'success', text: data.message });
+                fetchContests();
+                fetchQuestions();
+            } else {
+                setActionMsg({ type: 'error', text: data.error || 'Failed to delete contest' });
+            }
+        } catch (err) {
+            setActionMsg({ type: 'error', text: 'Network failure deleting contest' });
+        }
+    };
+
+    const handlePurgeAccidentalContests = async () => {
+        if (!window.confirm('Purge all empty accidental rounds (> Round 01 with 0 registrations & 0 submissions)? Questions will be released back to the question bank.')) return;
+        try {
+            const res = await fetch(`${API_BASE}/kata/admin/contests/purge-accidental`, {
+                method: 'POST',
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            const data = await res.json();
+            if (data.success) {
+                setActionMsg({ type: 'success', text: data.message });
+                fetchContests();
+                fetchQuestions();
+            } else {
+                setActionMsg({ type: 'error', text: data.error || 'Failed to purge accidental contests' });
+            }
+        } catch (err) {
+            setActionMsg({ type: 'error', text: 'Network failure purging accidental contests' });
+        }
+    };
+
     return (
         <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'Inter, system-ui, sans-serif' }}>
             {/* Title & Tabs */}
@@ -785,6 +825,25 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
                             >
                                 <Play size={14} /> Generate Forma (Sun)
                             </button>
+                            <button
+                                onClick={handlePurgeAccidentalContests}
+                                title="Purge empty accidental contests (> Round 01 with 0 registrations & 0 submissions) and release questions"
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    background: '#fef2f2',
+                                    color: '#991b1b',
+                                    border: '1px solid #fecaca',
+                                    padding: '7px 14px',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <Trash2 size={14} /> Purge Accidental Contests
+                            </button>
                         </div>
                     </div>
 
@@ -913,6 +972,27 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
                                                 >
                                                     Recalculate Ratings
                                                 </button>
+                                                {(!c.registeredCount || c.registeredCount === 0) && (
+                                                    <button
+                                                        onClick={() => handleDeleteContest(c.contestId)}
+                                                        title="Delete empty contest and release questions back to question bank"
+                                                        style={{
+                                                            padding: '3px 7px',
+                                                            borderRadius: '4px',
+                                                            fontSize: '11px',
+                                                            fontWeight: '600',
+                                                            background: '#fef2f2',
+                                                            color: '#991b1b',
+                                                            border: '1px solid #fecaca',
+                                                            cursor: 'pointer',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}
+                                                    >
+                                                        <Trash2 size={11} /> Delete
+                                                    </button>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>
