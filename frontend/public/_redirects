@@ -8,6 +8,19 @@
 # Proxy Workspace & Kata requests to the separate Workspace deployment site
 /workspace    https://bicsworkspace.netlify.app/workspace/kata  200!
 /workspace/*  https://bicsworkspace.netlify.app/workspace/:splat  200!
+/kata         https://bicsworkspace.netlify.app/workspace/kata  200!
+/kata/*       https://bicsworkspace.netlify.app/workspace/kata/:splat  200!
+/contests     https://bicsworkspace.netlify.app/workspace/contests  200!
+/contests/*   https://bicsworkspace.netlify.app/workspace/contests/:splat  200!
+/contest/*    https://bicsworkspace.netlify.app/workspace/contest/:splat  200!
+/problemset   https://bicsworkspace.netlify.app/workspace/problemset  200!
+/problemset/* https://bicsworkspace.netlify.app/workspace/problemset/:splat  200!
+/gym          https://bicsworkspace.netlify.app/workspace/gym  200!
+/gym/*        https://bicsworkspace.netlify.app/workspace/gym/:splat  200!
+/submissions  https://bicsworkspace.netlify.app/workspace/submissions  200!
+/submissions/* https://bicsworkspace.netlify.app/workspace/submissions/:splat  200!
+/status       https://bicsworkspace.netlify.app/workspace/status  200!
+/status/*     https://bicsworkspace.netlify.app/workspace/status/:splat  200!
 
 # Netlify Proxy Redirects for Cloudinary Media Storage (BICS_2026)
 /media/v:ver/*  https://res.cloudinary.com/dl7xqcnmr/image/upload/v:ver/BICS_2026/:splat  200!

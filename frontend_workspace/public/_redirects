@@ -3,6 +3,10 @@
 /workspace/favicon.ico    /favicon.ico                                 200
 /workspace/kata_icon.png  /kata_icon.png                               200
 /workspace/kata_logo.png  /kata_logo.png                               200
+/favicon.ico              /favicon.ico                                 200
+/kata_icon.png            /kata_icon.png                               200
+*/kata_icon.png           /kata_icon.png                               200
+*/favicon.ico             /favicon.ico                                 200
 
 # Proxy API requests to Render backend server
 /api/*                    https://bics-portal.onrender.com/api/:splat  200!

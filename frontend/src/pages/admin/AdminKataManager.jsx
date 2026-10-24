@@ -17,6 +17,16 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
     // Question Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingQuestionId, setEditingQuestionId] = useState(null);
+
+    // Equip admin kata view with kata icon
+    useEffect(() => {
+        const link = document.querySelector("link[rel*='icon']");
+        const prevHref = link ? link.href : '/bics_logo.png';
+        if (link) link.href = '/kata_icon.png';
+        return () => {
+            if (link) link.href = prevHref;
+        };
+    }, []);
     const [formData, setFormData] = useState({
         track: 'shin',
         letter: 'A',

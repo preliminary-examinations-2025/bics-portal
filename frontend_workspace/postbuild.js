@@ -22,4 +22,14 @@ if (fs.existsSync(indexHtml)) {
   fs.copyFileSync(indexHtml, targetIndexHtml);
 }
 
+// Mirror root icons and redirects into dist/workspace/
+const filesToMirror = ['favicon.ico', 'kata_icon.png', 'kata_logo.png', '_redirects'];
+for (const file of filesToMirror) {
+  const src = path.join(distDir, file);
+  const dest = path.join(workspaceDir, file);
+  if (fs.existsSync(src)) {
+    fs.copyFileSync(src, dest);
+  }
+}
+
 console.log('[postbuild] Successfully mirrored assets to dist/workspace/ for Netlify.');

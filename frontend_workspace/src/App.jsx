@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import AuthGuard from './components/AuthGuard';
 
@@ -50,6 +50,32 @@ function LogoutHandler() {
     return <div style={{ minHeight: '100vh', background: '#ffffff' }} />;
 }
 
+function KataFaviconEnforcer() {
+    const location = useLocation();
+
+    React.useEffect(() => {
+        const iconUrl = '/workspace/kata_icon.png';
+        const linkRels = [
+            { rel: 'icon', type: 'image/png' },
+            { rel: 'shortcut icon', type: 'image/png' },
+            { rel: 'apple-touch-icon' }
+        ];
+
+        linkRels.forEach(({ rel, type }) => {
+            let el = document.querySelector(`link[rel='${rel}']`);
+            if (!el) {
+                el = document.createElement('link');
+                el.rel = rel;
+                document.head.appendChild(el);
+            }
+            if (type) el.type = type;
+            el.href = iconUrl;
+        });
+    }, [location.pathname]);
+
+    return null;
+}
+
 export default function App() {
     React.useEffect(() => {
         const handleMessage = (e) => {
@@ -97,6 +123,7 @@ export default function App() {
     return (
         <AuthProvider>
             <BrowserRouter basename="/workspace">
+                <KataFaviconEnforcer />
                 <AuthGuard>
                         <Routes>
                         {/* Registration Route */}
