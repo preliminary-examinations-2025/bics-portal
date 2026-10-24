@@ -20,6 +20,11 @@ const {
 const { requireAdmin } = require('../middleware/auth');
 const { syncContestNormalizedMarks, syncCandidateNormalizedMarks } = require('../utils/taNormalizedMarks');
 
+function truncateToTwoDigits(val) {
+    if (val === undefined || val === null || isNaN(val)) return 0;
+    return Math.trunc(Number(val) * 100 + 1e-9) / 100;
+}
+
 const ONLINE_TEST_COMPONENTS = {
     mstQuiz1: { label: 'Theory MST Quiz 1', maxMarks: 20, courseType: 'theory' },
     eseQuiz1: { label: 'Theory ESE Quiz 1', maxMarks: 30, courseType: 'theory' },
@@ -260,7 +265,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(cand, existing, subMaps.mstQuiz1.subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    mstQuiz1 = Math.min(20, Math.round(((rawScored / subMaps.mstQuiz1.testMax) * 20) * 100) / 100);
+                    mstQuiz1 = truncateToTwoDigits(Math.min(20, (rawScored / subMaps.mstQuiz1.testMax) * 20));
                 }
             }
 
@@ -269,7 +274,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(cand, existing, subMaps.eseQuiz1.subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    eseQuiz1 = Math.min(30, Math.round(((rawScored / subMaps.eseQuiz1.testMax) * 30) * 100) / 100);
+                    eseQuiz1 = truncateToTwoDigits(Math.min(30, (rawScored / subMaps.eseQuiz1.testMax) * 30));
                 }
             }
 
@@ -289,7 +294,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(cand, existing, subMaps.labQuiz1.subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    labQuiz1 = Math.min(60, Math.round(((rawScored / subMaps.labQuiz1.testMax) * 60) * 100) / 100);
+                    labQuiz1 = truncateToTwoDigits(Math.min(60, (rawScored / subMaps.labQuiz1.testMax) * 60));
                 }
             }
             const labQuizzes = {
@@ -303,7 +308,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(cand, existing, subMaps.mstOnline.subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    mstOnline = Math.min(40, Math.round(((rawScored / subMaps.mstOnline.testMax) * 40) * 100) / 100);
+                    mstOnline = truncateToTwoDigits(Math.min(40, (rawScored / subMaps.mstOnline.testMax) * 40));
                 }
             }
 
@@ -313,7 +318,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(cand, existing, subMaps.eseOnline.subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    eseOnline = Math.min(100, Math.round(((rawScored / subMaps.eseOnline.testMax) * 100) * 100) / 100);
+                    eseOnline = truncateToTwoDigits(Math.min(100, (rawScored / subMaps.eseOnline.testMax) * 100));
                 }
             }
 
@@ -330,8 +335,8 @@ router.get('/ledger/:courseCode', async (req, res) => {
                     const entry = trackList.find(e => String(e.contestId).trim().toUpperCase() === cleanId);
                     const normScore = entry ? Number(entry.totalNormalizedScore || 0) : 0;
                     const maxPts = entry ? Number(entry.maxPossibleScore || 5) : 5;
-                    const scaled = Math.min(1.0, Math.round(((normScore / (maxPts || 5)) * 1.0) * 100) / 100);
-                    return { contestId: cId, normalizedScore: normScore, scaledMark: scaled };
+                    const scaled = truncateToTwoDigits(Math.min(1.0, (normScore / (maxPts || 5)) * 1.0));
+                    return { contestId: cId, normalizedScore: truncateToTwoDigits(normScore), scaledMark: scaled };
                 });
             }
 
@@ -653,7 +658,7 @@ router.post('/link-test/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(m, m, subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    const scaled = Math.min(compMeta.maxMarks, Math.round(((rawScored / testMaxMarks) * compMeta.maxMarks) * 100) / 100);
+                    const scaled = truncateToTwoDigits(Math.min(compMeta.maxMarks, (rawScored / testMaxMarks) * compMeta.maxMarks));
 
                     if (normTarget === 'mstQuiz1') {
                         if (!m.theoryQuizzes) m.theoryQuizzes = {};
@@ -788,16 +793,16 @@ router.post('/sync-kata/:courseCode', requireAdmin, async (req, res) => {
                 const matched = trackEntries.find(te => String(te.contestId).trim().toUpperCase() === cleanId);
                 const normalizedScore = matched ? Number(matched.totalNormalizedScore || 0) : 0;
                 const maxPossible = matched ? Number(matched.maxPossibleScore || 5) : 5;
-                const scaledMark = Math.min(1.0, Math.round(((normalizedScore / (maxPossible || 5)) * 1.0) * 100) / 100);
+                const scaledMark = truncateToTwoDigits(Math.min(1.0, (normalizedScore / (maxPossible || 5)) * 1.0));
                 return {
                     contestId: cId,
-                    normalizedScore,
+                    normalizedScore: truncateToTwoDigits(normalizedScore),
                     scaledMark
                 };
             });
 
             m.labKataContests = kataContestResults;
-            m.taKata = Math.round(kataContestResults.reduce((acc, kc) => acc + kc.scaledMark, 0) * 100) / 100;
+            m.taKata = truncateToTwoDigits(kataContestResults.reduce((acc, kc) => acc + kc.scaledMark, 0));
 
             return calculateMarksLedgerEntry(m, courseDef.type);
         });
