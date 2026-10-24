@@ -20,13 +20,44 @@ const {
 const { requireAdmin } = require('../middleware/auth');
 const { syncContestNormalizedMarks, syncCandidateNormalizedMarks } = require('../utils/taNormalizedMarks');
 
+const ONLINE_TEST_COMPONENTS = {
+    mstQuiz1: { label: 'Theory MST Quiz 1', maxMarks: 20, courseType: 'theory' },
+    eseQuiz1: { label: 'Theory ESE Quiz 1', maxMarks: 30, courseType: 'theory' },
+    labQuiz1: { label: 'Lab Quiz 1', maxMarks: 60, courseType: 'lab' },
+    mstOnline: { label: 'Lab MST Online', maxMarks: 40, courseType: 'lab' },
+    eseOnline: { label: 'Lab ESE Online', maxMarks: 100, courseType: 'lab' }
+};
+
+function normalizeTargetComponent(target) {
+    if (!target) return null;
+    if (target === 'mst') return 'mstOnline';
+    if (target === 'ese') return 'eseOnline';
+    return target;
+}
+
+function getDefaultKataContests(courseCode) {
+    if (courseCode === 'R526CS02L') {
+        return ['SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07'];
+    }
+    if (courseCode === 'R526CS03L') {
+        return ['FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07'];
+    }
+    return [];
+}
+
+function getCourseTrack(courseCode) {
+    if (courseCode === 'R526CS02L') return 'shin';
+    if (courseCode === 'R526CS03L') return 'forma';
+    return null;
+}
+
 // 1. Get Course List & Status
 router.get('/courses', async (req, res) => {
     try {
         let ledgers = [];
         if (dbState.useMongo) {
             ledgers = await AcademicMarksLedgerModel.find()
-                .select('courseCode linkedOnlineTestId linkedMstOnlineTestId linkedEseOnlineTestId isLocked updatedAt studentMarks.studentId')
+                .select('courseCode linkedOnlineTestId linkedMstOnlineTestId linkedEseOnlineTestId linkedOnlineTestIds configuredKataContests isLocked updatedAt studentMarks.studentId')
                 .lean();
         } else {
             const db = getJSONData();
@@ -35,11 +66,22 @@ router.get('/courses', async (req, res) => {
 
         const courses = DEFAULT_ACADEMIC_COURSES.map(c => {
             const l = ledgers.find(l => l.courseCode === c.code);
+            const linkedIds = {
+                mstQuiz1: l?.linkedOnlineTestIds?.mstQuiz1 || '',
+                eseQuiz1: l?.linkedOnlineTestIds?.eseQuiz1 || '',
+                labQuiz1: l?.linkedOnlineTestIds?.labQuiz1 || '',
+                mstOnline: l?.linkedOnlineTestIds?.mstOnline || l?.linkedMstOnlineTestId || (c.type === 'lab' ? l?.linkedOnlineTestId : '') || '',
+                eseOnline: l?.linkedOnlineTestIds?.eseOnline || l?.linkedEseOnlineTestId || ''
+            };
             return {
                 ...c,
                 linkedOnlineTestId: l?.linkedOnlineTestId || '',
                 linkedMstOnlineTestId: l?.linkedMstOnlineTestId || '',
                 linkedEseOnlineTestId: l?.linkedEseOnlineTestId || '',
+                linkedOnlineTestIds: linkedIds,
+                configuredKataContests: (l?.configuredKataContests && l.configuredKataContests.length > 0)
+                    ? l.configuredKataContests
+                    : getDefaultKataContests(c.code),
                 isLocked: l?.isLocked || false,
                 studentCount: l?.studentMarks?.length || 0,
                 updatedAt: l?.updatedAt || null
@@ -56,13 +98,15 @@ router.get('/courses', async (req, res) => {
 // 2. Get Available Online Tests (Excludes test IDs already linked to any course/component)
 router.get('/available-tests', async (req, res) => {
     try {
-        const { currentCourseCode, targetExam } = req.query;
+        const { currentCourseCode, targetComponent, targetExam } = req.query;
+        const normTarget = normalizeTargetComponent(targetComponent || targetExam);
+
         let ledgers = [];
         let tests = [];
 
         if (dbState.useMongo) {
             ledgers = await AcademicMarksLedgerModel.find()
-                .select('courseCode linkedOnlineTestId linkedMstOnlineTestId linkedEseOnlineTestId')
+                .select('courseCode linkedOnlineTestId linkedMstOnlineTestId linkedEseOnlineTestId linkedOnlineTestIds')
                 .lean();
             tests = await TestConfigModel.find({ isDeleted: { $ne: true } })
                 .select('_id title marks totalMarks courseCode')
@@ -76,19 +120,20 @@ router.get('/available-tests', async (req, res) => {
         // Gather all linked test IDs across all OTHER courses and components
         const assignedTestIds = new Set();
         ledgers.forEach(l => {
-            if (l.courseCode !== currentCourseCode) {
-                if (l.linkedOnlineTestId) assignedTestIds.add(String(l.linkedOnlineTestId));
-                if (l.linkedMstOnlineTestId) assignedTestIds.add(String(l.linkedMstOnlineTestId));
-                if (l.linkedEseOnlineTestId) assignedTestIds.add(String(l.linkedEseOnlineTestId));
-            } else {
-                // For the current course, only exclude the test assigned to the OTHER exam component
-                if (targetExam === 'mst' && l.linkedEseOnlineTestId) {
-                    assignedTestIds.add(String(l.linkedEseOnlineTestId));
+            const lIds = l.linkedOnlineTestIds || {};
+            const allTargetKeys = ['mstQuiz1', 'eseQuiz1', 'labQuiz1', 'mstOnline', 'eseOnline'];
+
+            allTargetKeys.forEach(tKey => {
+                const tid = lIds[tKey] || (tKey === 'mstOnline' ? (l.linkedMstOnlineTestId || l.linkedOnlineTestId) : (tKey === 'eseOnline' ? l.linkedEseOnlineTestId : ''));
+                if (tid) {
+                    if (l.courseCode !== currentCourseCode) {
+                        assignedTestIds.add(String(tid));
+                    } else if (normTarget && tKey !== normTarget) {
+                        // For the current course, only exclude tests assigned to OTHER components
+                        assignedTestIds.add(String(tid));
+                    }
                 }
-                if (targetExam === 'ese' && l.linkedMstOnlineTestId) {
-                    assignedTestIds.add(String(l.linkedMstOnlineTestId));
-                }
-            }
+            });
         });
 
         // Deduplicate tests by ID and filter available ones
@@ -127,7 +172,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
         if (dbState.useMongo) {
             ledger = await AcademicMarksLedgerModel.findOne({ courseCode }).lean();
             candidates = await CandidateModel.find()
-                .select('studentId name rollNo registrationData.studentId registrationData.fullName')
+                .select('studentId name rollNo username registrationData.studentId registrationData.fullName +taNormalizedContestMarks')
                 .lean();
             counterfoils = await CounterfoilSubmissionModel.find({ courseCode }).lean();
         } else {
@@ -143,50 +188,44 @@ router.get('/ledger/:courseCode', async (req, res) => {
             ledger.studentMarks.forEach(sm => existingMap.set(String(sm.studentId), sm));
         }
 
-        const linkedMstId = ledger?.linkedMstOnlineTestId || ledger?.linkedOnlineTestId || '';
-        const linkedEseId = ledger?.linkedEseOnlineTestId || '';
+        // Determine all linked online test IDs
+        const linkedIds = {
+            mstQuiz1: ledger?.linkedOnlineTestIds?.mstQuiz1 || '',
+            eseQuiz1: ledger?.linkedOnlineTestIds?.eseQuiz1 || '',
+            labQuiz1: ledger?.linkedOnlineTestIds?.labQuiz1 || '',
+            mstOnline: ledger?.linkedOnlineTestIds?.mstOnline || ledger?.linkedMstOnlineTestId || (courseDef.type === 'lab' ? ledger?.linkedOnlineTestId : '') || '',
+            eseOnline: ledger?.linkedOnlineTestIds?.eseOnline || ledger?.linkedEseOnlineTestId || ''
+        };
 
-        let mstSubMap = null;
-        let mstTestMax = 40;
-        if (linkedMstId) {
-            let mstSubmissions = [];
-            let mstTest = null;
-            if (dbState.useMongo) {
-                mstSubmissions = await TestSubmissionModel.find({ testId: linkedMstId })
-                    .select('candidateId studentId candidateName status totalScore score evaluation answers')
-                    .lean();
-                mstTest = await TestConfigModel.findById(linkedMstId)
-                    .select('marks totalMarks title')
-                    .lean();
-            } else {
-                const db = getJSONData();
-                mstSubmissions = (db.testSubmissions || []).filter(s => String(s.testId) === String(linkedMstId));
-                mstTest = (db.tests || []).find(t => String(t.id || t._id) === String(linkedMstId));
+        // Fetch submissions for all linked online tests
+        const subMaps = {};
+        for (const [key, testId] of Object.entries(linkedIds)) {
+            if (testId) {
+                let subs = [];
+                let testCfg = null;
+                if (dbState.useMongo) {
+                    subs = await TestSubmissionModel.find({ testId })
+                        .select('candidateId studentId candidateName status totalScore score evaluation answers')
+                        .lean();
+                    testCfg = await TestConfigModel.findById(testId).select('marks totalMarks title').lean();
+                } else {
+                    const db = getJSONData();
+                    subs = (db.testSubmissions || []).filter(s => String(s.testId) === String(testId));
+                    testCfg = (db.tests || []).find(t => String(t.id || t._id) === String(testId));
+                }
+                const defaultMax = ONLINE_TEST_COMPONENTS[key]?.maxMarks || 100;
+                const testMax = Number(testCfg?.marks || testCfg?.totalMarks || defaultMax);
+                subMaps[key] = {
+                    subMap: buildSubmissionMap(subs),
+                    testMax
+                };
             }
-            mstSubMap = buildSubmissionMap(mstSubmissions);
-            if (mstTest) mstTestMax = Number(mstTest.marks || mstTest.totalMarks || 40);
         }
 
-        let eseSubMap = null;
-        let eseTestMax = 100;
-        if (linkedEseId) {
-            let eseSubmissions = [];
-            let eseTest = null;
-            if (dbState.useMongo) {
-                eseSubmissions = await TestSubmissionModel.find({ testId: linkedEseId })
-                    .select('candidateId studentId candidateName status totalScore score evaluation answers')
-                    .lean();
-                eseTest = await TestConfigModel.findById(linkedEseId)
-                    .select('marks totalMarks title')
-                    .lean();
-            } else {
-                const db = getJSONData();
-                eseSubmissions = (db.testSubmissions || []).filter(s => String(s.testId) === String(linkedEseId));
-                eseTest = (db.tests || []).find(t => String(t.id || t._id) === String(linkedEseId));
-            }
-            eseSubMap = buildSubmissionMap(eseSubmissions);
-            if (eseTest) eseTestMax = Number(eseTest.marks || eseTest.totalMarks || 100);
-        }
+        const configuredContests = (ledger?.configuredKataContests && ledger.configuredKataContests.length > 0)
+            ? ledger.configuredKataContests
+            : getDefaultKataContests(courseDef.code);
+        const track = getCourseTrack(courseDef.code);
 
         // Map candidates to studentMarks array
         const studentMarks = candidates.map(cand => {
@@ -214,38 +253,106 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 eseWrittenStatus = eseCf.status === 'approved' ? 'approved' : (eseCf.status === 'rejected' ? 'rejected' : 'pending_approval');
             }
 
-            // Auto-fetch Online MST score if test is linked
-            let mstOnline = Number(existing.mstOnline || 0);
-            if (mstSubMap) {
-                const mstSub = findSubmissionForStudent(cand, existing, mstSubMap);
-                if (mstSub) {
-                    const rawScored = getSubmissionScore(mstSub);
-                    mstOnline = Math.min(40, Math.round(((rawScored / mstTestMax) * 40) * 100) / 100);
+            // Theory Quizzes
+            const existTQ = existing.theoryQuizzes || {};
+            let mstQuiz1 = Number(existTQ.mstQuiz1 ?? existing.mstQuiz1 ?? 0);
+            if (subMaps.mstQuiz1) {
+                const sub = findSubmissionForStudent(cand, existing, subMaps.mstQuiz1.subMap);
+                if (sub) {
+                    const rawScored = getSubmissionScore(sub);
+                    mstQuiz1 = Math.min(20, Math.round(((rawScored / subMaps.mstQuiz1.testMax) * 20) * 100) / 100);
                 }
             }
 
-            // Auto-fetch Online ESE score if test is linked
-            let eseOnline = Number(existing.eseOnline || 0);
-            if (eseSubMap) {
-                const eseSub = findSubmissionForStudent(cand, existing, eseSubMap);
-                if (eseSub) {
-                    const rawScored = getSubmissionScore(eseSub);
-                    eseOnline = Math.min(100, Math.round(((rawScored / eseTestMax) * 100) * 100) / 100);
+            let eseQuiz1 = Number(existTQ.eseQuiz1 ?? existing.eseQuiz1 ?? 0);
+            if (subMaps.eseQuiz1) {
+                const sub = findSubmissionForStudent(cand, existing, subMaps.eseQuiz1.subMap);
+                if (sub) {
+                    const rawScored = getSubmissionScore(sub);
+                    eseQuiz1 = Math.min(30, Math.round(((rawScored / subMaps.eseQuiz1.testMax) * 30) * 100) / 100);
                 }
+            }
+
+            const theoryQuizzes = {
+                mstQuiz1,
+                mstQuiz2: Number(existTQ.mstQuiz2 ?? 0),
+                mstQuiz3: Number(existTQ.mstQuiz3 ?? 0),
+                eseQuiz1,
+                eseQuiz2: Number(existTQ.eseQuiz2 ?? 0),
+                eseQuiz3: Number(existTQ.eseQuiz3 ?? 0)
+            };
+
+            // Lab Quizzes
+            const existLQ = existing.labQuizzes || {};
+            let labQuiz1 = Number(existLQ.quiz1 ?? existing.labQuiz1 ?? 0);
+            if (subMaps.labQuiz1) {
+                const sub = findSubmissionForStudent(cand, existing, subMaps.labQuiz1.subMap);
+                if (sub) {
+                    const rawScored = getSubmissionScore(sub);
+                    labQuiz1 = Math.min(60, Math.round(((rawScored / subMaps.labQuiz1.testMax) * 60) * 100) / 100);
+                }
+            }
+            const labQuizzes = {
+                quiz1: labQuiz1,
+                quiz2: Number(existLQ.quiz2 ?? 0)
+            };
+
+            // Lab MST Online (40m)
+            let mstOnline = Number(existing.mstOnline || 0);
+            if (subMaps.mstOnline) {
+                const sub = findSubmissionForStudent(cand, existing, subMaps.mstOnline.subMap);
+                if (sub) {
+                    const rawScored = getSubmissionScore(sub);
+                    mstOnline = Math.min(40, Math.round(((rawScored / subMaps.mstOnline.testMax) * 40) * 100) / 100);
+                }
+            }
+
+            // Lab ESE Online (100m)
+            let eseOnline = Number(existing.eseOnline || 0);
+            if (subMaps.eseOnline) {
+                const sub = findSubmissionForStudent(cand, existing, subMaps.eseOnline.subMap);
+                if (sub) {
+                    const rawScored = getSubmissionScore(sub);
+                    eseOnline = Math.min(100, Math.round(((rawScored / subMaps.eseOnline.testMax) * 100) * 100) / 100);
+                }
+            }
+
+            // Lab Kata Contests
+            let labKataContests = Array.isArray(existing.labKataContests) && existing.labKataContests.length > 0
+                ? existing.labKataContests
+                : [];
+            
+            // If empty and course is lab, auto-populate from candidate's normalized marks if available
+            if (courseDef.type === 'lab' && labKataContests.length === 0 && track && cand.taNormalizedContestMarks?.[track]) {
+                const trackList = cand.taNormalizedContestMarks[track] || [];
+                labKataContests = configuredContests.map(cId => {
+                    const cleanId = String(cId).trim().toUpperCase();
+                    const entry = trackList.find(e => String(e.contestId).trim().toUpperCase() === cleanId);
+                    const normScore = entry ? Number(entry.totalNormalizedScore || 0) : 0;
+                    const maxPts = entry ? Number(entry.maxPossibleScore || 5) : 5;
+                    const scaled = Math.min(1.0, Math.round(((normScore / (maxPts || 5)) * 1.0) * 100) / 100);
+                    return { contestId: cId, normalizedScore: normScore, scaledMark: scaled };
+                });
             }
 
             const rawEntry = {
                 studentId: sId,
                 studentName: sName,
                 rollNo,
-                taAssignment: Number(existing.taAssignment || 0),
-                taClassTest: Number(existing.taClassTest || 0),
-                taQuiz: Number(existing.taQuiz || 0),
-                taIdeation: Number(existing.taIdeation || 0),
-                taPracticalEval: Number(existing.taPracticalEval || 0),
-                taLabQuiz: Number(existing.taLabQuiz || 0),
-                taProject: Number(existing.taProject || 0),
 
+                // Theory Granular
+                theoryAssignments: existing.theoryAssignments || { a1: 0, a2: 0, a3: 0, a4: 0, a5: 0 },
+                theoryClassTests: existing.theoryClassTests || { ct1: 0, ct2: 0, ct3: 0, ct4: 0, ct5: 0 },
+                theoryQuizzes,
+                theoryProject: Number(existing.theoryProject ?? existing.project ?? 0),
+
+                // Lab Granular
+                labPracticals: existing.labPracticals || { p1: 0, p2: 0, p3: 0, p4: 0, p5: 0, p6: 0, p7: 0, p8: 0, p9: 0, p10: 0 },
+                labKataContests,
+                labQuizzes,
+                labProject: Number(existing.labProject ?? existing.project ?? 0),
+
+                // MST & ESE
                 mstWritten,
                 mstWrittenStatus,
                 mstOnline,
@@ -254,7 +361,17 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 eseWritten,
                 eseWrittenStatus,
                 eseOnline,
-                eseViva: Number(existing.eseViva || 0)
+                eseViva: Number(existing.eseViva || 0),
+
+                // Legacy
+                taAssignment: Number(existing.taAssignment || 0),
+                taClassTest: Number(existing.taClassTest || 0),
+                taQuiz: Number(existing.taQuiz || 0),
+                taIdeation: Number(existing.taIdeation || 0),
+                taPracticalEval: Number(existing.taPracticalEval || 0),
+                taKata: Number(existing.taKata || 0),
+                taLabQuiz: Number(existing.taLabQuiz || 0),
+                taProject: Number(existing.taProject || 0)
             };
 
             return calculateMarksLedgerEntry(rawEntry, courseDef.type);
@@ -267,6 +384,8 @@ router.get('/ledger/:courseCode', async (req, res) => {
             linkedOnlineTestId: ledger?.linkedOnlineTestId || '',
             linkedMstOnlineTestId: ledger?.linkedMstOnlineTestId || '',
             linkedEseOnlineTestId: ledger?.linkedEseOnlineTestId || '',
+            linkedOnlineTestIds: linkedIds,
+            configuredKataContests: configuredContests,
             isLocked: ledger?.isLocked || false,
             lockedAt: ledger?.lockedAt || null,
             lockedBy: ledger?.lockedBy || '',
@@ -283,7 +402,14 @@ router.get('/ledger/:courseCode', async (req, res) => {
 // 4. Save Course Marks Ledger
 router.post('/save/:courseCode', async (req, res) => {
     const { courseCode } = req.params;
-    const { studentMarks, linkedOnlineTestId, linkedMstOnlineTestId, linkedEseOnlineTestId } = req.body;
+    const { 
+        studentMarks, 
+        linkedOnlineTestId, 
+        linkedMstOnlineTestId, 
+        linkedEseOnlineTestId,
+        linkedOnlineTestIds,
+        configuredKataContests 
+    } = req.body;
 
     const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
 
@@ -328,6 +454,8 @@ router.post('/save/:courseCode', async (req, res) => {
                 if (linkedOnlineTestId !== undefined) ledger.linkedOnlineTestId = linkedOnlineTestId;
                 if (linkedMstOnlineTestId !== undefined) ledger.linkedMstOnlineTestId = linkedMstOnlineTestId;
                 if (linkedEseOnlineTestId !== undefined) ledger.linkedEseOnlineTestId = linkedEseOnlineTestId;
+                if (linkedOnlineTestIds !== undefined) ledger.linkedOnlineTestIds = linkedOnlineTestIds;
+                if (configuredKataContests !== undefined) ledger.configuredKataContests = configuredKataContests;
                 ledger.studentMarks = recalculated;
             } else {
                 recalculated.forEach(nm => diff.push({ studentId: String(nm.studentId), type: 'ADD', after: nm }));
@@ -338,6 +466,8 @@ router.post('/save/:courseCode', async (req, res) => {
                     linkedOnlineTestId: linkedOnlineTestId || '',
                     linkedMstOnlineTestId: linkedMstOnlineTestId || '',
                     linkedEseOnlineTestId: linkedEseOnlineTestId || '',
+                    linkedOnlineTestIds: linkedOnlineTestIds || {},
+                    configuredKataContests: configuredKataContests || getDefaultKataContests(courseDef.code),
                     studentMarks: recalculated
                 });
             }
@@ -368,6 +498,8 @@ router.post('/save/:courseCode', async (req, res) => {
                 linkedOnlineTestId: linkedOnlineTestId !== undefined ? linkedOnlineTestId : (db.academicMarksLedgers[idx]?.linkedOnlineTestId || ''),
                 linkedMstOnlineTestId: linkedMstOnlineTestId !== undefined ? linkedMstOnlineTestId : (db.academicMarksLedgers[idx]?.linkedMstOnlineTestId || ''),
                 linkedEseOnlineTestId: linkedEseOnlineTestId !== undefined ? linkedEseOnlineTestId : (db.academicMarksLedgers[idx]?.linkedEseOnlineTestId || ''),
+                linkedOnlineTestIds: linkedOnlineTestIds !== undefined ? linkedOnlineTestIds : (db.academicMarksLedgers[idx]?.linkedOnlineTestIds || {}),
+                configuredKataContests: configuredKataContests !== undefined ? configuredKataContests : (db.academicMarksLedgers[idx]?.configuredKataContests || getDefaultKataContests(courseDef.code)),
                 isLocked: db.academicMarksLedgers[idx]?.isLocked || false,
                 studentMarks: recalculated,
                 updatedAt: new Date().toISOString()
@@ -408,15 +540,25 @@ router.post('/save/:courseCode', async (req, res) => {
     }
 });
 
-// 5. Link Online Test to Course & Sync Scores (Lab Courses Only)
+// 5. Universal Online Test Linking & Score Sync
 router.post('/link-test/:courseCode', async (req, res) => {
     const { courseCode } = req.params;
-    const { testId, targetExam = 'mst', syncOnlineScores } = req.body; // targetExam: 'mst' (40m) or 'ese' (100m)
+    const { testId, targetComponent, targetExam, syncOnlineScores = true } = req.body;
+    const normTarget = normalizeTargetComponent(targetComponent || targetExam || 'mstOnline');
 
     const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+    const compMeta = ONLINE_TEST_COMPONENTS[normTarget];
 
-    if (courseDef.type !== 'lab') {
-        return res.status(400).json({ error: "Online test linking applies strictly to Lab Courses (MST Online - 40m, ESE Online - 100m). Theory courses are evaluated via Written Counterfoil & TA." });
+    if (!compMeta) {
+        return res.status(400).json({ 
+            error: `Invalid targetComponent '${normTarget}'. Must be one of: ${Object.keys(ONLINE_TEST_COMPONENTS).join(', ')}` 
+        });
+    }
+
+    if (compMeta.courseType !== courseDef.type) {
+        return res.status(400).json({ 
+            error: `Component '${compMeta.label}' belongs to ${compMeta.courseType} courses, but course ${courseCode} is a ${courseDef.type} course.` 
+        });
     }
 
     try {
@@ -439,25 +581,26 @@ router.post('/link-test/:courseCode', async (req, res) => {
             }
         }
 
-        // Check if test is assigned elsewhere
+        // Validate conflict: check if testId is already linked elsewhere
         if (testId) {
             const conflict = allLedgers.find(l => {
                 const sameCourse = l.courseCode === courseCode;
-                if (!sameCourse) {
-                    return String(l.linkedOnlineTestId) === String(testId) ||
-                           String(l.linkedMstOnlineTestId) === String(testId) ||
-                           String(l.linkedEseOnlineTestId) === String(testId);
-                } else {
-                    if (targetExam === 'mst') {
-                        return String(l.linkedEseOnlineTestId) === String(testId);
-                    } else {
-                        return String(l.linkedMstOnlineTestId) === String(testId);
+                const lIds = l.linkedOnlineTestIds || {};
+                for (const tKey of Object.keys(ONLINE_TEST_COMPONENTS)) {
+                    const tid = lIds[tKey] || (tKey === 'mstOnline' ? (l.linkedMstOnlineTestId || l.linkedOnlineTestId) : (tKey === 'eseOnline' ? l.linkedEseOnlineTestId : ''));
+                    if (tid && String(tid) === String(testId)) {
+                        if (!sameCourse || tKey !== normTarget) {
+                            return true;
+                        }
                     }
                 }
+                return false;
             });
 
             if (conflict) {
-                return res.status(400).json({ error: `Test ID ${testId} is already assigned to course ${conflict.courseCode} (${conflict.courseName}) and cannot be reused.` });
+                return res.status(400).json({ 
+                    error: `Test ID ${testId} is already linked to course ${conflict.courseCode} (${conflict.courseName}) and cannot be reused.` 
+                });
             }
         }
 
@@ -469,15 +612,14 @@ router.post('/link-test/:courseCode', async (req, res) => {
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
                     courseType: courseDef.type,
-                    linkedOnlineTestId: '',
-                    linkedMstOnlineTestId: targetExam === 'mst' ? (testId || '') : '',
-                    linkedEseOnlineTestId: targetExam === 'ese' ? (testId || '') : ''
+                    linkedOnlineTestIds: { [normTarget]: testId || '' }
                 });
             } else {
-                ledger.linkedOnlineTestId = '';
-                if (targetExam === 'mst') ledger.linkedMstOnlineTestId = testId || '';
-                else ledger.linkedEseOnlineTestId = testId || '';
+                if (!ledger.linkedOnlineTestIds) ledger.linkedOnlineTestIds = {};
+                ledger.linkedOnlineTestIds[normTarget] = testId || '';
             }
+            if (normTarget === 'mstOnline') ledger.linkedMstOnlineTestId = testId || '';
+            if (normTarget === 'eseOnline') ledger.linkedEseOnlineTestId = testId || '';
         } else {
             const db = getJSONData();
             db.academicMarksLedgers = db.academicMarksLedgers || [];
@@ -487,35 +629,45 @@ router.post('/link-test/:courseCode', async (req, res) => {
                     courseCode: courseDef.code,
                     courseName: courseDef.name,
                     courseType: courseDef.type,
-                    linkedOnlineTestId: '',
-                    linkedMstOnlineTestId: targetExam === 'mst' ? (testId || '') : '',
-                    linkedEseOnlineTestId: targetExam === 'ese' ? (testId || '') : '',
+                    linkedOnlineTestIds: { [normTarget]: testId || '' },
                     studentMarks: []
                 };
+                if (normTarget === 'mstOnline') ledger.linkedMstOnlineTestId = testId || '';
+                if (normTarget === 'eseOnline') ledger.linkedEseOnlineTestId = testId || '';
                 db.academicMarksLedgers.push(ledger);
             } else {
-                db.academicMarksLedgers[idx].linkedOnlineTestId = '';
-                if (targetExam === 'mst') db.academicMarksLedgers[idx].linkedMstOnlineTestId = testId || '';
-                else db.academicMarksLedgers[idx].linkedEseOnlineTestId = testId || '';
+                if (!db.academicMarksLedgers[idx].linkedOnlineTestIds) db.academicMarksLedgers[idx].linkedOnlineTestIds = {};
+                db.academicMarksLedgers[idx].linkedOnlineTestIds[normTarget] = testId || '';
+                if (normTarget === 'mstOnline') db.academicMarksLedgers[idx].linkedMstOnlineTestId = testId || '';
+                if (normTarget === 'eseOnline') db.academicMarksLedgers[idx].linkedEseOnlineTestId = testId || '';
                 ledger = db.academicMarksLedgers[idx];
             }
         }
 
-        // Sync online scores if test is linked (defaults to true unless explicitly false)
+        // Sync online scores if test is linked
         if (syncOnlineScores !== false && testId && submissions.length > 0) {
-            const testMaxMarks = Number(testObj?.marks || testObj?.totalMarks || (targetExam === 'mst' ? 40 : 100));
+            const testMaxMarks = Number(testObj?.marks || testObj?.totalMarks || compMeta.maxMarks);
             const subMap = buildSubmissionMap(submissions);
 
             ledger.studentMarks = (ledger.studentMarks || []).map(m => {
                 const sub = findSubmissionForStudent(m, m, subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    if (targetExam === 'mst') {
-                        // MST Online Exam is scaled out of 40 marks
-                        m.mstOnline = Math.min(40, Math.round(((rawScored / testMaxMarks) * 40) * 100) / 100);
-                    } else if (targetExam === 'ese') {
-                        // ESE Online Exam is scaled out of 100 marks
-                        m.eseOnline = Math.min(100, Math.round(((rawScored / testMaxMarks) * 100) * 100) / 100);
+                    const scaled = Math.min(compMeta.maxMarks, Math.round(((rawScored / testMaxMarks) * compMeta.maxMarks) * 100) / 100);
+
+                    if (normTarget === 'mstQuiz1') {
+                        if (!m.theoryQuizzes) m.theoryQuizzes = {};
+                        m.theoryQuizzes.mstQuiz1 = scaled;
+                    } else if (normTarget === 'eseQuiz1') {
+                        if (!m.theoryQuizzes) m.theoryQuizzes = {};
+                        m.theoryQuizzes.eseQuiz1 = scaled;
+                    } else if (normTarget === 'labQuiz1') {
+                        if (!m.labQuizzes) m.labQuizzes = {};
+                        m.labQuizzes.quiz1 = scaled;
+                    } else if (normTarget === 'mstOnline') {
+                        m.mstOnline = scaled;
+                    } else if (normTarget === 'eseOnline') {
+                        m.eseOnline = scaled;
                     }
                 }
                 return calculateMarksLedgerEntry(m, courseDef.type);
@@ -529,16 +681,203 @@ router.post('/link-test/:courseCode', async (req, res) => {
             saveJSONData(db);
         }
 
-        const examLabel = targetExam === 'mst' ? 'Lab MST Online (40m max)' : 'Lab ESE Online (100m max)';
-        await logSystemAction('admin', 'TEST_LINKED', `Linked online test ${testId} to ${examLabel} for course ${courseCode}`, 'info');
+        await logSystemAction('admin', 'TEST_LINKED', `Linked online test ${testId} to ${compMeta.label} (${compMeta.maxMarks}m) for course ${courseCode}`, 'info');
         return res.json({ 
             success: true, 
-            message: testId ? `Successfully linked online test and synced scores for ${examLabel} in ${courseCode}.` : `Unlinked online test from ${examLabel} for course ${courseCode}.`,
-            targetExam,
+            message: testId ? `Successfully linked online test and synced scores for ${compMeta.label} in ${courseCode}.` : `Unlinked online test from ${compMeta.label} for course ${courseCode}.`,
+            targetComponent: normTarget,
             testId
         });
     } catch (e) {
         console.error("Failed to link online test:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 5b. Sync Kata Contests for Lab Course (Option A: 6 selected contests)
+router.post('/sync-kata/:courseCode', requireAdmin, async (req, res) => {
+    const { courseCode } = req.params;
+    const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: courseCode.endsWith('L') ? 'lab' : 'theory' };
+
+    if (courseDef.type !== 'lab') {
+        return res.status(400).json({ error: "Kata sync only applies to lab courses (R526CS02L and R526CS03L)." });
+    }
+
+    const track = getCourseTrack(courseCode);
+    if (!track) {
+        return res.status(400).json({ error: `No Kata track associated with course ${courseCode}.` });
+    }
+
+    try {
+        let ledger = null;
+        let candidates = [];
+        if (dbState.useMongo) {
+            ledger = await AcademicMarksLedgerModel.findOne({ courseCode });
+            candidates = await CandidateModel.find()
+                .select('name studentId username rollNo +taNormalizedContestMarks')
+                .lean();
+        } else {
+            const db = getJSONData();
+            db.academicMarksLedgers = db.academicMarksLedgers || [];
+            ledger = db.academicMarksLedgers.find(l => l.courseCode === courseCode);
+            candidates = db.candidates || [];
+        }
+
+        if (!ledger) {
+            ledger = dbState.useMongo
+                ? new AcademicMarksLedgerModel({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    configuredKataContests: getDefaultKataContests(courseCode),
+                    studentMarks: []
+                })
+                : {
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    configuredKataContests: getDefaultKataContests(courseCode),
+                    studentMarks: []
+                };
+        }
+
+        const selectedContests = (ledger.configuredKataContests && ledger.configuredKataContests.length > 0)
+            ? ledger.configuredKataContests
+            : getDefaultKataContests(courseCode);
+
+        // First, trigger normalized sync for these contests so any recent submissions are included
+        for (const cId of selectedContests) {
+            try {
+                await syncContestNormalizedMarks(cId);
+            } catch (syncErr) {
+                console.warn(`[MarksLedger] Warning during sync of contest ${cId}:`, syncErr.message);
+            }
+        }
+
+        // Re-fetch candidates after sync
+        if (dbState.useMongo) {
+            candidates = await CandidateModel.find()
+                .select('name studentId username rollNo +taNormalizedContestMarks')
+                .lean();
+        } else {
+            const db = getJSONData();
+            candidates = db.candidates || [];
+        }
+
+        // Ensure each candidate is present in studentMarks
+        const existingStudentMarksMap = new Map();
+        (ledger.studentMarks || []).forEach(sm => {
+            existingStudentMarksMap.set(String(sm.studentId), typeof sm.toObject === 'function' ? sm.toObject() : sm);
+        });
+
+        const updatedStudentMarks = candidates.map(c => {
+            const sid = String(c.studentId || c._id);
+            const sname = c.name || c.username || 'Candidate';
+            const rollNo = c.rollNo || c.studentId || '';
+
+            const m = existingStudentMarksMap.get(sid) || {
+                studentId: sid,
+                studentName: sname,
+                rollNo
+            };
+
+            const trackEntries = c.taNormalizedContestMarks?.[track] || [];
+
+            const kataContestResults = selectedContests.map(cId => {
+                const cleanId = String(cId).trim().toUpperCase();
+                const matched = trackEntries.find(te => String(te.contestId).trim().toUpperCase() === cleanId);
+                const normalizedScore = matched ? Number(matched.totalNormalizedScore || 0) : 0;
+                const maxPossible = matched ? Number(matched.maxPossibleScore || 5) : 5;
+                const scaledMark = Math.min(1.0, Math.round(((normalizedScore / (maxPossible || 5)) * 1.0) * 100) / 100);
+                return {
+                    contestId: cId,
+                    normalizedScore,
+                    scaledMark
+                };
+            });
+
+            m.labKataContests = kataContestResults;
+            m.taKata = Math.round(kataContestResults.reduce((acc, kc) => acc + kc.scaledMark, 0) * 100) / 100;
+
+            return calculateMarksLedgerEntry(m, courseDef.type);
+        });
+
+        ledger.studentMarks = updatedStudentMarks;
+        ledger.configuredKataContests = selectedContests;
+
+        if (dbState.useMongo) {
+            await ledger.save();
+        } else {
+            const db = getJSONData();
+            const idx = db.academicMarksLedgers.findIndex(l => l.courseCode === courseCode);
+            if (idx >= 0) db.academicMarksLedgers[idx] = ledger;
+            else db.academicMarksLedgers.push(ledger);
+            saveJSONData(db);
+        }
+
+        return res.json({
+            success: true,
+            message: `Synchronized ${selectedContests.length} Kata contests for course ${courseCode}.`,
+            selectedContests,
+            studentCount: updatedStudentMarks.length
+        });
+    } catch (e) {
+        console.error("Failed to sync Kata contest scores:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// 5c. Configure Kata Contests for Lab Course (Option A: 6 contests)
+router.post('/config-kata-contests/:courseCode', requireAdmin, async (req, res) => {
+    const { courseCode } = req.params;
+    const { contests } = req.body;
+
+    if (!Array.isArray(contests) || contests.length !== 6) {
+        return res.status(400).json({ error: "Exactly 6 contests must be selected for Option A ledger calculation." });
+    }
+
+    try {
+        let ledger = null;
+        if (dbState.useMongo) {
+            ledger = await AcademicMarksLedgerModel.findOne({ courseCode });
+            if (!ledger) {
+                const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: 'lab' };
+                ledger = new AcademicMarksLedgerModel({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    configuredKataContests: contests
+                });
+            } else {
+                ledger.configuredKataContests = contests;
+            }
+            await ledger.save();
+        } else {
+            const db = getJSONData();
+            db.academicMarksLedgers = db.academicMarksLedgers || [];
+            let idx = db.academicMarksLedgers.findIndex(l => l.courseCode === courseCode);
+            if (idx === -1) {
+                const courseDef = DEFAULT_ACADEMIC_COURSES.find(c => c.code === courseCode) || { code: courseCode, name: courseCode, type: 'lab' };
+                db.academicMarksLedgers.push({
+                    courseCode: courseDef.code,
+                    courseName: courseDef.name,
+                    courseType: courseDef.type,
+                    configuredKataContests: contests,
+                    studentMarks: []
+                });
+            } else {
+                db.academicMarksLedgers[idx].configuredKataContests = contests;
+            }
+            saveJSONData(db);
+        }
+
+        return res.json({
+            success: true,
+            message: `Updated configured Kata contests for ${courseCode}.`,
+            configuredKataContests: contests
+        });
+    } catch (e) {
+        console.error("Failed to configure Kata contests:", e);
         return res.status(500).json({ error: e.message });
     }
 });
