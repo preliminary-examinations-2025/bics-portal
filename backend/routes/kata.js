@@ -2238,8 +2238,10 @@ router.get('/contests/:contestId/submissions', async (req, res) => {
                 let displayVerdict = s.verdict;
                 let displayPoints = s.pointsAwarded;
 
-                // For live submissions, conceal evaluated verdict and marks before official standings release (36h after end)
-                if (s.isLiveSubmission && !isStandingsReleased && !isAdmin) {
+                // For live Forma submissions only: conceal evaluated verdict and marks before official standings release (36h after end).
+                // KataShin submissions are auto-judged in real-time — show real verdict immediately.
+                const isFormaTrack = s.track === 'forma';
+                if (s.isLiveSubmission && !isStandingsReleased && !isAdmin && isFormaTrack) {
                     displayVerdict = s.verdict === 'Deprecated' ? 'Deprecated' : 'Awaiting Evaluation';
                     displayPoints = 0;
                 }
@@ -2327,7 +2329,10 @@ router.get('/submissions', async (req, res) => {
                 let displayPoints = s.pointsAwarded;
 
                 const isStandingsReleased = cInfo ? cInfo.isStandingsReleased : true;
-                if (s.isLiveSubmission && !isStandingsReleased && !isAdmin) {
+                // For live Forma submissions only: conceal verdict and marks before official standings release.
+                // KataShin verdicts are real-time — never mask them with "Awaiting Evaluation".
+                const isFormaTrack = s.track === 'forma';
+                if (s.isLiveSubmission && !isStandingsReleased && !isAdmin && isFormaTrack) {
                     displayVerdict = s.verdict === 'Deprecated' ? 'Deprecated' : 'Awaiting Evaluation';
                     displayPoints = 0;
                 }
@@ -2720,11 +2725,14 @@ router.get('/submissions/:id/status', async (req, res) => {
         const isAdmin = req.user?.role === 'admin';
 
         if (submission.isLiveSubmission && !isAdmin) {
-            const contest = await KataContestModel.findOne({ contestId: submission.contestId }).select('endTime standingsReleased').lean();
+            const contest = await KataContestModel.findOne({ contestId: submission.contestId }).select('endTime standingsReleased track').lean();
             const now = new Date();
             const thirtySixHoursAfterEnd = contest?.endTime ? new Date(new Date(contest.endTime).getTime() + 36 * 3600 * 1000) : null;
             const isStandingsReleased = Boolean(contest?.standingsReleased) || (thirtySixHoursAfterEnd && now >= thirtySixHoursAfterEnd);
-            if (!isStandingsReleased) {
+            // "Awaiting Evaluation" concealment applies ONLY to Forma track (AI-graded, result embargoed).
+            // Shin verdicts are auto-judged in real-time and must always be shown as-is.
+            const isFormaTrack = (contest?.track === 'forma') || (submission.track === 'forma');
+            if (!isStandingsReleased && isFormaTrack) {
                 displayVerdict = submission.verdict === 'Deprecated' ? 'Deprecated' : 'Awaiting Evaluation';
                 displayPoints = 0;
             }

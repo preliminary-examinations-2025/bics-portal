@@ -203,10 +203,16 @@ async function processSubmissionAsync(submissionId) {
 
         await submission.save();
 
-        // Check C++ plagiarism via Gemini Direct API asynchronously
-        checkKataShinPlagiarism(submission._id).catch(err => {
-            console.error('[JudgeEngine] Shin plagiarism check error:', err);
-        });
+        // Plagiarism check: ONLY for post-contest / virtual practice submissions.
+        // Live contest plagiarism is handled by the 4-hour post-contest audit worker
+        // (runFourHourPostContestAuditWorker in kataAiEvaluator.js), which deduplicates
+        // to the single latest/accepted solution per candidate per problem — far more
+        // accurate and quota-efficient than checking every live attempt.
+        if (!submission.isLiveSubmission) {
+            checkKataShinPlagiarism(submission._id).catch(err => {
+                console.error('[JudgeEngine] Shin plagiarism check error:', err);
+            });
+        }
     } catch (err) {
 
         console.error(`[JudgeEngine] Error processing submission ${submissionId}:`, err);
