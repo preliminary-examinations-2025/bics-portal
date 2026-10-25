@@ -7,6 +7,47 @@ import LatexRenderer from '../components/LatexRenderer';
 import CodeforcesEditor from '../components/CodeforcesEditor';
 import { useAuth } from '../context/AuthContext';
 
+function formatCodeforcesTime(dateStr) {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '—';
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const mon = months[d.getMonth()];
+    const day = String(d.getDate()).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const mins = String(d.getMinutes()).padStart(2, '0');
+    return `${mon}/${day}/${year} ${hours}:${mins}`;
+}
+
+function renderVerdictBadge(verdict) {
+    if (!verdict) return <span style={{ color: '#888888' }}>—</span>;
+    const vLower = verdict.toLowerCase();
+    if (vLower === 'accepted') {
+        return <span style={{ color: '#00a000', fontWeight: 'bold' }}>Accepted</span>;
+    }
+    if (
+        vLower.startsWith('wrong answer') ||
+        vLower.startsWith('time limit') ||
+        vLower.startsWith('runtime error') ||
+        vLower.startsWith('compilation error')
+    ) {
+        return <span style={{ color: '#0000cc' }}>{verdict}</span>;
+    }
+    if (
+        vLower.includes('awaiting') ||
+        vLower.includes('in queue') ||
+        vLower.includes('compiling') ||
+        vLower.includes('running')
+    ) {
+        return <span style={{ color: '#64748b' }}>{verdict}</span>;
+    }
+    if (vLower === 'deprecated') {
+        return <span style={{ color: '#888888' }}>Deprecated</span>;
+    }
+    return <span style={{ color: '#333333' }}>{verdict}</span>;
+}
+
 export default function KataProblemDetailView({ isProblemsetRoute }) {
     const { contestId, letter } = useParams();
     const navigate = useNavigate();
@@ -347,26 +388,6 @@ export default function KataProblemDetailView({ isProblemsetRoute }) {
                                 lineHeight: '1.6',
                                 color: '#222222'
                             }}>
-                                {/* Solved Status Banner */}
-                                {problemData?.isSolved && (
-                                    <div style={{
-                                        background: '#d4edc9',
-                                        border: '1px solid #bce1af',
-                                        color: '#1a591d',
-                                        padding: '6px 12px',
-                                        borderRadius: '3px',
-                                        marginBottom: '16px',
-                                        fontSize: '12px',
-                                        fontWeight: 'bold',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px'
-                                    }}>
-                                        <span>✔</span>
-                                        <span>You have successfully solved this problem (Accepted).</span>
-                                    </div>
-                                )}
-
                                 {/* Centered Problem Header */}
                                 <div style={{ textAlign: 'center', marginBottom: '24px' }}>
                                     <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1a1a1a', marginBottom: '6px' }}>
@@ -816,6 +837,73 @@ export default function KataProblemDetailView({ isProblemsetRoute }) {
                                         )}
                                     </div>
                                 </form>
+                            </div>
+                        </div>
+
+                        {/* Last Submissions Card (Codeforces Style) */}
+                        <div style={{
+                            border: '1px solid #b9b9b9',
+                            borderRadius: '4px',
+                            background: '#ffffff',
+                            overflow: 'hidden',
+                            marginBottom: '16px'
+                        }}>
+                            <div style={{
+                                background: '#f0f4f8',
+                                padding: '6px 10px',
+                                borderBottom: '1px solid #b9b9b9',
+                                fontWeight: 'bold',
+                                fontSize: '12px',
+                                color: '#315682'
+                            }}>
+                                → Last submissions
+                            </div>
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8f8f8', borderBottom: '1px solid #e1e1e1', height: '26px' }}>
+                                            <th style={{ padding: '4px 6px', fontWeight: 'bold', color: '#333333', borderRight: '1px solid #e1e1e1', width: '30%' }}>Submission</th>
+                                            <th style={{ padding: '4px 6px', fontWeight: 'bold', color: '#333333', borderRight: '1px solid #e1e1e1', width: '38%', textAlign: 'center' }}>Time</th>
+                                            <th style={{ padding: '4px 6px', fontWeight: 'bold', color: '#333333', width: '32%', textAlign: 'center' }}>Verdict</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(problemData?.lastSubmissions && problemData.lastSubmissions.length > 0) ? (
+                                            problemData.lastSubmissions.map((s, idx) => {
+                                                const isEven = idx % 2 === 0;
+                                                const subId = s.submissionId || (s.id ? String(s.id).slice(-8) : `sub-${idx}`);
+                                                const subLink = isProblemset 
+                                                    ? `/status?problemset=true&submissionId=${subId}` 
+                                                    : `/kata/contests/${contestId}/submissions`;
+                                                return (
+                                                    <tr key={s.id || idx} style={{ background: isEven ? '#ffffff' : '#f9f9f9', borderBottom: '1px solid #f0f0f0', height: '28px' }}>
+                                                        <td style={{ padding: '4px 6px', borderRight: '1px solid #e1e1e1' }}>
+                                                            <Link 
+                                                                to={subLink} 
+                                                                style={{ color: '#0000cc', textDecoration: 'underline' }}
+                                                                title={`View submission ${subId}`}
+                                                            >
+                                                                {subId}
+                                                            </Link>
+                                                        </td>
+                                                        <td style={{ padding: '4px 6px', borderRight: '1px solid #e1e1e1', textAlign: 'center', color: '#333333', whiteSpace: 'nowrap' }}>
+                                                            {formatCodeforcesTime(s.submittedAt)}
+                                                        </td>
+                                                        <td style={{ padding: '4px 6px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                                            {renderVerdictBadge(s.verdict)}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        ) : (
+                                            <tr>
+                                                <td colSpan={3} style={{ padding: '12px 8px', textAlign: 'center', color: '#888888', fontStyle: 'italic' }}>
+                                                    No submissions yet for this problem
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
 

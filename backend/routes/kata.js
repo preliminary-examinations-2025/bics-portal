@@ -1925,24 +1925,48 @@ router.get(['/contests/:contestId/problem/:letter', '/problemset/problem/:contes
         }
 
         let isSolved = false;
+        let lastSubmissions = [];
         if (handle) {
             const safeHandleRegex = new RegExp(`^${escapeRegex(handle)}$`, 'i');
-            const accepted = await KataSubmissionModel.findOne({
+            const userSubs = await KataSubmissionModel.find({
                 contestId,
-                problemLetter: letter,
+                problemLetter: letter.toUpperCase(),
                 $or: [
                     { username: { $regex: safeHandleRegex } },
                     { candidateId: { $regex: safeHandleRegex } }
-                ],
-                verdict: { $regex: /^Accepted$/i },
-                isSuperseded: { $ne: true }
-            }).lean();
+                ]
+            })
+            .sort({ submittedAt: -1 })
+            .limit(10)
+            .lean();
+
+            const thirtySixHoursAfterEnd = contest.endTime ? new Date(new Date(contest.endTime).getTime() + 36 * 3600 * 1000) : null;
+            const isStandingsReleased = Boolean(contest.standingsReleased) || (thirtySixHoursAfterEnd && now >= thirtySixHoursAfterEnd);
+            const isFormaTrack = contest.track === 'forma' || contest.contestId?.toUpperCase().includes('FORMA') || contestId.toUpperCase().includes('FORMA');
+            const isAdmin = req.user?.role === 'admin';
+
+            lastSubmissions = userSubs.map(s => {
+                let displayVerdict = s.verdict;
+                if (s.isLiveSubmission && !isStandingsReleased && !isAdmin && isFormaTrack) {
+                    displayVerdict = s.verdict === 'Deprecated' ? 'Deprecated' : 'Awaiting Evaluation';
+                }
+                return {
+                    id: s._id,
+                    submissionId: s.submissionId || generateSubmissionId(s.submittedAt),
+                    submittedAt: s.submittedAt,
+                    verdict: displayVerdict,
+                    pointsAwarded: s.pointsAwarded,
+                    executionTimeMs: s.timeUsedMs || s.executionTimeMs,
+                    memoryUsedKb: s.memoryUsedKb,
+                    language: s.language,
+                    isLiveSubmission: s.isLiveSubmission,
+                    isVirtual: s.isVirtual
+                };
+            });
+
+            const accepted = userSubs.find(s => /^Accepted$/i.test(s.verdict) && s.isSuperseded !== true);
             if (accepted) {
-                const thirtySixHoursAfterEnd = contest.endTime ? new Date(new Date(contest.endTime).getTime() + 36 * 3600 * 1000) : null;
-                const isStandingsReleased = Boolean(contest.standingsReleased) || (thirtySixHoursAfterEnd && now >= thirtySixHoursAfterEnd);
-                const isForma = contest.track === 'forma' || contest.contestId?.toUpperCase().includes('FORMA') || contestId.toUpperCase().includes('FORMA');
-                const isAdmin = req.user?.role === 'admin';
-                if (!isForma || isStandingsReleased || isAdmin || !accepted.isLiveSubmission) {
+                if (!isFormaTrack || isStandingsReleased || isAdmin || !accepted.isLiveSubmission) {
                     isSolved = true;
                 }
             }
@@ -1958,6 +1982,7 @@ router.get(['/contests/:contestId/problem/:letter', '/problemset/problem/:contes
             contestEndTime: contest.endTime ? new Date(contest.endTime).toISOString() : null,
             candidateTimer,
             isSolved,
+            lastSubmissions,
             contestId: contest.contestId,
             contestTitle: contest.title,
             track: contest.track || 'shin',
@@ -2308,6 +2333,9 @@ router.get('/submissions', async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
 
         const filter = {};
+        if (req.query.contestId) {
+            filter.contestId = req.query.contestId.toUpperCase();
+        }
         if (handle) {
             filter.$or = [{ username: handle }, { candidateId: handle }];
         }
