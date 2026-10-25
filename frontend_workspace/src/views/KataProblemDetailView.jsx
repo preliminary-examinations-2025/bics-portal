@@ -597,7 +597,7 @@ export default function KataProblemDetailView({ isProblemsetRoute }) {
                                             ✓ Practice Mode Active
                                         </div>
                                         <div style={{ fontSize: '11px', color: '#555', lineHeight: '1.4', marginBottom: '8px' }}>
-                                            Forma solutions are evaluated on the spot via Groq.
+                                            Forma solutions are evaluated against automated rubrics upon submission.
                                         </div>
                                         <div style={{
                                             fontSize: '10px',
@@ -608,7 +608,7 @@ export default function KataProblemDetailView({ isProblemsetRoute }) {
                                             padding: '5px 8px',
                                             lineHeight: '1.4'
                                         }}>
-                                            ⏱ <strong>Submission Gap:</strong> {isForma ? '45 seconds' : '30 seconds'} between submissions per candidate to prevent API overload.
+                                            ⏱ <strong>Submission Gap:</strong> {isForma ? '45 seconds' : '30 seconds'} between submissions per candidate to maintain system stability.
                                         </div>
                                     </div>
                                 )}

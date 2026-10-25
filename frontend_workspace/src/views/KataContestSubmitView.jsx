@@ -409,7 +409,7 @@ export default function KataContestSubmitView() {
                                             />
                                         )}
                                         <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-                                            Forma solutions are asynchronously evaluated by the Gemini Direct API.
+                                            Forma solutions are evaluated asynchronously against automated rubrics.
                                         </div>
                                     </div>
                                 ) : (
