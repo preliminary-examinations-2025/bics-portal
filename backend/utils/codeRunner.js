@@ -17,18 +17,53 @@ const isGppAvailable = async () => {
     });
 };
 
-const safeUnlink = (filePath) => {
+const safeUnlink = (filePath, maxRetries = 6, delayMs = 200) => {
     if (!filePath) return;
+    const tryDelete = (attemptsLeft) => {
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+        } catch (err) {
+            // Windows file handle lock backoff
+            if (attemptsLeft > 0) {
+                setTimeout(() => tryDelete(attemptsLeft - 1), delayMs);
+            }
+        }
+    };
+    tryDelete(maxRetries);
+};
+
+/**
+ * Scavenger: prunes orphaned temp files/directories older than 30 seconds
+ */
+const cleanOrphanedTempRuns = () => {
+    const dir = path.join(__dirname, '..', 'temp_runs');
+    if (!fs.existsSync(dir)) return;
     try {
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (err) {
-        setTimeout(() => {
+        const entries = fs.readdirSync(dir);
+        const now = Date.now();
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry);
             try {
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                const stats = fs.statSync(fullPath);
+                if (now - stats.mtimeMs > 30000) {
+                    if (stats.isDirectory()) {
+                        fs.rmSync(fullPath, { recursive: true, force: true });
+                    } else {
+                        fs.unlinkSync(fullPath);
+                    }
+                }
             } catch (_) {}
-        }, 350);
+        }
+    } catch (err) {
+        console.warn("[codeRunner] Error pruning temp_runs directory:", err.message);
     }
 };
+
+// Immediate cleanup on startup + scheduled scavenger every 10 minutes
+try { cleanOrphanedTempRuns(); } catch (_) {}
+setInterval(cleanOrphanedTempRuns, 10 * 60 * 1000);
 
 const isDockerAvailable = async () => {
     const now = Date.now();
@@ -225,11 +260,8 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
         // Compile with standard optimization and modern C++ standard
         exec(`g++ -O2 -std=c++17 -I"${bitsShimDir}" "${codeFile}" -o "${execFile}"`, { timeout: 15000, maxBuffer: 1024 * 1024 }, async (compileErr, stdout, stderr) => {
             if (compileErr) {
-                try {
-                    if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
-                } catch (unlinkErr) {
-                    console.warn("Local compiler temp code unlink warning:", unlinkErr.message);
-                }
+                safeUnlink(codeFile);
+                safeUnlink(execFile);
                 return resolve({
                     success: false,
                     status: 'Compilation Error',
