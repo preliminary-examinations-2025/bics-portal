@@ -8,16 +8,86 @@ const { processContestRatings } = require('../utils/ratingEngine');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+
+/**
+ * Call OpenRouter API with verified available models:
+ * Fallback priority: Gemini Flash (via OpenRouter) -> Llama 3.3 -> Qwen 2.5 -> DeepSeek
+ */
+async function callOpenRouterDirectApiWithFallback(promptText, systemInstruction = '') {
+    const apiKey = process.env.OPENROUTER_API_KEY || OPENROUTER_API_KEY;
+    if (!apiKey) {
+        throw new Error('OPENROUTER_API_KEY is missing in backend environment');
+    }
+
+    const openRouterModels = [
+        'google/gemini-2.0-flash-001',
+        'google/gemini-flash-1.5',
+        'google/gemini-1.5-flash',
+        'meta-llama/llama-3.3-70b-instruct',
+        'qwen/qwen-2.5-72b-instruct',
+        'deepseek/deepseek-chat'
+    ];
+
+    for (const model of openRouterModels) {
+        try {
+            console.log(`[KataAiEvaluator] Evaluating via OpenRouter model: ${model}...`);
+            const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://bics-portal.onrender.com',
+                    'X-Title': 'BICS Kata Evaluator'
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [
+                        ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+                        { role: 'user', content: promptText }
+                    ],
+                    temperature: 0.2,
+                    response_format: { type: 'json_object' }
+                })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const text = data.choices?.[0]?.message?.content;
+                if (text) {
+                    return {
+                        text,
+                        model: `openrouter-${model}`
+                    };
+                }
+            } else {
+                const errText = await res.text();
+                console.warn(`[KataAiEvaluator] OpenRouter model ${model} failed (${res.status}):`, errText.slice(0, 150));
+            }
+        } catch (err) {
+            console.warn(`[KataAiEvaluator] OpenRouter model ${model} network error:`, err.message);
+        }
+    }
+
+    throw new Error('All OpenRouter models exhausted without a successful completion');
+}
 
 /**
  * Call Gemini Direct API to generate content with fallback
+ * Primary: verified available Gemini models (gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-flash-8b, gemini-1.5-pro)
+ * Secondary: Groq API fallback
+ * Tertiary: OpenRouter API fallback
  */
-async function callGeminiDirectApi(promptText, systemInstruction = '', model = 'gemini-2.5-flash') {
+async function callGeminiDirectApi(promptText, systemInstruction = '', model = 'gemini-1.5-flash') {
     if (!GEMINI_API_KEY) {
-        throw new Error('GEMINI_API_KEY is missing in backend environment');
+        console.log('[KataAiEvaluator] GEMINI_API_KEY not configured, routing to Groq fallback');
+        return await callGroqDirectApiWithFallback(promptText, systemInstruction);
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+    const verifiedModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
+    const targetModel = verifiedModels.includes(model) ? model : 'gemini-1.5-flash';
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
     
     const requestBody = {
         contents: [
@@ -48,42 +118,45 @@ async function callGeminiDirectApi(promptText, systemInstruction = '', model = '
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw new Error(`Gemini Direct API error (${response.status}): ${errBody}`);
+            throw new Error(`Gemini Direct API error (${response.status}): ${errBody.slice(0, 200)}`);
         }
 
         const data = await response.json();
         const rawOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
         return {
             text: rawOutput,
-            model: model
+            model: targetModel
         };
     } catch (err) {
-        // Fallback to gemini-2.5-pro or Groq if rate-limited
-        console.warn(`[KataAiEvaluator] Gemini ${model} failed, trying secondary fallback:`, err.message);
-        if (model !== 'gemini-2.5-pro') {
+        console.warn(`[KataAiEvaluator] Gemini ${targetModel} failed (${err.message}). Trying secondary Gemini model...`);
+        
+        // Try secondary real Gemini model if primary was gemini-1.5-flash
+        if (targetModel === 'gemini-1.5-flash') {
             try {
-                return await callGeminiDirectApi(promptText, systemInstruction, 'gemini-2.5-pro');
-            } catch (proErr) {
-                console.warn('[KataAiEvaluator] Gemini pro fallback also failed:', proErr.message);
+                return await callGeminiDirectApi(promptText, systemInstruction, 'gemini-2.0-flash');
+            } catch (secErr) {
+                console.warn('[KataAiEvaluator] Gemini secondary model fallback also failed:', secErr.message);
             }
         }
 
-        // Secondary fallback to Groq if configured
-        if (GROQ_API_KEY) {
-            return await callGroqDirectApiWithFallback(promptText, systemInstruction);
-        }
-
-        throw err;
+        // Secondary fallback to Groq (which in turn falls back to OpenRouter)
+        console.log('[KataAiEvaluator] Gemini Direct API exhausted, initiating Groq fallback...');
+        return await callGroqDirectApiWithFallback(promptText, systemInstruction);
     }
 }
 
 /**
  * Call Groq API with fallback in strict order:
  * llama -> qwen -> gpt -> whatever is available
+ * With OpenRouter tertiary fallback if all Groq models fail
  */
 async function callGroqDirectApiWithFallback(promptText, systemInstruction = '') {
     if (!GROQ_API_KEY) {
-        throw new Error('GROQ_API_KEY is missing in backend environment');
+        if (process.env.OPENROUTER_API_KEY || OPENROUTER_API_KEY) {
+            console.log('[KataAiEvaluator] GROQ_API_KEY not configured, routing to OpenRouter fallback...');
+            return await callOpenRouterDirectApiWithFallback(promptText, systemInstruction);
+        }
+        throw new Error('GROQ_API_KEY and OPENROUTER_API_KEY are missing in backend environment');
     }
 
     let candidateModels = [
@@ -91,10 +164,12 @@ async function callGroqDirectApiWithFallback(promptText, systemInstruction = '')
         'llama-3.3-70b-versatile',
         'llama-3.1-70b-versatile',
         'llama3-70b-8192',
+        'llama-3.1-8b-instant',
         // 2. qwen models
         'qwen/qwen3.8-27b',
         'qwen-2.5-72b-instruct',
-        // 3. gpt models
+        // 3. gpt / gemma models
+        'gemma2-9b-it',
         'openai/gpt-oss-120b',
         'openai/gpt-oss-20b'
     ];
@@ -111,14 +186,15 @@ async function callGroqDirectApiWithFallback(promptText, systemInstruction = '')
 
             const llamaModels = allAvailable.filter(id => id.toLowerCase().includes('llama'));
             const qwenModels = allAvailable.filter(id => id.toLowerCase().includes('qwen'));
-            const gptModels = allAvailable.filter(id => id.toLowerCase().includes('gpt'));
+            const gptModels = allAvailable.filter(id => id.toLowerCase().includes('gpt') || id.toLowerCase().includes('gemma'));
             const remainingModels = allAvailable.filter(id =>
                 !id.toLowerCase().includes('llama') &&
                 !id.toLowerCase().includes('qwen') &&
-                !id.toLowerCase().includes('gpt')
+                !id.toLowerCase().includes('gpt') &&
+                !id.toLowerCase().includes('gemma')
             );
 
-            // Strict sequence: llama -> qwen -> gpt -> whatever is available
+            // Strict sequence: llama -> qwen -> gpt/gemma -> whatever is available
             candidateModels = [
                 ...llamaModels,
                 ...qwenModels,
@@ -169,7 +245,17 @@ async function callGroqDirectApiWithFallback(promptText, systemInstruction = '')
         }
     }
 
-    throw new Error('All Groq models exhausted without a successful completion');
+    // Tertiary Fallback: OpenRouter fallback for Groq API
+    if (process.env.OPENROUTER_API_KEY || OPENROUTER_API_KEY) {
+        console.warn('[KataAiEvaluator] All Groq models failed or exhausted, initiating OpenRouter fallback...');
+        try {
+            return await callOpenRouterDirectApiWithFallback(promptText, systemInstruction);
+        } catch (orErr) {
+            console.warn('[KataAiEvaluator] OpenRouter tertiary fallback also failed:', orErr.message);
+        }
+    }
+
+    throw new Error('All Groq and OpenRouter models exhausted without a successful completion');
 }
 
 /**
@@ -991,6 +1077,7 @@ function startKataAiHourlyWorker() {
 module.exports = {
     callGeminiDirectApi,
     callGroqDirectApiWithFallback,
+    callOpenRouterDirectApiWithFallback,
     evaluateKataFormaSubmission,
     evaluateKataFormaVirtualWithGroq,
     checkKataShinPlagiarism,

@@ -97,15 +97,21 @@ export default function KataContestDashboardView() {
             ? new Date(candidateTimer.expiresAt).getTime()
             : (Date.now() + ((candidateTimer.remainingSeconds ?? candSecondsLeft ?? 0) * 1000));
 
+        // Live contest candidate timer strictly ends when contest.endTime ends (e.g. 23:59:59)
+        const contestEndMs = (!candidateTimer.isVirtual && contest?.endTime)
+            ? new Date(contest.endTime).getTime()
+            : null;
+        const effectiveExpiry = contestEndMs ? Math.min(targetExpiry, contestEndMs) : targetExpiry;
+
         const updateTimer = () => {
-            const remaining = Math.max(0, Math.floor((targetExpiry - Date.now()) / 1000));
+            const remaining = Math.max(0, Math.floor((effectiveExpiry - Date.now()) / 1000));
             setCandSecondsLeft(remaining);
         };
 
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt]);
+    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt, candidateTimer?.isVirtual, contest?.endTime]);
 
     const handleStartTimer = async () => {
         setStartingTimer(true);

@@ -142,15 +142,21 @@ export default function KataProblemDetailView({ isProblemsetRoute }) {
             ? new Date(candidateTimer.expiresAt).getTime()
             : (Date.now() + ((candidateTimer.remainingSeconds ?? candSecondsLeft ?? 0) * 1000));
 
+        // Live contest candidate timer strictly ends when contest.endTime ends (e.g. 23:59:59)
+        const contestEndMs = (!candidateTimer.isVirtual && (problemData?.contestEndTime || problemData?.endTime))
+            ? new Date(problemData.contestEndTime || problemData.endTime).getTime()
+            : null;
+        const effectiveExpiry = contestEndMs ? Math.min(targetExpiry, contestEndMs) : targetExpiry;
+
         const updateTimer = () => {
-            const remaining = Math.max(0, Math.floor((targetExpiry - Date.now()) / 1000));
+            const remaining = Math.max(0, Math.floor((effectiveExpiry - Date.now()) / 1000));
             setCandSecondsLeft(remaining);
         };
 
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt]);
+    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt, candidateTimer?.isVirtual, problemData?.contestEndTime, problemData?.endTime]);
 
     // Submission cooldown ticker (Shin: 30s gap, Forma: 45s gap)
     useEffect(() => {
@@ -596,7 +602,9 @@ export default function KataProblemDetailView({ isProblemsetRoute }) {
                                             ✓ Practice Mode Active
                                         </div>
                                         <div style={{ fontSize: '11px', color: '#555', lineHeight: '1.4', marginBottom: '8px' }}>
-                                            Forma solutions are evaluated against automated rubrics upon submission.
+                                            {isForma 
+                                                ? 'Forma solutions are evaluated against automated rubrics upon submission.' 
+                                                : 'Shin solutions are compiled and evaluated against authoritative test suites upon submission.'}
                                         </div>
                                         <div style={{
                                             fontSize: '10px',

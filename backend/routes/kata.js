@@ -258,19 +258,34 @@ function getCandidateTimer(contest, identifier) {
         (c.candidateId && c.candidateId.toLowerCase() === lower)
     );
 
-    if (cand && !hasEnded) {
-        if (cand.startedAt && cand.expiresAt) {
-            const expiresAt = new Date(cand.expiresAt);
+    if (cand) {
+        const contestEnd = contest.endTime ? new Date(contest.endTime) : null;
+        if (cand.startedAt) {
+            // Live contest candidate timer strictly ends when contest.endTime ends (e.g. 23:59:59)
+            let expiresAt = cand.expiresAt ? new Date(cand.expiresAt) : new Date(new Date(cand.startedAt).getTime() + liveDurationSeconds * 1000);
+            if (contestEnd && contestEnd.getTime() < expiresAt.getTime()) {
+                expiresAt = contestEnd;
+            }
             const remainingSeconds = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
-            const isExpired = now > expiresAt;
+            const isExpired = now >= expiresAt || hasEnded;
             return {
                 isRegistered: true,
                 isStarted: true,
                 startedAt: cand.startedAt,
-                expiresAt: cand.expiresAt,
-                remainingSeconds,
+                expiresAt: expiresAt,
+                remainingSeconds: isExpired ? 0 : remainingSeconds,
                 totalSeconds: liveDurationSeconds,
                 isExpired
+            };
+        } else if (hasEnded) {
+            return {
+                isRegistered: true,
+                isStarted: false,
+                startedAt: null,
+                expiresAt: null,
+                remainingSeconds: 0,
+                totalSeconds: liveDurationSeconds,
+                isExpired: true
             };
         } else {
             return {
@@ -1770,7 +1785,8 @@ router.post('/contests/:contestId/start-timer', async (req, res) => {
             // Candidate timer starts right then and there upon clicking Enter!
             if (!cand.startedAt) {
                 cand.startedAt = now;
-                cand.expiresAt = new Date(Math.min(now.getTime() + 2 * 3600 * 1000, contest.endTime.getTime()));
+                const contestEndMs = contest.endTime ? new Date(contest.endTime).getTime() : (now.getTime() + 2 * 3600 * 1000);
+                cand.expiresAt = new Date(Math.min(now.getTime() + 2 * 3600 * 1000, contestEndMs));
                 await contest.save();
             }
         } else if (hasEnded) {
@@ -1939,6 +1955,7 @@ router.get(['/contests/:contestId/problem/:letter', '/problemset/problem/:contes
             isWithinFourHoursPostEnd,
             isPastFourHours,
             fourHoursPostEnd: fourHoursPostEnd.toISOString(),
+            contestEndTime: contest.endTime ? new Date(contest.endTime).toISOString() : null,
             candidateTimer,
             isSolved,
             contestId: contest.contestId,
@@ -2022,9 +2039,15 @@ router.post('/contests/:contestId/submit', async (req, res) => {
                 });
             }
 
-            if (cand.expiresAt && now > new Date(cand.expiresAt)) {
+            const contestEnd = contest.endTime ? new Date(contest.endTime) : null;
+            const candExpiresAt = cand.expiresAt ? new Date(cand.expiresAt) : null;
+            const effectiveExpiry = (contestEnd && candExpiresAt)
+                ? (contestEnd < candExpiresAt ? contestEnd : candExpiresAt)
+                : (candExpiresAt || contestEnd);
+
+            if (effectiveExpiry && now > effectiveExpiry) {
                 return res.status(403).json({
-                    error: 'Your 2-hour contest window has expired. Submissions are now locked.'
+                    error: 'The contest has ended and your submission window is locked.'
                 });
             }
         } else {

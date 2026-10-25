@@ -49,8 +49,8 @@ async function callOpenRouter(prompt) {
     if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured');
 
     const models = [
-        'google/gemini-2.5-flash',
-        'google/gemini-2.5-flash-lite',
+        'google/gemini-2.0-flash-001',
+        'google/gemini-1.5-flash',
         'google/gemini-flash-1.5'
     ];
     let lastError = null;
@@ -107,7 +107,7 @@ async function callGemini(prompt) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
 
-    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    const models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b'];
     let lastError = null;
 
     for (const model of models) {
