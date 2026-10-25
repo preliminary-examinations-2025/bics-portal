@@ -115,7 +115,7 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
         // Step A: Compile inside Docker container
         const compileCmd = `docker run --rm --network none --memory 256m --cpus 1.0 -v "${volumePath}:/sandbox" bics-cpp-sandbox g++ -O2 -std=c++17 /sandbox/solution.cpp -o /sandbox/runner`;
 
-        exec(compileCmd, { timeout: 15000 }, async (compileErr, compileStdout, compileStderr) => {
+        exec(compileCmd, { timeout: 15000, maxBuffer: 1024 * 1024 }, async (compileErr, compileStdout, compileStderr) => {
             if (compileErr) {
                 try {
                     fs.rmSync(dir, { recursive: true, force: true });
@@ -223,7 +223,7 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
         const bitsShimDir = path.resolve(__dirname, '..', 'sandbox');
 
         // Compile with standard optimization and modern C++ standard
-        exec(`g++ -O2 -std=c++17 -I"${bitsShimDir}" "${codeFile}" -o "${execFile}"`, { timeout: 15000 }, async (compileErr, stdout, stderr) => {
+        exec(`g++ -O2 -std=c++17 -I"${bitsShimDir}" "${codeFile}" -o "${execFile}"`, { timeout: 15000, maxBuffer: 1024 * 1024 }, async (compileErr, stdout, stderr) => {
             if (compileErr) {
                 try {
                     if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);

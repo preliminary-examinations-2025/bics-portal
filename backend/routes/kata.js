@@ -2388,8 +2388,9 @@ router.get('/contests/:contestId/standings', async (req, res) => {
         const isScheduled = now < startTime || contest.status === 'scheduled';
         const isLive = now >= startTime && now <= endTime && contest.status !== 'scheduled';
         const thirtySixHoursAfterEnd = new Date(endTime.getTime() + 36 * 3600 * 1000);
-        const isAuditPending = now > endTime && now < thirtySixHoursAfterEnd;
-        const isConcealed = (isLive || isAuditPending) && req.user?.role !== 'admin';
+        const isStandingsReleased = Boolean(contest.standingsReleased) || (now >= thirtySixHoursAfterEnd);
+        const isAuditPending = now > endTime && !isStandingsReleased;
+        const isConcealed = !isStandingsReleased && (isLive || isAuditPending) && req.user?.role !== 'admin';
 
         if (isScheduled) {
             return res.json({

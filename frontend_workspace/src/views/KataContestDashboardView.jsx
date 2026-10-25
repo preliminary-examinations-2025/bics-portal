@@ -90,23 +90,22 @@ export default function KataContestDashboardView() {
         return () => clearInterval(interval);
     }, [contest]);
 
-    // Candidate 2-hour window ticker
+    // Candidate 2-hour window ticker (absolute wall-clock calculation to prevent timer drift)
     useEffect(() => {
-        if (!candidateTimer?.isStarted || candSecondsLeft === null) return;
-        if (candSecondsLeft <= 0) return;
+        if (!candidateTimer?.isStarted) return;
+        const targetExpiry = candidateTimer.expiresAt
+            ? new Date(candidateTimer.expiresAt).getTime()
+            : (Date.now() + ((candidateTimer.remainingSeconds ?? candSecondsLeft ?? 0) * 1000));
 
-        const interval = setInterval(() => {
-            setCandSecondsLeft(prev => {
-                if (prev === null || prev <= 1) {
-                    clearInterval(interval);
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
+        const updateTimer = () => {
+            const remaining = Math.max(0, Math.floor((targetExpiry - Date.now()) / 1000));
+            setCandSecondsLeft(remaining);
+        };
 
+        updateTimer();
+        const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [candidateTimer?.isStarted, candSecondsLeft]);
+    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt]);
 
     const handleStartTimer = async () => {
         setStartingTimer(true);

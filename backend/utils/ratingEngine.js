@@ -226,7 +226,10 @@ async function processContestRatings(contestId, models) {
         }
 
         const profile = candidateDoc?.kataProfile || {};
-        const oldRating = track === 'forma' ? (profile.formaRating || 1200) : (profile.shinRating || 1200);
+        const existingHistory = (profile.contestHistory || []).find(h => h.contestId === cid);
+        const oldRating = existingHistory 
+            ? (existingHistory.oldRating ?? (track === 'forma' ? (profile.formaRating || 1200) : (profile.shinRating || 1200)))
+            : (track === 'forma' ? (profile.formaRating || 1200) : (profile.shinRating || 1200));
 
         participantsList.push({
             candidateId: candData.candidateId,
@@ -307,30 +310,32 @@ async function processContestRatings(contestId, models) {
         // Increment live contest count
         p.contestsLive = (p.contestsLive || 0) + (existingHistoryIdx >= 0 ? 0 : 1);
 
-        // Update solved stats
-        p.solvedStats = p.solvedStats || {};
-        if (track === 'forma') {
-            p.solvedStats.formaSolved = (p.solvedStats.formaSolved || 0) + res.solvedCount;
-        } else {
-            p.solvedStats.shinSolved = (p.solvedStats.shinSolved || 0) + res.solvedCount;
-        }
+        // Update solved stats and activity heatmap only if this contest wasn't already processed (idempotency)
+        if (existingHistoryIdx < 0) {
+            p.solvedStats = p.solvedStats || {};
+            if (track === 'forma') {
+                p.solvedStats.formaSolved = (p.solvedStats.formaSolved || 0) + res.solvedCount;
+            } else {
+                p.solvedStats.shinSolved = (p.solvedStats.shinSolved || 0) + res.solvedCount;
+            }
 
-        for (const letter of res.solvedLetters) {
-            if (letter === 'A') p.solvedStats.easy = (p.solvedStats.easy || 0) + 1;
-            else if (letter === 'B') p.solvedStats.easy = (p.solvedStats.easy || 0) + 1;
-            else if (letter === 'C') p.solvedStats.medium = (p.solvedStats.medium || 0) + 1;
-            else if (letter === 'D') p.solvedStats.hard = (p.solvedStats.hard || 0) + 1;
-            else if (letter === 'E') p.solvedStats.boss = (p.solvedStats.boss || 0) + 1;
-        }
+            for (const letter of res.solvedLetters) {
+                if (letter === 'A') p.solvedStats.easy = (p.solvedStats.easy || 0) + 1;
+                else if (letter === 'B') p.solvedStats.easy = (p.solvedStats.easy || 0) + 1;
+                else if (letter === 'C') p.solvedStats.medium = (p.solvedStats.medium || 0) + 1;
+                else if (letter === 'D') p.solvedStats.hard = (p.solvedStats.hard || 0) + 1;
+                else if (letter === 'E') p.solvedStats.boss = (p.solvedStats.boss || 0) + 1;
+            }
 
-        // Update submission heatmap
-        const dayKey = contestDate.toISOString().slice(0, 10);
-        if (!p.submissionHeatmap) p.submissionHeatmap = new Map();
-        if (p.submissionHeatmap instanceof Map) {
-            const currentCount = p.submissionHeatmap.get(dayKey) || 0;
-            p.submissionHeatmap.set(dayKey, currentCount + Math.max(1, res.solvedCount));
-        } else {
-            p.submissionHeatmap[dayKey] = (p.submissionHeatmap[dayKey] || 0) + Math.max(1, res.solvedCount);
+            // Update submission heatmap
+            const dayKey = contestDate.toISOString().slice(0, 10);
+            if (!p.submissionHeatmap) p.submissionHeatmap = new Map();
+            if (p.submissionHeatmap instanceof Map) {
+                const currentCount = p.submissionHeatmap.get(dayKey) || 0;
+                p.submissionHeatmap.set(dayKey, currentCount + Math.max(1, res.solvedCount));
+            } else {
+                p.submissionHeatmap[dayKey] = (p.submissionHeatmap[dayKey] || 0) + Math.max(1, res.solvedCount);
+            }
         }
 
         if (dbState?.useMongo) {
