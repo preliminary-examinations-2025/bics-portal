@@ -63,7 +63,8 @@ const cleanOrphanedTempRuns = () => {
 
 // Immediate cleanup on startup + scheduled scavenger every 10 minutes
 try { cleanOrphanedTempRuns(); } catch (_) {}
-setInterval(cleanOrphanedTempRuns, 10 * 60 * 1000);
+const scavengerTimer = setInterval(cleanOrphanedTempRuns, 10 * 60 * 1000);
+if (scavengerTimer?.unref) scavengerTimer.unref();
 
 const isDockerAvailable = async () => {
     const now = Date.now();
