@@ -90,12 +90,26 @@ export default function KataContestDashboardView() {
         return () => clearInterval(interval);
     }, [contest]);
 
-    // Candidate 2-hour window ticker (absolute wall-clock calculation to prevent timer drift)
+    // Candidate 2-hour window ticker (clock-skew compensated & drift-resistant)
     useEffect(() => {
         if (!candidateTimer?.isStarted) return;
+
+        const maxDurationSec = candidateTimer.totalSeconds || 7200;
+
+        // Calculate clock skew between server and client device
+        // If serverTime is provided: skew = serverTime - clientLocalNow
+        // Fallback: derive skew from (expiresAt - (clientLocalNow + remainingSeconds))
+        const clientFetchTime = Date.now();
+        const serverTimeMs = candidateTimer.serverTime ? new Date(candidateTimer.serverTime).getTime() : null;
+        const clockSkewMs = serverTimeMs 
+            ? (serverTimeMs - clientFetchTime)
+            : (candidateTimer.expiresAt && candidateTimer.remainingSeconds !== undefined
+                ? (new Date(candidateTimer.expiresAt).getTime() - (clientFetchTime + candidateTimer.remainingSeconds * 1000))
+                : 0);
+
         const targetExpiry = candidateTimer.expiresAt
             ? new Date(candidateTimer.expiresAt).getTime()
-            : (Date.now() + ((candidateTimer.remainingSeconds ?? candSecondsLeft ?? 0) * 1000));
+            : (clientFetchTime + clockSkewMs + ((candidateTimer.remainingSeconds ?? candSecondsLeft ?? maxDurationSec) * 1000));
 
         // Live contest candidate timer strictly ends when contest.endTime ends (e.g. 23:59:59)
         const contestEndMs = (!candidateTimer.isVirtual && contest?.endTime)
@@ -104,14 +118,15 @@ export default function KataContestDashboardView() {
         const effectiveExpiry = contestEndMs ? Math.min(targetExpiry, contestEndMs) : targetExpiry;
 
         const updateTimer = () => {
-            const remaining = Math.max(0, Math.floor((effectiveExpiry - Date.now()) / 1000));
+            const syncedNow = Date.now() + clockSkewMs;
+            const remaining = Math.min(maxDurationSec, Math.max(0, Math.floor((effectiveExpiry - syncedNow) / 1000)));
             setCandSecondsLeft(remaining);
         };
 
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt, candidateTimer?.isVirtual, contest?.endTime]);
+    }, [candidateTimer?.isStarted, candidateTimer?.expiresAt, candidateTimer?.serverTime, candidateTimer?.remainingSeconds, candidateTimer?.isVirtual, contest?.endTime]);
 
     const handleStartTimer = async () => {
         setStartingTimer(true);

@@ -239,7 +239,8 @@ function getCandidateTimer(contest, identifier) {
     if (virtualCand) {
         const virtualDuration = (virtualCand.durationSeconds || liveDurationSeconds) * 1000;
         const expiresAt = new Date(virtualCand.expiresAt || (new Date(virtualCand.startedAt || now).getTime() + virtualDuration));
-        const remainingSeconds = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
+        const totalSec = virtualCand.durationSeconds || liveDurationSeconds;
+        const remainingSeconds = Math.min(totalSec, Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000)));
         const isExpired = now > expiresAt;
         return {
             isRegistered: true,
@@ -247,8 +248,9 @@ function getCandidateTimer(contest, identifier) {
             isVirtual: true,
             startedAt: virtualCand.startedAt || now,
             expiresAt: expiresAt,
+            serverTime: now.toISOString(),
             remainingSeconds,
-            totalSeconds: virtualCand.durationSeconds || liveDurationSeconds,
+            totalSeconds: totalSec,
             isExpired
         };
     }
@@ -266,13 +268,14 @@ function getCandidateTimer(contest, identifier) {
             if (contestEnd && contestEnd.getTime() < expiresAt.getTime()) {
                 expiresAt = contestEnd;
             }
-            const remainingSeconds = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
+            const remainingSeconds = Math.min(liveDurationSeconds, Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000)));
             const isExpired = now >= expiresAt || hasEnded;
             return {
                 isRegistered: true,
                 isStarted: true,
                 startedAt: cand.startedAt,
                 expiresAt: expiresAt,
+                serverTime: now.toISOString(),
                 remainingSeconds: isExpired ? 0 : remainingSeconds,
                 totalSeconds: liveDurationSeconds,
                 isExpired
@@ -283,6 +286,7 @@ function getCandidateTimer(contest, identifier) {
                 isStarted: false,
                 startedAt: null,
                 expiresAt: null,
+                serverTime: now.toISOString(),
                 remainingSeconds: 0,
                 totalSeconds: liveDurationSeconds,
                 isExpired: true
@@ -293,6 +297,7 @@ function getCandidateTimer(contest, identifier) {
                 isStarted: false,
                 startedAt: null,
                 expiresAt: null,
+                serverTime: now.toISOString(),
                 remainingSeconds: liveDurationSeconds,
                 totalSeconds: liveDurationSeconds,
                 isExpired: false
@@ -305,6 +310,7 @@ function getCandidateTimer(contest, identifier) {
         isStarted: false,
         startedAt: null,
         expiresAt: null,
+        serverTime: now.toISOString(),
         remainingSeconds: liveDurationSeconds,
         totalSeconds: liveDurationSeconds,
         isExpired: false
