@@ -417,6 +417,26 @@ export default function App() {
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const disconnectTimerRef = useRef(null);
 
+  // Authoritative Server Time Synchronization Engine
+  const serverClockOffsetRef = useRef(0);
+  const serverExpiresAtRef = useRef(null);
+
+  const calibrateServerTime = (data) => {
+    if (!data) return;
+    if (typeof data.serverTime === 'number') {
+      serverClockOffsetRef.current = data.serverTime - Date.now();
+    }
+    if (typeof data.expiresAt === 'number') {
+      serverExpiresAtRef.current = data.expiresAt;
+    } else if (data.submission?.startedAt && (data.test?.duration || test?.duration)) {
+      const dur = Number(data.test?.duration || test?.duration || 60);
+      serverExpiresAtRef.current = new Date(data.submission.startedAt).getTime() + (dur * 60 * 1000);
+    }
+    if (typeof data.remainingSeconds === 'number') {
+      setExamTimeLeft(data.remainingSeconds);
+    }
+  };
+
   useEffect(() => {
     const handleOnlineStatus = () => setIsOnline(true);
     const handleOfflineStatus = () => setIsOnline(false);
@@ -1479,7 +1499,7 @@ export default function App() {
       }
       
       setSubmission(data.submission);
-      setExamTimeLeft(Number(test.duration) * 60);
+      calibrateServerTime(data);
 
       // Clean slate on exam start: prevent any state leakage from previous sessions
       isAutoSubmittedRef.current = false;
@@ -1517,18 +1537,27 @@ export default function App() {
     }
   };
 
-  // 4. Timer Countdown hook
+  // 4. Authoritative Server-Synchronized Timer Countdown hook (Ticks smoothly per second)
   useEffect(() => {
     if (flow !== 'active_exam') return;
 
     const timer = setInterval(() => {
-      if (!submission?.startedAt || !test?.duration) {
-        setExamTimeLeft(prev => Math.max(0, prev - 1));
-        return;
+      let remainingSec = 0;
+      if (serverExpiresAtRef.current) {
+        const currentServerTime = Date.now() + serverClockOffsetRef.current;
+        remainingSec = Math.max(0, Math.round((serverExpiresAtRef.current - currentServerTime) / 1000));
+      } else if (submission?.startedAt && test?.duration) {
+        const currentServerTime = Date.now() + serverClockOffsetRef.current;
+        const startedAtMs = new Date(submission.startedAt).getTime();
+        const totalDurationMs = Number(test.duration) * 60 * 1000;
+        remainingSec = Math.max(0, Math.round((startedAtMs + totalDurationMs - currentServerTime) / 1000));
+      } else {
+        setExamTimeLeft(prev => {
+          remainingSec = Math.max(0, prev - 1);
+          return remainingSec;
+        });
       }
-      const elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
-      const totalDurationMs = Number(test.duration) * 60 * 1000;
-      const remainingSec = Math.max(0, Math.round((totalDurationMs - elapsedMs) / 1000));
+
       setExamTimeLeft(remainingSec);
       if (remainingSec <= 0) {
         clearInterval(timer);
@@ -1537,7 +1566,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [flow, proctoringWarnings]);
+  }, [flow, submission, test, proctoringWarnings]);
 
   // Minor proctoring warning counter (Continuous warnings counted per second - Item 3)
   const minorWarningSecondsRef = useRef(0);
@@ -2535,6 +2564,7 @@ export default function App() {
         if (res.ok) {
           cancelDisconnectCountdown();
           const data = await res.json();
+          calibrateServerTime(data);
           // If server finalized submission due to timeout or proctor action, transition to finished
           if (data.status && data.status !== 'started') {
             setFlow('finished');
@@ -2680,7 +2710,10 @@ export default function App() {
         })
       });
 
-      if (res.status === 409) {
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        calibrateServerTime(data);
+      } else if (res.status === 409) {
         console.warn("[Draft] Exam attempt is finalized or reaped on server. Halting further draft saves.");
       }
     } catch (e) {

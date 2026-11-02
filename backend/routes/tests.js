@@ -604,8 +604,22 @@ router.post('/start/:id', requireAuth, async (req, res) => {
         const subPayload = submission.toObject ? submission.toObject() : { ...submission };
         subPayload.bicsId = toBicsId(submission._id || submission.id);
 
+        const now = new Date();
+        const durationMin = Number(test.duration || 60);
+        const startedAtMs = new Date(submission.startedAt || now).getTime();
+        const expiresAtMs = startedAtMs + (durationMin * 60 * 1000);
+        const remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
+
         await logSystemAction(candidateName || studentId || 'Candidate', 'TEST_STARTED', `Candidate started the examination "${test.title}" (${id})`, 'info');
-        return res.json({ success: true, submission: subPayload });
+        return res.json({ 
+            success: true, 
+            submission: subPayload,
+            serverTime: now.getTime(),
+            startedAt: startedAtMs,
+            expiresAt: expiresAtMs,
+            remainingSeconds: remainingSeconds,
+            reaperGraceSeconds: 70
+        });
     } catch (e) {
         console.error(e);
         if (e.code === 11000 || (e.name === 'MongoServerError' && e.code === 11000)) {
@@ -628,10 +642,29 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
             const sub = await TestSubmissionModel.findByIdAndUpdate(
                 targetSubId,
                 { $set: { lastHeartbeatAt: now } },
-                { new: true, select: 'status startedAt' }
+                { new: true, select: 'status startedAt testId' }
             );
             if (!sub) return res.status(404).json({ error: "Submission session not found" });
-            return res.json({ success: true, status: sub.status, serverTime: now.getTime() });
+
+            let expiresAtMs = null;
+            let remainingSeconds = null;
+            if (sub.testId && sub.startedAt) {
+                const testDoc = await TestConfigModel.findById(sub.testId).select('duration').lean();
+                const durMin = Number(testDoc?.duration || 60);
+                const startedAtMs = new Date(sub.startedAt).getTime();
+                expiresAtMs = startedAtMs + (durMin * 60 * 1000);
+                remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
+            }
+
+            return res.json({ 
+                success: true, 
+                status: sub.status, 
+                serverTime: now.getTime(),
+                startedAt: sub.startedAt ? new Date(sub.startedAt).getTime() : null,
+                expiresAt: expiresAtMs,
+                remainingSeconds: remainingSeconds,
+                reaperGraceSeconds: 70
+            });
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
@@ -639,7 +672,27 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
             if (!sub) return res.status(404).json({ error: "Submission session not found" });
             sub.lastHeartbeatAt = now;
             saveJSONData(db);
-            return res.json({ success: true, status: sub.status, serverTime: now.getTime() });
+
+            let expiresAtMs = null;
+            let remainingSeconds = null;
+            if (sub.testId && sub.startedAt) {
+                db.tests = db.tests || [];
+                const testDoc = db.tests.find(t => String(t.id || t._id) === String(sub.testId));
+                const durMin = Number(testDoc?.duration || 60);
+                const startedAtMs = new Date(sub.startedAt).getTime();
+                expiresAtMs = startedAtMs + (durMin * 60 * 1000);
+                remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
+            }
+
+            return res.json({ 
+                success: true, 
+                status: sub.status, 
+                serverTime: now.getTime(),
+                startedAt: sub.startedAt ? new Date(sub.startedAt).getTime() : null,
+                expiresAt: expiresAtMs,
+                remainingSeconds: remainingSeconds,
+                reaperGraceSeconds: 70
+            });
         }
     } catch (e) {
         console.error("Heartbeat error:", e.message);
@@ -655,6 +708,7 @@ const handleDraftSave = async (req, res) => {
     const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
     try {
+        const now = new Date();
         if (dbState.useMongo) {
             const submission = await TestSubmissionModel.findById(targetSubId);
             if (!submission) return res.status(404).json({ error: "Submission session not found" });
@@ -692,13 +746,27 @@ const handleDraftSave = async (req, res) => {
                 submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
 
-            submission.lastHeartbeatAt = new Date();
+            submission.lastHeartbeatAt = now;
             await submission.save();
+
+            let expiresAtMs = null;
+            let remainingSeconds = null;
+            if (submission.testId && submission.startedAt) {
+                const testDoc = await TestConfigModel.findById(submission.testId).select('duration').lean();
+                const durMin = Number(testDoc?.duration || 60);
+                const startedAtMs = new Date(submission.startedAt).getTime();
+                expiresAtMs = startedAtMs + (durMin * 60 * 1000);
+                remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
+            }
 
             return res.json({ 
                 success: true, 
                 savedAt: submission.lastHeartbeatAt, 
-                answersCount: submission.answers?.length || 0 
+                answersCount: submission.answers?.length || 0,
+                serverTime: now.getTime(),
+                expiresAt: expiresAtMs,
+                remainingSeconds: remainingSeconds,
+                reaperGraceSeconds: 70
             });
         } else {
             const db = getJSONData();
@@ -730,10 +798,28 @@ const handleDraftSave = async (req, res) => {
                 submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
 
-            submission.lastHeartbeatAt = new Date();
+            submission.lastHeartbeatAt = now;
             saveJSONData(db);
 
-            return res.json({ success: true, savedAt: submission.lastHeartbeatAt });
+            let expiresAtMs = null;
+            let remainingSeconds = null;
+            if (submission.testId && submission.startedAt) {
+                db.tests = db.tests || [];
+                const testDoc = db.tests.find(t => String(t.id || t._id) === String(submission.testId));
+                const durMin = Number(testDoc?.duration || 60);
+                const startedAtMs = new Date(submission.startedAt).getTime();
+                expiresAtMs = startedAtMs + (durMin * 60 * 1000);
+                remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
+            }
+
+            return res.json({ 
+                success: true, 
+                savedAt: submission.lastHeartbeatAt,
+                serverTime: now.getTime(),
+                expiresAt: expiresAtMs,
+                remainingSeconds: remainingSeconds,
+                reaperGraceSeconds: 70
+            });
         }
     } catch (e) {
         console.error("Draft save error:", e.message);

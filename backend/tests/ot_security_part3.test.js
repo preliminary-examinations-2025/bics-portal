@@ -220,13 +220,13 @@ async function runTests() {
         assert(routesSource.includes("isBeaconDisconnect: true"), "Must mark beacon disconnects in metadata");
     });
 
-    test("2.4.4: Dead-Man's Switch reaper worker exports functions and auto-finalizes sessions dark > 45s", () => {
+    test("2.4.4: Dead-Man's Switch reaper worker exports functions and auto-finalizes sessions dark > 70s", () => {
         const { reapAbandonedSubmissions, startSubmissionReaper, stopSubmissionReaper } = require('../workers/submissionReaper');
         assert.strictEqual(typeof reapAbandonedSubmissions, 'function', "reapAbandonedSubmissions must be a function");
         assert.strictEqual(typeof startSubmissionReaper, 'function', "startSubmissionReaper must be a function");
         assert.strictEqual(typeof stopSubmissionReaper, 'function', "stopSubmissionReaper must be a function");
 
-        const maxIdleMs = 45000;
+        const maxIdleMs = 70000;
         const cutoffTime = new Date(Date.now() - maxIdleMs);
 
         const mockSessions = [
@@ -240,8 +240,8 @@ async function runTests() {
             {
                 _id: 'sub_abandoned_dead',
                 status: 'started',
-                startedAt: new Date(Date.now() - 120000),
-                lastHeartbeatAt: new Date(Date.now() - 50000), // dark 50s ago (> 45s)
+                startedAt: new Date(Date.now() - 150000),
+                lastHeartbeatAt: new Date(Date.now() - 75000), // dark 75s ago (> 70s)
                 proctoringEvents: []
             },
             {
@@ -269,7 +269,7 @@ async function runTests() {
         reaped[0].proctoringEvents.push({
             timestamp: new Date(),
             type: 'DISCONNECT_REAPED',
-            details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 45s.'
+            details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 70s.'
         });
 
         assert.strictEqual(reaped[0].status, 'auto-submitted');

@@ -19,7 +19,7 @@ const { sendEirfNoticeEmail } = require('../utils/email');
 let reaperIntervalId = null;
 let isReaping = false;
 
-async function reapAbandonedSubmissions(maxIdleMs = 45000) {
+async function reapAbandonedSubmissions(maxIdleMs = 70000) {
     if (isReaping) return;
     isReaping = true;
     const cutoffTime = new Date(Date.now() - maxIdleMs);
@@ -155,7 +155,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 45000) {
     }
 }
 
-function startSubmissionReaper(intervalMs = 15000, maxIdleMs = 45000) {
+function startSubmissionReaper(intervalMs = 15000, maxIdleMs = 70000) {
     if (reaperIntervalId) return;
     console.log(`[DEAD-MAN REAPER] Dead-Man's Switch reaper worker initialized (Interval: ${intervalMs}ms, Max Idle: ${maxIdleMs}ms).`);
     
