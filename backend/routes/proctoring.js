@@ -60,10 +60,30 @@ router.post('/event/:submissionId', async (req, res) => {
                         durationSeconds: durationSeconds ? Number(durationSeconds) : 0
                     });
 
-                    if (type === 'FULLSCREEN_EXIT') {
-                        submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
-                    } else if (type === 'TAB_SWITCH') {
-                        submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+                    const detailsLower = (details || '').toLowerCase();
+                    const isExitEvent = type === 'FULLSCREEN_EXIT' && 
+                                        !detailsLower.includes('returned to fullscreen') && 
+                                        !detailsLower.includes('outside fullscreen') && 
+                                        !detailsLower.includes('reconciled with');
+                    
+                    const isTabEvent = type === 'TAB_SWITCH' && 
+                                       !detailsLower.includes('returned focus') && 
+                                       !detailsLower.includes('during fullscreen exit transition');
+
+                    if (isExitEvent) {
+                        const lastExitTime = submission.proctoringLog._lastExitTime || 0;
+                        const nowMs = Date.now();
+                        if (nowMs - lastExitTime > 3000) {
+                            submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
+                            submission.proctoringLog._lastExitTime = nowMs;
+                        }
+                    } else if (isTabEvent) {
+                        const lastTabTime = submission.proctoringLog._lastTabTime || 0;
+                        const nowMs = Date.now();
+                        if (nowMs - lastTabTime > 3000) {
+                            submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+                            submission.proctoringLog._lastTabTime = nowMs;
+                        }
                     } else if (type === 'CLIPBOARD_ATTEMPT') {
                         submission.proctoringLog.clipboardAttempts = (submission.proctoringLog.clipboardAttempts || 0) + 1;
                     } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {

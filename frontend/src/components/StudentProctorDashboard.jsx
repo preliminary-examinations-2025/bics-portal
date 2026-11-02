@@ -24,6 +24,34 @@ const resolveSnapshotUrl = (url) => {
   return `${backendBase}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 
+// Helper to compute authoritative distinct incident counts from events log
+const getDistinctCount = (log, evType, filterFn) => {
+  if (!log) return 0;
+  if (!Array.isArray(log.events) || log.events.length === 0) {
+    if (evType === 'FULLSCREEN_EXIT') return log.fullscreenExits || 0;
+    if (evType === 'TAB_SWITCH') return log.tabSwitches || 0;
+    return 0;
+  }
+  const matching = log.events.filter(e => e.type === evType && (!filterFn || filterFn(e)));
+  if (matching.length === 0) {
+    if (evType === 'FULLSCREEN_EXIT') return log.fullscreenExits || 0;
+    if (evType === 'TAB_SWITCH') return log.tabSwitches || 0;
+    return 0;
+  }
+  matching.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
+  let count = 0;
+  let lastTime = 0;
+  for (const ev of matching) {
+    const t = new Date(ev.timestamp || ev.startTime || 0).getTime();
+    if (t - lastTime > 3000) {
+      count++;
+      lastTime = t;
+    }
+  }
+  const recorded = evType === 'FULLSCREEN_EXIT' ? (log.fullscreenExits || count) : (log.tabSwitches || count);
+  return Math.min(count, recorded);
+};
+
 export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
   const [activeTab, setActiveTab] = useState('proctoring'); // 'proctoring' | 'eirf'
   const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
@@ -580,14 +608,14 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                   <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
                     <div style={{ color: '#64748b', fontSize: '7pt' }}>Fullscreen Exits</div>
                     <strong style={{ color: sub.proctoringLog?.fullscreenExits > 0 ? '#b91c1c' : '#334155', fontSize: '9pt' }}>
-                      {sub.proctoringLog?.fullscreenExits || 0} / 3
+                      {getDistinctCount(sub.proctoringLog, 'FULLSCREEN_EXIT', e => { const d = (e.details || '').toLowerCase(); return !d.includes('returned to fullscreen') && !d.includes('outside fullscreen') && !d.includes('reconciled with'); })} / 3
                     </strong>
                   </div>
 
                   <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
                     <div style={{ color: '#64748b', fontSize: '7pt' }}>Tab Switches / Blurs</div>
                     <strong style={{ color: sub.proctoringLog?.tabSwitches > 0 ? '#b91c1c' : '#334155', fontSize: '9pt' }}>
-                      {sub.proctoringLog?.tabSwitches || 0} / 3
+                      {getDistinctCount(sub.proctoringLog, 'TAB_SWITCH', e => { const d = (e.details || '').toLowerCase(); return !d.includes('returned focus') && !d.includes('during fullscreen exit transition'); })} / 3
                     </strong>
                   </div>
 

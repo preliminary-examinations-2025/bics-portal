@@ -341,23 +341,47 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
     log.snapshots = Array.from(snapshotMap.values());
 
     // 2. Count authoritative violations from persisted events log
-    // Notice: RIGHT_CLICK_BLOCKED is a minor warning, NOT counted towards major inspectAttempts
-    const eventFullscreenExits = log.events.filter(e => e.type === 'FULLSCREEN_EXIT').length;
-    const eventTabSwitches = log.events.filter(e => e.type === 'TAB_SWITCH').length;
-    const eventInspectAttempts = log.events.filter(e => e.type === 'DEVTOOLS_OPENED' || e.type === 'INSPECT_ATTEMPT').length;
+    // Helper to calculate distinct incident occurrences debounced by 3 seconds
+    const countDistinctIncidents = (evType, filterFn) => {
+        const matching = log.events.filter(e => e.type === evType && (!filterFn || filterFn(e)));
+        matching.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
+        let count = 0;
+        let lastTime = 0;
+        for (const ev of matching) {
+            const t = new Date(ev.timestamp || ev.startTime || 0).getTime();
+            if (t - lastTime > 3000) {
+                count++;
+                lastTime = t;
+            }
+        }
+        return count;
+    };
+
+    const eventFullscreenExits = countDistinctIncidents('FULLSCREEN_EXIT', e => {
+        const d = (e.details || '').toLowerCase();
+        return !d.includes('returned to fullscreen') && !d.includes('outside fullscreen') && !d.includes('reconciled with');
+    });
+
+    const eventTabSwitches = countDistinctIncidents('TAB_SWITCH', e => {
+        const d = (e.details || '').toLowerCase();
+        return !d.includes('returned focus') && !d.includes('during fullscreen exit transition');
+    });
+
+    const eventInspectAttempts = countDistinctIncidents('DEVTOOLS_OPENED') + countDistinctIncidents('INSPECT_ATTEMPT');
     const eventClipboardAttempts = log.events.filter(e => e.type === 'CLIPBOARD_ATTEMPT').length;
 
-    // 3. Monotonic high-water mark: max of (existing in DB, client report, count of events in log)
-    log.fullscreenExits = Math.max(
-        Number(rawExisting.fullscreenExits || 0),
-        Number(incomingLog?.fullscreenExits || 0),
-        eventFullscreenExits
-    );
-    log.tabSwitches = Math.max(
-        Number(rawExisting.tabSwitches || 0),
-        Number(incomingLog?.tabSwitches || 0),
-        eventTabSwitches
-    );
+    // 3. Monotonic high-water mark:
+    // If distinct events were recorded in the event log, the count cannot exceed the authoritative distinct events.
+    const resolvedFsExits = eventFullscreenExits > 0 
+        ? Math.max(Number(incomingLog?.fullscreenExits || 0), eventFullscreenExits)
+        : Math.max(Number(rawExisting.fullscreenExits || 0), Number(incomingLog?.fullscreenExits || 0));
+
+    const resolvedTabSwitches = eventTabSwitches > 0
+        ? Math.max(Number(incomingLog?.tabSwitches || 0), eventTabSwitches)
+        : Math.max(Number(rawExisting.tabSwitches || 0), Number(incomingLog?.tabSwitches || 0));
+
+    log.fullscreenExits = resolvedFsExits;
+    log.tabSwitches = resolvedTabSwitches;
     log.inspectAttempts = Math.max(
         Number(rawExisting.inspectAttempts || 0),
         Number(incomingLog?.inspectAttempts || 0),

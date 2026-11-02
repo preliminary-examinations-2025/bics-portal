@@ -120,9 +120,19 @@ export default function App() {
         return <LogoutHandler />;
     }
 
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+    const wsBasename = currentPath.startsWith('/workspace') ? '/workspace' : '/athenaeum';
+
+    React.useEffect(() => {
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/workspace')) {
+            const nextPath = window.location.pathname.replace(/^\/workspace/, '/athenaeum');
+            window.history.replaceState(null, '', nextPath + window.location.search + window.location.hash);
+        }
+    }, []);
+
     return (
         <AuthProvider>
-            <BrowserRouter basename="/athenaeum">
+            <BrowserRouter basename={wsBasename}>
                 <KataFaviconEnforcer />
                 <AuthGuard>
                         <Routes>

@@ -1348,20 +1348,13 @@ export default function App() {
           fsExitStartTimeRef.current = now;
           lastFullscreenExitTimeRef.current = now;
 
-          // Trigger proctor warning toast and evidence snapshot capture immediately
-          handleProctorViolation(
-            'FULLSCREEN_EXIT',
-            'The examination must be taken in full-screen mode. Please return to full-screen view.',
-            'Candidate exited fullscreen mode.'
-          );
-
           // Deduplication: If a window blur occurred within the last 600ms, merge into a single incident
           const timeSinceBlur = now - lastWindowBlurTimeRef.current;
           if (timeSinceBlur < DEDUPLICATION_WINDOW_MS) {
             console.log(`[Proctoring Deduplication] Fullscreen exit within ${timeSinceBlur}ms of blur. Reconciled as single incident.`);
             syncProctoringLogs(
               proctoringWarnings,
-              'FULLSCREEN_EXIT',
+              'FULLSCREEN_DEDUP',
               `Candidate exited fullscreen mode (reconciled with window blur incident).`
             );
           } else {
@@ -1375,7 +1368,7 @@ export default function App() {
           handleProctorResolved('FULLSCREEN_EXIT');
           syncProctoringLogs(
             proctoringWarnings,
-            'FULLSCREEN_EXIT',
+            'FULLSCREEN_RETURNED',
             `Candidate returned to fullscreen after ${durationSeconds} seconds.`,
             startTime,
             endTime,
@@ -1403,20 +1396,13 @@ export default function App() {
           tabExitStartTimeRef.current = now;
           lastWindowBlurTimeRef.current = now;
 
-          // Trigger proctor warning toast and evidence snapshot capture immediately
-          handleProctorViolation(
-            'TAB_SWITCH',
-            'Navigating away from the active examination window is not permitted. Please keep this tab focused.',
-            'Candidate lost window focus / switched tabs.'
-          );
-
           // Deduplication: If fullscreen was exited within the last 600ms, merge and suppress double-warning
           const timeSinceFS = now - lastFullscreenExitTimeRef.current;
           if (timeSinceFS < DEDUPLICATION_WINDOW_MS) {
             console.log(`[Proctoring Deduplication] Window blur within ${timeSinceFS}ms of fullscreen exit. Suppressed second warning.`);
             syncProctoringLogs(
               proctoringWarnings,
-              'TAB_SWITCH',
+              'TAB_SWITCH_DEDUP',
               `Candidate lost window focus during fullscreen exit transition.`
             );
             return;
@@ -1437,7 +1423,7 @@ export default function App() {
         tabExitStartTimeRef.current = null;
         syncProctoringLogs(
           proctoringWarnings,
-          'TAB_SWITCH',
+          'TAB_RETURNED',
           `Candidate returned focus after switching tabs/leaving window for ${durationSeconds} seconds.`,
           startTime,
           endTime,
@@ -1957,13 +1943,13 @@ export default function App() {
         }
       }
 
-      // Continuous monitor for fullscreen exits and tab switches
+      // Continuous monitor for fullscreen exits and tab switches: ensure modal warning overlay is active without spamming log events
       if (!document.fullscreenElement && fsExitStartTimeRef.current) {
-        handleProctorViolation('FULLSCREEN_EXIT', 'The examination must be taken in full-screen mode. Please return to full-screen view.', 'Candidate is outside fullscreen mode.');
+        setShowWarningModal(true);
       }
 
       if (tabExitStartTimeRef.current) {
-        handleProctorViolation('TAB_SWITCH', 'Navigating away from the active examination window is not permitted. Please keep this tab focused.', 'Candidate switched tabs or window.');
+        setShowWarningModal(true);
       }
       
       if (active) {

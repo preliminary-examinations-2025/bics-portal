@@ -8,8 +8,8 @@
 # Proxy Athenaeum, Workspace & Kata requests to the separate Workspace deployment site
 /athenaeum    https://bicsworkspace.netlify.app/athenaeum/kata  200!
 /athenaeum/*  https://bicsworkspace.netlify.app/athenaeum/:splat  200!
-/workspace    https://bicsworkspace.netlify.app/athenaeum/kata  200!
-/workspace/*  https://bicsworkspace.netlify.app/athenaeum/:splat  200!
+/workspace    /athenaeum/kata  301!
+/workspace/*  /athenaeum/:splat  301!
 /kata         https://bicsworkspace.netlify.app/athenaeum/kata  200!
 /kata/*       https://bicsworkspace.netlify.app/athenaeum/kata/:splat  200!
 /contests     https://bicsworkspace.netlify.app/athenaeum/contests  200!
