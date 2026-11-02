@@ -67,11 +67,11 @@ export function AuthProvider({ children }) {
         }
 
         let pathname = window.location.pathname || '';
-        if (!pathname.startsWith('/workspace')) {
-            pathname = '/workspace' + (pathname.startsWith('/') ? pathname : '/' + pathname);
+        if (!pathname.startsWith('/athenaeum') && !pathname.startsWith('/workspace')) {
+            pathname = '/athenaeum' + (pathname.startsWith('/') ? pathname : '/' + pathname);
         }
-        if (pathname === '/workspace' || pathname === '/workspace/') {
-            pathname = '/workspace/kata';
+        if (pathname === '/athenaeum' || pathname === '/athenaeum/' || pathname === '/workspace' || pathname === '/workspace/') {
+            pathname = '/athenaeum/kata';
         }
         let search = window.location.search || '';
         if (search) {

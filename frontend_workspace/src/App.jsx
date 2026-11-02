@@ -54,7 +54,7 @@ function KataFaviconEnforcer() {
     const location = useLocation();
 
     React.useEffect(() => {
-        const iconUrl = '/workspace/kata_icon.png';
+        const iconUrl = '/athenaeum/kata_icon.png';
         const linkRels = [
             { rel: 'icon', type: 'image/png' },
             { rel: 'shortcut icon', type: 'image/png' },
@@ -122,7 +122,7 @@ export default function App() {
 
     return (
         <AuthProvider>
-            <BrowserRouter basename="/workspace">
+            <BrowserRouter basename="/athenaeum">
                 <KataFaviconEnforcer />
                 <AuthGuard>
                         <Routes>

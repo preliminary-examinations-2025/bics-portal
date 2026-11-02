@@ -50,7 +50,7 @@ export default function KataHeader({ user, profile, onSearch, track, contestId }
     const isProblemsetActive = currentPath.includes('/problemset');
     const isSubmissionsActive = currentPath.includes('/submissions') || currentPath.includes('/status');
     const isContestsActive = (currentPath.includes('/contests') || currentPath.includes('/contest')) && !currentSearch.includes('track=') && !isShinActive && !isFormaActive && !isRulesActive && !isGymActive && !isProblemsetActive && !isSubmissionsActive;
-    const isHomeActive = !isRulesActive && !isGymActive && !isProblemsetActive && !isSubmissionsActive && !isContestsActive && !isShinActive && !isFormaActive && (currentPath === '/workspace/kata' || currentPath === '/kata' || currentPath === '/workspace' || currentPath === '/workspace/' || currentPath.includes('/profile'));
+    const isHomeActive = !isRulesActive && !isGymActive && !isProblemsetActive && !isSubmissionsActive && !isContestsActive && !isShinActive && !isFormaActive && (currentPath === '/athenaeum/kata' || currentPath === '/kata' || currentPath === '/athenaeum' || currentPath === '/athenaeum/' || currentPath === '/workspace/kata' || currentPath === '/workspace' || currentPath === '/workspace/' || currentPath.includes('/profile'));
 
     useEffect(() => {
         let animFrame = null;

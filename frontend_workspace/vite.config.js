@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/workspace/',
+  base: '/athenaeum/',
   server: {
     host: '0.0.0.0',
     port: 5175,

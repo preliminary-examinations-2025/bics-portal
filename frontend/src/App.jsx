@@ -521,18 +521,24 @@ export default function App() {
 
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-    // A. Workspace URL Redirection (handles both local port 5175 and production proxy /workspace/*)
-    if (cleanRedirect.includes('/workspace')) {
+    // A. Athenaeum & Workspace URL Redirection (handles both local port 5175 and production proxy /athenaeum/* or /workspace/*)
+    if (cleanRedirect.includes('/athenaeum') || cleanRedirect.includes('/workspace')) {
       try {
         sessionStorage.removeItem('bics_redirect_url');
         localStorage.removeItem('bics_redirect_url');
       } catch (e) {}
-      setLoadingMessage("Opening Kata Workspace...");
+      setLoadingMessage("Opening Athenaeum...");
 
-      const wsIdx = cleanRedirect.indexOf('/workspace');
-      let wsPath = cleanRedirect.slice(wsIdx);
-      if (wsPath === '/workspace' || wsPath === '/workspace/') {
-        wsPath = '/workspace/kata';
+      let wsPath = cleanRedirect;
+      if (cleanRedirect.includes('/athenaeum')) {
+        const wsIdx = cleanRedirect.indexOf('/athenaeum');
+        wsPath = cleanRedirect.slice(wsIdx);
+      } else {
+        const wsIdx = cleanRedirect.indexOf('/workspace');
+        wsPath = cleanRedirect.slice(wsIdx).replace(/^\/workspace/, '/athenaeum');
+      }
+      if (wsPath === '/athenaeum' || wsPath === '/athenaeum/' || wsPath === '/workspace' || wsPath === '/workspace/') {
+        wsPath = '/athenaeum/kata';
       }
       try {
         const dummyUrl = new URL(wsPath, 'http://dummy.local');
@@ -3069,7 +3075,7 @@ int main() {
       try {
         const wsIframe = document.createElement('iframe');
         wsIframe.style.display = 'none';
-        wsIframe.src = 'http://localhost:5175/workspace/logout?clean=1';
+        wsIframe.src = 'http://localhost:5175/athenaeum/logout?clean=1';
         document.body.appendChild(wsIframe);
         setTimeout(() => {
           try { wsIframe.remove(); } catch (e) {}

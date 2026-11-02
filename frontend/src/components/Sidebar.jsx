@@ -211,7 +211,7 @@ export default function Sidebar({
               </div>
             )}
 
-            <div className="sidebar-category">Workspace tools</div>
+            <div className="sidebar-category">Athenaeum</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, workspace: !dropdowns.workspace})}>
               Menu Links {dropdowns.workspace ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
@@ -233,7 +233,7 @@ export default function Sidebar({
                                   localStorage.getItem('token') || 
                                   sessionStorage.getItem('token') || '';
                     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-                    const baseTarget = isLocal ? 'http://localhost:5175/workspace/kata' : '/workspace/kata';
+                    const baseTarget = isLocal ? 'http://localhost:5175/athenaeum/kata' : '/athenaeum/kata';
                     const fullTarget = token ? `${baseTarget}?authToken=${encodeURIComponent(token)}` : baseTarget;
                     window.location.href = fullTarget;
                   }}

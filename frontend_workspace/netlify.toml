@@ -5,7 +5,28 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# Static assets rewrite from /workspace/ to root assets
+# Static assets rewrite from /athenaeum/ to root assets
+[[redirects]]
+  from = "/athenaeum/assets/*"
+  to = "/assets/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/athenaeum/favicon.ico"
+  to = "/favicon.ico"
+  status = 200
+
+[[redirects]]
+  from = "/athenaeum/kata_icon.png"
+  to = "/kata_icon.png"
+  status = 200
+
+[[redirects]]
+  from = "/athenaeum/kata_logo.png"
+  to = "/kata_logo.png"
+  status = 200
+
+# Legacy static assets rewrite from /workspace/ to root assets
 [[redirects]]
   from = "/workspace/assets/*"
   to = "/assets/:splat"
@@ -33,15 +54,26 @@
   status = 200
   force = true
 
-# Root URL redirect to /workspace/kata
+# Root URL redirect to /athenaeum/kata
 [[redirects]]
   from = "/"
-  to = "/workspace/kata"
+  to = "/athenaeum/kata"
   status = 302
 
-# SPA client-side routing fallback for /workspace/*
+# Legacy workspace redirect to /athenaeum/
+[[redirects]]
+  from = "/workspace"
+  to = "/athenaeum/kata"
+  status = 301
+
 [[redirects]]
   from = "/workspace/*"
+  to = "/athenaeum/:splat"
+  status = 301
+
+# SPA client-side routing fallback for /athenaeum/*
+[[redirects]]
+  from = "/athenaeum/*"
   to = "/index.html"
   status = 200
 

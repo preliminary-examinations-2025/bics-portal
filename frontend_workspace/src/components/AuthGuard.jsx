@@ -36,17 +36,17 @@ export default function AuthGuard({ children }) {
                         Access Restricted
                     </div>
                     <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '14px', lineHeight: '1.4' }}>
-                        {authError || 'Only enrolled BICS students and administrators are permitted access to the Kata workspace. Redirecting to login portal...'}
+                        {authError || 'Only enrolled BICS students and administrators are permitted access to the Athenaeum workspace. Redirecting to login portal...'}
                     </div>
                     <button
                         onClick={() => {
                             const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
                             let pathname = window.location.pathname || '';
-                            if (!pathname.startsWith('/workspace')) {
-                                pathname = '/workspace' + (pathname.startsWith('/') ? pathname : '/' + pathname);
+                            if (!pathname.startsWith('/athenaeum') && !pathname.startsWith('/workspace')) {
+                                pathname = '/athenaeum' + (pathname.startsWith('/') ? pathname : '/' + pathname);
                             }
-                            if (pathname === '/workspace' || pathname === '/workspace/') {
-                                pathname = '/workspace/kata';
+                            if (pathname === '/athenaeum' || pathname === '/athenaeum/' || pathname === '/workspace' || pathname === '/workspace/') {
+                                pathname = '/athenaeum/kata';
                             }
                             let search = window.location.search || '';
                             if (search) {
