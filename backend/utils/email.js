@@ -129,9 +129,7 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
     const basePortalUrl = process.env.PORTAL_URL || process.env.DASHBOARD_URL || defaultPortalUrl;
     const cleanBase = basePortalUrl.replace(/\/+$/, '');
 
-    const eirfUrl = cleanBase.endsWith('/terminal')
-        ? `${cleanBase}/eirf/${submissionId}`
-        : `${cleanBase}/terminal/eirf/${submissionId}`;
+    const eirfUrl = `${cleanBase}/assessment/eirf/${submissionId}`;
 
     const nowIST = formatISTDate(new Date());
     const deadlineIST = formatISTDate(new Date(Date.now() + 45 * 60 * 1000));

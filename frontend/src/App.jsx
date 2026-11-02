@@ -557,16 +557,16 @@ export default function App() {
       return;
     }
 
-    // B. OT Terminal Exam URL Redirection
-    if (cleanRedirect.includes('/terminal')) {
+    // B. Assessment Exam URL Redirection (Strict /assessment routes)
+    if (cleanRedirect.includes('/assessment') || cleanRedirect.includes('/terminal')) {
       try {
         sessionStorage.removeItem('bics_redirect_url');
         localStorage.removeItem('bics_redirect_url');
       } catch (e) {}
-      setLoadingMessage("Opening Exam Terminal...");
+      setLoadingMessage("Opening Assessment Portal...");
 
-      const termIdx = cleanRedirect.indexOf('/terminal');
-      let termPath = cleanRedirect.slice(termIdx);
+      const termIdx = cleanRedirect.includes('/assessment') ? cleanRedirect.indexOf('/assessment') : cleanRedirect.indexOf('/terminal');
+      let termPath = cleanRedirect.slice(termIdx).replace(/^\/terminal/, '/assessment');
       try {
         const dummyUrl = new URL(termPath, 'http://dummy.local');
         dummyUrl.searchParams.delete('authToken');
@@ -574,7 +574,7 @@ export default function App() {
       } catch (e) {}
 
       const authToken = token || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-      let finalTermUrl = isLocal ? `http://localhost:5174${termPath.replace(/^\/terminal/, '') || '/'}` : termPath;
+      let finalTermUrl = isLocal ? `http://localhost:5174${termPath}` : termPath;
       if (authToken) {
         const sep = finalTermUrl.includes('?') ? '&' : '?';
         finalTermUrl = `${finalTermUrl}${sep}authToken=${encodeURIComponent(authToken)}`;
@@ -2267,13 +2267,13 @@ int main() {
         return;
       }
  
-      // Redirect to FrontendOT (using port 5174 in development, or /terminal subpath on Netlify)
+      // Redirect to FrontendOT (using port 5174 in development, or /assessment subpath on Netlify)
       const otBaseUrl = window.location.origin.includes('localhost')
-        ? 'http://localhost:5174/terminal'
-        : `${window.location.origin}/terminal`;
+        ? 'http://localhost:5174/assessment'
+        : `${window.location.origin}/assessment`;
       const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
       const authParam = userToken ? `&authToken=${encodeURIComponent(userToken)}` : '';
-      const examUrl = `${otBaseUrl}/assessment?token=${data.token}${authParam}`;
+      const examUrl = `${otBaseUrl}/test?token=${data.token}${authParam}`;
       
       setTimeout(() => {
         window.location.href = examUrl;
@@ -3085,7 +3085,7 @@ int main() {
       try {
         const otIframe = document.createElement('iframe');
         otIframe.style.display = 'none';
-        otIframe.src = 'http://localhost:5174/terminal/logout?clean=1';
+        otIframe.src = 'http://localhost:5174/assessment/logout?clean=1';
         document.body.appendChild(otIframe);
         setTimeout(() => {
           try { otIframe.remove(); } catch (e) {}

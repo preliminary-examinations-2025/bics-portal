@@ -35,11 +35,19 @@ const base64ToBuf = (base64) => {
 export async function fetchServerPublicKey(apiBase = '/api') {
   if (cachedPublicKeyDer) return cachedPublicKeyDer;
   try {
+    const stored = localStorage.getItem('bics_eirf_pubkey');
+    if (stored) {
+      cachedPublicKeyDer = stored;
+    }
+  } catch (_) {}
+
+  try {
     const res = await fetch(`${apiBase}/test/eirf/public-key`);
     if (res.ok) {
       const data = await res.json();
       if (data.publicKeyDerBase64) {
         cachedPublicKeyDer = data.publicKeyDerBase64;
+        try { localStorage.setItem('bics_eirf_pubkey', cachedPublicKeyDer); } catch (_) {}
         return cachedPublicKeyDer;
       }
     }

@@ -33,7 +33,7 @@ function resolveSubmissionIdentifiers(submissionId, submissionDoc = null) {
 }
 
 // 1. Save Live Proctoring Event during test
-router.post('/event/:submissionId', async (req, res) => {
+router.post('/event/:submissionId', requireAuth, async (req, res) => {
     const { submissionId } = req.params;
     const { type, details, startTime, endTime, durationSeconds } = req.body;
     if (!type) return res.status(400).json({ error: "Event type is required." });
@@ -48,6 +48,13 @@ router.post('/event/:submissionId', async (req, res) => {
                 try {
                     submission = await TestSubmissionModel.findById(mongoSubId);
                     if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+                    if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+                        return res.status(403).json({ error: "Access denied: You cannot submit proctoring telemetry for another candidate." });
+                    }
+                    if (submission.status !== 'started') {
+                        return res.status(400).json({ error: "Exam is already closed. Additional events rejected." });
+                    }
 
                     submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
                     submission.proctoringLog.events = submission.proctoringLog.events || [];
@@ -116,6 +123,13 @@ router.post('/event/:submissionId', async (req, res) => {
             submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found." });
 
+            if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+                return res.status(403).json({ error: "Access denied: You cannot submit proctoring telemetry for another candidate." });
+            }
+            if (submission.status !== 'started') {
+                return res.status(400).json({ error: "Exam is already closed. Additional events rejected." });
+            }
+
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.events = submission.proctoringLog.events || [];
             submission.proctoringLog.events.push({ 
@@ -127,10 +141,30 @@ router.post('/event/:submissionId', async (req, res) => {
                         durationSeconds: durationSeconds ? Number(durationSeconds) : 0
             });
 
-            if (type === 'FULLSCREEN_EXIT') {
-                submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
-            } else if (type === 'TAB_SWITCH') {
-                submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+            const detailsLower = (details || '').toLowerCase();
+            const isExitEvent = type === 'FULLSCREEN_EXIT' && 
+                                !detailsLower.includes('returned to fullscreen') && 
+                                !detailsLower.includes('outside fullscreen') && 
+                                !detailsLower.includes('reconciled with');
+            
+            const isTabEvent = type === 'TAB_SWITCH' && 
+                               !detailsLower.includes('returned focus') && 
+                               !detailsLower.includes('during fullscreen exit transition');
+
+            if (isExitEvent) {
+                const lastExitTime = submission.proctoringLog._lastExitTime || 0;
+                const nowMs = Date.now();
+                if (nowMs - lastExitTime > 3000) {
+                    submission.proctoringLog.fullscreenExits = (submission.proctoringLog.fullscreenExits || 0) + 1;
+                    submission.proctoringLog._lastExitTime = nowMs;
+                }
+            } else if (isTabEvent) {
+                const lastTabTime = submission.proctoringLog._lastTabTime || 0;
+                const nowMs = Date.now();
+                if (nowMs - lastTabTime > 3000) {
+                    submission.proctoringLog.tabSwitches = (submission.proctoringLog.tabSwitches || 0) + 1;
+                    submission.proctoringLog._lastTabTime = nowMs;
+                }
             } else if (type === 'CLIPBOARD_ATTEMPT') {
                 submission.proctoringLog.clipboardAttempts = (submission.proctoringLog.clipboardAttempts || 0) + 1;
             } else if (type === 'WEBCAM_LOST' || type === 'WEBCAM_RESTORED') {
@@ -164,7 +198,7 @@ router.post('/event/:submissionId', async (req, res) => {
     }
 });
 
-// 2. WebRTC Signal Exchange Broker: send signal
+// 2. WebRTC Signal Exchange Broker: send signal (Issue B2: Ownership check)
 router.post('/signal/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
     const { sender, type, data } = req.body;
@@ -172,7 +206,24 @@ router.post('/signal/:submissionId', async (req, res) => {
 
     const { mongoSubId, bicsSubId } = resolveSubmissionIdentifiers(submissionId);
 
+    const rawAuth = req.headers.authorization || (req.query.token ? `Bearer ${req.query.token}` : null);
+    let authUser = null;
+    if (rawAuth) {
+        try {
+            authUser = jwt.verify(rawAuth.replace(/^Bearer\s+/i, ''), JWT_SECRET);
+        } catch (_) {}
+    }
+
     try {
+        if (authUser && authUser.role !== 'admin') {
+            const checkSub = dbState.useMongo 
+                ? await TestSubmissionModel.findById(mongoSubId)
+                : (getJSONData().testSubmissions || []).find(s => s.id === mongoSubId || s._id === mongoSubId);
+            if (checkSub && String(checkSub.studentId) !== String(authUser.studentId) && String(checkSub.candidateId) !== String(authUser.id)) {
+                return res.status(403).json({ error: "Access denied: Unauthorized to transmit WebRTC signals for another candidate." });
+            }
+        }
+
         if (dbState.useMongo) {
             const sig = new TestSignalModel({ submissionId: mongoSubId, sender, type, data });
             await sig.save();
@@ -197,7 +248,7 @@ router.post('/signal/:submissionId', async (req, res) => {
     }
 });
 
-// 3. WebRTC Signal Exchange Broker: poll signals
+// 3. WebRTC Signal Exchange Broker: poll signals (Issue B2: Prevent SDP/ICE leak to unauthorized callers)
 router.get('/signal/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
     const { sender } = req.query;
@@ -205,13 +256,34 @@ router.get('/signal/:submissionId', async (req, res) => {
 
     const { mongoSubId, bicsSubId } = resolveSubmissionIdentifiers(submissionId);
 
+    const rawAuth = req.headers.authorization || (req.query.token ? `Bearer ${req.query.token}` : null);
+    let authUser = null;
+    if (rawAuth) {
+        try {
+            authUser = jwt.verify(rawAuth.replace(/^Bearer\s+/i, ''), JWT_SECRET);
+        } catch (_) {}
+    }
+
     try {
+        if (authUser && authUser.role !== 'admin') {
+            const checkSub = dbState.useMongo 
+                ? await TestSubmissionModel.findById(mongoSubId)
+                : (getJSONData().testSubmissions || []).find(s => s.id === mongoSubId || s._id === mongoSubId);
+            if (checkSub && String(checkSub.studentId) !== String(authUser.studentId) && String(checkSub.candidateId) !== String(authUser.id)) {
+                return res.status(403).json({ error: "Access denied: Unauthorized to view WebRTC stream telemetry for another candidate." });
+            }
+        }
+
         let signals = [];
         if (dbState.useMongo) {
             signals = await TestSignalModel.find({ 
                 submissionId: { $in: [submissionId, mongoSubId, bicsSubId].filter(Boolean) }, 
                 sender 
             });
+            // Delete signals once read so they do not replay indefinitely (Issue B8)
+            if (signals.length > 0) {
+                await TestSignalModel.deleteMany({ _id: { $in: signals.map(s => s._id) } }).catch(() => {});
+            }
         } else {
             const db = getJSONData();
             db.testSignals = db.testSignals || [];
@@ -230,7 +302,7 @@ router.get('/signal/:submissionId', async (req, res) => {
 
 // 4. Capture & Store Proctoring Snapshot (Cloudinary in prod, local gitignored folder in dev)
 // Requirement 4: Stored under BICS Object ID (xxxxxx-xxxx-xxxx-xxxxxx), not 24-hex Mongo ID
-router.post('/snapshot/:submissionId', async (req, res) => {
+router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
     const { submissionId } = req.params;
     const { image, eventType, details } = req.body;
 
@@ -250,6 +322,13 @@ router.post('/snapshot/:submissionId', async (req, res) => {
         }
 
         if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+        if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+            return res.status(403).json({ error: "Access denied: Unauthorized to upload snapshot for another candidate." });
+        }
+        if (submission.status !== 'started') {
+            return res.status(400).json({ error: "Exam is already closed. Additional snapshots rejected." });
+        }
 
         // Authoritative 20-character base-36 BICS Object ID (6-4-4-6 format)
         const finalBicsSubId = isBicsId(submissionId) ? submissionId : (toBicsId(submission._id || submission.id || mongoSubId) || initialBicsId);
@@ -330,6 +409,13 @@ router.post('/snapshot/:submissionId', async (req, res) => {
             db.testSubmissions = db.testSubmissions || [];
             submission = db.testSubmissions.find(s => s.id === mongoSubId || s._id === mongoSubId || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId));
             if (!submission) return res.status(404).json({ error: "Submission not found." });
+
+            if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+                return res.status(403).json({ error: "Access denied: Unauthorized to upload snapshot for another candidate." });
+            }
+            if (submission.status !== 'started') {
+                return res.status(400).json({ error: "Exam is already closed. Additional snapshots rejected." });
+            }
 
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.snapshots = submission.proctoringLog.snapshots || [];

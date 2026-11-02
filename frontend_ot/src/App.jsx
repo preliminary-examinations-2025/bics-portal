@@ -18,7 +18,7 @@ import { EirfFormView } from './views/EirfFormView';
 import { VerificationReviewView } from './views/VerificationReviewView';
 import { FinishedView } from './views/FinishedView';
 import { extractComprehensiveClientSecurity } from './utils/clientSecurity';
-import { encryptEirfEnvelope, encryptPendingStorage, decryptPendingStorage } from './utils/eirfCrypto';
+import { encryptEirfEnvelope, encryptPendingStorage, decryptPendingStorage, fetchServerPublicKey } from './utils/eirfCrypto';
 import { 
   saveOfflineSubmission, 
   getOfflineSubmission, 
@@ -967,41 +967,11 @@ export default function App() {
       return;
     }
 
-    // Normalize path by stripping /terminal prefix if present
-    let normPath = rawPath.replace(/^\/terminal/, '') || '/';
-    if (!normPath.startsWith('/')) normPath = `/${normPath}`;
-    if (normPath.length > 1 && normPath.endsWith('/')) {
-      normPath = normPath.slice(0, -1);
-    }
+    // Strip trailing slashes
+    let path = rawPath.replace(/\/+$/, '') || '/';
 
-    // 2. EIRF route (e.g. /terminal/eirf/:submissionId or /eirf/:submissionId)
-    if (normPath.startsWith('/eirf/')) {
-      const parts = normPath.split('/').filter(Boolean);
-      const eirfSubId = parts[1] || searchParams.get('submissionId') || searchParams.get('id');
-      if (eirfSubId) {
-        loadEirfDetails(eirfSubId);
-        return;
-      }
-      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
-      setLoading(false);
-      return;
-    }
-
-    // 3. Submission verification route (e.g. /terminal/verification/:submissionId or /verification/:submissionId)
-    if (normPath.startsWith('/verification/') || normPath.startsWith('/submissions/') || normPath.startsWith('/submission/')) {
-      const parts = normPath.split('/').filter(Boolean);
-      const subId = parts[1] || searchParams.get('submissionId') || searchParams.get('id');
-      if (subId) {
-        loadSubmissionVerification(subId);
-        return;
-      }
-      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
-      setLoading(false);
-      return;
-    }
-
-    // 4. Strict Assessment Route: Must be /assessment with valid token query parameter
-    if (normPath === '/assessment') {
+    // 1. Strict Test Route: /assessment/test?token=****
+    if (path === '/assessment/test') {
       const parsedToken = searchParams.get('token');
       const urlAuthToken = searchParams.get('authToken') || searchParams.get('jwt');
       if (urlAuthToken) {
@@ -1019,21 +989,48 @@ export default function App() {
         return;
       }
       setToken(parsedToken);
+      fetchServerPublicKey(API_BASE).catch(() => {});
       verifyExamToken(parsedToken);
       return;
     }
 
-    // 5. Any other link/path is strictly rejected with server forbidden error
+    // 2. Strict Verification Route: /assessment/verification/:id
+    if (path.startsWith('/assessment/verification/')) {
+      const parts = path.split('/').filter(Boolean);
+      // Expected: ['assessment', 'verification', ':id']
+      const subId = parts[2] || searchParams.get('submissionId') || searchParams.get('id');
+      if (subId) {
+        loadSubmissionVerification(subId);
+        return;
+      }
+      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
+      setLoading(false);
+      return;
+    }
+
+    // 3. Strict EIRF Route: /assessment/eirf/:submissionId
+    if (path.startsWith('/assessment/eirf/')) {
+      const parts = path.split('/').filter(Boolean);
+      // Expected: ['assessment', 'eirf', ':submissionId']
+      const eirfSubId = parts[2] || searchParams.get('submissionId') || searchParams.get('id');
+      if (eirfSubId) {
+        loadEirfDetails(eirfSubId);
+        return;
+      }
+      setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
+      setLoading(false);
+      return;
+    }
+
+    // 4. Any other route is strictly rejected with server forbidden error
     setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
     setLoading(false);
   }, []);
 
   // Dynamically update browser tab title based on route and examination/verification state
   useEffect(() => {
-    const isEirfRoute = window.location.pathname.includes('/eirf') || flow === 'eirf_form';
-    const isSubmissionsRoute = window.location.pathname.startsWith('/submissions') || 
-                               window.location.pathname.startsWith('/submission') || 
-                               flow === 'verification_review';
+    const isEirfRoute = window.location.pathname.startsWith('/assessment/eirf') || flow === 'eirf_form';
+    const isSubmissionsRoute = window.location.pathname.startsWith('/assessment/verification') || flow === 'verification_review';
 
     if (verifyError) {
       document.title = "Server Error";
@@ -1523,14 +1520,18 @@ export default function App() {
     if (flow !== 'active_exam') return;
 
     const timer = setInterval(() => {
-      setExamTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          autoSubmitExam(proctoringWarnings);
-          return 0;
-        }
-        return prev - 1;
-      });
+      if (!submission?.startedAt || !test?.duration) {
+        setExamTimeLeft(prev => Math.max(0, prev - 1));
+        return;
+      }
+      const elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+      const totalDurationMs = Number(test.duration) * 60 * 1000;
+      const remainingSec = Math.max(0, Math.round((totalDurationMs - elapsedMs) / 1000));
+      setExamTimeLeft(remainingSec);
+      if (remainingSec <= 0) {
+        clearInterval(timer);
+        autoSubmitExam(proctoringWarnings);
+      }
     }, 1000);
 
     return () => clearInterval(timer);
@@ -1604,7 +1605,7 @@ export default function App() {
   const captureEvidenceSnapshot = async (eventType, details, retryCount = 0) => {
     try {
       if (!submission) return;
-      const subId = submission.bicsId || submission.id || submission._id;
+      const subId = submission.id || submission._id;
       if (!subId) return;
 
       const canvas = document.createElement('canvas');
@@ -1623,8 +1624,7 @@ export default function App() {
             const imageCapture = new window.ImageCapture(videoTrack);
             const bitmap = await imageCapture.grabFrame();
             if (bitmap && bitmap.width > 0) {
-              ctx.translate(canvas.width, 0);
-              ctx.scale(-1, 1);
+              // Natural unmirrored frame for forensic record
               ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
               ctx.setTransform(1, 0, 0, 1, 0, 0);
               frameDrawn = true;
@@ -1644,8 +1644,7 @@ export default function App() {
             vid.play().catch(() => {});
           }
           if (vid.readyState >= 2) {
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
+            // Natural unmirrored frame for forensic record
             ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             frameDrawn = true;
@@ -2339,7 +2338,8 @@ export default function App() {
 
     let active = true;
     const subId = submission.id || submission._id;
-    let checkedEventIds = new Set();
+    if (!checkedEventIdsRef.current) checkedEventIdsRef.current = new Set();
+    const checkedEventIds = checkedEventIdsRef.current;
 
     const checkAdminMessages = setInterval(async () => {
       try {
@@ -2557,11 +2557,13 @@ export default function App() {
     const handleDisconnect = () => {
       try {
         if (navigator.sendBeacon) {
+          const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
           const payload = JSON.stringify({
             submissionId: subId,
             status: 'auto-submitted',
             reason: 'PAGEHIDE_DISCONNECT',
-            answers: examAnswersRef.current,
+            authToken: userAuth,
+            answers: typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : examAnswersRef.current,
             proctoringLog: getProctoringLogPayload(proctoringWarnings)
           });
           const blob = new Blob([payload], { type: 'application/json' });
@@ -2659,7 +2661,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           submissionId: submission._id || submission.id,
-          answers: answersList,
+          answers: finalAnswers,
           proctoringLog: proctoringWarnings,
           status: 'started'
         })
@@ -2794,6 +2796,7 @@ export default function App() {
         }
       }
 
+      const latestAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
       const pLogPayload = getProctoringLogPayload(warningsObj);
 
       await fetch(`${API_BASE}/tests/submit`, {
@@ -2801,7 +2804,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           submissionId: subId,
-          answers: examAnswers,
+          answers: latestAnswers,
           proctoringLog: pLogPayload,
           status: 'started'
         })
@@ -2914,13 +2917,19 @@ export default function App() {
     }
   };
 
+  const isFinalizingRef = useRef(false);
   const finalizeExamSubmission = async (answersList, warningsObj, statusVal) => {
+    if (isFinalizingRef.current) return;
+    isFinalizingRef.current = true;
     setSubmittingExam(true);
     const subId = submission?._id || submission?.id;
     if (!subId) {
       setSubmittingExam(false);
+      isFinalizingRef.current = false;
+      triggerCustomAlert("Submission Error", "Active examination submission could not be verified. Please check your internet connection and refresh.");
       return;
     }
+    const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (answersList || examAnswersRef.current || []);
 
     const fullPLog = getProctoringLogPayload(warningsObj);
     const isActuallyOnline = Boolean(navigator.onLine && isOnline);
@@ -3084,31 +3093,45 @@ export default function App() {
     const subId = submission.id || submission._id;
 
     const onOnline = () => {
-      // Drain queued offline proctoring events
-      getOfflineEvents(subId).then(events => {
+      // Drain queued offline proctoring events safely with auth (Issue B5)
+      getOfflineEvents(subId).then(async events => {
         if (events && events.length > 0) {
-          events.forEach(ev => {
+          const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+          const uploads = events.map(ev => 
             fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+              },
               body: JSON.stringify(ev)
-            }).catch(() => {});
-          });
-          clearOfflineEvents(subId);
+            }).then(r => r.ok).catch(() => false)
+          );
+          const results = await Promise.all(uploads);
+          if (results.every(Boolean)) {
+            clearOfflineEvents(subId);
+          }
         }
       });
 
-      // Drain queued offline proctoring snapshots
-      getOfflineSnapshots(subId).then(snapshots => {
+      // Drain queued offline proctoring snapshots safely with auth (Issue B5)
+      getOfflineSnapshots(subId).then(async snapshots => {
         if (snapshots && snapshots.length > 0) {
-          snapshots.forEach(snap => {
+          const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+          const uploads = snapshots.map(snap => 
             fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+              },
               body: JSON.stringify(snap)
-            }).catch(() => {});
-          });
-          clearOfflineSnapshots(subId);
+            }).then(r => r.ok).catch(() => false)
+          );
+          const results = await Promise.all(uploads);
+          if (results.every(Boolean)) {
+            clearOfflineSnapshots(subId);
+          }
         }
       });
     };

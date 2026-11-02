@@ -80,8 +80,31 @@ export default function OnlineTestsView({
                           </span>
                         ) : (test.hasEirfFlag || (test.eirfStatus && test.eirfStatus !== 'none')) ? (
                           <span 
-                            style={{ fontSize: '8pt', backgroundColor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                            title="Proctoring telemetry alert recorded (>5s). Check your registered email for your official EIRF filing link."
+                            onClick={(e) => {
+                              if (test.submissionId) {
+                                e.stopPropagation();
+                                const otBase = window.location.origin.includes('localhost')
+                                  ? 'http://localhost:5174/assessment'
+                                  : `${window.location.origin}/assessment`;
+                                const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                                const authParam = token ? `?authToken=${encodeURIComponent(token)}` : '';
+                                window.location.href = `${otBase}/eirf/${test.submissionId}${authParam}`;
+                              }
+                            }}
+                            style={{ 
+                              fontSize: '8pt', 
+                              backgroundColor: '#fffbeb', 
+                              color: '#b45309', 
+                              border: '1px solid #fde68a', 
+                              padding: '2px 8px', 
+                              borderRadius: '12px', 
+                              fontWeight: 'bold', 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '4px', 
+                              cursor: test.submissionId ? 'pointer' : 'help' 
+                            }}
+                            title={test.submissionId ? "Click to view or file your Emergency Incident Report Form (EIRF)" : "Proctoring telemetry alert recorded. Check your registered email for filing link."}
                           >
                             <AlertTriangle size={10} style={{ color: '#d97706' }} /> EIRF Review Pending
                           </span>
@@ -106,15 +129,33 @@ export default function OnlineTestsView({
                     Open from: {new Date(test.startDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST to {new Date(test.endDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
                   </p>
                 </div>
-                <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   {test.submissionStatus ? (
-                    <button
-                      className="cf-btn-secondary"
-                      disabled
-                      style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
-                    >
-                      Already Submitted
-                    </button>
+                    <>
+                      <button
+                        className="cf-btn-secondary"
+                        disabled
+                        style={{ cursor: 'not-allowed', backgroundColor: '#cbd5e1', color: '#64748b', borderColor: '#cbd5e1' }}
+                      >
+                        Already Submitted
+                      </button>
+                      {(test.hasEirfFlag || (test.eirfStatus && test.eirfStatus !== 'none')) && test.eirfStatus !== 'approved' && test.eirfStatus !== 'rejected' && test.submissionId && (
+                        <button
+                          className="cf-btn-secondary"
+                          onClick={() => {
+                            const otBase = window.location.origin.includes('localhost')
+                              ? 'http://localhost:5174/assessment'
+                              : `${window.location.origin}/assessment`;
+                            const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                            const authParam = token ? `?authToken=${encodeURIComponent(token)}` : '';
+                            window.location.href = `${otBase}/eirf/${test.submissionId}${authParam}`;
+                          }}
+                          style={{ borderColor: '#fde68a', color: '#b45309', backgroundColor: '#fffbeb', fontSize: '9pt', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          File Incident Report (EIRF)
+                        </button>
+                      )}
+                    </>
                   ) : isFuture ? (
                     <button
                       className="cf-btn-secondary"

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShieldAlert, Loader2, Check, X, Play } from 'lucide-react';
 import { API_BASE } from '../config/constants';
+import { decryptPendingStorage } from '../utils/eirfCrypto';
 import { CenteredFooter } from '../components/common/CenteredFooter';
 import { 
   getOfflineSubmission, 
@@ -277,7 +278,11 @@ export function FinishedView({
                     if (!payload) {
                       const cachedPayload = localStorage.getItem(pendingSubmitKey);
                       if (cachedPayload) {
-                        try { payload = JSON.parse(cachedPayload); } catch {}
+                        try {
+                          payload = await decryptPendingStorage(cachedPayload, subId);
+                        } catch {
+                          try { payload = JSON.parse(cachedPayload); } catch {}
+                        }
                       }
                     }
 
@@ -306,31 +311,45 @@ export function FinishedView({
                         localStorage.removeItem(pendingSubmitKey);
                         await deleteOfflineSubmission(subId).catch(() => {});
 
-                        // Drain queued offline proctoring events
-                        getOfflineEvents(subId).then(events => {
+                        // Drain queued offline proctoring events safely with auth (Issue B5)
+                        getOfflineEvents(subId).then(async events => {
                           if (events && events.length > 0) {
-                            events.forEach(ev => {
+                            const userAuth = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                            const uploads = events.map(ev => 
                               fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 
+                                  'Content-Type': 'application/json',
+                                  ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+                                },
                                 body: JSON.stringify(ev)
-                              }).catch(() => {});
-                            });
-                            clearOfflineEvents(subId);
+                              }).then(r => r.ok).catch(() => false)
+                            );
+                            const results = await Promise.all(uploads);
+                            if (results.every(Boolean)) {
+                              clearOfflineEvents(subId);
+                            }
                           }
                         });
 
-                        // Drain queued offline proctoring snapshots
-                        getOfflineSnapshots(subId).then(snapshots => {
+                        // Drain queued offline proctoring snapshots safely with auth (Issue B5)
+                        getOfflineSnapshots(subId).then(async snapshots => {
                           if (snapshots && snapshots.length > 0) {
-                            snapshots.forEach(snap => {
+                            const userAuth = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                            const uploads = snapshots.map(snap => 
                               fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 
+                                  'Content-Type': 'application/json',
+                                  ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+                                },
                                 body: JSON.stringify(snap)
-                              }).catch(() => {});
-                            });
-                            clearOfflineSnapshots(subId);
+                              }).then(r => r.ok).catch(() => false)
+                            );
+                            const results = await Promise.all(uploads);
+                            if (results.every(Boolean)) {
+                              clearOfflineSnapshots(subId);
+                            }
                           }
                         });
 

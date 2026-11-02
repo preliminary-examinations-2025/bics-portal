@@ -14,6 +14,7 @@ const { TestSubmissionModel, TestConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { encryptEirfPayload } = require('../utils/cipher');
 const { recalculateMCQScore, calculateCodingScoreFast } = require('../routes/tests');
+const { sendEirfNoticeEmail } = require('../utils/email');
 
 let reaperIntervalId = null;
 let isReaping = false;
@@ -56,6 +57,10 @@ async function reapAbandonedSubmissions(maxIdleMs = 45000) {
 
                     sub.status = 'auto-submitted';
                     sub.submittedAt = new Date();
+                    sub.hasEirfFlag = true;
+                    if (!sub.eirfStatus || sub.eirfStatus === 'none') {
+                        sub.eirfStatus = 'pending';
+                    }
 
                     if (!sub.proctoringLog) sub.proctoringLog = {};
                     if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
@@ -88,6 +93,21 @@ async function reapAbandonedSubmissions(maxIdleMs = 45000) {
                     };
                     sub.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(sub._id || sub.id));
 
+                    if (!sub.eirfNoticeEmailSent && sub.candidateEmail) {
+                        try {
+                            await sendEirfNoticeEmail(
+                                sub.candidateEmail,
+                                sub.candidateName || 'Candidate',
+                                sub.testTitle || 'BICS Online Examination',
+                                `Session auto-finalized by server dead-man switch: Candidate heartbeat lost for ${idleSeconds}s (browser crash, connection loss, or power trip).`,
+                                String(sub._id || sub.id)
+                            );
+                            sub.eirfNoticeEmailSent = true;
+                        } catch (mailErr) {
+                            console.error(`[DEAD-MAN REAPER] Failed to send EIRF notice email:`, mailErr.message);
+                        }
+                    }
+
                     await sub.save();
                 } catch (subErr) {
                     console.error(`[DEAD-MAN REAPER] Error finalizing session ${sub._id}:`, subErr.message);
@@ -108,6 +128,10 @@ async function reapAbandonedSubmissions(maxIdleMs = 45000) {
                     if (now - startT > maxIdleMs && now - hbT > maxIdleMs) {
                         sub.status = 'auto-submitted';
                         sub.submittedAt = new Date();
+                        sub.hasEirfFlag = true;
+                        if (!sub.eirfStatus || sub.eirfStatus === 'none') {
+                            sub.eirfStatus = 'pending';
+                        }
                         if (!sub.proctoringLog) sub.proctoringLog = {};
                         if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
                         sub.proctoringLog.events.push({

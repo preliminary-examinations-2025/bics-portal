@@ -68,7 +68,7 @@ router.get('/active', requireAuth, async (req, res) => {
                                 { isDeleted: { $ne: true } }
                             ]
                         })
-                        .select('testId status eirfStatus hasEirfFlag startedAt')
+                        .select('_id testId status eirfStatus hasEirfFlag startedAt')
                         .sort({ startedAt: -1 })
                         .lean();
 
@@ -114,6 +114,7 @@ router.get('/active', requireAuth, async (req, res) => {
                 endDate: t.endDate,
                 instructions: t.instructions,
                 questionsCount: Array.isArray(t.questions) ? t.questions.length : 0,
+                submissionId: foundSub ? (foundSub._id || foundSub.id) : null,
                 submissionStatus: foundSub ? foundSub.status : null,
                 eirfStatus: foundSub ? (foundSub.eirfStatus || 'none') : 'none',
                 hasEirfFlag: foundSub ? !!foundSub.hasEirfFlag : false
@@ -169,7 +170,7 @@ router.get('/submitted', requireAuth, async (req, res) => {
             const testId = sub.testId;
             if (dbState.useMongo) {
                 test = await TestConfigModel.findById(testId);
-                if (test) {
+                if (test && (!sub.evaluation || sub.evaluation.totalScore == null)) {
                     recalculateMCQScore(sub, test);
                 }
             } else {
@@ -179,8 +180,10 @@ router.get('/submitted', requireAuth, async (req, res) => {
                 if (test) {
                     const dbSub = db.testSubmissions.find(s => s.id === sub.id || s._id === sub._id);
                     if (dbSub) {
-                        recalculateMCQScore(dbSub, test);
-                        saveJSONData(db);
+                        if (!dbSub.evaluation || dbSub.evaluation.totalScore == null) {
+                            recalculateMCQScore(dbSub, test);
+                            saveJSONData(db);
+                        }
                         sub = dbSub;
                     }
                 }
@@ -371,14 +374,18 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
     const eventClipboardAttempts = log.events.filter(e => e.type === 'CLIPBOARD_ATTEMPT').length;
 
     // 3. Monotonic high-water mark:
-    // If distinct events were recorded in the event log, the count cannot exceed the authoritative distinct events.
-    const resolvedFsExits = eventFullscreenExits > 0 
-        ? Math.max(Number(incomingLog?.fullscreenExits || 0), eventFullscreenExits)
-        : Math.max(Number(rawExisting.fullscreenExits || 0), Number(incomingLog?.fullscreenExits || 0));
+    // Guarantees violation counters never decrease, but also reflect true authoritative counts
+    const resolvedFsExits = Math.max(
+        Number(rawExisting.fullscreenExits || 0),
+        Number(incomingLog?.fullscreenExits || 0),
+        eventFullscreenExits
+    );
 
-    const resolvedTabSwitches = eventTabSwitches > 0
-        ? Math.max(Number(incomingLog?.tabSwitches || 0), eventTabSwitches)
-        : Math.max(Number(rawExisting.tabSwitches || 0), Number(incomingLog?.tabSwitches || 0));
+    const resolvedTabSwitches = Math.max(
+        Number(rawExisting.tabSwitches || 0),
+        Number(incomingLog?.tabSwitches || 0),
+        eventTabSwitches
+    );
 
     log.fullscreenExits = resolvedFsExits;
     log.tabSwitches = resolvedTabSwitches;
@@ -640,22 +647,41 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
     }
 });
 
-// 4.2 Browser Beacon on Disconnect / Tab Close (Item 2.4)
+// 4.2 Browser Beacon on Disconnect / Tab Close (Item 2.4 & Issue B3)
 router.post('/beacon-disconnect', express.json({ type: ['application/json', 'text/plain', '*/*'] }), async (req, res) => {
     let payload = req.body;
     if (typeof payload === 'string') {
         try { payload = JSON.parse(payload); } catch (_) {}
     }
-    const { submissionId, answers, proctoringLog } = payload || {};
+    const { submissionId, answers, proctoringLog, authToken } = payload || {};
     if (!submissionId) return res.status(400).json({ error: "Submission ID required" });
     const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
+
+    // Verify token if provided or in header
+    let authUser = null;
+    const rawToken = authToken || (req.headers.authorization ? req.headers.authorization.replace(/^Bearer\s+/i, '') : null);
+    if (rawToken) {
+        try {
+            authUser = jwt.verify(rawToken, JWT_SECRET);
+        } catch (_) {}
+    }
 
     try {
         if (dbState.useMongo) {
             const submission = await TestSubmissionModel.findById(targetSubId);
-            if (submission && submission.status === 'started') {
+            if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+            if (authUser && authUser.role !== 'admin' && String(submission.studentId) !== String(authUser.studentId) && String(submission.candidateId) !== String(authUser.id)) {
+                return res.status(403).json({ error: "Access denied: Unauthorized to submit disconnect beacon for another candidate." });
+            }
+
+            if (submission.status === 'started') {
                 submission.status = 'auto-submitted';
                 submission.submittedAt = new Date();
+                submission.hasEirfFlag = true;
+                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
+                    submission.eirfStatus = 'pending';
+                }
                 if (answers && Array.isArray(answers) && answers.length > 0) {
                     submission.answers = answers;
                 }
@@ -675,6 +701,22 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                     recalculateMCQScore(submission, test);
                     calculateCodingScoreFast(submission, test);
                 }
+
+                if (!submission.eirfNoticeEmailSent && submission.candidateEmail) {
+                    try {
+                        await sendEirfNoticeEmail(
+                            submission.candidateEmail,
+                            submission.candidateName || 'Candidate',
+                            submission.testTitle || 'BICS Examination',
+                            'Exam session auto-submitted: Browser tab/window closed by candidate.',
+                            String(submission._id || submission.id)
+                        );
+                        submission.eirfNoticeEmailSent = true;
+                    } catch (mailErr) {
+                        console.error("[BEACON DISCONNECT] Failed to send EIRF notice email:", mailErr.message);
+                    }
+                }
+
                 await submission.save();
                 console.log(`[BEACON FINALIZED] Submission ${submissionId} auto-submitted via browser beacon.`);
             }
@@ -897,17 +939,51 @@ router.post('/submit', async (req, res) => {
                     submission = await TestSubmissionModel.findById(targetSubId);
                     if (!submission) return res.status(404).json({ error: "Submission not found" });
 
-                    if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
-                        const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
-                        earlyPayload.bicsId = toBicsId(submission._id || submission.id);
-                        return res.json({ success: true, submission: earlyPayload });
+                    // A1. Hard State Machine Guard: Never allow draft saves to reopen finalized exams
+                    if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
+                        if (!isFinalSubmission || status === 'started') {
+                            const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                            earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                            return res.json({ success: true, message: "Exam is already finalized. Draft save ignored.", submission: earlyPayload });
+                        }
                     }
 
-                    submission.answers = answers;
+                    // A2. Reconnect Recovery: If auto-submitted due to network disconnect, allow submission if within deadline
+                    let allowAnswersUpdate = true;
+                    if (submission.status === 'auto-submitted' && isFinalSubmission) {
+                        const testDoc = await TestConfigModel.findById(submission.testId);
+                        const elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+                        const allowedMs = (testDoc?.duration || 60) * 60 * 1000 + (120 * 1000); // duration + 2 min buffer
+                        if (elapsedMs > allowedMs) {
+                            allowAnswersUpdate = false;
+                        } else {
+                            submission.status = 'submitted'; // upgrade from auto-submitted
+                        }
+                    } else if (['submitted', 'evaluated'].includes(submission.status)) {
+                        allowAnswersUpdate = false;
+                    }
+
+                    // A3. Authoritative input sanitization: strip client-supplied scores, test results, or manual grade flags
+                    if (allowAnswersUpdate && Array.isArray(answers)) {
+                        submission.answers = answers.map(a => {
+                            const cleanAns = { ...a };
+                            delete cleanAns.score;
+                            delete cleanAns.isManuallyGraded;
+                            delete cleanAns.testCaseResults;
+                            delete cleanAns.isBonusAwarded;
+                            delete cleanAns.isObjectionResolved;
+                            return cleanAns;
+                        });
+                    }
+
                     if (proctoringLog) {
                         submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
                     }
-                    submission.status = status || 'submitted';
+
+                    const ALLOWED_STATUSES = ['started', 'submitted', 'auto-submitted'];
+                    if (submission.status === 'started' || isFinalSubmission) {
+                        submission.status = ALLOWED_STATUSES.includes(status) ? status : 'submitted';
+                    }
                     if (status !== 'started') {
                         submission.submittedAt = new Date();
                     }

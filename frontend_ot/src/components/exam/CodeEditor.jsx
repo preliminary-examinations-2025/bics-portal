@@ -587,6 +587,7 @@ export const CodeEditor = ({
                           <html>
                             <head>
                               <meta charset="utf-8">
+                              <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:;">
                               <base href="https://invalid-sandbox-origin.invalid/">
                               <style>
                                 html, body {

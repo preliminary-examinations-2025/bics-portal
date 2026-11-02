@@ -70,8 +70,8 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
             const objectionsCount = (sub.objections || []).length;
 
             const otBase = window.location.origin.includes('localhost')
-              ? 'http://localhost:5174/terminal'
-              : `${window.location.origin}/terminal`;
+              ? 'http://localhost:5174/assessment'
+              : `${window.location.origin}/assessment`;
 
             return (
               <div
