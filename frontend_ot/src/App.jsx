@@ -414,6 +414,8 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState('');
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [disconnectCountdown, setDisconnectCountdown] = useState(null);
+  const disconnectTimerRef = useRef(null);
 
   useEffect(() => {
     const handleOnlineStatus = () => setIsOnline(true);
@@ -2531,14 +2533,19 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' }
         });
         if (res.ok) {
+          cancelDisconnectCountdown();
           const data = await res.json();
           // If server finalized submission due to timeout or proctor action, transition to finished
           if (data.status && data.status !== 'started') {
             setFlow('finished');
             setFinishedStep(1);
           }
+        } else {
+          startDisconnectCountdown();
         }
-      } catch (_) {}
+      } catch (_) {
+        startDisconnectCountdown();
+      }
     };
 
     // Immediate ping + periodic 12-second pulse
@@ -3100,12 +3107,47 @@ export default function App() {
     setSubmittingExam(false);
   };
 
+  const cancelDisconnectCountdown = () => {
+    if (disconnectTimerRef.current) {
+      clearInterval(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+    setDisconnectCountdown(null);
+  };
+
+  const startDisconnectCountdown = () => {
+    if (disconnectTimerRef.current) return;
+    setDisconnectCountdown(50);
+
+    disconnectTimerRef.current = setInterval(() => {
+      setDisconnectCountdown(prev => {
+        if (prev === null) return 50;
+        if (prev <= 1) {
+          clearInterval(disconnectTimerRef.current);
+          disconnectTimerRef.current = null;
+          console.warn("[Network Disconnect] 50 seconds elapsed without connection. Auto-finalizing exam.");
+          const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
+          finalizeExamSubmission(finalAnswers, proctoringWarnings, 'auto-submitted');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => {
+    if (flow !== 'active_exam') {
+      cancelDisconnectCountdown();
+    }
+  }, [flow]);
+
   // Active exam network listener: keep proctoring active, download payload, mark EIRF flag, and sync on reconnect (Items 7 & 8)
   useEffect(() => {
     if (!submission) return;
     const subId = submission.id || submission._id;
 
     const onOnline = () => {
+      cancelDisconnectCountdown();
       // Drain queued offline proctoring events safely with auth (Issue B5)
       getOfflineEvents(subId).then(async events => {
         if (events && events.length > 0) {
@@ -3155,6 +3197,7 @@ export default function App() {
         setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
         downloadEirfBackupFile(submission, candidate, examAnswers, proctoringWarnings);
         setWebcamProctorWarning("Network Offline: Local proctoring remains active. Your answers and proctoring telemetry are secured.");
+        startDisconnectCountdown();
       }
     };
 
@@ -3378,6 +3421,31 @@ export default function App() {
   if (flow === 'active_exam') {
     return (
       <>
+        {disconnectCountdown !== null && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 999999,
+            backgroundColor: '#dc2626',
+            color: '#ffffff',
+            padding: '10px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px',
+            fontWeight: 'bold',
+            fontSize: '11pt',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+            borderBottom: '2px solid #f87171'
+          }}>
+            <ShieldAlert size={20} />
+            <span>
+              Network Disconnected! Reconnecting to exam server... Your session will auto-finalize in <strong>{disconnectCountdown}s</strong> if connection is not restored.
+            </span>
+          </div>
+        )}
         <ActiveExamView
           devModeActive={devModeActive}
           test={test}

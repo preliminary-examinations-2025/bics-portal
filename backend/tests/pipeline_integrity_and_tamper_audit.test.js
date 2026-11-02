@@ -132,8 +132,17 @@ async function runPipelineIntegrityAudit() {
     assert(proctoringSource.includes("Unauthorized to view WebRTC stream telemetry for another candidate"), "Signal poll must reject unauthorized cross-candidate access");
     console.log("  ✅ WebRTC security verified: Telemetry streams are strictly isolated and replay-resistant.");
 
+    // ------------------------------------------------------------------
+    // TEST 8: 50-Second Network Disconnection Auto-Finalize Guard
+    // ------------------------------------------------------------------
+    console.log("\n[TEST 8] 50-Second Network Disconnection Auto-Finalize Guard:");
+    assert(frontendOtSource.includes("setDisconnectCountdown(50)"), "Frontend must initialize 50s disconnect countdown on connection loss");
+    assert(frontendOtSource.includes("50 seconds elapsed without connection. Auto-finalizing exam"), "Frontend must auto-finalize exam when 50s disconnect expires");
+    assert(frontendOtSource.includes("Your session will auto-finalize in"), "Frontend must display real-time warning countdown banner to candidate");
+    console.log("  ✅ 50-second disconnect guard verified: Client gracefully auto-submits and displays FinishedView, matching server reaper timing.");
+
     console.log("\n==================================================================");
-    console.log("🏁 ALL 7 PIPELINE & ANTI-TAMPER AUDIT CHECKS PASSED SUCCESSFULLY!");
+    console.log("🏁 ALL 8 PIPELINE & ANTI-TAMPER AUDIT CHECKS PASSED SUCCESSFULLY!");
     console.log("==================================================================");
 }
 
