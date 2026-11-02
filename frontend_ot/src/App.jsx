@@ -2656,16 +2656,26 @@ export default function App() {
   const saveServerDraft = async (answersList) => {
     try {
       if (!submission) return;
-      await fetch(`${API_BASE}/tests/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const subId = submission._id || submission.id;
+      const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (answersList || examAnswersRef.current || []);
+      const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+
+      const res = await fetch(`${API_BASE}/tests/draft/${subId}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+        },
         body: JSON.stringify({
-          submissionId: submission._id || submission.id,
+          submissionId: subId,
           answers: finalAnswers,
-          proctoringLog: proctoringWarnings,
-          status: 'started'
+          proctoringLog: getProctoringLogPayload(proctoringWarnings)
         })
       });
+
+      if (res.status === 409) {
+        console.warn("[Draft] Exam attempt is finalized or reaped on server. Halting further draft saves.");
+      }
     } catch (e) {
       console.warn("Failed to sync background draft with database:", e);
     }
@@ -2798,15 +2808,18 @@ export default function App() {
 
       const latestAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
       const pLogPayload = getProctoringLogPayload(warningsObj);
+      const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
 
-      await fetch(`${API_BASE}/tests/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch(`${API_BASE}/tests/draft/${subId}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+        },
         body: JSON.stringify({
           submissionId: subId,
           answers: latestAnswers,
-          proctoringLog: pLogPayload,
-          status: 'started'
+          proctoringLog: pLogPayload
         })
       });
     } catch (e) {

@@ -647,6 +647,103 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
     }
 });
 
+// 4.1b Candidate Active Draft Autosave (Segregated from Final /submit)
+const handleDraftSave = async (req, res) => {
+    const { submissionId } = req.params;
+    const { answers, proctoringLog } = req.body;
+    if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
+    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
+
+    try {
+        if (dbState.useMongo) {
+            const submission = await TestSubmissionModel.findById(targetSubId);
+            if (!submission) return res.status(404).json({ error: "Submission session not found" });
+
+            // Hard Immutability: If exam is reaped or finalized, reject all draft updates with 409
+            if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
+                return res.status(409).json({
+                    error: `Exam attempt is permanently closed (Status: ${submission.status}). Draft updates are prohibited.`,
+                    status: submission.status,
+                    isFinalized: true
+                });
+            }
+
+            if (submission.status !== 'started') {
+                return res.status(409).json({
+                    error: "Exam is not currently in started state.",
+                    status: submission.status
+                });
+            }
+
+            // Authoritative input sanitization: strip client score tampering
+            if (Array.isArray(answers)) {
+                submission.answers = answers.map(a => {
+                    const cleanAns = { ...a };
+                    delete cleanAns.score;
+                    delete cleanAns.isManuallyGraded;
+                    delete cleanAns.testCaseResults;
+                    delete cleanAns.isBonusAwarded;
+                    delete cleanAns.isObjectionResolved;
+                    return cleanAns;
+                });
+            }
+
+            if (proctoringLog) {
+                submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
+            }
+
+            submission.lastHeartbeatAt = new Date();
+            await submission.save();
+
+            return res.json({ 
+                success: true, 
+                savedAt: submission.lastHeartbeatAt, 
+                answersCount: submission.answers?.length || 0 
+            });
+        } else {
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            const submission = db.testSubmissions.find(s => String(s.id || s._id) === String(targetSubId) || String(s.id || s._id) === String(submissionId));
+            if (!submission) return res.status(404).json({ error: "Submission session not found" });
+
+            if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
+                return res.status(409).json({
+                    error: `Exam attempt is permanently closed (Status: ${submission.status}). Draft updates are prohibited.`,
+                    status: submission.status,
+                    isFinalized: true
+                });
+            }
+
+            if (Array.isArray(answers)) {
+                submission.answers = answers.map(a => {
+                    const cleanAns = { ...a };
+                    delete cleanAns.score;
+                    delete cleanAns.isManuallyGraded;
+                    delete cleanAns.testCaseResults;
+                    delete cleanAns.isBonusAwarded;
+                    delete cleanAns.isObjectionResolved;
+                    return cleanAns;
+                });
+            }
+
+            if (proctoringLog) {
+                submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
+            }
+
+            submission.lastHeartbeatAt = new Date();
+            saveJSONData(db);
+
+            return res.json({ success: true, savedAt: submission.lastHeartbeatAt });
+        }
+    } catch (e) {
+        console.error("Draft save error:", e.message);
+        return res.status(500).json({ error: "Failed to persist draft answers" });
+    }
+};
+
+router.put('/draft/:submissionId', handleDraftSave);
+router.post('/draft/:submissionId', handleDraftSave);
+
 // 4.2 Browser Beacon on Disconnect / Tab Close (Item 2.4 & Issue B3)
 router.post('/beacon-disconnect', express.json({ type: ['application/json', 'text/plain', '*/*'] }), async (req, res) => {
     let payload = req.body;
@@ -939,32 +1036,26 @@ router.post('/submit', async (req, res) => {
                     submission = await TestSubmissionModel.findById(targetSubId);
                     if (!submission) return res.status(404).json({ error: "Submission not found" });
 
-                    // A1. Hard State Machine Guard: Never allow draft saves to reopen finalized exams
+                    // Hard Immutability: If exam is already finalized or reaped, strictly reject answer tampering with 409 Conflict
                     if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
-                        if (!isFinalSubmission || status === 'started') {
-                            const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
-                            earlyPayload.bicsId = toBicsId(submission._id || submission.id);
-                            return res.json({ success: true, message: "Exam is already finalized. Draft save ignored.", submission: earlyPayload });
-                        }
+                        const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                        earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                        return res.status(409).json({ 
+                            error: `Exam attempt is permanently closed (Status: ${submission.status}). Answers are frozen and cannot be modified.`,
+                            status: submission.status,
+                            isFinalized: true,
+                            submission: earlyPayload 
+                        });
                     }
 
-                    // A2. Reconnect Recovery: If auto-submitted due to network disconnect, allow submission if within deadline
-                    let allowAnswersUpdate = true;
-                    if (submission.status === 'auto-submitted' && isFinalSubmission) {
-                        const testDoc = await TestConfigModel.findById(submission.testId);
-                        const elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
-                        const allowedMs = (testDoc?.duration || 60) * 60 * 1000 + (120 * 1000); // duration + 2 min buffer
-                        if (elapsedMs > allowedMs) {
-                            allowAnswersUpdate = false;
-                        } else {
-                            submission.status = 'submitted'; // upgrade from auto-submitted
-                        }
-                    } else if (['submitted', 'evaluated'].includes(submission.status)) {
-                        allowAnswersUpdate = false;
+                    if (status === 'started') {
+                        return res.status(400).json({
+                            error: "Draft autosaves must use dedicated draft endpoint: PUT /api/tests/draft/:submissionId."
+                        });
                     }
 
-                    // A3. Authoritative input sanitization: strip client-supplied scores, test results, or manual grade flags
-                    if (allowAnswersUpdate && Array.isArray(answers)) {
+                    // Authoritative input sanitization: strip client-supplied scores, test results, or manual grade flags
+                    if (Array.isArray(answers)) {
                         submission.answers = answers.map(a => {
                             const cleanAns = { ...a };
                             delete cleanAns.score;
@@ -1087,10 +1178,22 @@ router.post('/submit', async (req, res) => {
             submission = db.testSubmissions.find(s => s.id === targetSubId || s._id === targetSubId || s.id === submissionId || s._id === submissionId);
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
-            if (isFinalSubmission && (submission.status === 'submitted' || submission.status === 'auto-submitted' || submission.status === 'evaluated')) {
+            // Hard Immutability: If exam is already finalized or reaped, strictly reject answers tampering with 409 Conflict
+            if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
                 const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
                 earlyPayload.bicsId = toBicsId(submission._id || submission.id);
-                return res.json({ success: true, submission: earlyPayload });
+                return res.status(409).json({ 
+                    error: `Exam attempt is permanently closed (Status: ${submission.status}). Answers are frozen and cannot be modified.`,
+                    status: submission.status,
+                    isFinalized: true,
+                    submission: earlyPayload 
+                });
+            }
+
+            if (status === 'started') {
+                return res.status(400).json({
+                    error: "Draft autosaves must use dedicated draft endpoint: PUT /api/tests/draft/:submissionId."
+                });
             }
 
             submission.answers = answers;
