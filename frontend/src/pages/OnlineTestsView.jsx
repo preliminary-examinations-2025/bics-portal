@@ -139,22 +139,6 @@ export default function OnlineTestsView({
                       >
                         Already Submitted
                       </button>
-                      {(test.hasEirfFlag || (test.eirfStatus && test.eirfStatus !== 'none')) && test.eirfStatus !== 'approved' && test.eirfStatus !== 'rejected' && test.submissionId && (
-                        <button
-                          className="cf-btn-secondary"
-                          onClick={() => {
-                            const otBase = window.location.origin.includes('localhost')
-                              ? 'http://localhost:5174/assessment'
-                              : `${window.location.origin}/assessment`;
-                            const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-                            const authParam = token ? `?authToken=${encodeURIComponent(token)}` : '';
-                            window.location.href = `${otBase}/eirf/${test.submissionId}${authParam}`;
-                          }}
-                          style={{ borderColor: '#fde68a', color: '#b45309', backgroundColor: '#fffbeb', fontSize: '9pt', fontWeight: 'bold', cursor: 'pointer' }}
-                        >
-                          File Incident Report (EIRF)
-                        </button>
-                      )}
                     </>
                   ) : isFuture ? (
                     <button

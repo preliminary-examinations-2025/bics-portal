@@ -650,7 +650,7 @@ router.post('/biometrics/continuity/:submissionId', requireAuth, async (req, res
         }
 
         const matchResult = await compareFaceBiometrics(liveFrame, verifiedPhoto);
-        const isMismatch = matchResult.similarityScore < 0.50;
+        const isMismatch = matchResult.similarityScore < 0.28;
 
         if (isMismatch) {
             const eventObj = {

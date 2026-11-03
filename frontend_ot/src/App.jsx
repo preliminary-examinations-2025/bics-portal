@@ -432,6 +432,18 @@ function AppContent() {
   );
 
   const [token, setToken] = useState('');
+
+  const getActiveAuthToken = () => {
+    if (typeof window === 'undefined') return token || '';
+    return token || 
+           localStorage.getItem('bics_auth_token') || 
+           sessionStorage.getItem('bics_auth_token') || 
+           localStorage.getItem('token') || 
+           sessionStorage.getItem('token') || 
+           (typeof window !== 'undefined' ? window.__BICS_AUTH_TOKEN__ : '') || 
+           '';
+  };
+
   const [loading, setLoading] = useState(true);
   const [verifyError, setVerifyError] = useState('');
 
@@ -1879,8 +1891,10 @@ function AppContent() {
 
     // Do NOT trigger toast notifications for FULLSCREEN_EXIT and TAB_SWITCH
     // since there is already a dedicated modal dialog (ExamProctorOverlay) alerting the candidate.
-    const isModalMajorViolation = eventType === 'FULLSCREEN_EXIT' || eventType === 'TAB_SWITCH';
-    if (!isModalMajorViolation) {
+    // Also do NOT trigger toast notifications or warning banners for FACE_MISMATCH to avoid candidate anxiety;
+    // continue logging it silently to server proctoring telemetry for administrator inspection.
+    const isModalOrSilentViolation = eventType === 'FULLSCREEN_EXIT' || eventType === 'TAB_SWITCH' || eventType === 'FACE_MISMATCH';
+    if (!isModalOrSilentViolation) {
       addProctorToast(eventType, {
         id: eventType,
         title,
@@ -2029,10 +2043,13 @@ function AppContent() {
                       checkCanvas.width = 160;
                       checkCanvas.height = 120;
                       const cCtx = checkCanvas.getContext('2d');
+                      // Mirror frame horizontally to align with mirrored baselinePhoto orientation
+                      cCtx.translate(checkCanvas.width, 0);
+                      cCtx.scale(-1, 1);
                       cCtx.drawImage(video, 0, 0, checkCanvas.width, checkCanvas.height);
-                      const cropData = checkCanvas.toDataURL('image/jpeg', 0.65);
+                      const cropData = checkCanvas.toDataURL('image/jpeg', 0.75);
 
-                      const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                      const activeToken = getActiveAuthToken();
                       const cHeaders = { 'Content-Type': 'application/json' };
                       if (activeToken) cHeaders['Authorization'] = `Bearer ${activeToken}`;
 
@@ -2699,7 +2716,7 @@ function AppContent() {
     const handleDisconnect = () => {
       try {
         if (navigator.sendBeacon) {
-          const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+          const userAuth = getActiveAuthToken();
           const payload = JSON.stringify({
             submissionId: subId,
             status: 'auto-submitted',
@@ -2800,7 +2817,7 @@ function AppContent() {
       if (!submission) return;
       const subId = submission._id || submission.id;
       const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (answersList || examAnswersRef.current || []);
-      const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+      const userAuth = getActiveAuthToken();
 
       const res = await fetch(`${API_BASE}/tests/draft/${subId}`, {
         method: 'PUT',
@@ -2953,7 +2970,7 @@ function AppContent() {
 
       const latestAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
       const pLogPayload = getProctoringLogPayload(warningsObj);
-      const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+      const userAuth = getActiveAuthToken();
 
       await fetch(`${API_BASE}/tests/draft/${subId}`, {
         method: 'PUT',
@@ -3289,7 +3306,7 @@ function AppContent() {
       // Drain queued offline proctoring events safely with auth (Issue B5)
       getOfflineEvents(subId).then(async events => {
         if (events && events.length > 0) {
-          const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+          const userAuth = getActiveAuthToken();
           const uploads = events.map(ev => 
             fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
               method: 'POST',
@@ -3310,7 +3327,7 @@ function AppContent() {
       // Drain queued offline proctoring snapshots safely with auth (Issue B5)
       getOfflineSnapshots(subId).then(async snapshots => {
         if (snapshots && snapshots.length > 0) {
-          const userAuth = authToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+          const userAuth = getActiveAuthToken();
           const uploads = snapshots.map(snap => 
             fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
               method: 'POST',
