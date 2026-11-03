@@ -7,6 +7,7 @@ const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
 const { formatCloudinaryMediaUrl, uploadToCloudinary, useCloudinary } = require('../config/cloudinary');
 const { isBicsId, isMongoId, toBicsId, toMongoId } = require('../utils/bicsId');
+const { requireAuth } = require('../middleware/auth');
 
 // Helper to resolve mongo ObjectId and BICS Object ID from input submissionId
 function resolveSubmissionIdentifiers(submissionId, submissionDoc = null) {
