@@ -407,16 +407,17 @@ console.log('  ✅ EIRF Asymmetric Envelope Encryption (RSA-OAEP + AES-256-GCM) 
 // 4.2 Re-evaluation & Submission Verification Endpoints
 const testsRouteSource = fs.readFileSync(path.join(backendDir, 'routes/tests.js'), 'utf8');
 
-// Ensure evaluation and submission verification endpoints exist
-assert(testsRouteSource.includes('/evaluation/:id'), 'backend/routes/tests.js must support /evaluation/:id route');
-assert(testsRouteSource.includes('/submission-verification/:id'), 'backend/routes/tests.js must export /submission-verification/:id');
+// Ensure strict single evaluation endpoint exists
+assert(testsRouteSource.includes("router.get('/evaluation/:id'"), 'backend/routes/tests.js must support strict single /evaluation/:id route');
+assert(!testsRouteSource.includes("router.get('/submission-verification/:id'"), 'backend/routes/tests.js must not expose legacy /submission-verification/:id route');
 assert(testsRouteSource.includes('/reevaluation/:submissionId'), 'backend/routes/tests.js must export /reevaluation/:submissionId');
 assert(testsRouteSource.includes("['submitted', 'auto-submitted', 'evaluated']") || testsRouteSource.includes("status = status || 'submitted'"), 'Backend must record submitted/auto-submitted status on submission');
 
-// Ensure frontend_ot App.jsx routes /assessment/evaluation/:id
+// Ensure frontend_ot App.jsx routes strictly /assessment/evaluation/:id and nothing else
 const appSource = fs.readFileSync(path.join(frontendOtDir, 'App.jsx'), 'utf8');
 assert(appSource.includes("path.startsWith('/assessment/evaluation/')"), 'frontend_ot App.jsx must route /assessment/evaluation/:id');
-console.log('  ✅ Postactive routes /assessment/evaluation/:id & /evaluation/:id confirmed across frontend and backend.');
+assert(!appSource.includes("path.startsWith('/assessment/verification/')"), 'frontend_ot App.jsx must not have legacy /assessment/verification/ route');
+console.log('  ✅ Strict single route /assessment/evaluation/:id confirmed across frontend and backend.');
 
 // ==================================================================
 // FINAL AUDIT SUMMARY
