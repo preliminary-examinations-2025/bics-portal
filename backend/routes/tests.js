@@ -1605,14 +1605,26 @@ router.post('/submit', async (req, res) => {
                             if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
                         });
 
+                        // EIRF Threshold Policy:
+                        // 1. Minor warnings threshold: 5% of actual exam duration (e.g. 180s for 60m)
+                        // 2. Individual major warnings (fullscreen exit or tab switch): > 5 seconds
+                        // 3. Exhausted 3 allowed warnings or auto-submitted
+                        // 4. Session network drop / emergency trigger
+                        const examDurationMin = Number(test?.duration || 60);
+                        const minorThresholdSec = Math.max(10, Math.round(examDurationMin * 60 * 0.05));
+
                         const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
-                        const isFlagged = submission.status === 'auto-submitted' || totalWarnings >= 1 || hasLongExit || hasNetworkOffline || hasMinorThreshold || Boolean(req.body.hasEirfFlag);
+                        const isDisqualified = submission.status === 'auto-submitted' || totalWarnings >= 3;
+                        const isFlagged = isDisqualified || hasLongExit || hasNetworkOffline || hasMinorThreshold;
 
                         if (isFlagged) {
                             submission.hasEirfFlag = true;
                             if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                                 submission.eirfStatus = 'pending';
                             }
+                        } else {
+                            submission.hasEirfFlag = false;
+                            submission.eirfStatus = 'none';
                         }
 
                         // Explicitly append final submission proctoring event for compliance audit trail
@@ -1744,14 +1756,26 @@ router.post('/submit', async (req, res) => {
                     if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
                 });
 
+                // EIRF Threshold Policy:
+                // 1. Minor warnings threshold: 5% of actual exam duration (e.g. 180s for 60m)
+                // 2. Individual major warnings (fullscreen exit or tab switch): > 5 seconds
+                // 3. Exhausted 3 allowed warnings or auto-submitted
+                // 4. Session network drop / emergency trigger
+                const examDurationMin = Number(test?.duration || 60);
+                const minorThresholdSec = Math.max(10, Math.round(examDurationMin * 60 * 0.05));
+
                 const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
-                const isFlagged = submission.status === 'auto-submitted' || totalWarnings >= 1 || hasLongExit || hasNetworkOffline || hasMinorThreshold || Boolean(req.body.hasEirfFlag);
+                const isDisqualified = submission.status === 'auto-submitted' || totalWarnings >= 3;
+                const isFlagged = isDisqualified || hasLongExit || hasNetworkOffline || hasMinorThreshold;
 
                 if (isFlagged) {
                     submission.hasEirfFlag = true;
                     if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                         submission.eirfStatus = 'pending';
                     }
+                } else {
+                    submission.hasEirfFlag = false;
+                    submission.eirfStatus = 'none';
                 }
 
                 // Explicitly append final submission proctoring event for compliance audit trail

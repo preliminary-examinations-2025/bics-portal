@@ -1412,6 +1412,10 @@ function AppContent() {
             endTime,
             durationSeconds
           );
+          // Individual major warning threshold: > 5s sets EIRF flag
+          if (durationSeconds > 5) {
+            setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+          }
         }
       }
     };
@@ -1482,6 +1486,10 @@ function AppContent() {
           endTime,
           durationSeconds
         );
+        // Individual major warning threshold: > 5s sets EIRF flag
+        if (durationSeconds > 5) {
+          setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+        }
       }
     };
 
@@ -1625,31 +1633,37 @@ function AppContent() {
     return () => clearInterval(timer);
   }, [flow, submission, test, proctoringWarnings]);
 
-  // Minor proctoring warning counter (Continuous warnings counted per second - Item 3)
+  // Minor proctoring warning counter (Threshold: 5% of actual exam duration in seconds)
   const minorWarningSecondsRef = useRef(0);
   const [minorWarningCount, setMinorWarningCount] = useState(0);
-  const hasTriggered40sEirfRef = useRef(false);
+  const hasTriggeredMinorEirfRef = useRef(false);
+
+  const getMinorWarningThresholdSeconds = () => {
+    const durMin = Number(test?.duration || 60);
+    return Math.max(10, Math.round((durMin * 60) * 0.05));
+  };
 
   const incrementMinorWarning = (reason = 'minor_violation') => {
     minorWarningSecondsRef.current += 1;
     const count = minorWarningSecondsRef.current;
     setMinorWarningCount(count);
 
-    if (count >= 40 && !hasTriggered40sEirfRef.current) {
-      hasTriggered40sEirfRef.current = true;
-      console.warn(`[PROCTORING_THRESHOLD]: 40 seconds of cumulative minor proctoring warnings reached (${reason}). Setting EIRF flag to true.`);
+    const thresholdSec = getMinorWarningThresholdSeconds();
+    if (count >= thresholdSec && !hasTriggeredMinorEirfRef.current) {
+      hasTriggeredMinorEirfRef.current = true;
+      console.warn(`[PROCTORING_THRESHOLD]: ${count}s of minor proctoring warnings reached (5% threshold of ${test?.duration || 60}m exam: ${thresholdSec}s, reason: ${reason}). Setting EIRF flag to true.`);
 
       setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
 
       logProctoringEvent(
         submission,
         'MINOR_WARNINGS_EXCEEDED',
-        `Cumulative minor proctoring violations reached threshold: ${count} seconds (${reason}). EIRF incident flag activated.`
+        `Cumulative minor proctoring violations reached threshold: ${count} seconds (5% of ${test?.duration || 60}m duration, ${reason}). EIRF incident flag activated.`
       );
 
       captureEvidenceSnapshot(
         'MINOR_WARNINGS_EXCEEDED',
-        `Cumulative minor proctoring violations reached threshold: ${count} seconds (${reason}). EIRF incident flag activated.`
+        `Cumulative minor proctoring violations reached threshold: ${count} seconds (5% of ${test?.duration || 60}m duration, ${reason}). EIRF incident flag activated.`
       );
 
       addProctorToast('MINOR_WARNINGS_EXCEEDED', {
@@ -3184,9 +3198,19 @@ function AppContent() {
             status: statusVal,
             hasEirfFlag: Boolean(
               submission?.hasEirfFlag || 
-              (warningsObj?.fullscreenExits || 0) > 0 || 
-              (warningsObj?.tabSwitches || 0) > 0 || 
-              statusVal === 'auto-submitted'
+              statusVal === 'auto-submitted' ||
+              ((warningsObj?.fullscreenExits || 0) + (warningsObj?.tabSwitches || 0) >= 3) ||
+              (fullPLog?.events || []).some(ev => {
+                let dur = Number(ev.durationSeconds || 0);
+                if (!dur && ev.details) {
+                  const m = ev.details.match(/(\d+)\s+seconds/i);
+                  if (m && m[1]) dur = parseInt(m[1], 10);
+                }
+                const isMajor = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || 
+                                ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || 
+                                (ev.type && (ev.type.includes('FULLSCREEN') || ev.type.includes('TAB')));
+                return isMajor && dur > 5;
+              })
             )
           })
         });

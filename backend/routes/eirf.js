@@ -137,20 +137,37 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
 
         const fsCount = submission.proctoringLog?.fullscreenExits || 0;
         const tabCount = submission.proctoringLog?.tabSwitches || 0;
-
-        if (fsCount > 0 && !flaggedReasons.some(r => r.includes('Fullscreen'))) {
-            flaggedReasons.push(`Fullscreen exit recorded: ${fsCount} exit(s) (Max: ${maxFullscreenSeconds}s)`);
-        }
-        if (tabCount > 0 && !flaggedReasons.some(r => r.includes('Tab switch'))) {
-            flaggedReasons.push(`Tab switch / focus loss recorded: ${tabCount} switch(es) (Max: ${maxTabSwitchSeconds}s)`);
-        }
-
         const totalWarningsCount = fsCount + tabCount;
+
+        // EIRF Policy:
+        // 1. Minor warnings: 5% of actual exam duration
+        // 2. Individual major warnings (fullscreen exit or tab switch): > 5 seconds
+        // 3. Auto-submitted or exhausted 3 warnings
+        // 4. Session network drop
+        const examDurationMin = Number(testConfig?.duration || 60);
+        const minorThresholdSec = Math.max(10, Math.round(examDurationMin * 60 * 0.05));
+
+        let hasMinorFlag = false;
+        events.forEach(ev => {
+            if (ev.type === 'MINOR_WARNINGS_EXCEEDED') {
+                hasMinorFlag = true;
+                flaggedReasons.push(`Cumulative minor proctoring violations exceeded 5% exam duration threshold (${minorThresholdSec}s).`);
+            }
+        });
+
         if (submission.status === 'auto-submitted' || totalWarningsCount >= 3) {
             flaggedReasons.push(`Exam attempt auto-submitted due to reaching maximum compliance warnings (${totalWarningsCount} warnings).`);
         }
 
-        const hasEirfFlag = Boolean(submission.hasEirfFlag || hasFullscreenFlag || hasTabSwitchFlag || hasNetworkFlag || submission.status === 'auto-submitted' || totalWarningsCount >= 3 || fsCount > 0 || tabCount > 0);
+        const hasEirfFlag = Boolean(
+            submission.hasEirfFlag || 
+            hasFullscreenFlag || 
+            hasTabSwitchFlag || 
+            hasMinorFlag || 
+            hasNetworkFlag || 
+            submission.status === 'auto-submitted' || 
+            totalWarningsCount >= 3
+        );
 
         if (flaggedReasons.length === 0 && hasEirfFlag) {
             flaggedReasons.push(`Proctoring alert flagged by administration for incident review.`);

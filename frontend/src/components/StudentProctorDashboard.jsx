@@ -937,7 +937,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       <div style={{ fontSize: '11pt', fontWeight: 'bold', color: eirfData.existingReport ? '#0284c7' : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? '#d97706' : '#166534'), marginTop: '4px' }}>
                         {eirfData.existingReport 
                           ? (eirfData.existingReport.verificationStatus || eirfData.existingReport.status) 
-                          : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? 'Filing Pending' : 'Not Flagged')}
+                          : ((eirfData.hasEirfFlag || sub.hasEirfFlag) ? 'Filing Pending' : 'No EIRF Required')}
                       </div>
                     </div>
                   </div>
@@ -946,13 +946,13 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
 
               {/* Submitted EIRF Report Audit */}
               {!eirfData.existingReport ? (
-                (eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? (
+                (eirfData.hasEirfFlag || sub.hasEirfFlag) ? (
                   <div style={{ padding: '20px', backgroundColor: '#f0f9ff', borderRadius: '4px', border: '1px solid #bae6fd', color: '#0369a1', fontSize: '9pt' }}>
-                    <strong>Filing Link Sent via Email:</strong> The candidate has been flagged for proctoring review (&gt;5s violation or emergency trigger). An official EIRF filing link was dispatched to the candidate's email. The candidate has not yet submitted their written report statement.
+                    <strong>Filing Link Sent via Email:</strong> The candidate has been flagged for proctoring review (&gt;5s individual major violation, &gt;5% exam duration minor warning threshold, or emergency trigger). An official EIRF filing link was dispatched to the candidate's email.
                   </div>
                 ) : (
                   <div style={{ padding: '20px', backgroundColor: '#f0fdf4', borderRadius: '4px', border: '1px solid #bbf7d0', color: '#166534', fontSize: '9pt' }}>
-                    <strong>No EIRF Flag Triggered:</strong> The candidate completed the examination session within standard proctoring parameters (no &gt;5s violations or auto-submission triggers). No emergency incident report filing link was required or dispatched.
+                    <strong>No EIRF Required:</strong> The candidate completed the examination session within standard compliance parameters (all individual major warnings &le; 5s, minor warnings &le; 5% of actual exam duration). No incident report filing was required or dispatched.
                   </div>
                 )
               ) : (
