@@ -497,6 +497,7 @@ export default function App() {
   const [ambientNoiseFloorDb, setAmbientNoiseFloorDb] = useState(30);
   const [multiDisplayDetected, setMultiDisplayDetected] = useState(false);
   const [systemChecksCompleted, setSystemChecksCompleted] = useState(false);
+  const [startTicket, setStartTicket] = useState(() => (typeof window !== 'undefined' ? sessionStorage.getItem('bics_start_ticket') || '' : ''));
   const [biometricsCache, setBiometricsCache] = useState(null);
 
   // Early Client Security Metadata & Display Configuration Detection
@@ -1475,10 +1476,12 @@ export default function App() {
       const examSecurityToken = sessionStorage.getItem('bics_exam_token') || 
                                 token || 
                                 searchParams.get('token') || '';
+      const activeStartTicket = startTicket || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_start_ticket') || '' : '');
 
       const reqHeaders = { 'Content-Type': 'application/json' };
       if (activeToken) reqHeaders['Authorization'] = `Bearer ${activeToken}`;
       if (examSecurityToken) reqHeaders['x-exam-token'] = examSecurityToken;
+      if (activeStartTicket) reqHeaders['x-exam-start-ticket'] = activeStartTicket;
 
       const res = await fetch(`${API_BASE}/tests/start/${test.id || test._id}`, {
         method: 'POST',
@@ -1488,6 +1491,7 @@ export default function App() {
           candidateName: candidate.name,
           studentId: candidate.studentId,
           token: examSecurityToken,
+          startTicket: activeStartTicket,
           baselinePhotoUrl: baselinePhoto || '',
           securityMetadata: securityMetadata || {}
         })
@@ -3402,6 +3406,7 @@ export default function App() {
         micGranted={micGranted}
         systemChecksCompleted={systemChecksCompleted}
         onCompleteSystemChecks={() => setSystemChecksCompleted(true)}
+        onStartTicketReceived={(ticket) => setStartTicket(ticket)}
         handleAuthorizeCamera={handleAuthorizeCamera}
         handleLockFullscreen={handleLockFullscreen}
         onBackToTerms={() => setFlow('terms_conditions')}

@@ -404,6 +404,111 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
     return log;
 }
 
+// 2.4 Unprivileged ping & latency probe endpoint
+router.get('/ping', (req, res) => {
+    const now = Date.now();
+    if (req.query.download === '1') {
+        const size = Math.min(Number(req.query.size) || 200000, 1000000); // 200 KB default, max 1MB
+        const buffer = Buffer.alloc(size, 0x41); // 'A'
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.end(buffer);
+    }
+    return res.json({ success: true, serverTime: now });
+});
+
+// 2.5 System checks & probe verification gate -> returns HMAC start ticket
+router.post('/precheck', requireAuth, async (req, res) => {
+    let { testId, candidateId, probes } = req.body;
+    if (!testId) return res.status(400).json({ success: false, error: "Test ID is required" });
+
+    // Candidate authorization check
+    if (req.user && req.user.role !== 'admin' && !req.isExamTokenAuth) {
+        const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
+        const allowedIds = [
+            String(req.user.id || ''),
+            String(req.user.studentId || ''),
+            String(req.user.username || ''),
+            userMongo,
+            toBicsId(userMongo)
+        ];
+        if (candidateId) {
+            const candNorm = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+            if (candNorm !== userMongo && !allowedIds.includes(String(candidateId))) {
+                return res.status(403).json({ success: false, error: "Access denied: Candidate mismatch." });
+            }
+        }
+        candidateId = req.user.id || req.user.studentId;
+    }
+    if (!candidateId && req.user) {
+        candidateId = req.user.id || req.user.studentId;
+    }
+    if (!candidateId) return res.status(400).json({ success: false, error: "Candidate ID is required" });
+
+    // Validate probe telemetry
+    const multiDisplay = Boolean(probes?.display?.isExtended || (probes?.display?.screenCount && probes.display.screenCount > 1));
+    const virtualCamera = Boolean(probes?.camera?.virtualCameraDetected);
+    const networkFail = Boolean(probes?.network && probes.network.passed === false && probes.network.latencyMs > 2500);
+
+    if (multiDisplay) {
+        return res.status(400).json({
+            success: false,
+            passed: false,
+            code: "MULTI_DISPLAY_DETECTED",
+            error: "Multiple displays detected. Please disconnect secondary monitors before proceeding."
+        });
+    }
+
+    if (virtualCamera) {
+        return res.status(400).json({
+            success: false,
+            passed: false,
+            code: "VIRTUAL_CAMERA_DETECTED",
+            error: `Virtual or emulated camera detected (${probes?.camera?.flaggedDeviceName || 'OBS/Virtual'}). A physical webcam is required.`
+        });
+    }
+
+    if (networkFail) {
+        return res.status(400).json({
+            success: false,
+            passed: false,
+            code: "NETWORK_LATENCY_EXCESSIVE",
+            error: "Network latency exceeds 2500ms threshold. A stable connection is required."
+        });
+    }
+
+    // Generate signed HMAC Start Ticket (valid for 5 minutes)
+    const ticketSecret = process.env.EXAM_TICKET_SECRET || process.env.JWT_SECRET || 'bics-exam-ticket-secret-2026';
+    const expiresAt = Date.now() + (5 * 60 * 1000);
+    const nonce = crypto.randomBytes(12).toString('hex');
+    const targetTestId = isBicsId(String(testId)) ? toMongoId(String(testId)) : String(testId);
+    const targetCandId = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+    const payload = `${targetCandId}:${targetTestId}:${expiresAt}:${nonce}`;
+    const signature = crypto.createHmac('sha256', ticketSecret).update(payload).digest('hex');
+    const startTicket = `${payload}:${signature}`;
+
+    const rawClientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+                        req.headers['x-real-ip'] ||
+                        req.socket.remoteAddress ||
+                        req.ip || '';
+
+    await logSystemAction(
+        candidateId,
+        'PRECHECK_PASSED',
+        `Precheck completed successfully for test ${testId}. Generated start ticket valid for 5m. IP: ${rawClientIp}`,
+        'info'
+    ).catch(() => {});
+
+    return res.json({
+        success: true,
+        passed: true,
+        startTicket,
+        expiresAt,
+        serverTime: Date.now()
+    });
+});
+
 // 3. Get specific test for exam view (Strips answers & hidden test cases)
 router.get('/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
@@ -458,6 +563,41 @@ router.post('/start/:id', requireAuth, async (req, res) => {
         candidateId = req.user.id || req.user.studentId;
     }
     if (!candidateId) return res.status(400).json({ error: "Candidate ID is required" });
+
+    // Enforce HMAC-signed Start Ticket (Phase 1 Gate)
+    const startTicket = req.headers['x-exam-start-ticket'] || req.body.startTicket;
+    const precheckEnforced = process.env.PRECHECK_ENFORCE === 'true';
+
+    if (startTicket) {
+        const parts = String(startTicket).split(':');
+        if (parts.length !== 5) {
+            return res.status(403).json({ error: "Access denied: Invalid start ticket structure.", code: "PRECHECK_TICKET_INVALID" });
+        }
+        const [tCandId, tTestId, tExpiresAt, tNonce, tSignature] = parts;
+        const ticketSecret = process.env.EXAM_TICKET_SECRET || process.env.JWT_SECRET || 'bics-exam-ticket-secret-2026';
+        const expectedSig = crypto.createHmac('sha256', ticketSecret).update(`${tCandId}:${tTestId}:${tExpiresAt}:${tNonce}`).digest('hex');
+        if (expectedSig !== tSignature) {
+            return res.status(403).json({ error: "Access denied: Cryptographic signature mismatch on start ticket.", code: "PRECHECK_TICKET_FORGERY" });
+        }
+        if (Date.now() > Number(tExpiresAt)) {
+            return res.status(403).json({ error: "Access denied: Start ticket has expired. Please re-run system checks.", code: "PRECHECK_TICKET_EXPIRED" });
+        }
+        const normCand = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+        const normTest = isBicsId(String(id)) ? toMongoId(String(id)) : String(id);
+        if (tCandId !== normCand && tCandId !== String(candidateId)) {
+            return res.status(403).json({ error: "Access denied: Start ticket is bound to a different candidate.", code: "PRECHECK_CANDIDATE_MISMATCH" });
+        }
+        if (tTestId !== normTest && tTestId !== String(id)) {
+            return res.status(403).json({ error: "Access denied: Start ticket is bound to a different examination.", code: "PRECHECK_TEST_MISMATCH" });
+        }
+    } else if (precheckEnforced) {
+        return res.status(403).json({
+            error: "Access denied: Missing precheck start ticket. Please complete system and compatibility checks before starting the exam.",
+            code: "PRECHECK_TICKET_MISSING"
+        });
+    } else {
+        console.warn(`[PRECHECK_SHADOW]: Candidate ${candidateId} initiated exam ${id} without a verified start ticket.`);
+    }
 
     try {
         let test = null;
@@ -538,7 +678,8 @@ router.post('/start/:id', requireAuth, async (req, res) => {
         const enrichedSecurityMetadata = {
             ...(securityMetadata || {}),
             ip: networkMetadata.publicIp || securityMetadata?.ip || cleanIp,
-            network: networkMetadata
+            network: networkMetadata,
+            startTicket: startTicket || securityMetadata?.startTicket || null
         };
 
         if (dbState.useMongo) {

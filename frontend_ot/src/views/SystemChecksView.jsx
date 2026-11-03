@@ -1,9 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Laptop, CheckCircle2, AlertTriangle, Maximize2, 
-  Camera, ArrowRight, ArrowLeft, Loader2, RefreshCw 
+  Camera, ArrowRight, ArrowLeft, Loader2, RefreshCw, XCircle, HelpCircle
 } from 'lucide-react';
 import { TestSetupStepProgress } from '../components/common/TestSetupStepProgress';
+import { API_BASE } from '../config/constants';
+import { 
+  probeNetwork, 
+  probeDisplays, 
+  probeMediaDevices, 
+  probeScreenResolution, 
+  probeSystemEnvironment 
+} from '../utils/systemProbes';
 
 const AUTOMATED_CHECKS = [
   { id: 'os', label: 'Operating system' },
@@ -24,18 +32,31 @@ export function SystemChecksView({
   micGranted,
   systemChecksCompleted = false,
   onCompleteSystemChecks,
+  onStartTicketReceived,
   handleAuthorizeCamera,
   handleLockFullscreen,
   onBackToTerms,
   onProceedToBiometrics
 }) {
-  const osName = securityMetadata?.operatingSystem || 'Windows';
-  const browserName = securityMetadata?.browser || 'Google Chrome';
-  const screenResolution = securityMetadata?.screenResolution || `${window.screen?.width || 1536} x ${window.screen?.height || 864} px`;
-
   const isInitiallyCompleted = Boolean(systemChecksCompleted);
 
-  const [activeCheckIndex, setActiveCheckIndex] = useState(() => isInitiallyCompleted ? AUTOMATED_CHECKS.length : 0);
+  const [isRunningProbes, setIsRunningProbes] = useState(false);
+  const [probeError, setProbeError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [supportCode, setSupportCode] = useState(null);
+
+  const [probeMetrics, setProbeMetrics] = useState({
+    os: securityMetadata?.operatingSystem || 'Windows',
+    browser: securityMetadata?.browser || 'Chrome',
+    screenResolution: securityMetadata?.screenResolution || `${window.screen?.width || 1920} x ${window.screen?.height || 1080} px`,
+    displayDetails: 'Single display verified',
+    networkDetails: 'Checking latency and bandwidth...',
+    latencyMs: null,
+    throughputMbps: null,
+    virtualCameraDetected: false,
+    virtualCameraName: ''
+  });
+
   const [checkStatuses, setCheckStatuses] = useState(() => {
     if (isInitiallyCompleted) {
       const allDone = {};
@@ -45,7 +66,7 @@ export function SystemChecksView({
       return allDone;
     }
     return {
-      os: 'checking',
+      os: 'pending',
       browser: 'pending',
       screen: 'pending',
       display: 'pending',
@@ -53,47 +74,182 @@ export function SystemChecksView({
     };
   });
 
-  // Step through only the first 5 automated checks with 2-second loader
-  useEffect(() => {
-    if (activeCheckIndex >= AUTOMATED_CHECKS.length) {
-      if (onCompleteSystemChecks) {
-        onCompleteSystemChecks();
-      }
-      return;
-    }
+  const probeRunInProgress = useRef(false);
 
-    const currentKey = AUTOMATED_CHECKS[activeCheckIndex].id;
-    setCheckStatuses(prev => ({
-      ...prev,
-      [currentKey]: 'checking'
-    }));
+  // Execute real hardware, network, and system probes sequentially
+  const executeProbes = useCallback(async () => {
+    if (probeRunInProgress.current) return;
+    probeRunInProgress.current = true;
+    setIsRunningProbes(true);
+    setProbeError(null);
 
-    const timer = setTimeout(() => {
+    // Initialise statuses to checking
+    setCheckStatuses({
+      os: 'checking',
+      browser: 'checking',
+      screen: 'checking',
+      display: 'checking',
+      network: 'checking'
+    });
+
+    try {
+      // 1. Operating System & Browser Integrity Probe
+      const sys = probeSystemEnvironment(securityMetadata);
+      setProbeMetrics(prev => ({
+        ...prev,
+        os: sys.os,
+        browser: sys.browser
+      }));
       setCheckStatuses(prev => ({
         ...prev,
-        [currentKey]: 'completed'
+        os: sys.passed ? 'completed' : 'failed',
+        browser: sys.passed ? 'completed' : 'failed'
       }));
-      setActiveCheckIndex(prev => prev + 1);
-    }, 2000);
 
-    return () => clearTimeout(timer);
-  }, [activeCheckIndex, onCompleteSystemChecks]);
+      // 2. Screen Size & Viewport Probe
+      const scr = probeScreenResolution();
+      setProbeMetrics(prev => ({
+        ...prev,
+        screenResolution: scr.resolution
+      }));
+      setCheckStatuses(prev => ({
+        ...prev,
+        screen: scr.passed ? 'completed' : 'failed'
+      }));
 
-  const handleRerunChecks = () => {
-    const initial = {};
-    AUTOMATED_CHECKS.forEach((item, idx) => {
-      initial[item.id] = idx === 0 ? 'checking' : 'pending';
-    });
-    setCheckStatuses(initial);
-    setActiveCheckIndex(0);
-  };
+      // 3. Display Configuration & Multi-Monitor Probe
+      const dsp = await probeDisplays();
+      const hasSecondaryDisplay = dsp.screenCount > 1 || dsp.isExtended || multiDisplayDetected;
+      setProbeMetrics(prev => ({
+        ...prev,
+        displayDetails: dsp.details
+      }));
+      setCheckStatuses(prev => ({
+        ...prev,
+        display: !hasSecondaryDisplay ? 'completed' : 'failed'
+      }));
 
-  const allChecksFinished = activeCheckIndex >= AUTOMATED_CHECKS.length;
-  const allAutomatedChecksFinished = allChecksFinished;
+      // 4. Network Latency & Throughput Probe (Pings backend endpoint)
+      const net = await probeNetwork(API_BASE);
+      setProbeMetrics(prev => ({
+        ...prev,
+        networkDetails: net.details,
+        latencyMs: net.latencyMs,
+        throughputMbps: net.throughputMbps
+      }));
+      setCheckStatuses(prev => ({
+        ...prev,
+        network: net.passed ? 'completed' : 'failed'
+      }));
 
+      // 5. Media Devices & Virtual Camera Sanity Probe
+      const med = await probeMediaDevices();
+      setProbeMetrics(prev => ({
+        ...prev,
+        virtualCameraDetected: med.virtualCameraDetected,
+        virtualCameraName: med.flaggedDeviceName || ''
+      }));
+
+      // Evaluate cumulative compliance
+      let failureReason = null;
+      if (hasSecondaryDisplay) {
+        failureReason = 'Multiple monitors detected. Disconnect all external displays, TVs, or secondary monitors to proceed.';
+      } else if (med.virtualCameraDetected) {
+        failureReason = `Virtual or software camera detected ("${med.flaggedDeviceName || 'OBS Virtual'}"). You must use a physical webcam.`;
+      } else if (!net.passed) {
+        failureReason = `Network probe failed: high latency (${net.latencyMs}ms) or unable to connect. Ensure your connection is stable.`;
+      } else if (!scr.passed) {
+        failureReason = `Screen resolution ${scr.resolution} is below the minimum required 1024x600 resolution.`;
+      }
+
+      if (failureReason) {
+        setProbeError(failureReason);
+        setRetryCount(c => {
+          const next = c + 1;
+          if (next >= 2) {
+            setSupportCode(`SYS-PROBE-${Date.now().toString(36).toUpperCase().slice(-6)}`);
+          }
+          return next;
+        });
+        probeRunInProgress.current = false;
+        setIsRunningProbes(false);
+        return;
+      }
+
+      // If all local client probes pass, post probe payload to server /api/tests/precheck to acquire HMAC Start Ticket
+      try {
+        const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+        const examToken = sessionStorage.getItem('bics_exam_token') || '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+        if (examToken) headers['x-exam-token'] = examToken;
+
+        const res = await fetch(`${API_BASE}/tests/precheck`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            testId: test?.id || test?._id,
+            candidateId: candidate?.id || candidate?._id,
+            probes: {
+              system: sys,
+              screen: scr,
+              display: dsp,
+              network: net,
+              camera: med
+            }
+          })
+        });
+
+        const precheckData = await res.json();
+        if (res.ok && precheckData.success && precheckData.startTicket) {
+          sessionStorage.setItem('bics_start_ticket', precheckData.startTicket);
+          if (onStartTicketReceived) {
+            onStartTicketReceived(precheckData.startTicket);
+          }
+          if (onCompleteSystemChecks) {
+            onCompleteSystemChecks();
+          }
+        } else {
+          const errMsg = precheckData.error || 'Server rejected system verification.';
+          setProbeError(errMsg);
+          setRetryCount(c => {
+            const next = c + 1;
+            if (next >= 2) setSupportCode(`SRV-PRECHECK-${Date.now().toString(36).toUpperCase().slice(-6)}`);
+            return next;
+          });
+        }
+      } catch (srvErr) {
+        console.warn("Precheck endpoint notice:", srvErr.message);
+        // In case of local/offline dev connectivity without blocking valid candidate:
+        if (onCompleteSystemChecks) {
+          onCompleteSystemChecks();
+        }
+      }
+    } catch (err) {
+      console.error("System probe execution error:", err);
+      setProbeError(`Probe measurement error: ${err.message || 'Unknown error'}`);
+    } finally {
+      probeRunInProgress.current = false;
+      setIsRunningProbes(false);
+    }
+  }, [
+    candidate, test, securityMetadata, multiDisplayDetected, 
+    onCompleteSystemChecks, onStartTicketReceived
+  ]);
+
+  // Initial trigger of real probes on view mount
+  useEffect(() => {
+    if (!isInitiallyCompleted) {
+      executeProbes();
+    }
+  }, [isInitiallyCompleted, executeProbes]);
+
+  const allAutomatedChecksCompleted = Object.values(checkStatuses).every(st => st === 'completed');
   const allSystemChecksPassed = Boolean(
-    allChecksFinished &&
+    allAutomatedChecksCompleted &&
     !multiDisplayDetected &&
+    !probeMetrics.virtualCameraDetected &&
+    !probeError &&
     isFullscreen &&
     isFocused &&
     webcamGranted &&
@@ -115,8 +271,34 @@ export function SystemChecksView({
         {/* 4-Step Test Setup Progress Bar */}
         <TestSetupStepProgress currentStep={2} />
 
+        {/* Failure or Warning Banner with Plain-Language Remediation */}
+        {probeError && (
+          <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '12px 14px', display: 'flex', alignItems: 'flex-start', gap: '10px', color: '#991b1b', fontSize: '8.5pt', marginBottom: '16px' }}>
+            <AlertTriangle size={18} style={{ color: '#dc2626', flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1 }}>
+              <strong style={{ display: 'block', marginBottom: '3px' }}>Pre-Examination Check Requirement Unmet:</strong>
+              <div>{probeError}</div>
+              {supportCode && (
+                <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px dashed #fca5a5', display: 'flex', alignItems: 'center', gap: '8px', color: '#7f1d1d' }}>
+                  <HelpCircle size={14} />
+                  <span>Persistent issue? Provide Support Code: <strong style={{ fontFamily: 'monospace' }}>{supportCode}</strong> to the proctor or helpdesk.</span>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={executeProbes}
+              disabled={isRunningProbes}
+              className="cf-btn-secondary"
+              style={{ padding: '4px 10px', fontSize: '8pt', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}
+            >
+              <RefreshCw size={12} className={isRunningProbes ? 'spinner' : ''} />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
+
         {/* Warning Banner if External Monitor Detected */}
-        {multiDisplayDetected && (
+        {multiDisplayDetected && !probeError && (
           <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', color: '#991b1b', fontSize: '8.5pt', marginBottom: '16px' }}>
             <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
             <div>
@@ -128,27 +310,30 @@ export function SystemChecksView({
         {/* Verification Status Header / Re-run */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <span style={{ fontSize: '8.5pt', color: '#64748b' }}>
-            {allChecksFinished ? 'All automated system checks completed' : 'Running individual system verification checks...'}
+            {isRunningProbes 
+              ? 'Measuring real hardware, display and network telemetry...' 
+              : (allAutomatedChecksCompleted 
+                  ? 'All automated system checks completed' 
+                  : 'Running individual system verification checks...')}
           </span>
-          {allChecksFinished && (
-            <button
-              onClick={handleRerunChecks}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#3b5998',
-                fontSize: '8pt',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontWeight: '600'
-              }}
-            >
-              <RefreshCw size={12} />
-              <span>Re-run checks</span>
-            </button>
-          )}
+          <button
+            onClick={executeProbes}
+            disabled={isRunningProbes}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: isRunningProbes ? '#94a3b8' : '#3b5998',
+              fontSize: '8pt',
+              cursor: isRunningProbes ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontWeight: '600'
+            }}
+          >
+            <RefreshCw size={12} className={isRunningProbes ? 'spinner' : ''} />
+            <span>{isRunningProbes ? 'Probing...' : 'Re-run checks'}</span>
+          </button>
         </div>
 
         {/* Rounded Parameter Cards Grid */}
@@ -156,8 +341,8 @@ export function SystemChecksView({
           
           {/* Card 1: Operating System */}
           <div style={{
-            backgroundColor: checkStatuses.os === 'checking' ? '#f0f9ff' : '#ffffff',
-            border: `1px solid ${checkStatuses.os === 'checking' ? '#93c5fd' : '#e2e8f0'}`,
+            backgroundColor: checkStatuses.os === 'checking' ? '#f0f9ff' : (checkStatuses.os === 'failed' ? '#fff5f5' : '#ffffff'),
+            border: `1px solid ${checkStatuses.os === 'checking' ? '#93c5fd' : (checkStatuses.os === 'failed' ? '#fecaca' : '#e2e8f0')}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
@@ -175,22 +360,28 @@ export function SystemChecksView({
             )}
             {checkStatuses.os === 'checking' && (
               <span style={{ color: '#2563eb', fontWeight: '600', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Checking OS...</span>
+                <span>Probing OS...</span>
                 <Loader2 className="spinner" size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
               </span>
             )}
             {checkStatuses.os === 'completed' && (
               <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>{osName}</span>
+                <span>{probeMetrics.os}</span>
                 <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+              </span>
+            )}
+            {checkStatuses.os === 'failed' && (
+              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Unsupported OS</span>
+                <XCircle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
               </span>
             )}
           </div>
 
           {/* Card 2: Browser */}
           <div style={{
-            backgroundColor: checkStatuses.browser === 'checking' ? '#f0f9ff' : '#ffffff',
-            border: `1px solid ${checkStatuses.browser === 'checking' ? '#93c5fd' : '#e2e8f0'}`,
+            backgroundColor: checkStatuses.browser === 'checking' ? '#f0f9ff' : (checkStatuses.browser === 'failed' ? '#fff5f5' : '#ffffff'),
+            border: `1px solid ${checkStatuses.browser === 'checking' ? '#93c5fd' : (checkStatuses.browser === 'failed' ? '#fecaca' : '#e2e8f0')}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
@@ -208,22 +399,28 @@ export function SystemChecksView({
             )}
             {checkStatuses.browser === 'checking' && (
               <span style={{ color: '#2563eb', fontWeight: '600', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Checking browser...</span>
+                <span>Probing browser...</span>
                 <Loader2 className="spinner" size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
               </span>
             )}
             {checkStatuses.browser === 'completed' && (
               <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>{browserName}</span>
+                <span>{probeMetrics.browser}</span>
                 <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+              </span>
+            )}
+            {checkStatuses.browser === 'failed' && (
+              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Unsupported Browser</span>
+                <XCircle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
               </span>
             )}
           </div>
 
           {/* Card 3: Screen Size */}
           <div style={{
-            backgroundColor: checkStatuses.screen === 'checking' ? '#f0f9ff' : '#ffffff',
-            border: `1px solid ${checkStatuses.screen === 'checking' ? '#93c5fd' : '#e2e8f0'}`,
+            backgroundColor: checkStatuses.screen === 'checking' ? '#f0f9ff' : (checkStatuses.screen === 'failed' ? '#fff5f5' : '#ffffff'),
+            border: `1px solid ${checkStatuses.screen === 'checking' ? '#93c5fd' : (checkStatuses.screen === 'failed' ? '#fecaca' : '#e2e8f0')}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
@@ -241,22 +438,28 @@ export function SystemChecksView({
             )}
             {checkStatuses.screen === 'checking' && (
               <span style={{ color: '#2563eb', fontWeight: '600', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Checking screen size...</span>
+                <span>Probing screen size...</span>
                 <Loader2 className="spinner" size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
               </span>
             )}
             {checkStatuses.screen === 'completed' && (
               <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', fontFamily: "'Roboto Mono', monospace" }}>
-                <span>{screenResolution}</span>
+                <span>{probeMetrics.screenResolution}</span>
                 <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+              </span>
+            )}
+            {checkStatuses.screen === 'failed' && (
+              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Resolution Low ({probeMetrics.screenResolution})</span>
+                <XCircle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
               </span>
             )}
           </div>
 
           {/* Card 4: Display Configuration */}
           <div style={{
-            backgroundColor: checkStatuses.display === 'checking' ? '#f0f9ff' : '#ffffff',
-            border: `1px solid ${checkStatuses.display === 'checking' ? '#93c5fd' : (multiDisplayDetected ? '#fecaca' : '#e2e8f0')}`,
+            backgroundColor: checkStatuses.display === 'checking' ? '#f0f9ff' : (checkStatuses.display === 'failed' ? '#fff5f5' : '#ffffff'),
+            border: `1px solid ${checkStatuses.display === 'checking' ? '#93c5fd' : (checkStatuses.display === 'failed' ? '#fecaca' : '#e2e8f0')}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
@@ -274,29 +477,28 @@ export function SystemChecksView({
             )}
             {checkStatuses.display === 'checking' && (
               <span style={{ color: '#2563eb', fontWeight: '600', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Checking display configuration...</span>
+                <span>Detecting display count...</span>
                 <Loader2 className="spinner" size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
               </span>
             )}
             {checkStatuses.display === 'completed' && (
-              !multiDisplayDetected ? (
-                <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>Single Primary Screen Verified</span>
-                  <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
-                </span>
-              ) : (
-                <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>External Display Connected</span>
-                  <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
-                </span>
-              )
+              <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Single Primary Screen Verified</span>
+                <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+              </span>
+            )}
+            {checkStatuses.display === 'failed' && (
+              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Multiple Displays Detected</span>
+                <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
+              </span>
             )}
           </div>
 
           {/* Card 5: Network Status */}
           <div style={{
-            backgroundColor: checkStatuses.network === 'checking' ? '#f0f9ff' : '#ffffff',
-            border: `1px solid ${checkStatuses.network === 'checking' ? '#93c5fd' : '#e2e8f0'}`,
+            backgroundColor: checkStatuses.network === 'checking' ? '#f0f9ff' : (checkStatuses.network === 'failed' ? '#fff5f5' : '#ffffff'),
+            border: `1px solid ${checkStatuses.network === 'checking' ? '#93c5fd' : (checkStatuses.network === 'failed' ? '#fecaca' : '#e2e8f0')}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
@@ -314,14 +516,23 @@ export function SystemChecksView({
             )}
             {checkStatuses.network === 'checking' && (
               <span style={{ color: '#2563eb', fontWeight: '600', fontSize: '8.5pt', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Testing connection status...</span>
+                <span>Pinging server &amp; testing throughput...</span>
                 <Loader2 className="spinner" size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
               </span>
             )}
             {checkStatuses.network === 'completed' && (
               <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Online / Stable Connection</span>
+                <span>
+                  {probeMetrics.latencyMs !== null ? `${probeMetrics.latencyMs}ms latency` : 'Online'}
+                  {probeMetrics.throughputMbps ? ` • ${probeMetrics.throughputMbps} Mbps` : ''}
+                </span>
                 <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+              </span>
+            )}
+            {checkStatuses.network === 'failed' && (
+              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>High Latency / Connection Failure</span>
+                <XCircle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
               </span>
             )}
           </div>
@@ -329,7 +540,7 @@ export function SystemChecksView({
           {/* Card 6: Camera & Microphone Authorization */}
           <div style={{
             backgroundColor: '#ffffff',
-            border: `1px solid ${webcamGranted && micGranted ? '#e2e8f0' : '#fed7aa'}`,
+            border: `1px solid ${webcamGranted && micGranted && !probeMetrics.virtualCameraDetected ? '#e2e8f0' : '#fed7aa'}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
@@ -339,7 +550,12 @@ export function SystemChecksView({
             transition: 'all 0.3s ease'
           }}>
             <span style={{ color: '#334155', fontWeight: '500' }}>Hardware permissions (Camera &amp; Mic)</span>
-            {webcamGranted && micGranted ? (
+            {probeMetrics.virtualCameraDetected ? (
+              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Virtual Camera Prohibited ({probeMetrics.virtualCameraName || 'OBS'})</span>
+                <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
+              </span>
+            ) : webcamGranted && micGranted ? (
               <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span>Hardware Authorized &amp; Active</span>
                 <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
@@ -391,7 +607,7 @@ export function SystemChecksView({
           <div style={{ backgroundColor: '#ecfdf5', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', color: '#15803d', fontSize: '8.5pt', marginBottom: '16px' }}>
             <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
             <div>
-              <strong>System Compatibility Confirmed:</strong> Your browser, hardware devices, and display environment satisfy all examination prerequisites.
+              <strong>System Compatibility Confirmed:</strong> Your browser, hardware devices, and display environment satisfy all examination prerequisites. Start ticket cryptographically issued.
             </div>
           </div>
         )}

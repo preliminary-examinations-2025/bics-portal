@@ -611,24 +611,25 @@ export function BiometricCheckView({
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      // Diagnostic fallback for rare non-standard browsers
-      setSpeechErrorMessage('Web Speech API engine not detected in this browser. Running audio volume calibration.');
-      const interval = setInterval(() => {
+      // Diagnostic fallback when Web Speech API engine is unavailable in browser
+      setSpeechErrorMessage('Web Speech API engine not detected in this browser. Measuring microphone input levels.');
+      setTimeout(() => {
         setIsCalibratingVoice(false);
         setVoiceCalibrated(true);
         const floor = Math.max(25, currentDecibels);
         setAmbientFloorDb(floor);
+        setSpokenTranscript('[Voice engine unavailable - Hardware volume verified]');
         if (onSaveBiometricsCache) {
           onSaveBiometricsCache({
             voiceCalibrated: true,
-            spokenTranscript: targetPhraseDisplay,
-            phraseMatchScore: 100,
-            matchedWordsMap: { i: true, name: true, confirm: true, my: true, identity: true, for_the: true, examination: true },
+            voiceVerificationStatus: 'needs_review',
+            spokenTranscript: '[Voice engine unavailable - Hardware volume verified]',
+            phraseMatchScore: 50,
+            matchedWordsMap: {},
             ambientFloorDb: floor
           });
         }
-        clearInterval(interval);
-      }, 3000);
+      }, 2000);
       return;
     }
 
@@ -728,17 +729,23 @@ export function BiometricCheckView({
       }, 600);
     }, 4200);
 
-    // Step 5: Completed
+    // Step 5: Verification & Completion
     setTimeout(() => {
-      setGazeStep(5);
+      const sampledCount = Object.keys(capturedPoints).length;
       setGazeCalibrating(false);
-      setGazeCalibrated(true);
-      setGazeCalibrationData(capturedPoints);
-      if (onSaveBiometricsCache) {
-        onSaveBiometricsCache({
-          gazeCalibrated: true,
-          gazeCalibrationData: capturedPoints
-        });
+      if (sampledCount >= 2 || !blazefaceModelRef?.current) {
+        setGazeStep(5);
+        setGazeCalibrated(true);
+        setGazeCalibrationData(capturedPoints);
+        if (onSaveBiometricsCache) {
+          onSaveBiometricsCache({
+            gazeCalibrated: true,
+            gazeCalibrationData: capturedPoints
+          });
+        }
+      } else {
+        setGazeStep(1);
+        setGazeCalibrated(false);
       }
     }, 5600);
   };
