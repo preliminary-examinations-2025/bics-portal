@@ -270,7 +270,6 @@ const authorizeApiRequest = async (req, res, next) => {
         fullPath.includes('/api/tests/draft') ||
         fullPath.includes('/api/tests/biometrics/continuity') ||
         fullPath.includes('/api/tests/proctoring') || 
-        fullPath.includes('/api/proctoring') || 
         fullPath.includes('/api/tests/heartbeat') || 
         fullPath.includes('/api/tests/run') || 
         fullPath.includes('/api/tests/submit') ||

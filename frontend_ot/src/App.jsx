@@ -1811,7 +1811,7 @@ function AppContent() {
       if (isOnline) {
         const userAuth = getActiveAuthToken();
         const examToken = getActiveExamToken();
-        fetch(`${API_BASE}/proctoring/snapshot/${subId}`, {
+        fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -3270,6 +3270,29 @@ function AppContent() {
     if (submitSuccess) {
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
       deleteOfflineSubmission(subId).catch(() => {});
+
+      // Drain any queued offline proctoring snapshots safely
+      getOfflineSnapshots(subId).then(async snapshots => {
+        if (snapshots && snapshots.length > 0) {
+          const userAuth = getActiveAuthToken();
+          const examToken = getActiveExamToken();
+          const uploads = snapshots.map(snap =>
+            fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+                ...(examToken ? { 'x-exam-token': examToken } : {})
+              },
+              body: JSON.stringify(snap)
+            }).then(r => r.ok).catch(() => false)
+          );
+          const results = await Promise.all(uploads);
+          if (results.every(Boolean)) {
+            clearOfflineSnapshots(subId);
+          }
+        }
+      }).catch(() => {});
 
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());

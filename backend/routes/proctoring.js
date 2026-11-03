@@ -371,8 +371,8 @@ router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
         if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
             return res.status(403).json({ error: "Access denied: Unauthorized to upload snapshot for another candidate." });
         }
-        if (submission.status !== 'started') {
-            return res.status(400).json({ error: "Exam is already closed. Additional snapshots rejected." });
+        if (submission.status !== 'started' && !['submitted', 'auto-submitted'].includes(submission.status)) {
+            return res.status(400).json({ error: "Exam is permanently evaluated and closed. Additional snapshots rejected." });
         }
 
         // Authoritative 20-character base-36 BICS Object ID (6-4-4-6 format)
@@ -458,8 +458,8 @@ router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
             if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
                 return res.status(403).json({ error: "Access denied: Unauthorized to upload snapshot for another candidate." });
             }
-            if (submission.status !== 'started') {
-                return res.status(400).json({ error: "Exam is already closed. Additional snapshots rejected." });
+            if (submission.status !== 'started' && !['submitted', 'auto-submitted'].includes(submission.status)) {
+                return res.status(400).json({ error: "Exam is permanently evaluated and closed. Additional snapshots rejected." });
             }
 
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
