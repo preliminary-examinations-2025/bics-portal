@@ -12,6 +12,7 @@ import {
   probeScreenResolution, 
   probeSystemEnvironment 
 } from '../utils/systemProbes';
+import { preloadBlazeFaceIdle } from '../utils/blazefaceLoader';
 
 const AUTOMATED_CHECKS = [
   { id: 'os', label: 'Operating system' },
@@ -252,8 +253,9 @@ export function SystemChecksView({
     onCompleteSystemChecks, onStartTicketReceived
   ]);
 
-  // Initial trigger of real probes on view mount
+  // Initial trigger of real probes on view mount and idle preload of ML vision model
   useEffect(() => {
+    preloadBlazeFaceIdle();
     if (!isInitiallyCompleted) {
       executeProbes();
     }

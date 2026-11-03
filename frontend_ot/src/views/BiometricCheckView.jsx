@@ -6,6 +6,7 @@ import {
 import { getReturnUrl, API_BASE } from '../config/constants';
 import { TestSetupStepProgress } from '../components/common/TestSetupStepProgress';
 import { extractComprehensiveClientSecurity } from '../utils/clientSecurity';
+import { getBlazeFaceModel } from '../utils/blazefaceLoader';
 
 export function BiometricCheckView({
   candidate,
@@ -171,7 +172,7 @@ export function BiometricCheckView({
     return () => { mounted = false; };
   }, []);
 
-  // 2. Ensure BlazeFace Vision Model is Loaded non-blockingly
+  // 2. Ensure BlazeFace Vision Model is Ready via Singleton Loader (Zero UI freeze)
   useEffect(() => {
     let active = true;
     if (blazefaceModelRef?.current) {
@@ -179,40 +180,20 @@ export function BiometricCheckView({
       return;
     }
 
-    const loadAsync = async () => {
-      try {
-        if (window._sharedBlazefaceModel) {
-          if (blazefaceModelRef) blazefaceModelRef.current = window._sharedBlazefaceModel;
-          if (active) setIsModelLoaded(true);
-          return;
+    getBlazeFaceModel({ prewarm: true })
+      .then(model => {
+        if (!active) return;
+        if (blazefaceModelRef && model) {
+          blazefaceModelRef.current = model;
         }
-
-        if (window.blazeface) {
-          if (!window._blazefaceLoadPromise) {
-            window._blazefaceLoadPromise = window.blazeface.load().then(async (model) => {
-              window._sharedBlazefaceModel = model;
-              // Asynchronous non-blocking shader pre-warm on 16x16 dummy canvas
-              try {
-                const dummy = document.createElement('canvas');
-                dummy.width = 16;
-                dummy.height = 16;
-                await new Promise(r => setTimeout(r, 20));
-                await model.estimateFaces(dummy, false);
-              } catch {}
-              return model;
-            });
-          }
-
-          const model = await window._blazefaceLoadPromise;
-          if (blazefaceModelRef && model) blazefaceModelRef.current = model;
-          if (active && model) setIsModelLoaded(true);
+        if (model) {
+          setIsModelLoaded(true);
         }
-      } catch (err) {
-        console.warn("[PROCTOR_VISION]: Model load notice:", err);
-      }
-    };
+      })
+      .catch(err => {
+        console.warn("[PROCTOR_VISION]: Model retrieval notice:", err?.message || err);
+      });
 
-    loadAsync();
     return () => { active = false; };
   }, [blazefaceModelRef]);
 

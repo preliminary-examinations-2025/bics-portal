@@ -18,6 +18,7 @@ import { EirfFormView } from './views/EirfFormView';
 import { VerificationReviewView } from './views/VerificationReviewView';
 import { FinishedView } from './views/FinishedView';
 import { extractComprehensiveClientSecurity } from './utils/clientSecurity';
+import { getBlazeFaceModel, preloadBlazeFaceIdle } from './utils/blazefaceLoader';
 import { encryptEirfEnvelope, encryptPendingStorage, decryptPendingStorage, fetchServerPublicKey } from './utils/eirfCrypto';
 import { 
   saveOfflineSubmission, 
@@ -877,87 +878,23 @@ function AppContent() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load BlazeFace Model Failsafe & Pre-warm WebGL Shaders Early
+  // Asynchronously harvest client security in the background early (zero ML, zero WebGL overhead)
   useEffect(() => {
-    // 1. Asynchronously harvest client security in the background early
     extractComprehensiveClientSecurity().catch(() => {});
-
-    // 2. Load BlazeFace model and pre-warm WebGL shaders on dummy canvas
-    const loadModel = async () => {
-      try {
-        if (window.blazeface) {
-          console.log("[PROCTOR_ML]: Pre-warming BlazeFace model asynchronously...");
-          if (!window._blazefaceLoadPromise) {
-            window._blazefaceLoadPromise = window.blazeface.load().then(async (model) => {
-              window._sharedBlazefaceModel = model;
-              try {
-                const dummy = document.createElement('canvas');
-                dummy.width = 16;
-                dummy.height = 16;
-                await model.estimateFaces(dummy, false);
-                console.log("[PROCTOR_ML]: BlazeFace WebGL shaders pre-warmed early.");
-              } catch {}
-              return model;
-            });
-          }
-          const model = await window._blazefaceLoadPromise;
-          blazefaceModelRef.current = model;
-          window._sharedBlazefaceModel = model;
-          console.log("[PROCTOR_ML]: BlazeFace model loaded successfully.");
-
-          // If calibration video is already streaming, pre-warm on video as well
-          if (calibVideoRef.current && calibVideoRef.current.readyState >= 2) {
-            model.estimateFaces(calibVideoRef.current, false)
-              .then(() => console.log("[PROCTOR_ML]: BlazeFace shaders pre-warmed on load."))
-              .catch(() => {});
-          }
-        } else {
-          console.warn("[PROCTOR_ML]: BlazeFace model CDN not available.");
-        }
-      } catch (e) {
-        console.error("[PROCTOR_ML]: Failed to initialize BlazeFace model:", e);
-      }
-    };
-    loadModel();
   }, []);
 
-  // Pre-warm WebGL shaders when webcam stream connects during guidelines setup
+  // Sync shared BlazeFace singleton instance non-blockingly when webcam stream connects
   useEffect(() => {
     if (!webcamStream) return;
-    let cancelled = false;
+    let active = true;
 
-    const warmUp = async () => {
-      try {
-        const vid = calibVideoRef.current;
-        if (!vid) return;
-
-        // Ensure video has received first frame
-        if (vid.readyState < 2) {
-          await new Promise(resolve => {
-            const onLoaded = () => {
-              vid.removeEventListener('loadeddata', onLoaded);
-              resolve();
-            };
-            vid.addEventListener('loadeddata', onLoaded);
-            setTimeout(resolve, 1500);
-          });
-        }
-
-        if (cancelled) return;
-        const model = blazefaceModelRef.current || (window.blazeface ? await window.blazeface.load() : null);
-        if (model && vid && vid.readyState >= 2 && !cancelled) {
-          blazefaceModelRef.current = model;
-          console.log("[PROCTOR_ML]: Pre-warming WebGL shaders during guidelines setup...");
-          await model.estimateFaces(vid, false);
-          console.log("[PROCTOR_ML]: BlazeFace WebGL shaders pre-warmed. Start Exam freeze eliminated.");
-        }
-      } catch (err) {
-        console.warn("[PROCTOR_ML]: Shader pre-warming notice:", err?.message || err);
+    getBlazeFaceModel({ prewarm: false }).then(model => {
+      if (active && model) {
+        blazefaceModelRef.current = model;
       }
-    };
+    }).catch(() => {});
 
-    warmUp();
-    return () => { cancelled = true; };
+    return () => { active = false; };
   }, [webcamStream]);
 
   // Helper trigger methods for custom modal system
@@ -1311,16 +1248,11 @@ function AppContent() {
       setWebcamStream(stream);
       setWebcamGranted(true);
       setMicGranted(true); // Grant microphone concurrently as well
+      // Schedule background idle preload now that candidate granted camera permission
+      preloadBlazeFaceIdle();
       setTimeout(() => {
         if (calibVideoRef.current) {
           calibVideoRef.current.srcObject = stream;
-          calibVideoRef.current.onloadeddata = () => {
-            if (blazefaceModelRef.current) {
-              blazefaceModelRef.current.estimateFaces(calibVideoRef.current, false)
-                .then(() => console.log("[PROCTOR_ML]: BlazeFace shaders pre-warmed on calib stream ready."))
-                .catch(() => {});
-            }
-          };
         }
       }, 100);
     } catch (err) {
