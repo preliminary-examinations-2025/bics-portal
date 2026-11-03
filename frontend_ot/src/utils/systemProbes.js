@@ -101,7 +101,7 @@ export async function probeDisplays() {
           if (isExtended) screenCount = 2;
         }
       }
-    } else if (window.screen && typeof window.screen.isExtended === 'boolean') {
+    } else if (typeof window !== 'undefined' && window.screen && typeof window.screen.isExtended === 'boolean') {
       isExtended = window.screen.isExtended;
       if (isExtended) screenCount = 2;
     }
@@ -131,7 +131,7 @@ export async function probeDisplays() {
  */
 export async function probeMediaDevices() {
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
       return {
         passed: false,
         cameraCount: 0,
@@ -196,8 +196,8 @@ export async function probeMediaDevices() {
  * 4. Screen Resolution & Viewport Probe
  */
 export function probeScreenResolution() {
-  const w = window.screen?.width || window.innerWidth || 1024;
-  const h = window.screen?.height || window.innerHeight || 768;
+  const w = (typeof window !== 'undefined' && (window.screen?.width || window.innerWidth)) || 1024;
+  const h = (typeof window !== 'undefined' && (window.screen?.height || window.innerHeight)) || 768;
   const passed = w >= 1024 && h >= 600;
 
   return {
@@ -215,10 +215,10 @@ export function probeScreenResolution() {
 export function probeSystemEnvironment(securityMetadata) {
   const os = securityMetadata?.operatingSystem || 'Windows';
   const browser = securityMetadata?.browser || 'Chrome';
-  const ua = navigator.userAgent || '';
+  const ua = (typeof navigator !== 'undefined' ? navigator.userAgent : '') || '';
 
-  const isSupportedBrowser = /Chrome|Firefox|Edg|Safari|Brave|Opera/i.test(ua);
-  const isSupportedOS = /Windows|Macintosh|Mac OS|Linux|X11/i.test(ua);
+  const isSupportedBrowser = /Chrome|Firefox|Edg|Safari|Brave|Opera/i.test(ua) || /Chrome|Firefox|Edg|Safari|Brave|Opera/i.test(browser);
+  const isSupportedOS = /Windows|Macintosh|Mac OS|Linux|X11/i.test(ua) || /Windows|Macintosh|Mac OS|Linux|X11/i.test(os);
   const passed = isSupportedBrowser && isSupportedOS;
 
   return {
