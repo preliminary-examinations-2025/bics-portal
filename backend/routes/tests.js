@@ -12,6 +12,7 @@ const { sendEirfNoticeEmail } = require('../utils/email');
 const { executeCode } = require('../utils/codeRunner');
 const { authenticateToken, requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
 const { isBicsId, toMongoId, toBicsId } = require('../utils/bicsId');
+const { compareFaceBiometrics, isPlaceholderPhoto } = require('../utils/biometricMatcher');
 
 const activeSubmissionsProcessing = new Set();
 
@@ -509,6 +510,116 @@ router.post('/precheck', requireAuth, async (req, res) => {
     });
 });
 
+// In-memory active biometric challenge registry with automatic cleanup
+const activeBiometricChallenges = new Map();
+
+// 2.6 Server-Issued Active Biometric Challenge (Phase 2)
+router.get('/biometrics/challenge', requireAuth, (req, res) => {
+    const CHALLENGE_ACTIONS = [
+        { action: 'TURN_LEFT', instruction: 'Slowly turn your head slightly to the left' },
+        { action: 'TURN_RIGHT', instruction: 'Slowly turn your head slightly to the right' },
+        { action: 'BLINK_TWICE', instruction: 'Blink both eyes naturally twice' }
+    ];
+    const selected = CHALLENGE_ACTIONS[Math.floor(Math.random() * CHALLENGE_ACTIONS.length)];
+    const challengeId = `chal_${crypto.randomBytes(8).toString('hex')}`;
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const expiresAt = Date.now() + (2 * 60 * 1000); // 2 minutes
+
+    activeBiometricChallenges.set(challengeId, {
+        ...selected,
+        nonce,
+        expiresAt,
+        candidateId: req.user?.id || req.user?.studentId || null
+    });
+
+    if (activeBiometricChallenges.size > 200) {
+        const now = Date.now();
+        for (const [id, c] of activeBiometricChallenges.entries()) {
+            if (c.expiresAt < now) activeBiometricChallenges.delete(id);
+        }
+    }
+
+    return res.json({
+        success: true,
+        challengeId,
+        action: selected.action,
+        instruction: selected.instruction,
+        nonce,
+        expiresAt
+    });
+});
+
+// 2.7 Server-Side Identity Verification & Face Match (Phase 2)
+router.post('/biometrics/verify', requireAuth, async (req, res) => {
+    let { candidateId, testId, liveFrame, challengeId, challengeTelemetry } = req.body;
+    if (!candidateId && req.user) candidateId = req.user.id || req.user.studentId;
+    if (!candidateId) return res.status(400).json({ success: false, error: "Candidate ID is required." });
+    if (!liveFrame) return res.status(400).json({ success: false, error: "Live capture frame is required." });
+
+    try {
+        let candidate = null;
+        const mongoCandId = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+
+        if (dbState.useMongo) {
+            candidate = await CandidateModel.findById(mongoCandId).lean();
+            if (!candidate && String(candidateId).length < 24) {
+                candidate = await CandidateModel.findOne({ studentId: String(candidateId) }).lean();
+            }
+        } else {
+            const db = getJSONData();
+            db.candidates = db.candidates || [];
+            candidate = db.candidates.find(c => c.id === candidateId || c._id === candidateId || c.studentId === candidateId);
+        }
+
+        const referencePhotoUrl = candidate?.referencePhotoUrl || candidate?.registrationData?.photoUrl || '';
+
+        // Validate active challenge if provided
+        let livenessPassed = false;
+        if (challengeId && activeBiometricChallenges.has(challengeId)) {
+            const challenge = activeBiometricChallenges.get(challengeId);
+            if (Date.now() <= challenge.expiresAt && challengeTelemetry?.actionCompleted) {
+                livenessPassed = true;
+            }
+            activeBiometricChallenges.delete(challengeId);
+        } else if (challengeTelemetry?.actionCompleted) {
+            livenessPassed = true;
+        }
+
+        // Run identity match comparison
+        const matchResult = await compareFaceBiometrics(liveFrame, referencePhotoUrl);
+
+        // Generate signed HMAC biometric token
+        const ticketSecret = process.env.EXAM_TICKET_SECRET || process.env.JWT_SECRET || 'bics-exam-ticket-secret-2026';
+        const expiresAt = Date.now() + (10 * 60 * 1000); // 10 minutes
+        const nonce = crypto.randomBytes(8).toString('hex');
+        const payload = `${candidateId}:${testId || 'general'}:${matchResult.decision}:${matchResult.similarityScore}:${expiresAt}:${nonce}`;
+        const signature = crypto.createHmac('sha256', ticketSecret).update(payload).digest('hex');
+        const biometricToken = `${payload}:${signature}`;
+
+        await logSystemAction(
+            candidateId,
+            'BIOMETRIC_VERIFIED',
+            `Biometric face check: ${matchResult.decision} (Similarity: ${Math.round(matchResult.similarityScore * 100)}%, Liveness: ${livenessPassed ? 'PASSED' : 'MANUAL'}). Details: ${matchResult.details}`,
+            matchResult.decision === 'retry-review' ? 'warning' : 'info'
+        ).catch(() => {});
+
+        return res.json({
+            success: true,
+            similarityScore: matchResult.similarityScore,
+            decision: matchResult.decision,
+            reviewNeeded: matchResult.reviewNeeded,
+            isEnrolled: matchResult.isEnrolled,
+            livenessPassed,
+            details: matchResult.details,
+            biometricToken,
+            serverTime: Date.now()
+        });
+    } catch (err) {
+        console.error("Biometric verification error:", err);
+        return res.status(500).json({ success: false, error: "Failed to evaluate biometric identity: " + err.message });
+    }
+});
+
 // 3. Get specific test for exam view (Strips answers & hidden test cases)
 router.get('/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
@@ -682,6 +793,21 @@ router.post('/start/:id', requireAuth, async (req, res) => {
             startTicket: startTicket || securityMetadata?.startTicket || null
         };
 
+        const incBiometrics = req.body.biometricResult || {};
+        const submissionBiometrics = {
+            similarityScore: typeof incBiometrics.similarityScore === 'number' ? incBiometrics.similarityScore : null,
+            decision: incBiometrics.decision || 'not-evaluated',
+            reviewNeeded: Boolean(incBiometrics.reviewNeeded),
+            livenessPassed: Boolean(incBiometrics.livenessPassed),
+            livenessScore: incBiometrics.livenessScore || null,
+            challengeId: incBiometrics.challengeId || '',
+            challengeType: incBiometrics.challengeType || '',
+            voiceStatus: incBiometrics.voiceStatus || 'passed',
+            referencePhotoUrl: incBiometrics.referencePhotoUrl || '',
+            verifiedPhotoUrl: baselinePhotoUrl || '',
+            evaluatedAt: new Date()
+        };
+
         if (dbState.useMongo) {
             const targetCandId = mongoCandId || candidateId;
             const targetTestId = mongoTestId || id;
@@ -703,6 +829,7 @@ router.post('/start/:id', requireAuth, async (req, res) => {
                 lastHeartbeatAt: new Date(),
                 status: 'started',
                 baselinePhotoUrl: baselinePhotoUrl || '',
+                biometricResult: submissionBiometrics,
                 securityMetadata: enrichedSecurityMetadata,
                 proctoringLog: { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0, clipboardAttempts: 0, webcamStatus: 'active', events: [], snapshots: [] },
                 answers: []
@@ -734,6 +861,7 @@ router.post('/start/:id', requireAuth, async (req, res) => {
                 lastHeartbeatAt: new Date(),
                 status: 'started',
                 baselinePhotoUrl: baselinePhotoUrl || '',
+                biometricResult: submissionBiometrics,
                 securityMetadata: enrichedSecurityMetadata,
                 proctoringLog: { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0, clipboardAttempts: 0, webcamStatus: 'active', events: [], snapshots: [] },
                 answers: []

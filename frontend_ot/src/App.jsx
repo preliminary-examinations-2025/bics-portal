@@ -1493,6 +1493,7 @@ export default function App() {
           token: examSecurityToken,
           startTicket: activeStartTicket,
           baselinePhotoUrl: baselinePhoto || '',
+          biometricResult: biometricsCache?.biometricResult || null,
           securityMetadata: securityMetadata || {}
         })
       });

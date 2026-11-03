@@ -31,6 +31,7 @@ const CandidateSchema = new mongoose.Schema({
         signatureUrl: String,
         undertakingUrl: String
     },
+    referencePhotoUrl: { type: String, default: '' },
     midSemFeedback: { type: Map, of: [String], default: {} },
     endSemFeedback: { type: Map, of: [String], default: {} },
     midSemLedgerUrl: { type: String, default: '' },

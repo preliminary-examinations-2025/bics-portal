@@ -57,6 +57,19 @@ const TestSubmissionSchema = new mongoose.Schema({
         }]
     },
     baselinePhotoUrl: { type: String, default: '' },
+    biometricResult: {
+        similarityScore: { type: Number, default: null },
+        decision: { type: String, default: 'not-evaluated' },
+        reviewNeeded: { type: Boolean, default: false },
+        livenessPassed: { type: Boolean, default: false },
+        livenessScore: { type: Number, default: null },
+        challengeId: { type: String, default: '' },
+        challengeType: { type: String, default: '' },
+        voiceStatus: { type: String, default: 'passed' },
+        referencePhotoUrl: { type: String, default: '' },
+        verifiedPhotoUrl: { type: String, default: '' },
+        evaluatedAt: { type: Date }
+    },
     securityMetadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     hasEirfFlag: { type: Boolean, default: false },
     eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },

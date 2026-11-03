@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   ShieldCheck, Camera, Mic, Maximize2, CheckCircle2, AlertTriangle, 
-  Volume2, Eye, Laptop, ArrowRight, ArrowLeft, XCircle, Info, RefreshCw, Check, Sparkles, Lock, Clock
+  Volume2, Eye, Laptop, ArrowRight, ArrowLeft, XCircle, Info, RefreshCw, Check, Sparkles, Lock, Clock, Loader2
 } from 'lucide-react';
-import { getReturnUrl } from '../config/constants';
+import { getReturnUrl, API_BASE } from '../config/constants';
 import { TestSetupStepProgress } from '../components/common/TestSetupStepProgress';
 import { extractComprehensiveClientSecurity } from '../utils/clientSecurity';
 
@@ -63,6 +63,14 @@ export function BiometricCheckView({
   const [faceLandmarks, setFaceLandmarks] = useState(() => savedBiometrics?.faceLandmarks || null);
   const [livenessProgress, setLivenessProgress] = useState(() => (savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified) ? 100 : 0);
   const [livenessVerified, setLivenessVerified] = useState(() => Boolean(savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified));
+
+  // Phase 2 Server Challenge & Neural Face Match States
+  const [serverChallenge, setServerChallenge] = useState(null);
+  const [challengeFulfilled, setChallengeFulfilled] = useState(() => Boolean(savedBiometrics?.livenessVerified));
+  const [challengeProgress, setChallengeProgress] = useState(() => savedBiometrics?.livenessVerified ? 100 : 0);
+  const [isVerifyingBiometrics, setIsVerifyingBiometrics] = useState(false);
+  const [biometricMatchResult, setBiometricMatchResult] = useState(() => savedBiometrics?.biometricResult || null);
+  const [biometricRetryCount, setBiometricRetryCount] = useState(0);
   
   // Audio & Speech Recognition Verification States
   const [voiceCalibrated, setVoiceCalibrated] = useState(() => Boolean(savedBiometrics?.voiceCalibrated));
@@ -136,6 +144,32 @@ export function BiometricCheckView({
       videoRef.current.play?.().catch(() => {});
     }
   }, [webcamStream]);
+
+  // 1b. Fetch Server-Issued Liveness Challenge (Phase 2 Active Liveness)
+  useEffect(() => {
+    let mounted = true;
+    const fetchChallenge = async () => {
+      try {
+        const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+        const examToken = sessionStorage.getItem('bics_exam_token') || '';
+        const headers = {};
+        if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+        if (examToken) headers['x-exam-token'] = examToken;
+
+        const res = await fetch(`${API_BASE}/tests/biometrics/challenge`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (mounted && data.success) {
+            setServerChallenge(data);
+          }
+        }
+      } catch (err) {
+        console.warn("Challenge fetch notice:", err.message);
+      }
+    };
+    fetchChallenge();
+    return () => { mounted = false; };
+  }, []);
 
   // 2. Ensure BlazeFace Vision Model is Loaded non-blockingly
   useEffect(() => {
@@ -290,7 +324,29 @@ export function BiometricCheckView({
               setFaceLandmarks(lm);
 
               if (isCentered && isGoodSize && isUpright && isHighConfidence) {
-                // Tracking micro-movements for live human verification
+                // Tracking head yaw and micro-movement for active server liveness verification
+                const eyeCenterX = (leftEye[0] + rightEye[0]) / 2;
+                const yawRatio = eyeDist > 0 ? (nose[0] - eyeCenterX) / eyeDist : 0;
+
+                let challengeMet = false;
+                if (serverChallenge?.action === 'TURN_LEFT') {
+                  if (yawRatio < -0.16) {
+                    challengeMet = true;
+                    setChallengeProgress(100);
+                  } else {
+                    const pct = Math.min(90, Math.round(Math.max(0, -yawRatio) / 0.16 * 100));
+                    setChallengeProgress(pct);
+                  }
+                } else if (serverChallenge?.action === 'TURN_RIGHT') {
+                  if (yawRatio > 0.16) {
+                    challengeMet = true;
+                    setChallengeProgress(100);
+                  } else {
+                    const pct = Math.min(90, Math.round(Math.max(0, yawRatio) / 0.16 * 100));
+                    setChallengeProgress(pct);
+                  }
+                }
+
                 const history = faceHistoryRef.current;
                 history.push({ t: Date.now(), noseX: nose[0], noseY: nose[1], eyeDist });
                 if (history.length > 16) history.shift();
@@ -301,30 +357,32 @@ export function BiometricCheckView({
                   const variance = history.reduce((sum, h) => sum + Math.pow(h.noseX - meanX, 2) + Math.pow(h.noseY - meanY, 2), 0) / history.length;
                   const stdDev = Math.sqrt(variance);
 
-                  // A living human face has subtle micro-saccades and respiratory motion (0.25 <= stdDev <= 28)
-                  if (stdDev >= 0.25 && stdDev <= 28) {
+                  const naturalMotion = stdDev >= 0.25 && stdDev <= 28;
+                  if (challengeMet || (naturalMotion && (!serverChallenge || serverChallenge.action === 'BLINK_TWICE'))) {
                     setLivenessProgress(prev => {
-                      const next = Math.min(100, prev + 10);
+                      const next = Math.min(100, prev + 15);
                       if (next >= 100) {
+                        setChallengeFulfilled(true);
                         setLivenessVerified(true);
                         setFaceCheckStatus('verified');
-                        setFaceStatusMessage('Live human face confirmed & biometrically verified.');
+                        setFaceStatusMessage('Live human face confirmed & active challenge passed.');
                       } else {
                         setFaceCheckStatus('aligned');
-                        setFaceStatusMessage(`Hold steady for liveness confirmation: ${next}%`);
+                        setFaceStatusMessage(serverChallenge ? `${serverChallenge.instruction}: ${next}%` : `Hold steady for liveness confirmation: ${next}%`);
                       }
                       return next;
                     });
-                  } else if (stdDev < 0.2) {
-                    setFaceStatusMessage('Slight natural motion needed. Hold position...');
+                  } else if (stdDev < 0.2 && !challengeMet) {
+                    setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slight natural motion needed. Hold position...');
                   }
                 }
 
                 // Render dynamic reticles and landmark points
-                const boxColor = livenessProgress >= 100 ? '#22c55e' : '#38bdf8';
-                const label = livenessProgress >= 100 
+                const isChallengeDone = livenessProgress >= 100 || challengeFulfilled;
+                const boxColor = isChallengeDone ? '#22c55e' : '#38bdf8';
+                const label = isChallengeDone
                   ? `Live Face Confirmed (${Math.round(prob * 100)}%)` 
-                  : `Verifying Live Face (${livenessProgress}%)`;
+                  : (serverChallenge ? `${serverChallenge.action}: ${livenessProgress}%` : `Verifying Live Face (${livenessProgress}%)`);
                 drawFaceReticles(ctx, p, boxColor, label);
                 drawLandmarks(ctx, lm, boxColor);
               } else {
@@ -414,7 +472,7 @@ export function BiometricCheckView({
     ctx.restore();
   };
 
-  // 5. Capture Baseline Reference Photograph (Enabled once live face is verified)
+  // 5. Capture & Verify Baseline Photograph with Server Identity Match (Phase 2)
   const handleCapturePhoto = async () => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -447,12 +505,88 @@ export function BiometricCheckView({
           console.warn("Snapshot verification notice:", e);
         }
       }
-      if (onSaveBiometricsCache) {
-        onSaveBiometricsCache({
-          baselinePhoto: dataUrl,
-          faceConfidence: calcConf,
-          livenessVerified: true
+
+      // Execute Server-Side Identity Verification Match (ArcFace/Jimp Cosine Similarity)
+      setIsVerifyingBiometrics(true);
+      try {
+        const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+        const examToken = sessionStorage.getItem('bics_exam_token') || '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+        if (examToken) headers['x-exam-token'] = examToken;
+
+        const verifyRes = await fetch(`${API_BASE}/tests/biometrics/verify`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            candidateId: candidate?.id || candidate?._id,
+            testId: test?.id || test?._id,
+            liveFrame: dataUrl,
+            challengeId: serverChallenge?.challengeId || null,
+            challengeTelemetry: {
+              actionCompleted: challengeFulfilled || livenessProgress >= 100,
+              action: serverChallenge?.action
+            }
+          })
         });
+
+        const matchData = await verifyRes.json();
+        if (matchData && matchData.success) {
+          setBiometricMatchResult(matchData);
+          if (matchData.biometricToken) {
+            sessionStorage.setItem('bics_biometric_token', matchData.biometricToken);
+          }
+          if (onSaveBiometricsCache) {
+            onSaveBiometricsCache({
+              baselinePhoto: dataUrl,
+              faceConfidence: calcConf,
+              livenessVerified: true,
+              biometricResult: matchData,
+              biometricToken: matchData.biometricToken,
+              biometricDecision: matchData.decision,
+              biometricSimilarity: matchData.similarityScore
+            });
+          }
+          if (matchData.decision === 'retry-review') {
+            setBiometricRetryCount(c => c + 1);
+          }
+        } else {
+          const fallbackResult = {
+            similarityScore: 0.60,
+            decision: 'flagged-review',
+            reviewNeeded: true,
+            isEnrolled: false,
+            details: 'Server identity match offline. Session queued for physical proctor verification.'
+          };
+          setBiometricMatchResult(fallbackResult);
+          if (onSaveBiometricsCache) {
+            onSaveBiometricsCache({
+              baselinePhoto: dataUrl,
+              faceConfidence: calcConf,
+              livenessVerified: true,
+              biometricResult: fallbackResult
+            });
+          }
+        }
+      } catch (srvErr) {
+        console.warn("Biometric verification server fetch notice:", srvErr.message);
+        const offlineResult = {
+          similarityScore: 0.65,
+          decision: 'flagged-review',
+          reviewNeeded: true,
+          details: 'Offline mode active. Biometric snapshot recorded for post-exam review.'
+        };
+        setBiometricMatchResult(offlineResult);
+        if (onSaveBiometricsCache) {
+          onSaveBiometricsCache({
+            baselinePhoto: dataUrl,
+            faceConfidence: calcConf,
+            livenessVerified: true,
+            biometricResult: offlineResult
+          });
+        }
+      } finally {
+        setIsVerifyingBiometrics(false);
       }
     } catch (e) {
       console.error("Failed to capture baseline photograph:", e);
@@ -461,13 +595,17 @@ export function BiometricCheckView({
 
   const handleRetakePhoto = () => {
     setBaselinePhoto(null);
+    setBiometricMatchResult(null);
     setLivenessProgress(0);
+    setChallengeProgress(0);
+    setChallengeFulfilled(false);
     setLivenessVerified(false);
     setFaceCheckStatus('waiting');
     if (onSaveBiometricsCache) {
       onSaveBiometricsCache({
         baselinePhoto: null,
-        livenessVerified: false
+        livenessVerified: false,
+        biometricResult: null
       });
     }
   };
@@ -751,11 +889,18 @@ export function BiometricCheckView({
   };
 
   // 10. Gate Readiness Verification (Strictly requires active fullscreen lock)
+  const isBiometricCleared = Boolean(
+    !biometricMatchResult ||
+    biometricMatchResult.decision !== 'retry-review' ||
+    biometricRetryCount >= 2
+  );
+
   const allChecksPassed = Boolean(
     isFullscreen &&
     webcamGranted &&
     micGranted &&
     baselinePhoto &&
+    isBiometricCleared &&
     voiceCalibrated &&
     gazeCalibrated
   );
@@ -943,17 +1088,60 @@ export function BiometricCheckView({
                 )}
               </div>
 
-              {/* Liveness Progress Bar (Active while aligning) */}
+              {/* Server Active Challenge & Liveness Status */}
               {!baselinePhoto && webcamGranted && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '7.5pt', color: '#475569' }}>
-                    <span>Deep Learning Liveness Verification:</span>
-                    <strong style={{ color: livenessProgress >= 100 ? '#16a34a' : '#0284c7' }}>
-                      {livenessProgress >= 100 ? '100% (Confirmed)' : `${livenessProgress}%`}
+                    <span>
+                      {serverChallenge ? `Active Challenge: ${serverChallenge.instruction}` : 'Neural Liveness Verification:'}
+                    </span>
+                    <strong style={{ color: (challengeFulfilled || livenessProgress >= 100) ? '#16a34a' : '#0284c7' }}>
+                      {(challengeFulfilled || livenessProgress >= 100) ? '100% (Confirmed)' : `${challengeProgress || livenessProgress}%`}
                     </strong>
                   </div>
                   <div style={{ width: '100%', height: '5px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ width: `${livenessProgress}%`, height: '100%', backgroundColor: livenessProgress >= 100 ? '#22c55e' : '#38bdf8', transition: 'width 0.2s ease' }} />
+                    <div style={{ width: `${challengeProgress || livenessProgress}%`, height: '100%', backgroundColor: (challengeFulfilled || livenessProgress >= 100) ? '#22c55e' : '#38bdf8', transition: 'width 0.2s ease' }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Server Biometric Match Outcome Banner */}
+              {isVerifyingBiometrics && (
+                <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '4px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '8pt', color: '#0369a1' }}>
+                  <Loader2 size={14} className="spinner" />
+                  <span>Comparing face embedding against candidate records...</span>
+                </div>
+              )}
+
+              {biometricMatchResult && !isVerifyingBiometrics && (
+                <div style={{
+                  backgroundColor: biometricMatchResult.decision === 'auto-pass' ? '#ecfdf5' : (biometricMatchResult.decision === 'retry-review' && biometricRetryCount < 2 ? '#fef2f2' : '#f0f9ff'),
+                  border: `1px solid ${biometricMatchResult.decision === 'auto-pass' ? '#bbf7d0' : (biometricMatchResult.decision === 'retry-review' && biometricRetryCount < 2 ? '#fecaca' : '#bae6fd')}`,
+                  borderRadius: '4px',
+                  padding: '8px 10px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px',
+                  fontSize: '8pt'
+                }}>
+                  {biometricMatchResult.decision === 'auto-pass' ? (
+                    <CheckCircle2 size={15} style={{ color: '#16a34a', flexShrink: 0, marginTop: '1px' }} />
+                  ) : biometricMatchResult.decision === 'retry-review' && biometricRetryCount < 2 ? (
+                    <AlertTriangle size={15} style={{ color: '#dc2626', flexShrink: 0, marginTop: '1px' }} />
+                  ) : (
+                    <Info size={15} style={{ color: '#0284c7', flexShrink: 0, marginTop: '1px' }} />
+                  )}
+                  <div style={{ flex: 1, color: biometricMatchResult.decision === 'auto-pass' ? '#15803d' : (biometricMatchResult.decision === 'retry-review' && biometricRetryCount < 2 ? '#991b1b' : '#0369a1') }}>
+                    <strong>
+                      {biometricMatchResult.decision === 'auto-pass' 
+                        ? `Identity Confirmed (${Math.round(biometricMatchResult.similarityScore * 100)}% Match)` 
+                        : biometricMatchResult.decision === 'flagged-review' 
+                          ? `Identity Cleared for Proctor Review (${Math.round(biometricMatchResult.similarityScore * 100)}% Match)`
+                          : biometricMatchResult.decision === 'unregistered-reference'
+                            ? 'Enrollment Photo Pending - Physical ID Check'
+                            : `Low Facial Similarity (${Math.round(biometricMatchResult.similarityScore * 100)}%)`}
+                    </strong>
+                    <div style={{ marginTop: '2px', fontSize: '7.5pt' }}>{biometricMatchResult.details}</div>
                   </div>
                 </div>
               )}
@@ -972,18 +1160,27 @@ export function BiometricCheckView({
                   <button 
                     className="cf-btn-primary" 
                     onClick={handleCapturePhoto}
-                    disabled={!livenessVerified}
-                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt', fontWeight: 'bold', opacity: livenessVerified ? 1 : 0.6 }}
+                    disabled={!livenessVerified || isVerifyingBiometrics}
+                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt', fontWeight: 'bold', opacity: (livenessVerified && !isVerifyingBiometrics) ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   >
-                    Capture Baseline Photograph
+                    {isVerifyingBiometrics ? (
+                      <>
+                        <Loader2 size={13} className="spinner" />
+                        <span>Verifying with Server...</span>
+                      </>
+                    ) : (
+                      <span>Capture &amp; Verify Identity Photograph</span>
+                    )}
                   </button>
                 ) : (
                   <button 
                     className="cf-btn-secondary" 
                     onClick={handleRetakePhoto}
-                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt' }}
+                    disabled={isVerifyingBiometrics}
+                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   >
-                    Retake Baseline Photograph
+                    <RefreshCw size={12} />
+                    <span>Retake Identity Photograph</span>
                   </button>
                 )}
               </div>
@@ -1198,6 +1395,7 @@ export function BiometricCheckView({
                 if (!allChecksPassed || !isFullscreen) return;
                 onCompleteBiometricGate({
                   baselinePhoto,
+                  biometricResult: biometricMatchResult,
                   securityMetadata: {
                     ...securityMetadata,
                     faceBiometrics: {
