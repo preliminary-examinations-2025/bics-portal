@@ -49,6 +49,11 @@ export function BiometricCheckView({
   const audioAnimFrameRef = useRef(null);
   const speechRecognitionRef = useRef(null);
   const faceHistoryRef = useRef([]);
+  // Differential Active Challenge State Machine Refs
+  const neutralSamplesRef = useRef([]);
+  const baselinePoseRef = useRef(null);
+  const actionHeldCountRef = useRef(0);
+  const unalignedFramesCountRef = useRef(0);
 
   // Model & Biometrics State (Preserved if returning from next steps)
   const [isModelLoaded, setIsModelLoaded] = useState(false);
@@ -62,13 +67,13 @@ export function BiometricCheckView({
   const [faceConfidence, setFaceConfidence] = useState(() => savedBiometrics?.faceConfidence || (savedBiometrics?.baselinePhoto ? 95 : 0));
   const [faceBox, setFaceBox] = useState(() => savedBiometrics?.faceBox || null);
   const [faceLandmarks, setFaceLandmarks] = useState(() => savedBiometrics?.faceLandmarks || null);
-  const [livenessProgress, setLivenessProgress] = useState(() => (savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified) ? 100 : 0);
-  const [livenessVerified, setLivenessVerified] = useState(() => Boolean(savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified));
+  const [livenessProgress, setLivenessProgress] = useState(() => savedBiometrics?.baselinePhoto ? 100 : 0);
+  const [livenessVerified, setLivenessVerified] = useState(() => Boolean(savedBiometrics?.baselinePhoto));
 
   // Phase 2 Server Challenge & Neural Face Match States
   const [serverChallenge, setServerChallenge] = useState(null);
-  const [challengeFulfilled, setChallengeFulfilled] = useState(() => Boolean(savedBiometrics?.livenessVerified));
-  const [challengeProgress, setChallengeProgress] = useState(() => savedBiometrics?.livenessVerified ? 100 : 0);
+  const [challengeFulfilled, setChallengeFulfilled] = useState(() => Boolean(savedBiometrics?.baselinePhoto));
+  const [challengeProgress, setChallengeProgress] = useState(() => savedBiometrics?.baselinePhoto ? 100 : 0);
   const [isVerifyingBiometrics, setIsVerifyingBiometrics] = useState(false);
   const [biometricMatchResult, setBiometricMatchResult] = useState(() => savedBiometrics?.biometricResult || null);
   const [biometricRetryCount, setBiometricRetryCount] = useState(0);
@@ -305,68 +310,129 @@ export function BiometricCheckView({
               setFaceLandmarks(lm);
 
               if (isCentered && isGoodSize && isUpright && isHighConfidence) {
-                // Tracking head yaw and micro-movement for active server liveness verification
+                // Multi-Phase Differential Active Liveness State Machine
                 const eyeCenterX = (leftEye[0] + rightEye[0]) / 2;
                 const yawRatio = eyeDist > 0 ? (nose[0] - eyeCenterX) / eyeDist : 0;
+                const signedTilt = eyeDist > 0 ? (leftEye[1] - rightEye[1]) / eyeDist : 0;
 
-                let challengeMet = false;
-                if (serverChallenge?.action === 'TURN_LEFT') {
-                  if (yawRatio < -0.075) {
-                    challengeMet = true;
-                    setChallengeProgress(100);
+                unalignedFramesCountRef.current = 0;
+
+                if (baselinePhoto || challengeFulfilled) {
+                  // Active challenge is already completed or baseline portrait is confirmed
+                  drawFaceReticles(ctx, p, '#22c55e', `Live Face Confirmed (${Math.round(prob * 100)}%)`);
+                  drawLandmarks(ctx, lm, '#22c55e');
+                } else {
+                  // Step 1: Calibrate personal neutral baseline pose over 5 stable centered frames
+                  if (!baselinePoseRef.current) {
+                    neutralSamplesRef.current.push({ yaw: yawRatio, tilt: signedTilt });
+                    if (neutralSamplesRef.current.length < 5) {
+                      setFaceCheckStatus('aligned');
+                      setFaceStatusMessage('Calibrating neutral baseline... Look directly at the camera.');
+                      setChallengeProgress(0);
+                      drawFaceReticles(ctx, p, '#38bdf8', 'Calibrating Neutral Pose...');
+                      drawLandmarks(ctx, lm, '#38bdf8');
+                    } else {
+                      const avgYaw = neutralSamplesRef.current.reduce((sum, s) => sum + s.yaw, 0) / neutralSamplesRef.current.length;
+                      const avgTilt = neutralSamplesRef.current.reduce((sum, s) => sum + s.tilt, 0) / neutralSamplesRef.current.length;
+                      baselinePoseRef.current = { yaw: avgYaw, tilt: avgTilt };
+                      setFaceCheckStatus('aligned');
+                      setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slowly turn your head slightly');
+                      setChallengeProgress(0);
+                      drawFaceReticles(ctx, p, '#38bdf8', serverChallenge ? serverChallenge.instruction : 'Ready for challenge');
+                      drawLandmarks(ctx, lm, '#38bdf8');
+                    }
                   } else {
-                    const pct = Math.min(90, Math.round(Math.max(0, -yawRatio) / 0.075 * 100));
-                    setChallengeProgress(pct);
-                  }
-                } else if (serverChallenge?.action === 'TURN_RIGHT') {
-                  if (yawRatio > 0.075) {
-                    challengeMet = true;
-                    setChallengeProgress(100);
-                  } else {
-                    const pct = Math.min(90, Math.round(Math.max(0, yawRatio) / 0.075 * 100));
-                    setChallengeProgress(pct);
-                  }
-                }
+                    // Step 2: Measure real differential delta from the user's neutral baseline
+                    const deltaYaw = yawRatio - baselinePoseRef.current.yaw;
+                    const deltaTilt = Math.abs(signedTilt - baselinePoseRef.current.tilt);
+                    const action = serverChallenge?.action || 'TURN_LEFT';
 
-                const history = faceHistoryRef.current;
-                history.push({ t: Date.now(), noseX: nose[0], noseY: nose[1], eyeDist });
-                if (history.length > 16) history.shift();
+                    let progress = 0;
+                    let challengeMet = false;
 
-                if (history.length >= 6) {
-                  const meanX = history.reduce((sum, h) => sum + h.noseX, 0) / history.length;
-                  const meanY = history.reduce((sum, h) => sum + h.noseY, 0) / history.length;
-                  const variance = history.reduce((sum, h) => sum + Math.pow(h.noseX - meanX, 2) + Math.pow(h.noseY - meanY, 2), 0) / history.length;
-                  const stdDev = Math.sqrt(variance);
-
-                  const naturalMotion = stdDev >= 0.12 && stdDev <= 32;
-                  if (challengeMet || (naturalMotion && (!serverChallenge || serverChallenge.action === 'BLINK_TWICE'))) {
-                    setLivenessProgress(prev => {
-                      const next = Math.min(100, prev + 15);
-                      if (next >= 100) {
-                        setChallengeFulfilled(true);
-                        setLivenessVerified(true);
-                        setFaceCheckStatus('verified');
-                        setFaceStatusMessage('Live human face confirmed & active challenge passed.');
+                    if (action === 'TURN_LEFT') {
+                      // Turning to candidate's left produces negative deltaYaw in mirrored camera coordinate frame
+                      if (deltaYaw < -0.025) {
+                        progress = Math.min(100, Math.round(((-deltaYaw - 0.025) / (0.075 - 0.025)) * 100));
+                        setChallengeProgress(progress);
+                        if (progress >= 100) {
+                          actionHeldCountRef.current += 1;
+                          if (actionHeldCountRef.current >= 2) challengeMet = true;
+                        } else {
+                          actionHeldCountRef.current = 0;
+                        }
+                      } else if (deltaYaw > 0.040) {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage('Please turn to your LEFT (detected right turn)');
                       } else {
-                        setFaceCheckStatus('aligned');
-                        setFaceStatusMessage(serverChallenge ? `${serverChallenge.instruction}: ${next}%` : `Hold steady for liveness confirmation: ${next}%`);
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slowly turn your head slightly to the left');
                       }
-                      return next;
-                    });
-                  } else if (stdDev < 0.10 && !challengeMet) {
-                    setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slight natural motion needed. Hold position...');
+                    } else if (action === 'TURN_RIGHT') {
+                      // Turning to candidate's right produces positive deltaYaw in mirrored camera coordinate frame
+                      if (deltaYaw > 0.025) {
+                        progress = Math.min(100, Math.round(((deltaYaw - 0.025) / (0.075 - 0.025)) * 100));
+                        setChallengeProgress(progress);
+                        if (progress >= 100) {
+                          actionHeldCountRef.current += 1;
+                          if (actionHeldCountRef.current >= 2) challengeMet = true;
+                        } else {
+                          actionHeldCountRef.current = 0;
+                        }
+                      } else if (deltaYaw < -0.040) {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage('Please turn to your RIGHT (detected left turn)');
+                      } else {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slowly turn your head slightly to the right');
+                      }
+                    } else if (action === 'TILT_HEAD') {
+                      if (deltaTilt > 0.025) {
+                        progress = Math.min(100, Math.round(((deltaTilt - 0.025) / (0.080 - 0.025)) * 100));
+                        setChallengeProgress(progress);
+                        if (progress >= 100) {
+                          actionHeldCountRef.current += 1;
+                          if (actionHeldCountRef.current >= 2) challengeMet = true;
+                        } else {
+                          actionHeldCountRef.current = 0;
+                        }
+                      } else {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Tilt your head slightly to one side');
+                      }
+                    }
+
+                    // Step 3: Fulfill active challenge only when real differential threshold is verified
+                    if (challengeMet) {
+                      setChallengeFulfilled(true);
+                      setLivenessVerified(true);
+                      setChallengeProgress(100);
+                      setLivenessProgress(100);
+                      setFaceCheckStatus('verified');
+                      setFaceStatusMessage('Active challenge passed! Identity confirmed. Please capture baseline photo.');
+                      drawFaceReticles(ctx, p, '#22c55e', 'Active Challenge Passed (100%)');
+                      drawLandmarks(ctx, lm, '#22c55e');
+                    } else {
+                      drawFaceReticles(ctx, p, '#38bdf8', `${action}: ${progress}%`);
+                      drawLandmarks(ctx, lm, '#38bdf8');
+                    }
                   }
                 }
-
-                // Render dynamic reticles and landmark points
-                const isChallengeDone = livenessProgress >= 100 || challengeFulfilled;
-                const boxColor = isChallengeDone ? '#22c55e' : '#38bdf8';
-                const label = isChallengeDone
-                  ? `Live Face Confirmed (${Math.round(prob * 100)}%)` 
-                  : (serverChallenge ? `${serverChallenge.action}: ${livenessProgress}%` : `Verifying Live Face (${livenessProgress}%)`);
-                drawFaceReticles(ctx, p, boxColor, label);
-                drawLandmarks(ctx, lm, boxColor);
               } else {
+                unalignedFramesCountRef.current += 1;
+                if (unalignedFramesCountRef.current > 8 && !challengeFulfilled) {
+                  // Reset baseline calibration if candidate lost alignment for several frames
+                  neutralSamplesRef.current = [];
+                  baselinePoseRef.current = null;
+                  actionHeldCountRef.current = 0;
+                  setChallengeProgress(0);
+                }
+
                 setFaceCheckStatus('unaligned');
                 setLivenessProgress(prev => Math.max(0, prev - 2));
 
@@ -582,6 +648,10 @@ export function BiometricCheckView({
     setChallengeFulfilled(false);
     setLivenessVerified(false);
     setFaceCheckStatus('waiting');
+    neutralSamplesRef.current = [];
+    baselinePoseRef.current = null;
+    actionHeldCountRef.current = 0;
+    unalignedFramesCountRef.current = 0;
     if (onSaveBiometricsCache) {
       onSaveBiometricsCache({
         baselinePhoto: null,
@@ -1074,14 +1144,22 @@ export function BiometricCheckView({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '7.5pt', color: '#475569' }}>
                     <span>
-                      {serverChallenge ? `Active Challenge: ${serverChallenge.instruction}` : 'Neural Liveness Verification:'}
+                      {challengeFulfilled 
+                        ? 'Active Challenge: Confirmed' 
+                        : !baselinePoseRef.current 
+                          ? 'Calibrating Neutral Pose: Look straight at camera' 
+                          : (serverChallenge ? `Active Challenge: ${serverChallenge.instruction}` : 'Active Challenge: Perform gesture')}
                     </span>
-                    <strong style={{ color: (challengeFulfilled || livenessProgress >= 100) ? '#16a34a' : '#0284c7' }}>
-                      {(challengeFulfilled || livenessProgress >= 100) ? '100% (Confirmed)' : `${challengeProgress || livenessProgress}%`}
+                    <strong style={{ color: challengeFulfilled ? '#16a34a' : '#0284c7' }}>
+                      {challengeFulfilled 
+                        ? '100% (Confirmed)' 
+                        : !baselinePoseRef.current 
+                          ? 'Calibrating...' 
+                          : `${challengeProgress}%`}
                     </strong>
                   </div>
                   <div style={{ width: '100%', height: '5px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ width: `${challengeProgress || livenessProgress}%`, height: '100%', backgroundColor: (challengeFulfilled || livenessProgress >= 100) ? '#22c55e' : '#38bdf8', transition: 'width 0.2s ease' }} />
+                    <div style={{ width: `${challengeFulfilled ? 100 : challengeProgress}%`, height: '100%', backgroundColor: challengeFulfilled ? '#22c55e' : '#38bdf8', transition: 'width 0.15s ease' }} />
                   </div>
                 </div>
               )}

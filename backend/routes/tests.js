@@ -518,7 +518,7 @@ router.get('/biometrics/challenge', requireAuth, (req, res) => {
     const CHALLENGE_ACTIONS = [
         { action: 'TURN_LEFT', instruction: 'Slowly turn your head slightly to the left' },
         { action: 'TURN_RIGHT', instruction: 'Slowly turn your head slightly to the right' },
-        { action: 'BLINK_TWICE', instruction: 'Blink both eyes naturally twice' }
+        { action: 'TILT_HEAD', instruction: 'Tilt your head slightly to one side' }
     ];
     const selected = CHALLENGE_ACTIONS[Math.floor(Math.random() * CHALLENGE_ACTIONS.length)];
     const challengeId = `chal_${crypto.randomBytes(8).toString('hex')}`;

@@ -99,7 +99,7 @@ async function runPhase2BiometricSuite() {
     // ------------------------------------------------------------------
     console.log("\n[TEST 6] Frontend BiometricCheckView Active Challenge & Verification UI:");
     assert(biometricViewSource.includes("fetch(`${API_BASE}/tests/biometrics/challenge`"), "Frontend must fetch active server challenge");
-    assert(biometricViewSource.includes("yawRatio < -0.075"), "Frontend must track active head turn pose from landmarks with tuned sensitivity");
+    assert(biometricViewSource.includes("deltaYaw < -0.025") || biometricViewSource.includes("yawRatio < -0.075"), "Frontend must track active head turn pose from landmarks with tuned sensitivity");
     assert(biometricViewSource.includes("fetch(`${API_BASE}/tests/biometrics/verify`"), "Frontend must post live capture to /tests/biometrics/verify");
     assert(biometricViewSource.includes("biometricMatchResult.decision === 'auto-pass'"), "Frontend must render high-confidence auto-pass outcome");
     assert(biometricViewSource.includes("biometricRetryCount >= 2"), "Frontend must prevent student deadlocks by falling back to proctor review after retries");
