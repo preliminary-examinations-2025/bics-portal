@@ -22,6 +22,7 @@ import { encryptEirfEnvelope, encryptPendingStorage, decryptPendingStorage, fetc
 import { 
   saveOfflineSubmission, 
   getOfflineSubmission, 
+  deleteOfflineSubmission,
   saveOfflineSnapshot, 
   getOfflineSnapshots, 
   clearOfflineSnapshots, 
@@ -29,7 +30,8 @@ import {
   getOfflineEvents, 
   clearOfflineEvents,
   saveOfflineDraft,
-  getOfflineDraft
+  getOfflineDraft,
+  deleteOfflineDraft
 } from './utils/offlineDb';
 
 const API_BASE = (() => {
@@ -385,15 +387,49 @@ function LogoutHandler() {
   return <div style={{ minHeight: '100vh', background: '#ffffff' }} />;
 }
 
-export default function App() {
+// Error Boundary to prevent white-screen crashes on uncaught render anomalies
+class ExamErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("[EXAM_ERROR_BOUNDARY]: Uncaught render exception:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'sans-serif' }}>
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid #fed7aa', borderRadius: '8px', padding: '32px', maxWidth: '520px', width: '100%', textAlign: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#fff7ed', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <span style={{ fontSize: '24px' }}>⚠️</span>
+            </div>
+            <h2 style={{ fontSize: '13pt', color: '#002147', margin: '0 0 8px 0', fontWeight: '700' }}>Examination Session Recovery</h2>
+            <p style={{ fontSize: '9pt', color: '#64748b', lineHeight: '1.5', margin: '0 0 20px 0' }}>
+              An unexpected render anomaly occurred in the examination workspace. Your responses, drafts, and proctoring telemetry are safely preserved.
+            </p>
+            <button 
+              onClick={() => window.location.reload()}
+              style={{ backgroundColor: '#002147', color: '#ffffff', border: 'none', borderRadius: '6px', padding: '10px 24px', fontSize: '9pt', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              Resume Examination
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppContent() {
   const isLogout = typeof window !== 'undefined' && (
     window.location.pathname.includes('/logout') || 
     window.location.search.includes('clean=1')
   );
-
-  if (isLogout) {
-    return <LogoutHandler />;
-  }
 
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1284,6 +1320,7 @@ export default function App() {
   const lastLoggedWarnings = useRef({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
   const isAutoSubmittedRef = useRef(false);
   const proctoringEventsRef = useRef([]);
+  const checkedEventIdsRef = useRef(new Set());
 
   const getProctoringLogPayload = (warningsObj) => ({
     fullscreenExits: warningsObj?.fullscreenExits || 0,
@@ -3326,6 +3363,11 @@ export default function App() {
     </footer>
   );
 
+  // Handle clean logout if requested
+  if (isLogout) {
+    return <LogoutHandler />;
+  }
+
   // VIEW: Screen Size Blocker (Desktop Check)
   if (!isDesktop) {
     return (
@@ -3711,4 +3753,14 @@ export default function App() {
       />
     );
   }
+
+  return null;
+}
+
+export default function App() {
+  return (
+    <ExamErrorBoundary>
+      <AppContent />
+    </ExamErrorBoundary>
+  );
 }
