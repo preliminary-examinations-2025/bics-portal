@@ -20,7 +20,13 @@ export const QuestionViewer = ({
   examAnswers,
   setTest,
   activeQuestionBtnRef,
-  navTrackRef
+  navTrackRef,
+  draftMCQ,
+  draftCode,
+  draftLanguage,
+  draftHtml,
+  draftCss,
+  draftJs
 }) => {
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
   if (!currentQuestion) return null;
@@ -28,6 +34,40 @@ export const QuestionViewer = ({
   const isFlagged = currentQuestion.flaggedForReview || false;
 
   const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
+
+  const isQuestionAnswered = (q, qIdx) => {
+    const ans = examAnswers[qIdx];
+    if (!ans) {
+      if (q.type === 'mcq' && qIdx === selectedQuestionIndex) {
+        return draftMCQ !== null && draftMCQ !== undefined;
+      }
+      return false;
+    }
+
+    if (q.type === 'mcq') {
+      const selOpt = (qIdx === selectedQuestionIndex && draftMCQ !== undefined && draftMCQ !== null)
+        ? draftMCQ
+        : ans.selectedOptionIndex;
+      return selOpt !== null && selOpt !== undefined;
+    } else if (q.type === 'web') {
+      const initHtml = cleanStr(q.initialHtml || q.initialCode?.html || '');
+      const initCss = cleanStr(q.initialCss || q.initialCode?.css || '');
+      const initJs = cleanStr(q.initialJs || q.initialCode?.js || '');
+
+      const curHtml = cleanStr(qIdx === selectedQuestionIndex && draftHtml !== undefined ? draftHtml : ans.submittedHtml);
+      const curCss = cleanStr(qIdx === selectedQuestionIndex && draftCss !== undefined ? draftCss : ans.submittedCss);
+      const curJs = cleanStr(qIdx === selectedQuestionIndex && draftJs !== undefined ? draftJs : ans.submittedJs);
+
+      return (curHtml !== '' && curHtml !== initHtml) || 
+             (curCss !== '' && curCss !== initCss) || 
+             (curJs !== '' && curJs !== initJs) ||
+             Boolean(ans.isSavedByUser);
+    } else {
+      const initCode = cleanStr(q.initialTemplate || DEFAULT_TEMPLATES[ans?.selectedLanguage || draftLanguage || 'cpp'] || '');
+      const curCode = cleanStr(qIdx === selectedQuestionIndex && draftCode !== undefined ? draftCode : ans.submittedCode);
+      return (curCode.length > 0 && curCode !== initCode) || Boolean(ans.isSavedByUser);
+    }
+  };
 
   return (
     <div className="cf-card" style={{ flex: '0 0 calc(50% - 10px)', margin: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -238,38 +278,7 @@ export const QuestionViewer = ({
           }}
         >
           {test.questions.map((q, qIdx) => {
-            const ans = examAnswers[qIdx];
-            let isAnswered = false;
-
-            if (ans && ans.isSavedByUser) {
-              if (q.type === 'mcq') {
-                isAnswered = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined;
-              } else if (q.type === 'coding') {
-                const curCode = cleanStr(ans.submittedCode);
-                const initC1 = cleanStr(q.initialTemplate);
-                const initC2 = cleanStr(DEFAULT_TEMPLATES[ans.selectedLanguage || 'cpp']);
-                isAnswered = curCode !== '' && curCode !== initC1 && curCode !== initC2;
-              } else if (q.type === 'web') {
-                const curHtml = cleanStr(ans.submittedHtml);
-                const initH1 = cleanStr(q.initialHtml);
-                const initH2 = cleanStr(q.initialCode?.html);
-
-                const curCss = cleanStr(ans.submittedCss);
-                const initC1 = cleanStr(q.initialCss);
-                const initC2 = cleanStr(q.initialCode?.css);
-
-                const curJs = cleanStr(ans.submittedJs);
-                const initJ1 = cleanStr(q.initialJs);
-                const initJ2 = cleanStr(q.initialCode?.js);
-
-                const htmlMod = curHtml !== '' && curHtml !== initH1 && curHtml !== initH2;
-                const cssMod = curCss !== '' && curCss !== initC1 && curCss !== initC2;
-                const jsMod = curJs !== '' && curJs !== initJ1 && curJs !== initJ2;
-
-                isAnswered = htmlMod || cssMod || jsMod;
-              }
-            }
-
+            const isAnswered = isQuestionAnswered(q, qIdx);
             const isActive = selectedQuestionIndex === qIdx;
 
             let bgColor = '#fff';

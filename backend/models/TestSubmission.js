@@ -9,6 +9,7 @@ const AnswerSchema = new mongoose.Schema({
     submittedHtml: String, // for Web Coding (HTML)
     submittedCss: String, // for Web Coding (CSS)
     submittedJs: String, // for Web Coding (JS)
+    isSavedByUser: { type: Boolean, default: false },
     score: { type: Number, default: 0 }, // Scored marks for this question
     isObjectionResolved: { type: Boolean, default: false },
     isManuallyGraded: { type: Boolean, default: false },

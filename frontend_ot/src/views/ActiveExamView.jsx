@@ -146,6 +146,12 @@ export const ActiveExamView = ({
           setTest={setTest}
           activeQuestionBtnRef={activeQuestionBtnRef}
           navTrackRef={navTrackRef}
+          draftMCQ={draftMCQ}
+          draftCode={draftCode}
+          draftLanguage={draftLanguage}
+          draftHtml={draftHtml}
+          draftCss={draftCss}
+          draftJs={draftJs}
         />
 
         {/* Right Pane: MCQ Options or Monaco Code Editor & Live Console */}
