@@ -114,13 +114,16 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
                 else if (m3 && m3[1]) dur = parseInt(m3[1], 10);
                 else if (m4 && m4[1]) dur = parseInt(m4[1], 10);
             }
-            if (ev.type === 'FULLSCREEN_EXIT') {
+            const isFsEv = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
+            const isTabEv = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
+
+            if (isFsEv) {
                 if (dur > maxFullscreenSeconds) maxFullscreenSeconds = dur;
                 if (dur > 5) {
                     hasFullscreenFlag = true;
                     flaggedReasons.push(`Fullscreen exit duration: ${dur} seconds (exceeds 5s threshold)`);
                 }
-            } else if (ev.type === 'TAB_SWITCH') {
+            } else if (isTabEv) {
                 if (dur > maxTabSwitchSeconds) maxTabSwitchSeconds = dur;
                 if (dur > 5) {
                     hasTabSwitchFlag = true;

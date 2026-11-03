@@ -13,8 +13,12 @@ const { executeCode } = require('../utils/codeRunner');
 const { authenticateToken, requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
 const { isBicsId, toMongoId, toBicsId } = require('../utils/bicsId');
 const { compareFaceBiometrics, isPlaceholderPhoto } = require('../utils/biometricMatcher');
+const proctoringRouter = require('./proctoring');
 
 const activeSubmissionsProcessing = new Set();
+
+// Delegate proctoring routes so both /api/proctoring and /api/tests/proctoring resolve seamlessly
+router.use('/proctoring', proctoringRouter);
 
 // 1. Get active tests for student dashboard
 router.get('/active', requireAuth, async (req, res) => {
@@ -314,11 +318,15 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
     const log = { ...rawExisting };
     log.events = Array.isArray(rawExisting.events) ? [...rawExisting.events] : [];
 
-    // 1. Merge incoming events cleanly without duplicates
+    // 1. Merge incoming events cleanly without duplicates (2-second window collapse)
     if (incomingLog && Array.isArray(incomingLog.events) && incomingLog.events.length > 0) {
-        const existingKeys = new Set(log.events.map(e => `${e.type}_${new Date(e.timestamp || e.startTime || Date.now()).getTime()}_${e.details || ''}`));
+        const getEvKey = (e) => {
+            const timeSlot = Math.floor(new Date(e.timestamp || e.startTime || Date.now()).getTime() / 2000);
+            return `${e.type}_${timeSlot}_${e.details || ''}`;
+        };
+        const existingKeys = new Set(log.events.map(getEvKey));
         incomingLog.events.forEach(ev => {
-            const k = `${ev.type}_${new Date(ev.timestamp || ev.startTime || Date.now()).getTime()}_${ev.details || ''}`;
+            const k = getEvKey(ev);
             if (!existingKeys.has(k)) {
                 existingKeys.add(k);
                 log.events.push(ev);
@@ -1589,8 +1597,10 @@ router.post('/submit', async (req, res) => {
                                 const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
                                 if (match && match[1]) dur = parseInt(match[1], 10);
                             }
-                            if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
-                            if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+                            const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
+                            const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
+                            if (isFs && dur > maxFsSec) maxFsSec = dur;
+                            if (isTab && dur > maxTabSec) maxTabSec = dur;
                             if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
                             if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
                         });
@@ -1603,6 +1613,21 @@ router.post('/submit', async (req, res) => {
                             if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                                 submission.eirfStatus = 'pending';
                             }
+                        }
+
+                        // Explicitly append final submission proctoring event for compliance audit trail
+                        if (!submission.proctoringLog) submission.proctoringLog = {};
+                        if (!Array.isArray(submission.proctoringLog.events)) submission.proctoringLog.events = [];
+                        const finalEvType = submission.status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED';
+                        const finalEvDesc = submission.status === 'auto-submitted'
+                            ? 'Examination automatically finalized and submitted by proctoring engine.'
+                            : 'Candidate completed, finalized, and submitted examination answers.';
+                        if (!submission.proctoringLog.events.some(e => e.type === finalEvType)) {
+                            submission.proctoringLog.events.push({
+                                timestamp: new Date(),
+                                type: finalEvType,
+                                details: finalEvDesc
+                            });
                         }
                     }
 
@@ -1728,6 +1753,21 @@ router.post('/submit', async (req, res) => {
                         submission.eirfStatus = 'pending';
                     }
                 }
+
+                // Explicitly append final submission proctoring event for compliance audit trail
+                if (!submission.proctoringLog) submission.proctoringLog = {};
+                if (!Array.isArray(submission.proctoringLog.events)) submission.proctoringLog.events = [];
+                const finalEvType = submission.status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED';
+                const finalEvDesc = submission.status === 'auto-submitted'
+                    ? 'Examination automatically finalized and submitted by proctoring engine.'
+                    : 'Candidate completed, finalized, and submitted examination answers.';
+                if (!submission.proctoringLog.events.some(e => e.type === finalEvType)) {
+                    submission.proctoringLog.events.push({
+                        timestamp: new Date(),
+                        type: finalEvType,
+                        details: finalEvDesc
+                    });
+                }
             }
 
             const sStudId = submission.studentId || 'Candidate';
@@ -1782,8 +1822,10 @@ router.post('/submit', async (req, res) => {
                                 const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
                                 if (match && match[1]) dur = parseInt(match[1], 10);
                             }
-                            if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
-                            if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+                            const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
+                            const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
+                            if (isFs && dur > maxFsSec) maxFsSec = dur;
+                            if (isTab && dur > maxTabSec) maxTabSec = dur;
                         });
 
                         const incidentParts = [];

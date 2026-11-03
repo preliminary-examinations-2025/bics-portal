@@ -848,6 +848,8 @@ function AppContent() {
   const examVideoRef = useRef(null);
   const blazefaceModelRef = useRef(null);
   const faceAwayDurationRef = useRef(0);
+  const faceMissingDurationRef = useRef(0);
+  const multiFaceDurationRef = useRef(0);
   const [webcamProctorWarning, setWebcamProctorWarning] = useState('');
 
   // Computed setup condition
@@ -1674,6 +1676,14 @@ function AppContent() {
     }
   };
 
+  // Passive compliance decay: decay transient minor violation count when compliant to avoid odometer accumulation
+  const decayMinorWarning = () => {
+    if (minorWarningSecondsRef.current > 0) {
+      minorWarningSecondsRef.current = Math.max(0, minorWarningSecondsRef.current - 1);
+      setMinorWarningCount(minorWarningSecondsRef.current);
+    }
+  };
+
   // Continuously ensure active exam video element is linked to webcam stream & playing smoothly
   useEffect(() => {
     let active = true;
@@ -1785,9 +1795,15 @@ function AppContent() {
       console.log(`[Evidence Snapshot Captured]: ${eventType} -> Uploading to server for ${subId}`);
 
       if (isOnline) {
-        fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
+        const userAuth = getActiveAuthToken();
+        const examToken = getActiveExamToken();
+        fetch(`${API_BASE}/proctoring/snapshot/${subId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+            ...(examToken ? { 'x-exam-token': examToken } : {})
+          },
           body: JSON.stringify({
             image: dataUrl,
             eventType,
@@ -1892,7 +1908,8 @@ function AppContent() {
                              eventType === 'RIGHT_CLICK_BLOCKED' ||
                              eventType === 'DEVTOOLS_OPENED' || 
                              eventType === 'FULLSCREEN_EXIT' || 
-                             eventType === 'TAB_SWITCH';
+                             eventType === 'TAB_SWITCH' ||
+                             eventType === 'MULTI_FACE';
     const cooldownMs = isDiscreteAction ? 2000 : 10000;
 
     if (lastTime === 0 || (now - lastTime) >= cooldownMs) {
@@ -1951,10 +1968,11 @@ function AppContent() {
           
           if (predictions.length === 0) {
             // No face detected! (Continuous per-second warning count)
-            faceAwayDurationRef.current += 1;
+            faceMissingDurationRef.current += 1;
+            multiFaceDurationRef.current = 0;
             incrementMinorWarning('FACE_MISSING');
             
-            if (faceAwayDurationRef.current >= 3) { // 3 seconds at 1 FPS
+            if (faceMissingDurationRef.current >= 3) { // 3 seconds at 1 FPS
               handleProctorViolation(
                 'FACE_MISSING',
                 'Your face is not clearly visible in the camera frame. Please position yourself facing the webcam.',
@@ -1962,11 +1980,14 @@ function AppContent() {
               );
             }
           } else if (predictions.length > 1) {
-            // Multiple faces detected! (Continuous per-second warning count)
-            faceAwayDurationRef.current += 1;
+            // Multiple faces detected!
+            multiFaceDurationRef.current += 1;
+            faceMissingDurationRef.current = 0;
+            faceAwayDurationRef.current = 0;
             incrementMinorWarning('MULTI_FACE');
             
-            if (faceAwayDurationRef.current >= 3) {
+            // Multiple faces is a critical proctoring violation: dispatch immediately on confirmed frame
+            if (multiFaceDurationRef.current >= 1) {
               handleProctorViolation(
                 'MULTI_FACE',
                 'More than one face was detected in the camera frame. Please ensure you are alone in the room.',
@@ -1974,6 +1995,8 @@ function AppContent() {
               );
             }
           } else {
+            multiFaceDurationRef.current = 0;
+            faceMissingDurationRef.current = 0;
             // Exactly one face detected. Inspect landmarks!
             const prediction = predictions[0];
             const landmarks = prediction.landmarks; // [right_eye, left_eye, nose, mouth, right_ear, left_ear]
@@ -2013,6 +2036,7 @@ function AppContent() {
                     if (prev.includes('face') || prev.includes('facing')) return '';
                     return prev;
                   });
+                  decayMinorWarning();
 
                   // Periodic continuous identity verification (Phase 3.1: every 60s)
                   const nowTs = Date.now();
@@ -2211,6 +2235,7 @@ function AppContent() {
             if (sustainedVoiceCount === 0 && Date.now() > voiceWarningExpiryRef.current) {
               handleProctorResolved('VOICE_DETECTED');
               setWebcamProctorWarning(prev => (prev.includes('voice') || prev.includes('audio') || prev.includes('High voice') ? '' : prev));
+              decayMinorWarning();
             }
           }
         }, 100);

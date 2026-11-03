@@ -383,23 +383,79 @@ function reconcileDiskSnapshotsForSubmission(sub) {
         }
     });
 
+    const VIOLATION_TYPES = [
+        'MULTI_FACE', 'FACE_MISSING', 'LOOKING_AWAY', 'VOICE_DETECTED', 
+        'TAB_SWITCH', 'FULLSCREEN_EXIT', 'DEVTOOLS_OPENED', 'CLIPBOARD_ATTEMPT', 
+        'MINOR_WARNINGS_EXCEEDED', 'PROCTOR_WARNING', 'FACE_MISMATCH', 'BASELINE_REFERENCE'
+    ];
+    const NON_VIOLATION_TYPES = new Set([
+        'CODE_RUN', 'OPTION_MARKED', 'CODE_SAVED', 'CONSENT_ACCEPTED', 
+        'TEST_STARTED', 'TEST_SUBMITTED', 'TEST_AUTO_SUBMITTED', 'PROCTORING_ALLOWED'
+    ]);
+
     let addedAny = false;
+
+    // Clean up any legacy misattributed non-violation types in sub.proctoringLog.snapshots
+    if (Array.isArray(sub.proctoringLog.snapshots)) {
+        sub.proctoringLog.snapshots.forEach(s => {
+            if (NON_VIOLATION_TYPES.has(s.type)) {
+                const sTs = new Date(s.timestamp || 0).getTime();
+                const violationCandidates = (sub.proctoringLog?.events || []).filter(e => 
+                    !NON_VIOLATION_TYPES.has(e.type) && 
+                    VIOLATION_TYPES.some(vt => e.type === vt || (e.type && e.type.includes(vt)))
+                );
+                let closest = null;
+                let minDiff = Infinity;
+                violationCandidates.forEach(e => {
+                    const et = new Date(e.timestamp || e.startTime || 0).getTime();
+                    const diff = Math.abs(et - sTs);
+                    if (diff < minDiff && diff < 30000) {
+                        minDiff = diff;
+                        closest = e;
+                    }
+                });
+                if (closest) {
+                    s.type = closest.type;
+                    s.details = closest.details;
+                    addedAny = true;
+                } else {
+                    s.type = 'PROCTOR_WARNING';
+                    s.details = 'Proctoring violation evidence snapshot';
+                    addedAny = true;
+                }
+            }
+        });
+    }
+
     diskFiles.forEach(f => {
         const url = `/public/proctoring/${bicsId}/${f}`;
         if (!existingUrls.has(url)) {
             existingUrls.add(url);
             const tsMatch = f.match(/^(\d{13})/);
             const ts = tsMatch ? new Date(Number(tsMatch[1])) : (sub.startedAt || new Date());
-            const matchingEv = (sub.proctoringLog?.events || []).find(e => {
+            
+            // Only match against genuine violation events, never routine candidate actions
+            const violationCandidates = (sub.proctoringLog?.events || []).filter(e => 
+                !NON_VIOLATION_TYPES.has(e.type) && 
+                VIOLATION_TYPES.some(vt => e.type === vt || (e.type && e.type.includes(vt)))
+            );
+            let closestEv = null;
+            let minDiff = Infinity;
+            violationCandidates.forEach(e => {
                 const et = new Date(e.timestamp || e.startTime || 0).getTime();
-                return Math.abs(et - ts.getTime()) < 30000;
+                const diff = Math.abs(et - ts.getTime());
+                if (diff < minDiff && diff < 30000) {
+                    minDiff = diff;
+                    closestEv = e;
+                }
             });
-            const type = matchingEv ? matchingEv.type : 'PROCTOR_WARNING';
+
+            const type = closestEv ? closestEv.type : 'PROCTOR_WARNING';
             sub.proctoringLog.snapshots.push({
                 timestamp: ts,
                 type,
                 url,
-                details: matchingEv ? matchingEv.details : `Evidence snapshot captured for ${type}`
+                details: closestEv ? closestEv.details : `Evidence snapshot captured for ${type}`
             });
             addedAny = true;
         }

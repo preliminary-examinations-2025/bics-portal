@@ -80,17 +80,6 @@ export default function OnlineTestsView({
                           </span>
                         ) : (test.hasEirfFlag || (test.eirfStatus && test.eirfStatus !== 'none')) ? (
                           <span 
-                            onClick={(e) => {
-                              if (test.submissionId) {
-                                e.stopPropagation();
-                                const otBase = window.location.origin.includes('localhost')
-                                  ? 'http://localhost:5174/assessment'
-                                  : `${window.location.origin}/assessment`;
-                                const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-                                const authParam = token ? `?authToken=${encodeURIComponent(token)}` : '';
-                                window.location.href = `${otBase}/eirf/${test.submissionId}${authParam}`;
-                              }
-                            }}
                             style={{ 
                               fontSize: '8pt', 
                               backgroundColor: '#fffbeb', 
@@ -101,10 +90,9 @@ export default function OnlineTestsView({
                               fontWeight: 'bold', 
                               display: 'inline-flex', 
                               alignItems: 'center', 
-                              gap: '4px', 
-                              cursor: test.submissionId ? 'pointer' : 'help' 
+                              gap: '4px'
                             }}
-                            title={test.submissionId ? "Click to view or file your Emergency Incident Report Form (EIRF)" : "Proctoring telemetry alert recorded. Check your registered email for filing link."}
+                            title="Proctoring telemetry alert recorded. Check your registered email for official EIRF review details."
                           >
                             <AlertTriangle size={10} style={{ color: '#d97706' }} /> EIRF Review Pending
                           </span>

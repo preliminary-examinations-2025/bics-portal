@@ -438,6 +438,10 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
               <img 
                 src={resolveSnapshotUrl(selectedSnapshot.url)} 
                 alt="Proctoring Snapshot" 
+                onError={(e) => {
+                  e.target.onerror = null;
+                  e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 400 300"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="14" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Evidence Snapshot Recorded on Server</text></svg>';
+                }}
                 style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain' }}
               />
             </div>
@@ -720,11 +724,20 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {logs.map((log, idx) => {
+                    {(logs || []).filter((log, idx, arr) => {
+                      const logTime = new Date(log.timestamp || log.startTime || 0).getTime();
+                      const firstIdx = arr.findIndex(other => 
+                        other.type === log.type && 
+                        other.details === log.details && 
+                        Math.abs(new Date(other.timestamp || other.startTime || 0).getTime() - logTime) < 2000
+                      );
+                      return firstIdx === idx;
+                    }).map((log, idx) => {
                       const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED') || log.type?.includes('WARNING') || log.type?.includes('VOICE') || log.type?.includes('CLIPBOARD');
                       
                       // Match snapshot by time or category if available
                       const matchingSnapshots = snapshots.filter(s => {
+                        const timeDiff = Math.abs(new Date(s.timestamp).getTime() - new Date(log.timestamp).getTime());
                         const typeMatches = s.type === log.type || 
                           (s.type === 'FULLSCREEN_EXIT' && (log.type?.includes('FULLSCREEN') || log.type?.includes('EXIT'))) ||
                           (s.type === 'TAB_SWITCH' && (log.type?.includes('TAB') || log.type?.includes('FOCUS'))) ||
@@ -734,9 +747,9 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                           (s.type === 'FACE_MISSING' && log.type?.includes('FACE_MISSING')) ||
                           (s.type === 'MULTI_FACE' && log.type?.includes('MULTI_FACE')) ||
                           (s.type === 'LOOKING_AWAY' && log.type?.includes('LOOKING_AWAY')) ||
-                          (s.type === 'MINOR_WARNINGS_EXCEEDED' && log.type?.includes('MINOR_WARNINGS'));
+                          (s.type === 'MINOR_WARNINGS_EXCEEDED' && log.type?.includes('MINOR_WARNINGS')) ||
+                          (isWarning && timeDiff <= 15000); // Resilient matching for warning events within 15 seconds
                         if (!typeMatches) return false;
-                        const timeDiff = Math.abs(new Date(s.timestamp).getTime() - new Date(log.timestamp).getTime());
                         return timeDiff < 60000;
                       });
 
@@ -837,6 +850,10 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                           <img 
                             src={resolveSnapshotUrl(snap.url)} 
                             alt={snap.type} 
+                            onError={(e) => {
+                              e.target.onerror = null;
+                              e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 160 110"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="11" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Snapshot Stored</text></svg>';
+                            }}
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />
                         </div>
@@ -870,30 +887,62 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
           ) : (
             <>
               {/* Telemetry Overview */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-                <div style={{ backgroundColor: '#fffbeb', padding: '12px', borderRadius: '4px', border: '1px solid #fde68a' }}>
-                  <div style={{ fontSize: '8pt', color: '#b45309', fontWeight: 'bold' }}>Max Fullscreen Exit Duration</div>
-                  <div style={{ fontSize: '14pt', fontWeight: 'bold', color: eirfData.proctoringTelemetry?.maxFullscreenSeconds > 5 ? '#b91c1c' : '#15803d' }}>
-                    {eirfData.proctoringTelemetry?.maxFullscreenSeconds || 0} seconds
-                  </div>
-                </div>
+              {(() => {
+                const fsSeconds = Math.max(
+                  Number(eirfData.proctoringTelemetry?.maxFullscreenSeconds || 0),
+                  ...(logs || []).map(ev => {
+                    const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
+                    if (!isFs) return 0;
+                    let dur = Number(ev.durationSeconds || 0);
+                    if (!dur && ev.details) {
+                      const m = ev.details.match(/(\d+)\s+seconds/i);
+                      if (m && m[1]) dur = parseInt(m[1], 10);
+                    }
+                    return dur;
+                  })
+                );
 
-                <div style={{ backgroundColor: '#fffbeb', padding: '12px', borderRadius: '4px', border: '1px solid #fde68a' }}>
-                  <div style={{ fontSize: '8pt', color: '#b45309', fontWeight: 'bold' }}>Max Tab Switch Duration</div>
-                  <div style={{ fontSize: '14pt', fontWeight: 'bold', color: eirfData.proctoringTelemetry?.maxTabSwitchSeconds > 5 ? '#b91c1c' : '#15803d' }}>
-                    {eirfData.proctoringTelemetry?.maxTabSwitchSeconds || 0} seconds
-                  </div>
-                </div>
+                const tabSeconds = Math.max(
+                  Number(eirfData.proctoringTelemetry?.maxTabSwitchSeconds || 0),
+                  ...(logs || []).map(ev => {
+                    const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
+                    if (!isTab) return 0;
+                    let dur = Number(ev.durationSeconds || 0);
+                    if (!dur && ev.details) {
+                      const m = ev.details.match(/(\d+)\s+seconds/i);
+                      if (m && m[1]) dur = parseInt(m[1], 10);
+                    }
+                    return dur;
+                  })
+                );
 
-                <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ fontSize: '8pt', color: '#64748b', fontWeight: 'bold' }}>Report Filing Status</div>
-                  <div style={{ fontSize: '11pt', fontWeight: 'bold', color: eirfData.existingReport ? '#0284c7' : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? '#d97706' : '#166534'), marginTop: '4px' }}>
-                    {eirfData.existingReport 
-                      ? (eirfData.existingReport.verificationStatus || eirfData.existingReport.status) 
-                      : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? 'Filing Pending' : 'Not Flagged')}
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                    <div style={{ backgroundColor: '#fffbeb', padding: '12px', borderRadius: '4px', border: '1px solid #fde68a' }}>
+                      <div style={{ fontSize: '8pt', color: '#b45309', fontWeight: 'bold' }}>Max Fullscreen Exit Duration</div>
+                      <div style={{ fontSize: '14pt', fontWeight: 'bold', color: fsSeconds > 5 ? '#b91c1c' : '#15803d' }}>
+                        {fsSeconds} seconds
+                      </div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fffbeb', padding: '12px', borderRadius: '4px', border: '1px solid #fde68a' }}>
+                      <div style={{ fontSize: '8pt', color: '#b45309', fontWeight: 'bold' }}>Max Tab Switch Duration</div>
+                      <div style={{ fontSize: '14pt', fontWeight: 'bold', color: tabSeconds > 5 ? '#b91c1c' : '#15803d' }}>
+                        {tabSeconds} seconds
+                      </div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: '8pt', color: '#64748b', fontWeight: 'bold' }}>Report Filing Status</div>
+                      <div style={{ fontSize: '11pt', fontWeight: 'bold', color: eirfData.existingReport ? '#0284c7' : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? '#d97706' : '#166534'), marginTop: '4px' }}>
+                        {eirfData.existingReport 
+                          ? (eirfData.existingReport.verificationStatus || eirfData.existingReport.status) 
+                          : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? 'Filing Pending' : 'Not Flagged')}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Submitted EIRF Report Audit */}
               {!eirfData.existingReport ? (

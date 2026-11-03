@@ -53,7 +53,7 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                     if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
                         return res.status(403).json({ error: "Access denied: You cannot submit proctoring telemetry for another candidate." });
                     }
-                    if (submission.status !== 'started') {
+                    if (submission.status !== 'started' && type !== 'TEST_SUBMITTED' && type !== 'TEST_AUTO_SUBMITTED') {
                         return res.status(400).json({ error: "Exam is already closed. Additional events rejected." });
                     }
 
@@ -127,7 +127,7 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
                 return res.status(403).json({ error: "Access denied: You cannot submit proctoring telemetry for another candidate." });
             }
-            if (submission.status !== 'started') {
+            if (submission.status !== 'started' && type !== 'TEST_SUBMITTED' && type !== 'TEST_AUTO_SUBMITTED') {
                 return res.status(400).json({ error: "Exam is already closed. Additional events rejected." });
             }
 
