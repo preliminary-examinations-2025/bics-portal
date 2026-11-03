@@ -367,6 +367,13 @@ body.ot-google-font .pixel-logo {
     animation: spin 0.8s linear infinite;
 }
 
+/* SVG icon loaders: no border ring to prevent double spinner effect */
+svg.spinner, svg.cf-spinner, .cf-spinner-icon {
+    border: none !important;
+    border-radius: 0 !important;
+    animation: spin 0.8s linear infinite;
+}
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }

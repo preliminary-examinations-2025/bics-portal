@@ -659,6 +659,7 @@ function AppContent() {
   // Cooldown window refs for Deduplication of Fullscreen Exit & Blur (Item 3.1)
   const lastFullscreenExitTimeRef = useRef(0);
   const lastWindowBlurTimeRef = useRef(0);
+  const lastTabWarningTimeRef = useRef(0);
   const DEDUPLICATION_WINDOW_MS = 600;
 
   // Auto-commit draft tracking refs (Item 3)
@@ -1471,41 +1472,56 @@ function AppContent() {
     return () => document.removeEventListener('fullscreenchange', onFSChange);
   }, [flow, proctoringWarnings]);
 
-  // Check Window Focus state with duration tracking & Deduplication (Item 3.1)
+  // Check Window Focus and Tab Visibility state with duration tracking & Deduplication (Item 3.1)
   useEffect(() => {
-    const onBlur = () => {
+    const handleFocusLost = (source = 'blur') => {
+      if (flow !== 'active_exam') return;
+      const now = Date.now();
+
+      // Immediately record start timestamp if not already tracked
+      if (!tabExitStartTimeRef.current) {
+        tabExitStartTimeRef.current = now;
+      }
+      lastWindowBlurTimeRef.current = now;
       setIsFocused(false);
+
       setTimeout(() => {
         const active = document.activeElement;
         if (active && (active.id === 'web-sandbox-preview' || active.tagName === 'IFRAME')) {
+          // Candidate focused into sandbox preview iframe; reset start time
+          tabExitStartTimeRef.current = null;
+          setIsFocused(true);
           return;
         }
-        if (flow === 'active_exam') {
-          const now = Date.now();
-          tabExitStartTimeRef.current = now;
-          lastWindowBlurTimeRef.current = now;
 
-          // Deduplication: If fullscreen was exited within the last 600ms, merge and suppress double-warning
-          const timeSinceFS = now - lastFullscreenExitTimeRef.current;
-          if (timeSinceFS < DEDUPLICATION_WINDOW_MS) {
-            console.log(`[Proctoring Deduplication] Window blur within ${timeSinceFS}ms of fullscreen exit. Suppressed second warning.`);
-            syncProctoringLogs(
-              proctoringWarnings,
-              'TAB_SWITCH_DEDUP',
-              `Candidate lost window focus during fullscreen exit transition.`
-            );
-            return;
-          }
-
-          setProctoringWarnings(prev => ({ ...prev, tabSwitches: prev.tabSwitches + 1 }));
+        // Deduplication: If fullscreen was exited within the last 600ms, merge into fullscreen exit incident
+        const timeSinceFS = now - lastFullscreenExitTimeRef.current;
+        if (timeSinceFS < DEDUPLICATION_WINDOW_MS) {
+          console.log(`[Proctoring Deduplication] Focus lost within ${timeSinceFS}ms of fullscreen exit. Merged.`);
+          syncProctoringLogs(
+            proctoringWarnings,
+            'TAB_SWITCH_DEDUP',
+            `Candidate lost window focus during fullscreen exit transition.`
+          );
+          return;
         }
-      }, 100);
+
+        // Avoid double-counting if both blur and visibilitychange fire on the same tab switch
+        if (now - lastTabWarningTimeRef.current < 1000) {
+          return;
+        }
+        lastTabWarningTimeRef.current = now;
+
+        setProctoringWarnings(prev => ({ ...prev, tabSwitches: prev.tabSwitches + 1 }));
+      }, 50);
     };
-    
-    const onFocus = () => {
+
+    const handleFocusGained = (source = 'focus') => {
+      if (flow !== 'active_exam') return;
       setIsFocused(true);
       handleProctorResolved('TAB_SWITCH');
-      if (flow === 'active_exam' && tabExitStartTimeRef.current) {
+
+      if (tabExitStartTimeRef.current) {
         const startTime = tabExitStartTimeRef.current;
         const endTime = Date.now();
         const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
@@ -1521,11 +1537,21 @@ function AppContent() {
       }
     };
 
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('focus', onFocus);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        handleFocusLost('visibility');
+      } else if (document.visibilityState === 'visible') {
+        handleFocusGained('visibility');
+      }
+    };
+
+    window.addEventListener('blur', handleFocusLost);
+    window.addEventListener('focus', handleFocusGained);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', handleFocusLost);
+      window.removeEventListener('focus', handleFocusGained);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [flow, proctoringWarnings]);
 
