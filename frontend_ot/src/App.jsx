@@ -1708,7 +1708,7 @@ function AppContent() {
       }
       if (vid.paused) {
         vid.play().catch(e => {
-          if (e.name !== 'AbortError' && active) {
+          if (e.name !== 'AbortError' && !e.message?.includes('interrupted') && active) {
             console.warn("[ExamVideoPlayNotice]:", e.message);
           }
         });
@@ -2630,6 +2630,27 @@ function AppContent() {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // Synchronously commit active draft buffers into examAnswersRef.current and return latest answers
+  const commitActiveDraftToAnswers = () => {
+    const currentList = Array.isArray(examAnswersRef.current) ? [...examAnswersRef.current] : [...examAnswers];
+    if (test?.questions && test.questions[selectedQuestionIndex]) {
+      const activeQ = test.questions[selectedQuestionIndex];
+      const existing = currentList[selectedQuestionIndex] || { questionId: activeQ.id, type: activeQ.type };
+      currentList[selectedQuestionIndex] = {
+        ...existing,
+        selectedOptionIndex: draftMCQ !== undefined ? draftMCQ : existing.selectedOptionIndex,
+        submittedCode: draftCode !== undefined ? draftCode : existing.submittedCode,
+        selectedLanguage: draftLanguage || existing.selectedLanguage || 'cpp',
+        submittedHtml: draftHtml !== undefined ? draftHtml : existing.submittedHtml,
+        submittedCss: draftCss !== undefined ? draftCss : existing.submittedCss,
+        submittedJs: draftJs !== undefined ? draftJs : existing.submittedJs
+      };
+      examAnswersRef.current = currentList;
+      setExamAnswers(currentList);
+    }
+    return currentList;
+  };
+
   // Sync draft buffers into global answers list
   const handleSaveAndNext = () => {
     const updated = [...examAnswers];
@@ -2735,7 +2756,14 @@ function AppContent() {
     const subId = submission._id || submission.id;
     if (!subId) return;
 
-    const handleDisconnect = () => {
+    const handleBeforeUnload = (e) => {
+      // Standard browser confirmation prompt to prevent accidental reload/close
+      e.preventDefault();
+      e.returnValue = 'You have an active examination session in progress. Are you sure you want to leave?';
+      return e.returnValue;
+    };
+
+    const handlePageHide = () => {
       try {
         if (navigator.sendBeacon) {
           const userAuth = getActiveAuthToken();
@@ -2755,12 +2783,12 @@ function AppContent() {
       }
     };
 
-    window.addEventListener('pagehide', handleDisconnect);
-    window.addEventListener('beforeunload', handleDisconnect);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
 
     return () => {
-      window.removeEventListener('pagehide', handleDisconnect);
-      window.removeEventListener('beforeunload', handleDisconnect);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
     };
   }, [flow, submission, proctoringWarnings]);
 
@@ -3240,8 +3268,6 @@ function AppContent() {
     }
 
     if (submitSuccess) {
-      logProctoringEvent(submission, 'TEST_SUBMITTED', `Candidate finalized and submitted exam (Status: ${statusVal}).`).catch(() => {});
-
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
       deleteOfflineSubmission(subId).catch(() => {});
 

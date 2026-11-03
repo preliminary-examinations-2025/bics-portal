@@ -492,14 +492,27 @@ export function BiometricCheckView({
     ctx.moveTo(x2 - len, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - len);
     ctx.stroke();
 
-    // Subtle label badge
+    // Subtle label badge (un-inverted so text reads correctly on mirrored canvas)
     if (label) {
+      ctx.save();
       ctx.font = 'bold 11px Roboto, sans-serif';
       const textWidth = ctx.measureText(label).width;
+      const badgeW = textWidth + 12;
+      const badgeH = 19;
+      const badgeX = x1;
+      const badgeY = Math.max(0, y1 - 22);
+
       ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillRect(x1, Math.max(0, y1 - 22), textWidth + 12, 19);
+      ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+
+      // Invert horizontally around badge center to counteract canvas CSS scaleX(-1)
+      ctx.translate(badgeX + badgeW / 2, badgeY + badgeH / 2);
+      ctx.scale(-1, 1);
       ctx.fillStyle = color;
-      ctx.fillText(label, x1 + 6, Math.max(13, y1 - 8));
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
     }
     ctx.restore();
   };

@@ -59,10 +59,29 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
 
                     submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
                     submission.proctoringLog.events = submission.proctoringLog.events || [];
+
+                    const eventTimestamp = (req.body && req.body.timestamp) ? new Date(req.body.timestamp) : new Date();
+                    const eventTimeMs = eventTimestamp.getTime();
+
+                    // Deduplicate: If an event with identical type and details was logged within 4 seconds, skip appending
+                    const isDuplicate = submission.proctoringLog.events.some(existing => {
+                        if (type === 'TEST_SUBMITTED' || type === 'TEST_AUTO_SUBMITTED') {
+                            return existing.type === 'TEST_SUBMITTED' || existing.type === 'TEST_AUTO_SUBMITTED';
+                        }
+                        if (existing.type !== type) return false;
+                        if (existing.details !== details) return false;
+                        const existingTime = new Date(existing.timestamp || existing.startTime || 0).getTime();
+                        return Math.abs(eventTimeMs - existingTime) < 4000;
+                    });
+
+                    if (isDuplicate) {
+                        return res.json({ success: true, deduped: true });
+                    }
+
                     submission.proctoringLog.events.push({ 
                         type, 
                         details, 
-                        timestamp: new Date(),
+                        timestamp: eventTimestamp,
                         startTime: startTime || null,
                         endTime: endTime || null,
                         durationSeconds: durationSeconds ? Number(durationSeconds) : 0
@@ -99,7 +118,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                     }
 
                     const dur = Number(durationSeconds || 0);
-                    if (dur > 5 || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION') {
+                    const isMajorExit = type === 'FULLSCREEN_EXIT' || type === 'FULLSCREEN_RETURNED' || 
+                                        type === 'TAB_SWITCH' || type === 'TAB_RETURNED' ||
+                                        (type && (type.includes('FULLSCREEN') || type.includes('TAB')));
+                    if ((isMajorExit && dur > 5) || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
                         submission.hasEirfFlag = true;
                         if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                             submission.eirfStatus = 'pending';
@@ -133,13 +155,32 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
 
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.events = submission.proctoringLog.events || [];
+
+            const eventTimestamp = (req.body && req.body.timestamp) ? new Date(req.body.timestamp) : new Date();
+            const eventTimeMs = eventTimestamp.getTime();
+
+            // Deduplicate: If an event with identical type and details was logged within 4 seconds, skip appending
+            const isDuplicate = submission.proctoringLog.events.some(existing => {
+                if (type === 'TEST_SUBMITTED' || type === 'TEST_AUTO_SUBMITTED') {
+                    return existing.type === 'TEST_SUBMITTED' || existing.type === 'TEST_AUTO_SUBMITTED';
+                }
+                if (existing.type !== type) return false;
+                if (existing.details !== details) return false;
+                const existingTime = new Date(existing.timestamp || existing.startTime || 0).getTime();
+                return Math.abs(eventTimeMs - existingTime) < 4000;
+            });
+
+            if (isDuplicate) {
+                return res.json({ success: true, deduped: true });
+            }
+
             submission.proctoringLog.events.push({ 
-                        type, 
-                        details, 
-                        timestamp: new Date(),
-                        startTime: startTime || null,
-                        endTime: endTime || null,
-                        durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+                type, 
+                details, 
+                timestamp: eventTimestamp,
+                startTime: startTime || null,
+                endTime: endTime || null,
+                durationSeconds: durationSeconds ? Number(durationSeconds) : 0
             });
 
             const detailsLower = (details || '').toLowerCase();
@@ -173,7 +214,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             }
 
             const dur = Number(durationSeconds || 0);
-            if (dur > 5 || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION') {
+            const isMajorExit = type === 'FULLSCREEN_EXIT' || type === 'FULLSCREEN_RETURNED' || 
+                                type === 'TAB_SWITCH' || type === 'TAB_RETURNED' ||
+                                (type && (type.includes('FULLSCREEN') || type.includes('TAB')));
+            if ((isMajorExit && dur > 5) || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
                 submission.hasEirfFlag = true;
                 if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                     submission.eirfStatus = 'pending';

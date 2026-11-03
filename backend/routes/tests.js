@@ -318,20 +318,32 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
     const log = { ...rawExisting };
     log.events = Array.isArray(rawExisting.events) ? [...rawExisting.events] : [];
 
-    // 1. Merge incoming events cleanly without duplicates (2-second window collapse)
+    // 1. Merge incoming events cleanly without duplicates (Sliding 4-second deduplication window)
     if (incomingLog && Array.isArray(incomingLog.events) && incomingLog.events.length > 0) {
-        const getEvKey = (e) => {
-            const timeSlot = Math.floor(new Date(e.timestamp || e.startTime || Date.now()).getTime() / 2000);
-            return `${e.type}_${timeSlot}_${e.details || ''}`;
-        };
-        const existingKeys = new Set(log.events.map(getEvKey));
         incomingLog.events.forEach(ev => {
-            const k = getEvKey(ev);
-            if (!existingKeys.has(k)) {
-                existingKeys.add(k);
+            if (!ev || !ev.type) return;
+            const evTime = new Date(ev.timestamp || ev.startTime || Date.now()).getTime();
+
+            // Strict deduplication:
+            // a) Disallow multiple TEST_SUBMITTED / TEST_AUTO_SUBMITTED events entirely
+            // b) Disallow identical type & details within 4 seconds
+            const isDuplicate = log.events.some(existing => {
+                if (ev.type === 'TEST_SUBMITTED' || ev.type === 'TEST_AUTO_SUBMITTED') {
+                    return existing.type === 'TEST_SUBMITTED' || existing.type === 'TEST_AUTO_SUBMITTED';
+                }
+                if (existing.type !== ev.type) return false;
+                if (existing.details !== ev.details) return false;
+                const existingTime = new Date(existing.timestamp || existing.startTime || 0).getTime();
+                return Math.abs(evTime - existingTime) < 4000;
+            });
+
+            if (!isDuplicate) {
                 log.events.push(ev);
             }
         });
+
+        // Always maintain events in chronological order
+        log.events.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
     }
 
     // 1b. Explicitly preserve & merge evidence snapshots (prevent accidental erasure during submit/heartbeats)
@@ -1594,7 +1606,7 @@ router.post('/submit', async (req, res) => {
                         events.forEach(ev => {
                             let dur = Number(ev.durationSeconds || 0);
                             if (!dur && ev.details) {
-                                const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                                const match = ev.details.match(/(?:for|after)\s+(\d+)\s+seconds/i) || ev.details.match(/(\d+)\s*seconds/i);
                                 if (match && match[1]) dur = parseInt(match[1], 10);
                             }
                             const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
@@ -1747,11 +1759,13 @@ router.post('/submit', async (req, res) => {
                 events.forEach(ev => {
                     let dur = Number(ev.durationSeconds || 0);
                     if (!dur && ev.details) {
-                        const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                        const match = ev.details.match(/(?:for|after)\s+(\d+)\s+seconds/i) || ev.details.match(/(\d+)\s*seconds/i);
                         if (match && match[1]) dur = parseInt(match[1], 10);
                     }
-                    if (ev.type === 'FULLSCREEN_EXIT' && dur > maxFsSec) maxFsSec = dur;
-                    if (ev.type === 'TAB_SWITCH' && dur > maxTabSec) maxTabSec = dur;
+                    const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
+                    const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
+                    if (isFs && dur > maxFsSec) maxFsSec = dur;
+                    if (isTab && dur > maxTabSec) maxTabSec = dur;
                     if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
                     if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
                 });

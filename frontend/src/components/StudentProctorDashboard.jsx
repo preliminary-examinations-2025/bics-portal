@@ -724,19 +724,26 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {(logs || []).filter((log, idx, arr) => {
+                    {[...(logs || [])].sort((a, b) => 
+                      new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0)
+                    ).filter((log, idx, arr) => {
+                      if (log.type === 'TEST_SUBMITTED' || log.type === 'TEST_AUTO_SUBMITTED') {
+                        const firstSubmitIdx = arr.findIndex(other => other.type === 'TEST_SUBMITTED' || other.type === 'TEST_AUTO_SUBMITTED');
+                        return firstSubmitIdx === idx;
+                      }
                       const logTime = new Date(log.timestamp || log.startTime || 0).getTime();
                       const firstIdx = arr.findIndex(other => 
                         other.type === log.type && 
                         other.details === log.details && 
-                        Math.abs(new Date(other.timestamp || other.startTime || 0).getTime() - logTime) < 2000
+                        Math.abs(new Date(other.timestamp || other.startTime || 0).getTime() - logTime) < 4000
                       );
                       return firstIdx === idx;
                     }).map((log, idx) => {
                       const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED') || log.type?.includes('WARNING') || log.type?.includes('VOICE') || log.type?.includes('CLIPBOARD');
+                      const isNonViolation = ['CODE_RUN', 'OPTION_MARKED', 'CODE_SAVED', 'CONSENT_ACCEPTED', 'TEST_STARTED', 'TEST_SUBMITTED', 'TEST_AUTO_SUBMITTED', 'PROCTORING_ALLOWED'].includes(log.type);
                       
-                      // Match snapshot by time or category if available
-                      const matchingSnapshots = snapshots.filter(s => {
+                      // Match snapshot by time or category if available (strictly exclude routine non-violation actions)
+                      const matchingSnapshots = isNonViolation ? [] : snapshots.filter(s => {
                         const timeDiff = Math.abs(new Date(s.timestamp).getTime() - new Date(log.timestamp).getTime());
                         const typeMatches = s.type === log.type || 
                           (s.type === 'FULLSCREEN_EXIT' && (log.type?.includes('FULLSCREEN') || log.type?.includes('EXIT'))) ||
