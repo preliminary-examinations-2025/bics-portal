@@ -1636,6 +1636,7 @@ export default function App() {
 
   // Proctoring snapshot capture helper & violation dispatcher
   const lastSnapshotTimeRef = useRef({});
+  const lastContinuityCheckTimeRef = useRef(Date.now());
   const voiceWarningExpiryRef = useRef(0);
 
   const captureEvidenceSnapshot = async (eventType, details, retryCount = 0) => {
@@ -1951,6 +1952,39 @@ export default function App() {
                     if (prev.includes('face') || prev.includes('facing')) return '';
                     return prev;
                   });
+
+                  // Periodic continuous identity verification (Phase 3.1: every 60s)
+                  const nowTs = Date.now();
+                  if (nowTs - lastContinuityCheckTimeRef.current >= 60000 && submission) {
+                    lastContinuityCheckTimeRef.current = nowTs;
+                    try {
+                      const subId = submission.id || submission._id;
+                      const checkCanvas = document.createElement('canvas');
+                      checkCanvas.width = 160;
+                      checkCanvas.height = 120;
+                      const cCtx = checkCanvas.getContext('2d');
+                      cCtx.drawImage(video, 0, 0, checkCanvas.width, checkCanvas.height);
+                      const cropData = checkCanvas.toDataURL('image/jpeg', 0.65);
+
+                      const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                      const cHeaders = { 'Content-Type': 'application/json' };
+                      if (activeToken) cHeaders['Authorization'] = `Bearer ${activeToken}`;
+
+                      fetch(`${API_BASE}/tests/biometrics/continuity/${subId}`, {
+                        method: 'POST',
+                        headers: cHeaders,
+                        body: JSON.stringify({ liveFrame: cropData })
+                      }).then(r => r.json()).then(cData => {
+                        if (cData && cData.mismatch) {
+                          handleProctorViolation(
+                            'FACE_MISMATCH',
+                            'Facial identity check detected possible deviation from your baseline portrait.',
+                            `Continuous identity mismatch (Similarity: ${Math.round((cData.similarityScore || 0) * 100)}%).`
+                          );
+                        }
+                      }).catch(() => {});
+                    } catch (_) {}
+                  }
                 }
               } else {
                 faceAwayDurationRef.current = 0;

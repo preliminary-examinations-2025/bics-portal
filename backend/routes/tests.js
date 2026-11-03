@@ -620,6 +620,77 @@ router.post('/biometrics/verify', requireAuth, async (req, res) => {
     }
 });
 
+// 2.8 In-Exam Continuity Identity Verification (Phase 3.1)
+router.post('/biometrics/continuity/:submissionId', requireAuth, async (req, res) => {
+    const { submissionId } = req.params;
+    const { liveFrame } = req.body;
+    if (!liveFrame) return res.status(400).json({ success: false, error: "Live frame is required." });
+
+    const mongoSubId = isBicsId(String(submissionId)) ? toMongoId(String(submissionId)) : String(submissionId);
+
+    try {
+        let submission = null;
+        let db = null;
+        if (dbState.useMongo) {
+            submission = await TestSubmissionModel.findById(mongoSubId);
+            if (!submission && mongoSubId !== submissionId) {
+                submission = await TestSubmissionModel.findById(submissionId);
+            }
+        } else {
+            db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            submission = db.testSubmissions.find(s => s.id === mongoSubId || s._id === mongoSubId || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId));
+        }
+
+        if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+
+        const verifiedPhoto = submission.biometricResult?.verifiedPhotoUrl || submission.baselinePhotoUrl || '';
+        if (!verifiedPhoto) {
+            return res.json({ success: true, verified: true, message: "No baseline photo available for comparison." });
+        }
+
+        const matchResult = await compareFaceBiometrics(liveFrame, verifiedPhoto);
+        const isMismatch = matchResult.similarityScore < 0.50;
+
+        if (isMismatch) {
+            const eventObj = {
+                timestamp: new Date(),
+                type: 'FACE_MISMATCH',
+                details: `Continuous identity check flagged low facial similarity (${Math.round(matchResult.similarityScore * 100)}%).`
+            };
+
+            if (dbState.useMongo) {
+                await TestSubmissionModel.findByIdAndUpdate(mongoSubId, {
+                    $push: { 'proctoringLog.events': eventObj },
+                    $set: { 'biometricResult.continuityFlagged': true }
+                });
+            } else {
+                submission.proctoringLog = submission.proctoringLog || {};
+                submission.proctoringLog.events = submission.proctoringLog.events || [];
+                submission.proctoringLog.events.push(eventObj);
+                saveJSONData(db);
+            }
+
+            await logSystemAction(
+                submission.candidateName || submission.studentId || 'Candidate',
+                'PROCTOR_VIOLATION',
+                `Continuous facial identity deviation detected for submission ${submissionId}: ${Math.round(matchResult.similarityScore * 100)}% match.`,
+                'warning'
+            ).catch(() => {});
+        }
+
+        return res.json({
+            success: true,
+            similarityScore: matchResult.similarityScore,
+            decision: matchResult.decision,
+            mismatch: isMismatch
+        });
+    } catch (err) {
+        console.warn("[CONTINUITY_CHECK]: Identity comparison notice:", err.message);
+        return res.json({ success: true, verified: true, error: err.message });
+    }
+});
+
 // 3. Get specific test for exam view (Strips answers & hidden test cases)
 router.get('/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
