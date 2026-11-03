@@ -351,27 +351,7 @@ export function BiometricCheckView({
                     let challengeMet = false;
 
                     if (action === 'TURN_LEFT') {
-                      // Turning to candidate's left produces negative deltaYaw in mirrored camera coordinate frame
-                      if (deltaYaw < -0.025) {
-                        progress = Math.min(100, Math.round(((-deltaYaw - 0.025) / (0.075 - 0.025)) * 100));
-                        setChallengeProgress(progress);
-                        if (progress >= 100) {
-                          actionHeldCountRef.current += 1;
-                          if (actionHeldCountRef.current >= 2) challengeMet = true;
-                        } else {
-                          actionHeldCountRef.current = 0;
-                        }
-                      } else if (deltaYaw > 0.040) {
-                        setChallengeProgress(0);
-                        actionHeldCountRef.current = 0;
-                        setFaceStatusMessage('Please turn to your LEFT (detected right turn)');
-                      } else {
-                        setChallengeProgress(0);
-                        actionHeldCountRef.current = 0;
-                        setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slowly turn your head slightly to the left');
-                      }
-                    } else if (action === 'TURN_RIGHT') {
-                      // Turning to candidate's right produces positive deltaYaw in mirrored camera coordinate frame
+                      // Candidate turns to their left (mirrored display: nose shifts towards candidate's left eye, increasing deltaYaw)
                       if (deltaYaw > 0.025) {
                         progress = Math.min(100, Math.round(((deltaYaw - 0.025) / (0.075 - 0.025)) * 100));
                         setChallengeProgress(progress);
@@ -382,6 +362,26 @@ export function BiometricCheckView({
                           actionHeldCountRef.current = 0;
                         }
                       } else if (deltaYaw < -0.040) {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage('Please turn to your LEFT (detected right turn)');
+                      } else {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slowly turn your head slightly to the left');
+                      }
+                    } else if (action === 'TURN_RIGHT') {
+                      // Candidate turns to their right (mirrored display: nose shifts towards candidate's right eye, decreasing deltaYaw)
+                      if (deltaYaw < -0.025) {
+                        progress = Math.min(100, Math.round(((-deltaYaw - 0.025) / (0.075 - 0.025)) * 100));
+                        setChallengeProgress(progress);
+                        if (progress >= 100) {
+                          actionHeldCountRef.current += 1;
+                          if (actionHeldCountRef.current >= 2) challengeMet = true;
+                        } else {
+                          actionHeldCountRef.current = 0;
+                        }
+                      } else if (deltaYaw > 0.040) {
                         setChallengeProgress(0);
                         actionHeldCountRef.current = 0;
                         setFaceStatusMessage('Please turn to your RIGHT (detected left turn)');
