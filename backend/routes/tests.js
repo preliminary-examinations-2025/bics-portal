@@ -1069,9 +1069,14 @@ const handleDraftSave = async (req, res) => {
                 });
             }
 
+            const updateFields = {
+                lastHeartbeatAt: now
+            };
+
             // Authoritative input sanitization: strip client score tampering
+            let answersCount = submission.answers?.length || 0;
             if (Array.isArray(answers)) {
-                submission.answers = answers.map(a => {
+                updateFields.answers = answers.map(a => {
                     const cleanAns = { ...a };
                     delete cleanAns.score;
                     delete cleanAns.isManuallyGraded;
@@ -1080,14 +1085,18 @@ const handleDraftSave = async (req, res) => {
                     delete cleanAns.isObjectionResolved;
                     return cleanAns;
                 });
+                answersCount = updateFields.answers.length;
             }
 
             if (proctoringLog) {
-                submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
+                updateFields.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
 
-            submission.lastHeartbeatAt = now;
-            await submission.save();
+            // Atomic update prevents Mongoose VersionError (__v) collisions with concurrent heartbeats/proctoring logs
+            await TestSubmissionModel.updateOne(
+                { _id: targetSubId, status: 'started' },
+                { $set: updateFields }
+            );
 
             let expiresAtMs = null;
             let remainingSeconds = null;
@@ -1101,8 +1110,8 @@ const handleDraftSave = async (req, res) => {
 
             return res.json({ 
                 success: true, 
-                savedAt: submission.lastHeartbeatAt, 
-                answersCount: submission.answers?.length || 0,
+                savedAt: now, 
+                answersCount,
                 serverTime: now.getTime(),
                 expiresAt: expiresAtMs,
                 remainingSeconds: remainingSeconds,
@@ -1240,7 +1249,29 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                     }
                 }
 
-                await submission.save();
+                try {
+                    await submission.save();
+                } catch (saveErr) {
+                    if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
+                        // Atomic fallback update if concurrent draft save modified version
+                        await TestSubmissionModel.updateOne(
+                            { _id: targetSubId },
+                            {
+                                $set: {
+                                    status: submission.status,
+                                    submittedAt: submission.submittedAt,
+                                    score: submission.score,
+                                    answers: submission.answers,
+                                    proctoringLog: submission.proctoringLog,
+                                    encryptedDbPayload: submission.encryptedDbPayload,
+                                    eirfNoticeEmailSent: submission.eirfNoticeEmailSent
+                                }
+                            }
+                        );
+                    } else {
+                        throw saveErr;
+                    }
+                }
                 console.log(`[BEACON FINALIZED] Submission ${submissionId} auto-submitted via browser beacon.`);
             }
         } else {
