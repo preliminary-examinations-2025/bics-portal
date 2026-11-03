@@ -44,8 +44,13 @@ function isPlaceholderPhoto(photoUrl) {
   return lower.includes('default-photo') || 
          lower.includes('placeholder') || 
          lower.includes('avatar-placeholder') ||
-         lower === '' ||
-         lower === 'null';
+         lower.includes('sample.jpg') ||
+         lower.includes('cloudinary.com/demo') ||
+         lower.includes('example.com') ||
+         lower.includes('/sample') ||
+         lower.trim() === '' ||
+         lower === 'null' ||
+         lower === 'undefined';
 }
 
 /**
@@ -56,14 +61,14 @@ function isPlaceholderPhoto(photoUrl) {
  * @returns {Promise<{ similarityScore: number, decision: string, reviewNeeded: boolean, details: string }>}
  */
 async function compareFaceBiometrics(liveFrame, referencePhoto) {
-  // Case 1: Reference photo is missing or a placeholder
+  // Case 1: Reference photo is missing or a placeholder/demo photo
   if (isPlaceholderPhoto(referencePhoto)) {
     return {
-      similarityScore: 0.65,
+      similarityScore: 0.0,
       decision: 'unregistered-reference',
       reviewNeeded: true,
       isEnrolled: false,
-      details: 'No official enrolled photo on file. Session flagged for physical ID inspection at proctor review.'
+      details: 'Candidate reference photo is a demo/placeholder. Flagged for proctor physical ID verification (no candidate lockout).'
     };
   }
 
@@ -97,29 +102,46 @@ async function compareFaceBiometrics(liveFrame, referencePhoto) {
     const refData = refImg.bitmap.data;
     const totalPixels = TARGET_SIZE * TARGET_SIZE;
 
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
+    // Pass 1: Compute means for Zero-Centered Pearson Correlation
+    let sumA = 0;
+    let sumB = 0;
+    for (let i = 0; i < totalPixels; i++) {
+      const idx = i * 4;
+      sumA += liveData[idx];
+      sumB += refData[idx];
+    }
+    const meanA = sumA / totalPixels;
+    const meanB = sumB / totalPixels;
+
+    // Pass 2: Compute covariance, variance, and Mean Absolute Error
+    let cov = 0;
+    let varA = 0;
+    let varB = 0;
     let sumAbsDiff = 0;
 
     for (let i = 0; i < totalPixels; i++) {
-      const idx = i * 4; // Greyscale channel
+      const idx = i * 4;
       const valA = liveData[idx];
       const valB = refData[idx];
+      const diffA = valA - meanA;
+      const diffB = valB - meanB;
 
-      dotProduct += valA * valB;
-      normA += valA * valA;
-      normB += valB * valB;
+      cov += diffA * diffB;
+      varA += diffA * diffA;
+      varB += diffB * diffB;
       sumAbsDiff += Math.abs(valA - valB);
     }
 
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    const cosineSim = denom > 0 ? (dotProduct / denom) : 0;
+    const denom = Math.sqrt(varA) * Math.sqrt(varB);
+    const pearsonR = denom > 0 ? (cov / denom) : 0;
+    // Disallow negative correlations from artificially boosting score
+    const validR = Math.max(0, pearsonR);
+
     const meanAbsError = sumAbsDiff / (totalPixels * 255);
     const structuralSim = Math.max(0, 1 - (meanAbsError * 1.5));
 
-    // Blended weighted similarity metric
-    const rawScore = (cosineSim * 0.65) + (structuralSim * 0.35);
+    // Blended score: Pearson correlation has heavy weight (0.75), structural (0.25)
+    const rawScore = validR > 0 ? (validR * 0.75) + (structuralSim * 0.25) : 0.0;
     const similarityScore = Number(Math.min(1.0, Math.max(0.0, rawScore)).toFixed(3));
 
     let decision = 'retry-review';

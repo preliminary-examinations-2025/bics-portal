@@ -141,39 +141,46 @@ export async function getHighEntropyOsMetadata() {
   };
 }
 
+let cachedComprehensiveSecurity = null;
+let securityExtractionPromise = null;
+
 export async function getNetworkGeoTelemetry() {
-  // Query GeoIP & Network telemetry
-  try {
-    const geoRes = await fetch('http://ip-api.com/json/?fields=status,message,country,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query', {
-      signal: AbortSignal.timeout(2500)
-    });
-    if (geoRes.ok) {
-      const data = await geoRes.json();
-      if (data.status === 'success') {
-        return {
-          publicIp: data.query || 'Unknown',
-          country: data.country || 'Unknown',
-          region: data.regionName || 'Unknown',
-          city: data.city || 'Unknown',
-          zip: data.zip || '',
-          latitude: data.lat || null,
-          longitude: data.lon || null,
-          timezone: data.timezone || 'Asia/Kolkata',
-          isp: data.isp || 'Unknown',
-          organization: data.org || 'Unknown',
-          asNumber: data.as || 'Unknown',
-          isProxyOrVpn: Boolean(data.proxy),
-          isDatacenterHosting: Boolean(data.hosting),
-          resolvedAt: new Date().toISOString()
-        };
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  
+  // Fast GeoIP & Network telemetry with 800ms maximum timeout (non-blocking)
+  if (!isHttps) {
+    try {
+      const geoRes = await fetch('http://ip-api.com/json/?fields=status,message,country,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query', {
+        signal: AbortSignal.timeout(800)
+      });
+      if (geoRes.ok) {
+        const data = await geoRes.json();
+        if (data.status === 'success') {
+          return {
+            publicIp: data.query || 'Unknown',
+            country: data.country || 'Unknown',
+            region: data.regionName || 'Unknown',
+            city: data.city || 'Unknown',
+            zip: data.zip || '',
+            latitude: data.lat || null,
+            longitude: data.lon || null,
+            timezone: data.timezone || 'Asia/Kolkata',
+            isp: data.isp || 'Unknown',
+            organization: data.org || 'Unknown',
+            asNumber: data.as || 'Unknown',
+            isProxyOrVpn: Boolean(data.proxy),
+            isDatacenterHosting: Boolean(data.hosting),
+            resolvedAt: new Date().toISOString()
+          };
+        }
       }
+    } catch {
+      // If ip-api timed out or failed, attempt rapid fallback
     }
-  } catch {
-    // If ip-api failed (e.g. adblocker or HTTP limitation in HTTPS), attempt fallback
   }
 
   try {
-    const ipRes = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(2000) });
+    const ipRes = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(800) });
     if (ipRes.ok) {
       const ipData = await ipRes.json();
       return {
@@ -213,91 +220,109 @@ export async function getNetworkGeoTelemetry() {
   };
 }
 
-export async function extractComprehensiveClientSecurity() {
-  try {
-    const [osDetails, network] = await Promise.all([
-      getHighEntropyOsMetadata(),
-      getNetworkGeoTelemetry()
-    ]);
-
-    const isExtended = !!(window.screen && (window.screen.isExtended || (window.screenLeft < 0 || window.screenTop < 0)));
-
-    let gpuRenderer = 'Generic Hardware Accelerator';
-    try {
-      const canvas = document.createElement('canvas');
-      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (gl) {
-        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-        if (debugInfo) {
-          gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || gpuRenderer;
-        }
-      }
-    } catch {}
-
-    let batteryInfo = { level: 100, charging: true };
-    try {
-      if (navigator.getBattery) {
-        const battery = await navigator.getBattery();
-        batteryInfo = {
-          level: Math.round(battery.level * 100),
-          charging: battery.charging
-        };
-      }
-    } catch {}
-
-    const ua = navigator.userAgent || '';
-    let browserName = 'Google Chrome';
-    let browserVersion = '';
-    if (ua.includes('Edg/')) {
-      browserName = 'Microsoft Edge';
-      browserVersion = ua.match(/Edg\/([0-9.]+)/)?.[1] || '';
-    } else if (ua.includes('Chrome/')) {
-      browserName = 'Google Chrome';
-      browserVersion = ua.match(/Chrome\/([0-9.]+)/)?.[1] || '';
-    } else if (ua.includes('Firefox/')) {
-      browserName = 'Mozilla Firefox';
-      browserVersion = ua.match(/Firefox\/([0-9.]+)/)?.[1] || '';
-    } else if (ua.includes('Safari/') && !ua.includes('Chrome/')) {
-      browserName = 'Apple Safari';
-      browserVersion = ua.match(/Version\/([0-9.]+)/)?.[1] || '';
-    }
-
-    return {
-      ip: network.publicIp,
-      userAgent: ua,
-      operatingSystem: osDetails.osVersion || osDetails.osFamily,
-      osDetails,
-      network,
-      browser: browserName,
-      browserDetails: {
-        name: browserName,
-        version: browserVersion,
-        language: navigator.language || 'en-US',
-        languages: navigator.languages ? Array.from(navigator.languages) : ['en-US'],
-        cookieEnabled: navigator.cookieEnabled,
-        pdfViewerEnabled: navigator.pdfViewerEnabled || false
-      },
-      screenResolution: `${window.screen?.width || 1920} x ${window.screen?.height || 1080} px`,
-      windowResolution: `${window.innerWidth} x ${window.innerHeight} px`,
-      colorDepth: window.screen?.colorDepth || 24,
-      pixelRatio: window.devicePixelRatio || 1,
-      hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
-      deviceMemoryGB: navigator.deviceMemory || 'N/A',
-      isExtendedDisplay: isExtended,
-      webglRenderer: gpuRenderer,
-      battery: batteryInfo,
-      batteryLevel: `${batteryInfo.level}%`,
-      isCharging: batteryInfo.charging,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
-      capturedAt: new Date().toISOString()
-    };
-  } catch (err) {
-    console.warn("[SECURITY_TELEMETRY]: Error collecting telemetry:", err);
-    return {
-      ip: 'Unknown',
-      operatingSystem: 'Windows',
-      browser: 'Google Chrome',
-      capturedAt: new Date().toISOString()
-    };
+export async function extractComprehensiveClientSecurity(forceRefresh = false) {
+  if (!forceRefresh && cachedComprehensiveSecurity) {
+    return cachedComprehensiveSecurity;
   }
+  if (!forceRefresh && securityExtractionPromise) {
+    return securityExtractionPromise;
+  }
+
+  securityExtractionPromise = (async () => {
+    try {
+      const [osDetails, network] = await Promise.all([
+        getHighEntropyOsMetadata(),
+        getNetworkGeoTelemetry()
+      ]);
+
+      const isExtended = !!(window.screen && (window.screen.isExtended || (window.screenLeft < 0 || window.screenTop < 0)));
+
+      let gpuRenderer = 'Generic Hardware Accelerator';
+      try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (gl) {
+          const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+          if (debugInfo) {
+            gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || gpuRenderer;
+          }
+        }
+      } catch {}
+
+      let batteryInfo = { level: 100, charging: true };
+      try {
+        if (navigator.getBattery) {
+          const battery = await navigator.getBattery();
+          batteryInfo = {
+            level: Math.round(battery.level * 100),
+            charging: battery.charging
+          };
+        }
+      } catch {}
+
+      const ua = navigator.userAgent || '';
+      let browserName = 'Google Chrome';
+      let browserVersion = '';
+      if (ua.includes('Edg/')) {
+        browserName = 'Microsoft Edge';
+        browserVersion = ua.match(/Edg\/([0-9.]+)/)?.[1] || '';
+      } else if (ua.includes('Chrome/')) {
+        browserName = 'Google Chrome';
+        browserVersion = ua.match(/Chrome\/([0-9.]+)/)?.[1] || '';
+      } else if (ua.includes('Firefox/')) {
+        browserName = 'Mozilla Firefox';
+        browserVersion = ua.match(/Firefox\/([0-9.]+)/)?.[1] || '';
+      } else if (ua.includes('Safari/') && !ua.includes('Chrome/')) {
+        browserName = 'Apple Safari';
+        browserVersion = ua.match(/Version\/([0-9.]+)/)?.[1] || '';
+      }
+
+      const result = {
+        ip: network.publicIp,
+        userAgent: ua,
+        operatingSystem: osDetails.osVersion || osDetails.osFamily,
+        osDetails,
+        network,
+        browser: browserName,
+        browserDetails: {
+          name: browserName,
+          version: browserVersion,
+          language: navigator.language || 'en-US',
+          languages: navigator.languages ? Array.from(navigator.languages) : ['en-US'],
+          cookieEnabled: navigator.cookieEnabled,
+          pdfViewerEnabled: navigator.pdfViewerEnabled || false
+        },
+        screenResolution: `${window.screen?.width || 1920} x ${window.screen?.height || 1080} px`,
+        windowResolution: `${window.innerWidth} x ${window.innerHeight} px`,
+        colorDepth: window.screen?.colorDepth || 24,
+        pixelRatio: window.devicePixelRatio || 1,
+        hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+        deviceMemoryGB: navigator.deviceMemory || 'N/A',
+        isExtendedDisplay: isExtended,
+        webglRenderer: gpuRenderer,
+        battery: batteryInfo,
+        batteryLevel: `${batteryInfo.level}%`,
+        isCharging: batteryInfo.charging,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
+        capturedAt: new Date().toISOString()
+      };
+
+      cachedComprehensiveSecurity = result;
+      return result;
+    } catch (err) {
+      console.warn("[SECURITY_TELEMETRY]: Error collecting telemetry:", err);
+      const fallback = {
+        ip: 'Unknown',
+        operatingSystem: 'Windows',
+        browser: 'Google Chrome',
+        capturedAt: new Date().toISOString()
+      };
+      cachedComprehensiveSecurity = fallback;
+      return fallback;
+    } finally {
+      securityExtractionPromise = null;
+    }
+  })();
+
+  return securityExtractionPromise;
 }

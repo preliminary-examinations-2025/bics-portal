@@ -83,13 +83,13 @@ export function SystemChecksView({
     setIsRunningProbes(true);
     setProbeError(null);
 
-    // Initialise statuses to checking
+    // Initialise statuses sequentially so only the active check displays a single spinner
     setCheckStatuses({
       os: 'checking',
-      browser: 'checking',
-      screen: 'checking',
-      display: 'checking',
-      network: 'checking'
+      browser: 'pending',
+      screen: 'pending',
+      display: 'pending',
+      network: 'pending'
     });
 
     try {
@@ -103,7 +103,16 @@ export function SystemChecksView({
       setCheckStatuses(prev => ({
         ...prev,
         os: sys.passed ? 'completed' : 'failed',
-        browser: sys.passed ? 'completed' : 'failed'
+        browser: 'checking'
+      }));
+
+      // Short delay for visual polish so user sees checks progressing cleanly
+      await new Promise(r => setTimeout(r, 120));
+
+      setCheckStatuses(prev => ({
+        ...prev,
+        browser: sys.passed ? 'completed' : 'failed',
+        screen: 'checking'
       }));
 
       // 2. Screen Size & Viewport Probe
@@ -112,9 +121,13 @@ export function SystemChecksView({
         ...prev,
         screenResolution: scr.resolution
       }));
+
+      await new Promise(r => setTimeout(r, 120));
+
       setCheckStatuses(prev => ({
         ...prev,
-        screen: scr.passed ? 'completed' : 'failed'
+        screen: scr.passed ? 'completed' : 'failed',
+        display: 'checking'
       }));
 
       // 3. Display Configuration & Multi-Monitor Probe
@@ -124,9 +137,11 @@ export function SystemChecksView({
         ...prev,
         displayDetails: dsp.details
       }));
+
       setCheckStatuses(prev => ({
         ...prev,
-        display: !hasSecondaryDisplay ? 'completed' : 'failed'
+        display: !hasSecondaryDisplay ? 'completed' : 'failed',
+        network: 'checking'
       }));
 
       // 4. Network Latency & Throughput Probe (Pings backend endpoint)
@@ -289,10 +304,10 @@ export function SystemChecksView({
               onClick={executeProbes}
               disabled={isRunningProbes}
               className="cf-btn-secondary"
-              style={{ padding: '4px 10px', fontSize: '8pt', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}
+              style={{ padding: '4px 10px', fontSize: '8pt', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, opacity: isRunningProbes ? 0.7 : 1 }}
             >
-              <RefreshCw size={12} className={isRunningProbes ? 'spinner' : ''} />
-              <span>Retry</span>
+              <RefreshCw size={12} />
+              <span>{isRunningProbes ? 'Retrying...' : 'Retry'}</span>
             </button>
           </div>
         )}
@@ -331,7 +346,7 @@ export function SystemChecksView({
               fontWeight: '600'
             }}
           >
-            <RefreshCw size={12} className={isRunningProbes ? 'spinner' : ''} />
+            <RefreshCw size={12} />
             <span>{isRunningProbes ? 'Probing...' : 'Re-run checks'}</span>
           </button>
         </div>
@@ -564,7 +579,7 @@ export function SystemChecksView({
               <button 
                 className="cf-btn-primary" 
                 onClick={handleAuthorizeCamera}
-                style={{ padding: '5px 12px', fontSize: '8pt', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}
+                style={{ width: '190px', minWidth: '190px', justifyContent: 'center', padding: '6px 14px', fontSize: '8pt', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
                 <Camera size={13} /> Authorize Camera &amp; Mic
               </button>
@@ -593,7 +608,7 @@ export function SystemChecksView({
               <button 
                 className="cf-btn-primary" 
                 onClick={handleLockFullscreen}
-                style={{ padding: '5px 12px', fontSize: '8pt', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}
+                style={{ width: '190px', minWidth: '190px', justifyContent: 'center', padding: '6px 14px', fontSize: '8pt', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
                 <Maximize2 size={13} /> Lock Fullscreen Mode
               </button>

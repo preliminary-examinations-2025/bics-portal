@@ -330,19 +330,19 @@ export function BiometricCheckView({
 
                 let challengeMet = false;
                 if (serverChallenge?.action === 'TURN_LEFT') {
-                  if (yawRatio < -0.16) {
+                  if (yawRatio < -0.075) {
                     challengeMet = true;
                     setChallengeProgress(100);
                   } else {
-                    const pct = Math.min(90, Math.round(Math.max(0, -yawRatio) / 0.16 * 100));
+                    const pct = Math.min(90, Math.round(Math.max(0, -yawRatio) / 0.075 * 100));
                     setChallengeProgress(pct);
                   }
                 } else if (serverChallenge?.action === 'TURN_RIGHT') {
-                  if (yawRatio > 0.16) {
+                  if (yawRatio > 0.075) {
                     challengeMet = true;
                     setChallengeProgress(100);
                   } else {
-                    const pct = Math.min(90, Math.round(Math.max(0, yawRatio) / 0.16 * 100));
+                    const pct = Math.min(90, Math.round(Math.max(0, yawRatio) / 0.075 * 100));
                     setChallengeProgress(pct);
                   }
                 }
@@ -357,7 +357,7 @@ export function BiometricCheckView({
                   const variance = history.reduce((sum, h) => sum + Math.pow(h.noseX - meanX, 2) + Math.pow(h.noseY - meanY, 2), 0) / history.length;
                   const stdDev = Math.sqrt(variance);
 
-                  const naturalMotion = stdDev >= 0.25 && stdDev <= 28;
+                  const naturalMotion = stdDev >= 0.12 && stdDev <= 32;
                   if (challengeMet || (naturalMotion && (!serverChallenge || serverChallenge.action === 'BLINK_TWICE'))) {
                     setLivenessProgress(prev => {
                       const next = Math.min(100, prev + 15);
@@ -372,7 +372,7 @@ export function BiometricCheckView({
                       }
                       return next;
                     });
-                  } else if (stdDev < 0.2 && !challengeMet) {
+                  } else if (stdDev < 0.10 && !challengeMet) {
                     setFaceStatusMessage(serverChallenge ? serverChallenge.instruction : 'Slight natural motion needed. Hold position...');
                   }
                 }
@@ -387,7 +387,7 @@ export function BiometricCheckView({
                 drawLandmarks(ctx, lm, boxColor);
               } else {
                 setFaceCheckStatus('unaligned');
-                setLivenessProgress(prev => Math.max(0, prev - 10));
+                setLivenessProgress(prev => Math.max(0, prev - 2));
 
                 let reason = 'Center face inside guide';
                 if (!isGoodSize) reason = boxW <= canvas.width * 0.16 ? 'Move closer to camera' : 'Move slightly back';

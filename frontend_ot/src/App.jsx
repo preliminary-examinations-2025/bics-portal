@@ -828,17 +828,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load BlazeFace Model Failsafe & Pre-warm WebGL Shaders
+  // Load BlazeFace Model Failsafe & Pre-warm WebGL Shaders Early
   useEffect(() => {
+    // 1. Asynchronously harvest client security in the background early
+    extractComprehensiveClientSecurity().catch(() => {});
+
+    // 2. Load BlazeFace model and pre-warm WebGL shaders on dummy canvas
     const loadModel = async () => {
       try {
         if (window.blazeface) {
-          console.log("[PROCTOR_ML]: Loading BlazeFace model...");
-          const model = await window.blazeface.load();
+          console.log("[PROCTOR_ML]: Pre-warming BlazeFace model asynchronously...");
+          if (!window._blazefaceLoadPromise) {
+            window._blazefaceLoadPromise = window.blazeface.load().then(async (model) => {
+              window._sharedBlazefaceModel = model;
+              try {
+                const dummy = document.createElement('canvas');
+                dummy.width = 16;
+                dummy.height = 16;
+                await model.estimateFaces(dummy, false);
+                console.log("[PROCTOR_ML]: BlazeFace WebGL shaders pre-warmed early.");
+              } catch {}
+              return model;
+            });
+          }
+          const model = await window._blazefaceLoadPromise;
           blazefaceModelRef.current = model;
+          window._sharedBlazefaceModel = model;
           console.log("[PROCTOR_ML]: BlazeFace model loaded successfully.");
 
-          // If calibration video is already streaming, pre-warm shaders immediately
+          // If calibration video is already streaming, pre-warm on video as well
           if (calibVideoRef.current && calibVideoRef.current.readyState >= 2) {
             model.estimateFaces(calibVideoRef.current, false)
               .then(() => console.log("[PROCTOR_ML]: BlazeFace shaders pre-warmed on load."))
