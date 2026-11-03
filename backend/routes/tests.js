@@ -1864,8 +1864,8 @@ router.post('/reevaluation/:submissionId', requireAuth, async (req, res) => {
     }
 });
 
-// 9. Get Submission Verification Data for OT Terminal
-router.get('/submission-verification/:id', async (req, res) => {
+// 9. Get Evaluated Submission Data for OT Terminal
+router.get(['/submission-verification/:id', '/evaluation/:id'], async (req, res) => {
     const { id } = req.params;
     try {
         let submission = null;

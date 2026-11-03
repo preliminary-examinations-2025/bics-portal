@@ -122,7 +122,7 @@ export function VerificationReviewView({
               BICS Examination Portal
             </div>
             <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
-              Evaluated Candidate Script Verification • {test?.title || 'Academic Assessment'}
+              Evaluated Candidate Script &amp; Assessment Evaluation • {test?.title || 'Academic Assessment'}
             </div>
           </div>
         </div>

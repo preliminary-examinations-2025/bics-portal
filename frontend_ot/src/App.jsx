@@ -918,14 +918,21 @@ export default function App() {
     });
   };
 
-  // Fetch evaluated answer sheet verification for /submissions/:id
+  // Fetch evaluated answer sheet verification & evaluation review
   const loadSubmissionVerification = async (subId) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/tests/submission-verification/${subId}`);
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setVerifyError(data.error || "Unable to access evaluated answer sheet verification.");
+      const res = await fetch(`${API_BASE}/tests/evaluation/${subId}`);
+      let data = null;
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        // Fallback to legacy endpoint if backend running older version
+        const fallbackRes = await fetch(`${API_BASE}/tests/submission-verification/${subId}`);
+        data = await fallbackRes.json();
+      }
+      if (!data || !data.success) {
+        setVerifyError(data?.error || "Unable to access evaluated answer sheet verification.");
         setLoading(false);
         return;
       }
@@ -1019,11 +1026,11 @@ export default function App() {
       return;
     }
 
-    // 2. Strict Verification Route: /assessment/verification/:id
-    if (path.startsWith('/assessment/verification/')) {
+    // 2. Strict Evaluation & Verification Route: /assessment/evaluation/:submissionId (or legacy /assessment/verification/:submissionId)
+    if (path.startsWith('/assessment/evaluation/') || path.startsWith('/assessment/verification/') || path.startsWith('/evaluation/') || path.startsWith('/verification/')) {
       const parts = path.split('/').filter(Boolean);
-      // Expected: ['assessment', 'verification', ':id']
-      const subId = parts[2] || searchParams.get('submissionId') || searchParams.get('id');
+      // Expected: ['assessment', 'evaluation', ':submissionId'] or ['evaluation', ':submissionId']
+      const subId = parts[parts.length - 1] || searchParams.get('submissionId') || searchParams.get('id');
       if (subId) {
         loadSubmissionVerification(subId);
         return;
@@ -1055,7 +1062,11 @@ export default function App() {
   // Dynamically update browser tab title based on route and examination/verification state
   useEffect(() => {
     const isEirfRoute = window.location.pathname.startsWith('/assessment/eirf') || flow === 'eirf_form';
-    const isSubmissionsRoute = window.location.pathname.startsWith('/assessment/verification') || flow === 'verification_review';
+    const isSubmissionsRoute = window.location.pathname.startsWith('/assessment/evaluation') || 
+                               window.location.pathname.startsWith('/assessment/verification') || 
+                               window.location.pathname.startsWith('/evaluation') || 
+                               window.location.pathname.startsWith('/verification') || 
+                               flow === 'verification_review';
 
     if (verifyError) {
       document.title = "Server Error";
@@ -1069,9 +1080,9 @@ export default function App() {
         : "Emergency Incident Report Form (EIRF) | BICS Portal";
     } else if (isSubmissionsRoute) {
       if (test?.title) {
-        document.title = `Answer Sheet Verification - ${test.title} | BICS Portal`;
+        document.title = `Evaluation Review - ${test.title} | BICS Portal`;
       } else {
-        document.title = "Answer Sheet Verification | BICS Examination Portal";
+        document.title = "Assessment Evaluation Review | BICS Examination Portal";
       }
     } else {
       if (test?.title) {

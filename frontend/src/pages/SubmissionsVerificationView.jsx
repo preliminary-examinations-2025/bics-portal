@@ -182,7 +182,7 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                         onClick={() => {
                           const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
                           const authParam = userToken ? `?authToken=${encodeURIComponent(userToken)}` : '';
-                          window.location.href = `${otBase}/verification/${sub.id || sub._id}${authParam}`;
+                          window.location.href = `${otBase}/evaluation/${sub.id || sub._id}${authParam}`;
                         }}
                         style={{
                           display: 'inline-flex',
@@ -193,7 +193,7 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                           fontWeight: 'bold'
                         }}
                       >
-                        <ExternalLink size={15} /> Verify Evaluated Paper →
+                        <ExternalLink size={15} /> Inspect Evaluated Paper →
                       </button>
                     ) : vStatus === 'closed' ? (
                       <button
