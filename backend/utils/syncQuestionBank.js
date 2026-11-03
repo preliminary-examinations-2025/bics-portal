@@ -61,4 +61,8 @@ async function syncQuestionBank() {
     }
 }
 
-syncQuestionBank();
+if (require.main === module) {
+    syncQuestionBank();
+}
+
+module.exports = { syncQuestionBank };
