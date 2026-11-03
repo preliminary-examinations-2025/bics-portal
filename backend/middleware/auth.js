@@ -223,10 +223,34 @@ const authorizeApiRequest = async (req, res, next) => {
         if (decoded) {
             req.user = decoded;
         } else {
-            return res.status(401).json({
-                success: false,
-                error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
-            });
+            // Check if bearerToken is a valid TestTokenModel hex token for exam sessions
+            try {
+                const { TestTokenModel } = require('../models');
+                const { dbState, getJSONData } = require('../config/db');
+                let tokenDoc = null;
+                if (dbState.useMongo) {
+                    tokenDoc = await TestTokenModel.findOne({ token: bearerToken.trim() });
+                } else {
+                    const db = getJSONData();
+                    tokenDoc = (db.tokens || []).find(t => t.token === bearerToken.trim());
+                }
+                if (tokenDoc) {
+                    req.user = {
+                        id: String(tokenDoc.candidateId),
+                        role: 'candidate',
+                        studentId: String(tokenDoc.candidateId),
+                        username: 'candidate'
+                    };
+                    req.isExamTokenAuth = true;
+                }
+            } catch (err) {}
+
+            if (!req.user) {
+                return res.status(401).json({
+                    success: false,
+                    error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
+                });
+            }
         }
     } else if (queryAuthToken) {
         const decoded = verifyToken(String(queryAuthToken).trim());
@@ -243,6 +267,8 @@ const authorizeApiRequest = async (req, res, next) => {
     // 2.1 Dual Authentication for Online Examination Routes (supports active TestToken session)
     if (!req.user && (
         fullPath.includes('/api/tests/start') || 
+        fullPath.includes('/api/tests/draft') ||
+        fullPath.includes('/api/tests/biometrics/continuity') ||
         fullPath.includes('/api/tests/proctoring') || 
         fullPath.includes('/api/tests/heartbeat') || 
         fullPath.includes('/api/tests/run') || 

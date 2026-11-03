@@ -435,13 +435,27 @@ function AppContent() {
   const [token, setToken] = useState('');
 
   const getActiveAuthToken = () => {
-    if (typeof window === 'undefined') return token || '';
-    return token || 
-           localStorage.getItem('bics_auth_token') || 
-           sessionStorage.getItem('bics_auth_token') || 
-           localStorage.getItem('token') || 
-           sessionStorage.getItem('token') || 
-           (typeof window !== 'undefined' ? window.__BICS_AUTH_TOKEN__ : '') || 
+    if (typeof window === 'undefined') return '';
+    const storedAuth = localStorage.getItem('bics_auth_token') || 
+                       sessionStorage.getItem('bics_auth_token') || 
+                       localStorage.getItem('token') || 
+                       sessionStorage.getItem('token') || 
+                       (typeof window !== 'undefined' ? window.__BICS_AUTH_TOKEN__ : '') || 
+                       '';
+    if (storedAuth && typeof storedAuth === 'string' && storedAuth.startsWith('eyJ')) {
+      return storedAuth.trim();
+    }
+    if (token && typeof token === 'string' && token.startsWith('eyJ')) {
+      return token.trim();
+    }
+    return '';
+  };
+
+  const getActiveExamToken = () => {
+    if (token && typeof token === 'string') return token.trim();
+    if (typeof window === 'undefined') return '';
+    return sessionStorage.getItem('bics_exam_token') || 
+           (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') || 
            '';
   };
 
@@ -1655,19 +1669,28 @@ function AppContent() {
           hasEirfFlag: true,
           eirfStatus: 'pending'
         }).catch(() => {});
-        downloadEirfBackupFile(submission, candidate, examAnswers, proctoringWarnings);
+        // Mid-exam: strictly set hasEirfFlag; physical EIRF payload download is deferred exclusively to final test submission
       }
     }
   };
 
-  // Continuously ensure active exam video element is linked to webcam stream & playing
+  // Continuously ensure active exam video element is linked to webcam stream & playing smoothly
   useEffect(() => {
+    let active = true;
     if (flow === 'active_exam' && webcamStream && examVideoRef.current) {
-      if (examVideoRef.current.srcObject !== webcamStream) {
-        examVideoRef.current.srcObject = webcamStream;
+      const vid = examVideoRef.current;
+      if (vid.srcObject !== webcamStream) {
+        vid.srcObject = webcamStream;
       }
-      examVideoRef.current.play().catch(e => console.warn("[ExamVideoPlayNotice]:", e.message));
+      if (vid.paused) {
+        vid.play().catch(e => {
+          if (e.name !== 'AbortError' && active) {
+            console.warn("[ExamVideoPlayNotice]:", e.message);
+          }
+        });
+      }
     }
+    return () => { active = false; };
   }, [flow, webcamStream]);
 
   // Proctoring snapshot capture helper & violation dispatcher
@@ -2008,8 +2031,10 @@ function AppContent() {
                       const cropData = checkCanvas.toDataURL('image/jpeg', 0.75);
 
                       const activeToken = getActiveAuthToken();
+                      const examToken = getActiveExamToken();
                       const cHeaders = { 'Content-Type': 'application/json' };
                       if (activeToken) cHeaders['Authorization'] = `Bearer ${activeToken}`;
+                      if (examToken) cHeaders['x-exam-token'] = examToken;
 
                       fetch(`${API_BASE}/tests/biometrics/continuity/${subId}`, {
                         method: 'POST',
@@ -2776,12 +2801,14 @@ function AppContent() {
       const subId = submission._id || submission.id;
       const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (answersList || examAnswersRef.current || []);
       const userAuth = getActiveAuthToken();
+      const examToken = getActiveExamToken();
 
       const res = await fetch(`${API_BASE}/tests/draft/${subId}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
-          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+          ...(examToken ? { 'x-exam-token': examToken } : {})
         },
         body: JSON.stringify({
           submissionId: subId,
@@ -2929,12 +2956,14 @@ function AppContent() {
       const latestAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
       const pLogPayload = getProctoringLogPayload(warningsObj);
       const userAuth = getActiveAuthToken();
+      const examToken = getActiveExamToken();
 
       await fetch(`${API_BASE}/tests/draft/${subId}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
-          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+          ...(examToken ? { 'x-exam-token': examToken } : {})
         },
         body: JSON.stringify({
           submissionId: subId,
@@ -3265,12 +3294,14 @@ function AppContent() {
       getOfflineEvents(subId).then(async events => {
         if (events && events.length > 0) {
           const userAuth = getActiveAuthToken();
+          const examToken = getActiveExamToken();
           const uploads = events.map(ev => 
             fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
               method: 'POST',
               headers: { 
                 'Content-Type': 'application/json',
-                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+                ...(examToken ? { 'x-exam-token': examToken } : {})
               },
               body: JSON.stringify(ev)
             }).then(r => r.ok).catch(() => false)
@@ -3286,12 +3317,14 @@ function AppContent() {
       getOfflineSnapshots(subId).then(async snapshots => {
         if (snapshots && snapshots.length > 0) {
           const userAuth = getActiveAuthToken();
+          const examToken = getActiveExamToken();
           const uploads = snapshots.map(snap => 
             fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
               method: 'POST',
               headers: { 
                 'Content-Type': 'application/json',
-                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+                ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+                ...(examToken ? { 'x-exam-token': examToken } : {})
               },
               body: JSON.stringify(snap)
             }).then(r => r.ok).catch(() => false)
