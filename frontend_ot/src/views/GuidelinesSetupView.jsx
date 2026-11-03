@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, ShieldCheck, Clock, FileText, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-react';
+import { BookOpen, ShieldCheck, Clock, FileText, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Maximize2, Loader2 } from 'lucide-react';
 import { getReturnUrl } from '../config/constants';
 import { RichText } from '../components/common/RichText';
 import { TestSetupStepProgress } from '../components/common/TestSetupStepProgress';
@@ -11,6 +11,7 @@ export function GuidelinesSetupView({
   handleLockFullscreen,
   onBackToBiometrics,
   handleStartExam,
+  isStartingExam = false,
   devModeActive
 }) {
   const triggerFullscreen = async () => {
@@ -247,18 +248,19 @@ export function GuidelinesSetupView({
             )}
             <button 
               className="cf-btn-primary" 
-              disabled={!prepCompleted} 
+              disabled={!prepCompleted || isStartingExam} 
               style={{ 
                 padding: '6px 26px', 
                 fontSize: '8.5pt', 
                 fontWeight: 'bold',
-                cursor: prepCompleted ? 'pointer' : 'not-allowed',
-                opacity: prepCompleted ? 1 : 0.6,
+                cursor: (prepCompleted && !isStartingExam) ? 'pointer' : 'not-allowed',
+                opacity: (prepCompleted && !isStartingExam) ? 1 : 0.6,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px'
               }} 
               onClick={() => {
+                if (isStartingExam) return;
                 if (!isFullscreen) {
                   triggerFullscreen();
                   return;
@@ -267,7 +269,12 @@ export function GuidelinesSetupView({
                 handleStartExam();
               }}
             >
-              {!prepCompleted ? (
+              {isStartingExam ? (
+                <>
+                  <Loader2 size={13} className="spinner" />
+                  <span>Starting...</span>
+                </>
+              ) : !prepCompleted ? (
                 <span>Preparing Environment (0:{prepSecondsRemaining < 10 ? `0${prepSecondsRemaining}` : prepSecondsRemaining})</span>
               ) : !isFullscreen ? (
                 <span>Lock Fullscreen to Start</span>

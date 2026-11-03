@@ -499,6 +499,8 @@ export default function App() {
   const [systemChecksCompleted, setSystemChecksCompleted] = useState(false);
   const [startTicket, setStartTicket] = useState(() => (typeof window !== 'undefined' ? sessionStorage.getItem('bics_start_ticket') || '' : ''));
   const [biometricsCache, setBiometricsCache] = useState(null);
+  const [isStartingExam, setIsStartingExam] = useState(false);
+  const isStartingExamRef = useRef(false);
 
   // Early Client Security Metadata & Display Configuration Detection
   useEffect(() => {
@@ -1462,11 +1464,16 @@ export default function App() {
 
   // Start active exam and transition (Calls backend to register submission only when Start Test is clicked)
   const handleStartExam = async () => {
+    if (isStartingExamRef.current) return;
+
     const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
     if (!consentRulesChecked || !consentProctoringChecked || !isCurrentlyFullscreen) {
       if (!isCurrentlyFullscreen) setIsFullscreen(false);
       return;
     }
+
+    isStartingExamRef.current = true;
+    setIsStartingExam(true);
     
     try {
       const activeToken = localStorage.getItem('bics_auth_token') || 
@@ -1499,6 +1506,8 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        isStartingExamRef.current = false;
+        setIsStartingExam(false);
         triggerCustomAlert("Initialization Blocked", data.error || "Failed to initialize secure exam attempt. Re-attempts are prohibited.");
         return;
       }
@@ -1537,6 +1546,8 @@ export default function App() {
         }
       }, 100);
     } catch (err) {
+      isStartingExamRef.current = false;
+      setIsStartingExam(false);
       console.error(err);
       triggerCustomAlert("Security Sync Error", "Unable to sync starting attempt with database. Verify your connection.");
     }
@@ -3415,78 +3426,87 @@ export default function App() {
   // VIEW: Step 2 - Terms and Conditions & Undertaking
   if (flow === 'terms_conditions') {
     return (
-      <TermsConditionsView
-        test={test}
-        candidate={candidate}
-        consentRulesChecked={consentRulesChecked}
-        setConsentRulesChecked={setConsentRulesChecked}
-        consentProctoringChecked={consentProctoringChecked}
-        setConsentProctoringChecked={setConsentProctoringChecked}
-        onProceedToSystemChecks={() => setFlow('system_checks')}
-      />
+      <div key={flow} className="bics-view-transition">
+        <TermsConditionsView
+          test={test}
+          candidate={candidate}
+          consentRulesChecked={consentRulesChecked}
+          setConsentRulesChecked={setConsentRulesChecked}
+          consentProctoringChecked={consentProctoringChecked}
+          setConsentProctoringChecked={setConsentProctoringChecked}
+          onProceedToSystemChecks={() => setFlow('system_checks')}
+        />
+      </div>
     );
   }
 
   // VIEW: Step 3 - System & Hardware Compatibility Checks
   if (flow === 'system_checks') {
     return (
-      <SystemChecksView
-        test={test}
-        candidate={candidate}
-        securityMetadata={securityMetadata}
-        multiDisplayDetected={multiDisplayDetected}
-        isFullscreen={isFullscreen}
-        isFocused={isFocused}
-        webcamGranted={webcamGranted}
-        micGranted={micGranted}
-        systemChecksCompleted={systemChecksCompleted}
-        onCompleteSystemChecks={() => setSystemChecksCompleted(true)}
-        onStartTicketReceived={(ticket) => setStartTicket(ticket)}
-        handleAuthorizeCamera={handleAuthorizeCamera}
-        handleLockFullscreen={handleLockFullscreen}
-        onBackToTerms={() => setFlow('terms_conditions')}
-        onProceedToBiometrics={() => {
-          setSystemChecksCompleted(true);
-          setFlow('biometric_check');
-        }}
-      />
+      <div key={flow} className="bics-view-transition">
+        <SystemChecksView
+          test={test}
+          candidate={candidate}
+          securityMetadata={securityMetadata}
+          multiDisplayDetected={multiDisplayDetected}
+          isFullscreen={isFullscreen}
+          isFocused={isFocused}
+          webcamGranted={webcamGranted}
+          micGranted={micGranted}
+          systemChecksCompleted={systemChecksCompleted}
+          onCompleteSystemChecks={() => setSystemChecksCompleted(true)}
+          onStartTicketReceived={(ticket) => setStartTicket(ticket)}
+          handleAuthorizeCamera={handleAuthorizeCamera}
+          handleLockFullscreen={handleLockFullscreen}
+          onBackToTerms={() => setFlow('terms_conditions')}
+          onProceedToBiometrics={() => {
+            setSystemChecksCompleted(true);
+            setFlow('biometric_check');
+          }}
+        />
+      </div>
     );
   }
 
   // VIEW: Step 4 - Biometric & Hardware Verification Gate
   if (flow === 'biometric_check') {
     return (
-      <BiometricCheckView
-        candidate={candidate}
-        test={test}
-        webcamStream={webcamStream}
-        webcamGranted={webcamGranted}
-        micGranted={micGranted}
-        isFullscreen={isFullscreen}
-        isFocused={isFocused}
-        savedBiometrics={biometricsCache}
-        onSaveBiometricsCache={(update) => setBiometricsCache(prev => ({ ...prev, ...update }))}
-        blazefaceModelRef={blazefaceModelRef}
-        handleAuthorizeCamera={handleAuthorizeCamera}
-        handleLockFullscreen={handleLockFullscreen}
-        onBackToSystemChecks={() => setFlow('system_checks')}
-        onCompleteBiometricGate={handleCompleteBiometricGate}
-      />
+      <div key={flow} className="bics-view-transition">
+        <BiometricCheckView
+          candidate={candidate}
+          test={test}
+          webcamStream={webcamStream}
+          webcamGranted={webcamGranted}
+          micGranted={micGranted}
+          isFullscreen={isFullscreen}
+          isFocused={isFocused}
+          savedBiometrics={biometricsCache}
+          onSaveBiometricsCache={(update) => setBiometricsCache(prev => ({ ...prev, ...update }))}
+          blazefaceModelRef={blazefaceModelRef}
+          handleAuthorizeCamera={handleAuthorizeCamera}
+          handleLockFullscreen={handleLockFullscreen}
+          onBackToSystemChecks={() => setFlow('system_checks')}
+          onCompleteBiometricGate={handleCompleteBiometricGate}
+        />
+      </div>
     );
   }
 
   // VIEW: Step 5 - Guidelines & Proctoring Setup (With 1.00 min holding countdown)
   if (flow === 'guidelines_setup') {
     return (
-      <GuidelinesSetupView
-        test={test}
-        candidate={candidate}
-        isFullscreen={isFullscreen}
-        handleLockFullscreen={handleLockFullscreen}
-        onBackToBiometrics={() => setFlow('biometric_check')}
-        handleStartExam={handleStartExam}
-        devModeActive={devModeActive}
-      />
+      <div key={flow} className="bics-view-transition">
+        <GuidelinesSetupView
+          test={test}
+          candidate={candidate}
+          isFullscreen={isFullscreen}
+          handleLockFullscreen={handleLockFullscreen}
+          onBackToBiometrics={() => setFlow('biometric_check')}
+          handleStartExam={handleStartExam}
+          isStartingExam={isStartingExam}
+          devModeActive={devModeActive}
+        />
+      </div>
     );
   }
 

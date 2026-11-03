@@ -1105,14 +1105,6 @@ export function BiometricCheckView({
                 </div>
               )}
 
-              {/* Server Biometric Match Outcome Banner */}
-              {isVerifyingBiometrics && (
-                <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '4px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '8pt', color: '#0369a1' }}>
-                  <Loader2 size={14} className="spinner" />
-                  <span>Comparing face embedding against candidate records...</span>
-                </div>
-              )}
-
               {biometricMatchResult && !isVerifyingBiometrics && (
                 <div style={{
                   backgroundColor: biometricMatchResult.decision === 'auto-pass' ? '#ecfdf5' : (biometricMatchResult.decision === 'retry-review' && biometricRetryCount < 2 ? '#fef2f2' : '#f0f9ff'),

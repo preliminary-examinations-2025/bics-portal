@@ -606,3 +606,22 @@ pre code, pre code *,
     margin-bottom: 12px !important;
 }
 
+
+
+/* Slow, smooth, professional view transitions between examination checks */
+@keyframes bicsViewFadeIn {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.bics-view-transition {
+    animation: bicsViewFadeIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: opacity, transform;
+    width: 100%;
+}
