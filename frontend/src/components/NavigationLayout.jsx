@@ -5,7 +5,8 @@ import {
   Upload, FileText, Calendar, ShieldAlert,
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Clock, Activity,
-  Trash2, Ticket, Flag, Bell, Layers, LifeBuoy, Check, Code, Home, Printer, HelpCircle, Scale
+  Trash2, Ticket, Flag, Bell, Layers, LifeBuoy, Check, Code, Home, Printer, HelpCircle, Scale,
+  Award, Scroll, RotateCcw
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 
@@ -20,6 +21,7 @@ export default function NavigationLayout() {
     coursework: true,
     submissions: true,
     exam: true,
+    academic: true,
     feedback: true
   });
 
@@ -189,6 +191,42 @@ export default function NavigationLayout() {
                       <NavLink to="/main/examination/hall-ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Printer size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall Ticket Generation
                       </NavLink>
+                    </div>
+                  )}
+
+                  <div className="sidebar-category">Academic Records</div>
+                  <button type="button" className="sidebar-item" onClick={() => setDropdowns({...dropdowns, academic: !dropdowns.academic})}>
+                    Menu Links {dropdowns.academic ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  {dropdowns.academic && (
+                    <div className="dropdown-container">
+                      <button 
+                        type="button"
+                        className="dropdown-item" 
+                        disabled 
+                        title="Coming soon"
+                        style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                      >
+                        <Award size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Grades
+                      </button>
+                      <button 
+                        type="button"
+                        className="dropdown-item" 
+                        disabled 
+                        title="Coming soon"
+                        style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                      >
+                        <Scroll size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Transcripts
+                      </button>
+                      <button 
+                        type="button"
+                        className="dropdown-item" 
+                        disabled 
+                        title="Coming soon"
+                        style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                      >
+                        <RotateCcw size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Revaluation
+                      </button>
                     </div>
                   )}
 

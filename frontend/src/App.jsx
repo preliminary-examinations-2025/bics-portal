@@ -759,6 +759,7 @@ export default function App() {
     submissions: true,
     workspace: true,
     exam: true,
+    academic: true,
     feedback: true
   });
 

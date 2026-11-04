@@ -3,7 +3,8 @@ import {
   Settings, Users, FileText, BookOpen, Activity, Video, Ticket, 
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
-  GraduationCap, Key, LogOut, Wrench, Scale, Database, Code, Sparkles
+  GraduationCap, Key, LogOut, Wrench, Scale, Database, Code, Sparkles,
+  Award, Scroll, RotateCcw
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -314,6 +315,39 @@ export default function Sidebar({
                 </button>
                 <button className={`dropdown-item ${view === 'counterfoil' ? 'active' : ''}`} onClick={() => { setView('counterfoil'); setIsMobileSidebarOpen(false); }}>
                   <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Counterfoil
+                </button>
+              </div>
+            )}
+
+            <div className="sidebar-category">Academic Records</div>
+            <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, academic: !dropdowns.academic})}>
+              Menu Links {dropdowns.academic ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+            {dropdowns.academic && (
+              <div className="dropdown-container">
+                <button 
+                  className="dropdown-item" 
+                  disabled 
+                  title="Coming soon"
+                  style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                >
+                  <Award size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Grades
+                </button>
+                <button 
+                  className="dropdown-item" 
+                  disabled 
+                  title="Coming soon"
+                  style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                >
+                  <Scroll size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Transcripts
+                </button>
+                <button 
+                  className="dropdown-item" 
+                  disabled 
+                  title="Coming soon"
+                  style={{ opacity: 0.5, cursor: 'not-allowed' }}
+                >
+                  <RotateCcw size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Revaluation
                 </button>
               </div>
             )}
