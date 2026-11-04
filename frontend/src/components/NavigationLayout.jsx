@@ -194,6 +194,24 @@ export default function NavigationLayout() {
                     </div>
                   )}
 
+                  <div className="sidebar-category">Support and Feedback</div>
+                  <button type="button" className="sidebar-item" onClick={() => setDropdowns({...dropdowns, feedback: !dropdowns.feedback})}>
+                    Menu Links {dropdowns.feedback ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  {dropdowns.feedback && (
+                    <div className="dropdown-container">
+                      <NavLink to="/main/support/ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                        <LifeBuoy size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Open Technical Ticket
+                      </NavLink>
+                      <NavLink to="/main/support/feedback/general" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                        <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> General Feedback
+                      </NavLink>
+                      <NavLink to="/main/support/feedback" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                        <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Midsem / Endsem Feedback
+                      </NavLink>
+                    </div>
+                  )}
+
                   <div className="sidebar-category">Academic Records</div>
                   <button type="button" className="sidebar-item" onClick={() => setDropdowns({...dropdowns, academic: !dropdowns.academic})}>
                     Menu Links {dropdowns.academic ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -227,24 +245,6 @@ export default function NavigationLayout() {
                       >
                         <RotateCcw size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Revaluation
                       </button>
-                    </div>
-                  )}
-
-                  <div className="sidebar-category">Support and Feedback</div>
-                  <button type="button" className="sidebar-item" onClick={() => setDropdowns({...dropdowns, feedback: !dropdowns.feedback})}>
-                    Menu Links {dropdowns.feedback ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  {dropdowns.feedback && (
-                    <div className="dropdown-container">
-                      <NavLink to="/main/support/ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
-                        <LifeBuoy size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Open Technical Ticket
-                      </NavLink>
-                      <NavLink to="/main/support/feedback/general" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
-                        <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> General Feedback
-                      </NavLink>
-                      <NavLink to="/main/support/feedback" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
-                        <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Midsem / Endsem Feedback
-                      </NavLink>
                     </div>
                   )}
 

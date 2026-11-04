@@ -319,6 +319,27 @@ export default function Sidebar({
               </div>
             )}
 
+            <div className="sidebar-category">Feedback</div>
+            <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, feedback: !dropdowns.feedback})}>
+              Menu Links {dropdowns.feedback ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+            {dropdowns.feedback && (
+              <div className="dropdown-container">
+                <button className={`dropdown-item ${view === 'contact' ? 'active' : ''}`} onClick={() => { setView('contact'); setContactSuccess && setContactSuccess(''); setContactError && setContactError(''); setContactSubView && setContactSubView('form'); setIsMobileSidebarOpen(false); if (user && fetchStudentTickets) fetchStudentTickets(user.id || user._id); }}>
+                  <Mail size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
+                  <span>Support Helpdesk</span>
+                </button>
+                <button className={`dropdown-item ${view === 'midsem' ? 'active' : ''}`} onClick={() => { setView('midsem'); setFeedbackType && setFeedbackType('mid'); setFeedbackSuccess && setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
+                  <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
+                  <span>Mid Sem Feedback {systemConfig && !systemConfig.midSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
+                </button>
+                <button className={`dropdown-item ${view === 'endsem' ? 'active' : ''}`} onClick={() => { setView('endsem'); setFeedbackType && setFeedbackType('end'); setFeedbackSuccess && setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
+                  <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
+                  <span>End Sem Feedback {systemConfig && !systemConfig.endSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
+                </button>
+              </div>
+            )}
+
             <div className="sidebar-category">Academic Records</div>
             <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, academic: !dropdowns.academic})}>
               Menu Links {dropdowns.academic ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -348,27 +369,6 @@ export default function Sidebar({
                   style={{ opacity: 0.5, cursor: 'not-allowed' }}
                 >
                   <RotateCcw size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Revaluation
-                </button>
-              </div>
-            )}
-
-            <div className="sidebar-category">Feedback</div>
-            <button className="sidebar-item" onClick={() => setDropdowns({...dropdowns, feedback: !dropdowns.feedback})}>
-              Menu Links {dropdowns.feedback ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {dropdowns.feedback && (
-              <div className="dropdown-container">
-                <button className={`dropdown-item ${view === 'contact' ? 'active' : ''}`} onClick={() => { setView('contact'); setContactSuccess && setContactSuccess(''); setContactError && setContactError(''); setContactSubView && setContactSubView('form'); setIsMobileSidebarOpen(false); if (user && fetchStudentTickets) fetchStudentTickets(user.id || user._id); }}>
-                  <Mail size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                  <span>Support Helpdesk</span>
-                </button>
-                <button className={`dropdown-item ${view === 'midsem' ? 'active' : ''}`} onClick={() => { setView('midsem'); setFeedbackType && setFeedbackType('mid'); setFeedbackSuccess && setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
-                  <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                  <span>Mid Sem Feedback {systemConfig && !systemConfig.midSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
-                </button>
-                <button className={`dropdown-item ${view === 'endsem' ? 'active' : ''}`} onClick={() => { setView('endsem'); setFeedbackType && setFeedbackType('end'); setFeedbackSuccess && setFeedbackSuccess(''); setIsMobileSidebarOpen(false); }}>
-                  <MessageSquare size={14} style={{ marginRight: '6px', flexShrink: 0 }} />
-                  <span>End Sem Feedback {systemConfig && !systemConfig.endSemFeedbackActive && <sub style={{ fontSize: '7.5pt', color: '#e11d48', verticalAlign: 'sub', marginLeft: '4px' }}>(Closed)</sub>}</span>
                 </button>
               </div>
             )}
