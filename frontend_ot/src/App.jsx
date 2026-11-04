@@ -1166,10 +1166,13 @@ function AppContent() {
         if (typeof window !== 'undefined') window.__BICS_AUTH_TOKEN__ = tokenVal;
       }
       
-      // Load pre-existing state or localStorage cache tied strictly to unique submission attempt
+      // Load pre-existing state or localStorage/IndexedDB cache tied strictly to unique submission attempt
       const subId = data.submission?.id || data.submission?._id || 'new_attempt';
       const storageKey = `bics_draft_${data.test.id}_${data.candidate.id}_${subId}`;
-      const cached = localStorage.getItem(storageKey);
+      let cached = localStorage.getItem(storageKey);
+      if (!cached) {
+        cached = localStorage.getItem(`bics_draft_${data.test.id}_${data.candidate.id}`);
+      }
       
       let answersArr = [];
       if (cached) {
@@ -1180,21 +1183,29 @@ function AppContent() {
         }
       }
 
+      if ((!answersArr || answersArr.length === 0) && Array.isArray(data.submission?.answers) && data.submission.answers.length > 0) {
+        answersArr = data.submission.answers;
+      }
+
       const initialAnswers = data.test.questions.map(q => {
-        const cachedAns = answersArr.find(a => a.questionId === q.id);
+        const cachedAns = answersArr.find(a => String(a.questionId) === String(q.id) || String(a.questionId) === String(q._id));
         
         return {
-          questionId: q.id,
+          questionId: q.id || q._id,
           type: q.type,
           selectedOptionIndex: cachedAns ? cachedAns.selectedOptionIndex : null,
           submittedCode: cachedAns ? cachedAns.submittedCode : (q.initialTemplate || DEFAULT_TEMPLATES.cpp),
           selectedLanguage: cachedAns ? (cachedAns.selectedLanguage || 'cpp') : 'cpp',
           submittedHtml: cachedAns ? cachedAns.submittedHtml : (q.initialHtml || q.initialCode?.html || ''),
           submittedCss: cachedAns ? cachedAns.submittedCss : (q.initialCss || q.initialCode?.css || ''),
-          submittedJs: cachedAns ? cachedAns.submittedJs : (q.initialJs || q.initialCode?.js || '')
+          submittedJs: cachedAns ? cachedAns.submittedJs : (q.initialJs || q.initialCode?.js || ''),
+          testCaseResults: cachedAns?.testCaseResults || [],
+          score: cachedAns?.score !== undefined ? cachedAns.score : 0,
+          isSavedByUser: !!cachedAns?.isSavedByUser
         };
       });
 
+      examAnswersRef.current = initialAnswers;
       setExamAnswers(initialAnswers);
       setLoading(false);
     } catch (err) {
@@ -1450,6 +1461,7 @@ function AppContent() {
         const timeSinceFS = now - lastFullscreenExitTimeRef.current;
         if (timeSinceFS < DEDUPLICATION_WINDOW_MS) {
           console.log(`[Proctoring Deduplication] Focus lost within ${timeSinceFS}ms of fullscreen exit. Merged.`);
+          tabExitStartTimeRef.current = null;
           syncProctoringLogs(
             proctoringWarnings,
             'TAB_SWITCH_DEDUP',
@@ -2583,14 +2595,13 @@ function AppContent() {
           submittedJs: draftJsRef.current
         };
         currentAnswers = updated;
+        examAnswersRef.current = updated;
         setExamAnswers(updated);
 
-        // Immediate background cache update in localStorage
+        // Immediate background cache update in localStorage & IndexedDB
         const subId = submission?.id || submission?._id || 'new_attempt';
         const storageKey = `bics_draft_${test.id}_${candidate?.id}_${subId}`;
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(updated));
-        } catch (_) {}
+        safePersistDraft(storageKey, updated);
 
         // Auto-save to server draft
         saveServerDraft(updated);
@@ -2630,6 +2641,16 @@ function AppContent() {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // Safe persistent draft helper: caches to localStorage with fallback to IndexedDB on quota limits
+  const safePersistDraft = (storageKey, data) => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(data));
+    } catch (e) {
+      console.warn("[Draft Persistence] LocalStorage quota exceeded, fallback to IndexedDB:", e);
+    }
+    saveOfflineDraft(storageKey, data).catch(() => {});
+  };
+
   // Synchronously commit active draft buffers into examAnswersRef.current and return latest answers
   const commitActiveDraftToAnswers = () => {
     const currentList = Array.isArray(examAnswersRef.current) ? [...examAnswersRef.current] : [...examAnswers];
@@ -2664,6 +2685,7 @@ function AppContent() {
       submittedJs: draftJs,
       isSavedByUser: true
     };
+    examAnswersRef.current = updated;
     setExamAnswers(updated);
 
     const activeQuestion = test.questions?.[selectedQuestionIndex];
@@ -2677,10 +2699,10 @@ function AppContent() {
       }
     }
     
-    // Save to localStorage cache using unique submission ID
+    // Save to localStorage & IndexedDB cache using unique submission ID
     const subId = submission?.id || submission?._id || 'new_attempt';
     const storageKey = `bics_draft_${test.id}_${candidate.id}_${subId}`;
-    localStorage.setItem(storageKey, JSON.stringify(updated));
+    safePersistDraft(storageKey, updated);
 
     // Auto-save to server draft
     saveServerDraft(updated);
@@ -2690,28 +2712,31 @@ function AppContent() {
     }
   };
 
-  // Auto-save active progress to localStorage every 3 seconds to recover from crashes
+  // Auto-save active progress to localStorage & IndexedDB every 3 seconds to recover from crashes
   useEffect(() => {
     if (!test || !candidate || examAnswers.length === 0) return;
 
     const interval = setInterval(() => {
       const updated = [...examAnswers];
-      updated[selectedQuestionIndex] = {
-        ...updated[selectedQuestionIndex],
-        selectedOptionIndex: draftMCQ,
-        submittedCode: draftCode,
-        selectedLanguage: draftLanguage,
-        submittedHtml: draftHtml,
-        submittedCss: draftCss,
-        submittedJs: draftJs
-      };
-      
-      const storageKey = `bics_draft_${test.id}_${candidate.id}`;
-      localStorage.setItem(storageKey, JSON.stringify(updated));
+      if (updated[selectedQuestionIndex]) {
+        updated[selectedQuestionIndex] = {
+          ...updated[selectedQuestionIndex],
+          selectedOptionIndex: draftMCQ,
+          submittedCode: draftCode,
+          selectedLanguage: draftLanguage,
+          submittedHtml: draftHtml,
+          submittedCss: draftCss,
+          submittedJs: draftJs
+        };
+        examAnswersRef.current = updated;
+        const subId = submission?.id || submission?._id || 'new_attempt';
+        const storageKey = `bics_draft_${test.id}_${candidate.id}_${subId}`;
+        safePersistDraft(storageKey, updated);
+      }
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [test, candidate, examAnswers, selectedQuestionIndex, draftMCQ, draftCode, draftLanguage, draftHtml, draftCss, draftJs]);
+  }, [test, candidate, submission, examAnswers, selectedQuestionIndex, draftMCQ, draftCode, draftLanguage, draftHtml, draftCss, draftJs]);
 
   // Liveness Heartbeat for Server Dead-Man's Switch (Item 2.4)
   useEffect(() => {
@@ -2866,6 +2891,9 @@ function AppContent() {
     try {
       if (!submission) return;
       const subId = submission._id || submission.id;
+      if (Array.isArray(answersList)) {
+        examAnswersRef.current = answersList;
+      }
       const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (answersList || examAnswersRef.current || []);
       const userAuth = getActiveAuthToken();
       const examToken = getActiveExamToken();
@@ -2947,6 +2975,9 @@ function AppContent() {
                 score: 0
               };
             }
+            examAnswersRef.current = updated;
+            const subId = submission?.id || submission?._id || 'new_attempt';
+            safePersistDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`, updated);
             return updated;
           });
         } else {
@@ -2990,6 +3021,9 @@ function AppContent() {
                 score: questionScore
               });
             }
+            examAnswersRef.current = updated;
+            const subId = submission?.id || submission?._id || 'new_attempt';
+            safePersistDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`, updated);
             return updated;
           });
         }
@@ -3202,6 +3236,9 @@ function AppContent() {
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+      localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
+      deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});
+      deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}`).catch(() => {});
 
       setFlow('finished');
       setFinishedStep(1);
@@ -3269,6 +3306,9 @@ function AppContent() {
 
     if (submitSuccess) {
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+      localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
+      deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});
+      deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}`).catch(() => {});
       deleteOfflineSubmission(subId).catch(() => {});
 
       // Drain any queued offline proctoring snapshots safely
@@ -3341,6 +3381,9 @@ function AppContent() {
     if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
     if (micStream) micStream.getTracks().forEach(t => t.stop());
     localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
+    localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
+    deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});
+    deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}`).catch(() => {});
 
     setFlow('finished');
     setFinishedStep(1);
@@ -3439,7 +3482,11 @@ function AppContent() {
       if (flow === 'active_exam') {
         logProctoringEvent(submission, 'NETWORK_OFFLINE', 'Candidate network disconnected during active examination session.');
         setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
-        downloadEirfBackupFile(submission, candidate, examAnswers, proctoringWarnings);
+        // Do not trigger file downloads mid-exam. Persist active draft silently to IndexedDB
+        if (submission) {
+          const subId = submission._id || submission.id;
+          saveOfflineDraft(`bics_draft_${test?.id}_${candidate?.id}_${subId}`, examAnswersRef.current || examAnswers).catch(() => {});
+        }
         setWebcamProctorWarning("Network Offline: Local proctoring remains active. Your answers and proctoring telemetry are secured.");
         startDisconnectCountdown();
       }
@@ -3726,6 +3773,7 @@ function AppContent() {
           selectedQuestionIndex={selectedQuestionIndex}
           setSelectedQuestionIndex={setSelectedQuestionIndex}
           examAnswers={examAnswers}
+          examAnswersRef={examAnswersRef}
           setExamAnswers={setExamAnswers}
           draftMCQ={draftMCQ}
           setDraftMCQ={setDraftMCQ}

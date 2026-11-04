@@ -60,13 +60,20 @@ function calculateSubmissionScore(submission, test) {
                 if (ans.testCaseResults && ans.testCaseResults.length > 0) {
                     let tcPoints = 0;
                     ans.testCaseResults.forEach(tc => {
-                        const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' ? (tc.points || 0) : 0));
+                        const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' || tc.status === 'passed' ? (tc.points || 0) : 0));
                         tcPoints += pts;
                     });
                     ans.score = tcPoints;
                 } else if (ans.score === undefined || ans.score === null) {
                     ans.score = 0;
                 }
+            }
+        }
+        // 4. Web Coding Automated Scoring (deferred for LLMs / manual evaluation)
+        else if (quest && quest.type === 'web') {
+            if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
+                ans.pendingEvaluation = true;
+                ans.score = 0;
             }
         }
 
@@ -109,20 +116,40 @@ function calculateCodingScoreFast(submission, test) {
     submission.answers = submission.answers || [];
     let totalCodingPoints = 0;
 
-    submission.answers.forEach(ans => {
-        const quest = test.questions ? test.questions.find(q => String(q.id) === String(ans.questionId)) : null;
+    const questionMap = new Map();
+    (test.questions || []).forEach((q, idx) => {
+        const key = q.id ? String(q.id) : (q._id ? String(q._id) : String(idx));
+        questionMap.set(key, q);
+    });
+
+    submission.answers.forEach((ans, index) => {
+        let quest = null;
+        if (ans.questionId && String(ans.questionId) !== 'undefined') {
+            quest = questionMap.get(String(ans.questionId));
+        }
+        if (!quest && test.questions && test.questions[index]) {
+            quest = test.questions[index];
+        }
+
         if (quest && quest.type === 'coding') {
-            if (ans.testCaseResults && ans.testCaseResults.length > 0) {
-                let questionPoints = 0;
-                ans.testCaseResults.forEach(tc => {
-                    const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' ? (tc.points || 0) : 0));
-                    questionPoints += pts;
-                });
-                ans.score = Number(ans.score !== undefined ? ans.score : questionPoints);
-            } else if (ans.score === undefined || ans.score === null) {
-                ans.score = 0;
+            if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
+                if (ans.testCaseResults && ans.testCaseResults.length > 0) {
+                    let questionPoints = 0;
+                    ans.testCaseResults.forEach(tc => {
+                        const pts = Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' || tc.status === 'passed' ? (tc.points || 0) : 0));
+                        questionPoints += pts;
+                    });
+                    ans.score = questionPoints;
+                } else if (ans.score === undefined || ans.score === null) {
+                    ans.score = 0;
+                }
             }
             totalCodingPoints += Number(ans.score || 0);
+        } else if (quest && quest.type === 'web') {
+            if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
+                ans.pendingEvaluation = true;
+                ans.score = 0;
+            }
         }
     });
 

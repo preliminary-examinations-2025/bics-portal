@@ -31,6 +31,7 @@ export const ActiveExamView = ({
   selectedQuestionIndex,
   setSelectedQuestionIndex,
   examAnswers,
+  examAnswersRef,
   setExamAnswers,
   draftMCQ,
   setDraftMCQ,
@@ -129,6 +130,7 @@ export const ActiveExamView = ({
           draftCss={draftCss}
           draftJs={draftJs}
           setExamAnswers={setExamAnswers}
+          examAnswersRef={examAnswersRef}
           saveServerDraft={saveServerDraft}
         />
 

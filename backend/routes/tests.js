@@ -927,7 +927,10 @@ router.post('/start/:id', requireAuth, async (req, res) => {
             });
             await submission.save();
             if (req.body.token) {
-                await TestTokenModel.deleteOne({ token: req.body.token }).catch(() => {});
+                await TestTokenModel.updateOne(
+                    { token: req.body.token },
+                    { $set: { isUsed: true, sessionSubmissionId: submission._id } }
+                ).catch(() => {});
             }
         } else {
             const db = getJSONData();
@@ -958,6 +961,13 @@ router.post('/start/:id', requireAuth, async (req, res) => {
                 answers: []
             };
             db.testSubmissions.push(submission);
+            if (req.body.token && Array.isArray(db.tokens)) {
+                const tok = db.tokens.find(t => t.token === req.body.token);
+                if (tok) {
+                    tok.isUsed = true;
+                    tok.sessionSubmissionId = submission.id;
+                }
+            }
             saveJSONData(db);
         }
 
@@ -1093,16 +1103,26 @@ const handleDraftSave = async (req, res) => {
                 lastHeartbeatAt: now
             };
 
-            // Authoritative input sanitization: strip client score tampering
+            // Authoritative input sanitization: strip client score tampering while preserving executed testCaseResults
             let answersCount = submission.answers?.length || 0;
             if (Array.isArray(answers)) {
                 updateFields.answers = answers.map(a => {
                     const cleanAns = { ...a };
                     delete cleanAns.score;
                     delete cleanAns.isManuallyGraded;
-                    delete cleanAns.testCaseResults;
                     delete cleanAns.isBonusAwarded;
                     delete cleanAns.isObjectionResolved;
+                    if (Array.isArray(cleanAns.testCaseResults)) {
+                        cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                            testCaseIndex: tc.testCaseIndex,
+                            status: tc.status,
+                            points: Number(tc.points) || 0,
+                            scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                            actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                            expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+                        }));
+                    }
                     return cleanAns;
                 });
                 answersCount = updateFields.answers.length;
@@ -1235,7 +1255,25 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                     submission.eirfStatus = 'pending';
                 }
                 if (answers && Array.isArray(answers) && answers.length > 0) {
-                    submission.answers = answers;
+                    submission.answers = answers.map(a => {
+                        const cleanAns = { ...a };
+                        delete cleanAns.score;
+                        delete cleanAns.isManuallyGraded;
+                        delete cleanAns.isBonusAwarded;
+                        delete cleanAns.isObjectionResolved;
+                        if (Array.isArray(cleanAns.testCaseResults)) {
+                            cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                                testCaseIndex: tc.testCaseIndex,
+                                status: tc.status,
+                                points: Number(tc.points) || 0,
+                                scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                                actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                                expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                                input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+                            }));
+                        }
+                        return cleanAns;
+                    });
                 }
                 if (proctoringLog) {
                     submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
@@ -1531,15 +1569,25 @@ router.post('/submit', async (req, res) => {
                         });
                     }
 
-                    // Authoritative input sanitization: strip client-supplied scores, test results, or manual grade flags
+                    // Authoritative input sanitization: strip client-supplied scores or manual grade flags while preserving executed testCaseResults
                     if (Array.isArray(answers)) {
                         submission.answers = answers.map(a => {
                             const cleanAns = { ...a };
                             delete cleanAns.score;
                             delete cleanAns.isManuallyGraded;
-                            delete cleanAns.testCaseResults;
                             delete cleanAns.isBonusAwarded;
                             delete cleanAns.isObjectionResolved;
+                            if (Array.isArray(cleanAns.testCaseResults)) {
+                                cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                                    testCaseIndex: tc.testCaseIndex,
+                                    status: tc.status,
+                                    points: Number(tc.points) || 0,
+                                    scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                                    actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                                    expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                                    input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+                                }));
+                            }
                             return cleanAns;
                         });
                     }
@@ -1702,7 +1750,29 @@ router.post('/submit', async (req, res) => {
                 });
             }
 
-            submission.answers = answers;
+            if (Array.isArray(answers)) {
+                submission.answers = answers.map(a => {
+                    const cleanAns = { ...a };
+                    delete cleanAns.score;
+                    delete cleanAns.isManuallyGraded;
+                    delete cleanAns.isBonusAwarded;
+                    delete cleanAns.isObjectionResolved;
+                    if (Array.isArray(cleanAns.testCaseResults)) {
+                        cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                            testCaseIndex: tc.testCaseIndex,
+                            status: tc.status,
+                            points: Number(tc.points) || 0,
+                            scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                            actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                            expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+                        }));
+                    }
+                    return cleanAns;
+                });
+            } else {
+                submission.answers = [];
+            }
             if (proctoringLog) {
                 submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
@@ -1825,6 +1895,22 @@ router.post('/submit', async (req, res) => {
 
         // Asynchronous post-submission side effects (non-blocking so candidate UI returns in milliseconds)
         if (status !== 'started') {
+            const examToken = req.headers['x-exam-token'] || req.query.token || (req.body && req.body.token);
+            if (dbState.useMongo) {
+                if (examToken && typeof examToken === 'string') {
+                    await TestTokenModel.deleteOne({ token: examToken.trim() }).catch(() => {});
+                }
+                if (submission._id) {
+                    await TestTokenModel.deleteMany({ sessionSubmissionId: submission._id }).catch(() => {});
+                }
+            } else {
+                const db = getJSONData();
+                if (Array.isArray(db.tokens)) {
+                    db.tokens = db.tokens.filter(t => t.token !== (typeof examToken === 'string' ? examToken.trim() : '') && String(t.sessionSubmissionId) !== String(submission.id || submission._id));
+                    saveJSONData(db);
+                }
+            }
+
             logSystemAction(
                 submission?.candidateName || 'Candidate', 
                 status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED', 

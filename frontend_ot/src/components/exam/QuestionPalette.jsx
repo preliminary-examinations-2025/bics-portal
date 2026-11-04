@@ -21,6 +21,7 @@ export const QuestionPalette = ({
   draftCss,
   draftJs,
   setExamAnswers,
+  examAnswersRef,
   saveServerDraft
 }) => {
   const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
@@ -68,6 +69,9 @@ export const QuestionPalette = ({
       submittedCss: draftCss,
       submittedJs: draftJs
     };
+    if (examAnswersRef) {
+      examAnswersRef.current = updated;
+    }
     setExamAnswers(updated);
     if (saveServerDraft) saveServerDraft(updated);
     setSelectedQuestionIndex(targetIndex);
