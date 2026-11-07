@@ -196,6 +196,7 @@ const isWhitelisted = (urlPath, method = 'GET') => {
         fullPath.startsWith('/api/tests/submission-verification') ||
         fullPath.startsWith('/api/tests/evaluation') ||
         fullPath === '/api/test/eirf/public-key' ||
+        fullPath.startsWith('/api/test/eirf/verdict-pdf') ||
         fullPath === '/api/tests/beacon-disconnect' ||
         fullPath === '/api/log-client-error' ||
         fullPath.startsWith('/api/kata/')

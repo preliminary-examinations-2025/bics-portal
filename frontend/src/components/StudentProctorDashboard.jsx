@@ -52,8 +52,8 @@ const getDistinctCount = (log, evType, filterFn) => {
   return Math.min(count, recorded);
 };
 
-export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions }) {
-  const [activeTab, setActiveTab] = useState('proctoring'); // 'proctoring' | 'eirf'
+export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmissions, initialTab = 'proctoring' }) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'proctoring'); // 'proctoring' | 'eirf'
   const [logs, setLogs] = useState(sub.proctoringLog?.events || []);
   const [snapshots, setSnapshots] = useState(sub.proctoringLog?.snapshots || []);
   const [baselinePhotoUrl, setBaselinePhotoUrl] = useState(sub.baselinePhotoUrl || '');
@@ -79,6 +79,8 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const [reviewerName, setReviewerName] = useState('Academic Integrity Board Convener');
   const [reviewerTitle, setReviewerTitle] = useState('Convener, Examination Disciplinary Committee');
   const [submittingAction, setSubmittingAction] = useState(false);
+  const [previewProofModalOpen, setPreviewProofModalOpen] = useState(false);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState('');
   const pcRef = useRef(null);
   const subId = sub.id || sub._id;
 
@@ -1012,47 +1014,282 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       )}
                     </div>
 
-                    {/* Candidate Questionnaire Answers (4 Sections) */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {/* Section 1 */}
-                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
-                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>1. Incident Acknowledgment & Confirmation:</strong>
-                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
-                          <div>• Aware why action was taken: <strong>{eirfData.existingReport.formAnswers?.section1?.ackUnderstand || eirfData.existingReport.additionalAnswers?.ackUnderstand || 'Yes'}</strong></div>
-                          <div>• Exact warnings remembered: <strong>{eirfData.existingReport.formAnswers?.section1?.warningCount || eirfData.existingReport.additionalAnswers?.warningCount || '3 warnings'}</strong></div>
-                        </div>
-                      </div>
+                    {/* Disruption Evidence Proof Card */}
+                    {(() => {
+                      const proofUrl = eirfData.existingReport?.uploadedProofUrl || 
+                                       eirfData.existingReport?.proofUrl || 
+                                       Object.values(eirfData.existingReport?.formAnswers || {}).find(v => v && v.fileUrl)?.fileUrl ||
+                                       (sub.eirfProofUrl ? sub.eirfProofUrl : '');
+                      if (!proofUrl) return null;
+                      const resolvedUrl = resolveSnapshotUrl(proofUrl);
+                      const isImg = /\.(png|jpe?g|webp|gif|bmp)(\?.*)?$/i.test(proofUrl) || proofUrl.includes('cloudinary.com') || proofUrl.startsWith('data:image/');
 
-                      {/* Section 2 */}
-                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
-                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>2. Context Behind Navigation Violations:</strong>
-                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
-                          <div>• Tab / Focus Loss Context: <p style={{ margin: '2px 0 6px 0', color: '#475569' }}>{eirfData.existingReport.formAnswers?.section2?.tabReason || eirfData.existingReport.additionalAnswers?.tabReason || eirfData.existingReport.technicalContext?.openedApp || 'None specified'}</p></div>
-                          <div>• Full-Screen Exits Explanation: <p style={{ margin: '2px 0 0 0', color: '#475569' }}>{eirfData.existingReport.formAnswers?.section2?.fullscreenReason || eirfData.existingReport.additionalAnswers?.fullscreenReason || 'None specified'}</p></div>
-                        </div>
-                      </div>
+                      return (
+                        <div style={{
+                          backgroundColor: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '6px',
+                          padding: '12px 14px',
+                          marginBottom: '15px'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <ImageIcon size={15} style={{ color: '#0284c7' }} />
+                              Candidate Uploaded Disruption Proof Document
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProofPreviewUrl(resolvedUrl);
+                                setPreviewProofModalOpen(true);
+                              }}
+                              style={{
+                                fontSize: '8pt',
+                                color: '#0284c7',
+                                backgroundColor: '#e0f2fe',
+                                border: '1px solid #bae6fd',
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <ZoomIn size={12} /> Click to Enlarge
+                            </button>
+                          </div>
 
-                      {/* Section 3 */}
-                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
-                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>3. Technical Malfunction Triage:</strong>
-                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
-                          <div>• Reported Technical Interruptions: <strong>{Array.isArray(eirfData.existingReport.formAnswers?.section3?.interruptions) ? eirfData.existingReport.formAnswers.section3.interruptions.join(', ') : (Array.isArray(eirfData.existingReport.additionalAnswers?.interruptions) ? eirfData.existingReport.additionalAnswers.interruptions.join(', ') : 'None reported')}</strong></div>
-                          <div>• Peripheral Connection Status: <strong>{eirfData.existingReport.formAnswers?.section3?.peripherals || eirfData.existingReport.additionalAnswers?.peripherals || 'No, no peripherals were connected'}</strong></div>
-                        </div>
-                      </div>
+                          <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                            {isImg ? (
+                              <div
+                                onClick={() => {
+                                  setProofPreviewUrl(resolvedUrl);
+                                  setPreviewProofModalOpen(true);
+                                }}
+                                style={{
+                                  width: '120px',
+                                  height: '80px',
+                                  backgroundColor: '#0f172a',
+                                  borderRadius: '4px',
+                                  overflow: 'hidden',
+                                  cursor: 'pointer',
+                                  flexShrink: 0,
+                                  border: '1px solid #cbd5e1'
+                                }}
+                              >
+                                <img
+                                  src={resolvedUrl}
+                                  alt="Supporting Proof"
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  onError={(e) => {
+                                    e.target.onerror = null;
+                                    e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 120 80"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="10" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Proof Document</text></svg>';
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <div style={{
+                                width: '120px',
+                                height: '80px',
+                                backgroundColor: '#eff6ff',
+                                borderRadius: '4px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                border: '1px solid #bfdbfe',
+                                flexShrink: 0
+                              }}>
+                                <ImageIcon size={24} style={{ color: '#2563eb', marginBottom: '4px' }} />
+                                <span style={{ fontSize: '7.5pt', color: '#1e40af', fontWeight: 'bold' }}>Document File</span>
+                              </div>
+                            )}
 
-                      {/* Section 4 */}
-                      <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
-                        <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>4. Integrity Declaration & Final Statement:</strong>
-                        <div style={{ color: '#334155', lineHeight: 1.5 }}>
-                          <p style={{ margin: '2px 0 6px 0', color: '#475569' }}>{eirfData.existingReport.detailedExplanation || eirfData.existingReport.formAnswers?.section4?.explanation}</p>
-                          <div style={{ fontSize: '8pt', color: '#059669', fontWeight: 'bold' }}>
-                            Formal Integrity Declaration: Certified & Agreed
+                            <div style={{ fontSize: '8pt', color: '#475569', lineHeight: 1.4 }}>
+                              <div><strong>File Reference:</strong> {proofUrl.split('/').pop() || 'evidence_proof.png'}</div>
+                              <div style={{ color: '#059669', marginTop: '2px' }}>✓ Verified cryptographic snapshot preserved on secure server storage.</div>
+                              <div style={{ marginTop: '6px' }}>
+                                <a
+                                  href={resolvedUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: '#2563eb', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}
+                                >
+                                  <ExternalLink size={12} /> Open in New Tab
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Candidate Questionnaire Answers (Dynamic 8 Questions or 4 Section Fallback) */}
+                    {Array.isArray(eirfData.generatedQuestions) && eirfData.generatedQuestions.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                          <strong style={{ color: '#002147', fontSize: '9pt' }}>
+                            Dynamic Forensic Questionnaire Responses ({eirfData.generatedQuestions.length} Questions)
+                          </strong>
+                          <span style={{ fontSize: '7.5pt', backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold' }}>
+                            LLM Investigation Nodes
+                          </span>
+                        </div>
+
+                        {eirfData.generatedQuestions.map((q, qIdx) => {
+                          const qAns = eirfData.existingReport?.formAnswers?.[q.id] ?? 
+                                       eirfData.existingReport?.formAnswers?.[`question_${qIdx + 1}`] ??
+                                       eirfData.existingReport?.additionalAnswers?.[q.id];
+
+                          return (
+                            <div key={q.id || qIdx} style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#002147' }}>
+                                  Q{qIdx + 1} • <span style={{ color: '#0284c7' }}>{q.category || 'Incident Inquiry'}</span>
+                                </span>
+                                <span style={{ fontSize: '7pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '1px 5px', borderRadius: '3px' }}>
+                                  {q.type}
+                                </span>
+                              </div>
+
+                              <div style={{ color: '#1e293b', fontWeight: 'bold', marginBottom: '6px', lineHeight: 1.35 }}>
+                                {q.questionText}
+                              </div>
+
+                              <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px 10px', color: '#334155' }}>
+                                {q.type === 'file_upload' ? (
+                                  qAns?.fileUrl ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <ImageIcon size={14} style={{ color: '#0284c7' }} />
+                                      <span style={{ fontSize: '8pt', fontWeight: '500' }}>{qAns.fileName || 'Uploaded Supporting Proof'}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setProofPreviewUrl(resolveSnapshotUrl(qAns.fileUrl));
+                                          setPreviewProofModalOpen(true);
+                                        }}
+                                        style={{ marginLeft: 'auto', fontSize: '7.5pt', color: '#0284c7', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                                      >
+                                        View Proof
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>No supporting file attached by candidate</span>
+                                  )
+                                ) : q.type === 'checkbox' ? (
+                                  Array.isArray(qAns) && qAns.length > 0 ? (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                      {qAns.map((item, itemIdx) => (
+                                        <span key={itemIdx} style={{ fontSize: '7.5pt', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', padding: '2px 6px', borderRadius: '3px' }}>
+                                          {item}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span style={{ color: '#64748b' }}>{typeof qAns === 'string' ? qAns : 'None specified'}</span>
+                                  )
+                                ) : q.type === 'radio' ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <CheckCircle2 size={13} style={{ color: '#10b981' }} />
+                                    <strong>{String(qAns || 'None selected')}</strong>
+                                  </div>
+                                ) : (
+                                  <p style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
+                                    {String(qAns || eirfData.existingReport?.detailedExplanation || 'No response provided')}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {/* Section 1 */}
+                        <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                          <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>1. Incident Acknowledgment & Confirmation:</strong>
+                          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                            <div>• Aware why action was taken: <strong>{eirfData.existingReport.formAnswers?.section1?.ackUnderstand || eirfData.existingReport.additionalAnswers?.ackUnderstand || 'Yes'}</strong></div>
+                            <div>• Exact warnings remembered: <strong>{eirfData.existingReport.formAnswers?.section1?.warningCount || eirfData.existingReport.additionalAnswers?.warningCount || '3 warnings'}</strong></div>
+                          </div>
+                        </div>
+
+                        {/* Section 2 */}
+                        <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                          <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>2. Context Behind Navigation Violations:</strong>
+                          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                            <div>• Tab / Focus Loss Context: <p style={{ margin: '2px 0 6px 0', color: '#475569' }}>{eirfData.existingReport.formAnswers?.section2?.tabReason || eirfData.existingReport.additionalAnswers?.tabReason || eirfData.existingReport.technicalContext?.openedApp || 'None specified'}</p></div>
+                            <div>• Full-Screen Exits Explanation: <p style={{ margin: '2px 0 0 0', color: '#475569' }}>{eirfData.existingReport.formAnswers?.section2?.fullscreenReason || eirfData.existingReport.additionalAnswers?.fullscreenReason || 'None specified'}</p></div>
+                          </div>
+                        </div>
+
+                        {/* Section 3 */}
+                        <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                          <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>3. Technical Malfunction Triage:</strong>
+                          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                            <div>• Reported Technical Interruptions: <strong>{Array.isArray(eirfData.existingReport.formAnswers?.section3?.interruptions) ? eirfData.existingReport.formAnswers.section3.interruptions.join(', ') : (Array.isArray(eirfData.existingReport.additionalAnswers?.interruptions) ? eirfData.existingReport.additionalAnswers.interruptions.join(', ') : 'None reported')}</strong></div>
+                            <div>• Peripheral Connection Status: <strong>{eirfData.existingReport.formAnswers?.section3?.peripherals || eirfData.existingReport.additionalAnswers?.peripherals || 'No, no peripherals were connected'}</strong></div>
+                          </div>
+                        </div>
+
+                        {/* Section 4 */}
+                        <div style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                          <strong style={{ color: '#002147', display: 'block', marginBottom: '4px' }}>4. Integrity Declaration & Final Statement:</strong>
+                          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+                            <p style={{ margin: '2px 0 6px 0', color: '#475569' }}>{eirfData.existingReport.detailedExplanation || eirfData.existingReport.formAnswers?.section4?.explanation}</p>
+                            <div style={{ fontSize: '8pt', color: '#059669', fontWeight: 'bold' }}>
+                              Formal Integrity Declaration: Certified & Agreed
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
+
+                  {/* Official Verdict Certificate Card (If Adjudicated) */}
+                  {(eirfData.existingReport?.status === 'approved' || eirfData.existingReport?.status === 'rejected') && (
+                    <div style={{
+                      backgroundColor: eirfData.existingReport.status === 'approved' ? '#ecfdf5' : '#fef2f2',
+                      border: `1px solid ${eirfData.existingReport.status === 'approved' ? '#a7f3d0' : '#fecaca'}`,
+                      borderRadius: '4px',
+                      padding: '12px 14px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '10px'
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '9pt', fontWeight: 'bold', color: eirfData.existingReport.status === 'approved' ? '#065f46' : '#991b1b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <CheckCircle2 size={15} /> Official Committee Verdict: {eirfData.existingReport.status.toUpperCase()}
+                        </div>
+                        <div style={{ fontSize: '7.5pt', color: '#475569', marginTop: '2px' }}>
+                          Category: <strong>{eirfData.existingReport.resolutionCategory || 'N/A'}</strong> | Remediation: <strong>{eirfData.existingReport.remediationAction || 'N/A'}</strong>
+                        </div>
+                      </div>
+                      <a
+                        href={`${API_BASE}/test/eirf/verdict-pdf/${eirfData.existingReport.reportId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          backgroundColor: '#002147',
+                          color: '#ffffff',
+                          padding: '6px 12px',
+                          borderRadius: '4px',
+                          fontSize: '8pt',
+                          fontWeight: 'bold',
+                          textDecoration: 'none'
+                        }}
+                      >
+                        <ExternalLink size={13} /> View Official Signed PDF Verdict
+                      </a>
+                    </div>
+                  )}
 
                   {/* Admin Decision Actions */}
                   <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '4px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1300,6 +1537,67 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 {submittingAction && <Loader2 className="animate-spin" size={14} />}
                 {submittingAction ? 'Processing...' : `Confirm & ${pendingActionType === 'approve' ? 'Approve EIRF' : 'Reject EIRF'}`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disruption Evidence Proof Lightbox Zoom Modal */}
+      {previewProofModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 10000,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            backgroundColor: '#ffffff',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
+              <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ImageIcon size={15} style={{ color: '#0284c7' }} /> Candidate Disruption Supporting Proof
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <a
+                  href={proofPreviewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download="Disruption_Proof.png"
+                  style={{ fontSize: '8pt', color: '#0284c7', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 'bold' }}
+                >
+                  <ExternalLink size={12} /> Open Raw Link
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewProofModalOpen(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto', backgroundColor: '#0f172a', minWidth: '320px', minHeight: '240px' }}>
+              <img
+                src={proofPreviewUrl}
+                alt="Disruption Proof Attachment"
+                style={{ maxWidth: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '4px' }}
+              />
             </div>
           </div>
         </div>

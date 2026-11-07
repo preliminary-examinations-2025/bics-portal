@@ -1,9 +1,9 @@
 import React from 'react';
 import { 
-  Lock, ShieldCheck, BookOpen, Check, X, Flag, ShieldAlert, Clock, Award, ArrowRight 
+  Lock, ShieldCheck, BookOpen, Check, X, Flag, ShieldAlert, Clock, Award, ArrowRight, ExternalLink 
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
-import { getReturnUrl } from '../config/constants';
+import { getReturnUrl, API_BASE } from '../config/constants';
 import { RichText } from '../components/common/RichText';
 import { CenteredFooter } from '../components/common/CenteredFooter';
 import { ObjectionModal } from '../components/verification/ObjectionModal';
@@ -240,6 +240,140 @@ export function VerificationReviewView({
       {/* Main Continuous Document Container */}
       <div style={{ maxWidth: '1000px', width: '100%', margin: '0 auto', padding: '30px 20px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
         
+        {/* EIRF Committee Adjudication Verdict Banner */}
+        {submission?.eirfStatus === 'approved' ? (
+          <div style={{
+            backgroundColor: '#ecfdf5',
+            border: '1px solid #a7f3d0',
+            borderRadius: '8px',
+            padding: '16px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px',
+            boxShadow: '0 1px 3px rgba(16, 185, 129, 0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                backgroundColor: '#10b981',
+                color: '#ffffff',
+                padding: '10px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <ShieldCheck size={24} />
+              </div>
+              <div>
+                <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#065f46' }}>
+                  Academic Integrity Disciplinary Committee Clearance • EIRF Approved
+                </div>
+                <div style={{ fontSize: '8pt', color: '#047857', marginTop: '2px' }}>
+                  Technical / environmental disruption claim validated by the Examination Board. Official score restored and released.
+                </div>
+              </div>
+            </div>
+
+            <a
+              href={`${API_BASE}/test/eirf/verdict-pdf/${submission.eirfReportId || submission.id || submission._id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: '#002147',
+                color: '#ffffff',
+                padding: '8px 14px',
+                borderRadius: '6px',
+                fontSize: '8pt',
+                fontWeight: 'bold',
+                textDecoration: 'none',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+              }}
+            >
+              <ExternalLink size={13} /> View Signed Verdict Certificate
+            </a>
+          </div>
+        ) : submission?.eirfStatus === 'rejected' ? (
+          <div style={{
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '8px',
+            padding: '16px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px',
+            boxShadow: '0 1px 3px rgba(220, 38, 38, 0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                backgroundColor: '#dc2626',
+                color: '#ffffff',
+                padding: '10px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <ShieldAlert size={24} />
+              </div>
+              <div>
+                <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#991b1b' }}>
+                  Academic Integrity Disciplinary Sanction • Examination Annulled
+                </div>
+                <div style={{ fontSize: '8pt', color: '#b91c1c', marginTop: '2px' }}>
+                  EIRF report rejected due to confirmed protocol deviations. Examination score set to 0 points.
+                </div>
+              </div>
+            </div>
+
+            <a
+              href={`${API_BASE}/test/eirf/verdict-pdf/${submission.eirfReportId || submission.id || submission._id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: '#991b1b',
+                color: '#ffffff',
+                padding: '8px 14px',
+                borderRadius: '6px',
+                fontSize: '8pt',
+                fontWeight: 'bold',
+                textDecoration: 'none'
+              }}
+            >
+              <ExternalLink size={13} /> View Decision Notice
+            </a>
+          </div>
+        ) : (submission?.hasEirfFlag || (submission?.eirfStatus && submission?.eirfStatus !== 'none')) ? (
+          <div style={{
+            backgroundColor: '#fffbeb',
+            border: '1px solid #fde68a',
+            borderRadius: '8px',
+            padding: '14px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            <Clock size={20} style={{ color: '#d97706', flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#b45309' }}>
+                Incident Under Administrative Review
+              </div>
+              <div style={{ fontSize: '8pt', color: '#78350f', marginTop: '1px' }}>
+                A proctoring or technical incident report was filed for this assessment attempt. The scores below are provisional pending final Disciplinary Committee adjudication.
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {/* Exam Paper Title Header Card */}
         <div className="cf-card" style={{ padding: '24px 28px', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '15px', marginBottom: '15px' }}>

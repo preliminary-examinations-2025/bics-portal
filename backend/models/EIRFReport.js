@@ -24,6 +24,21 @@ const EIRFReportSchema = new mongoose.Schema({
     },
     additionalAnswers: mongoose.Schema.Types.Mixed,
     formAnswers: mongoose.Schema.Types.Mixed,
+    uploadedProofUrl: { type: String, default: '' },
+    
+    // Official Verdict & Artifacts
+    pdfUrl: { type: String, default: '' },
+    pdfCloudinaryPublicId: { type: String, default: '' },
+    digitalHash: { type: String, default: '' },
+    courseCode: { type: String, default: '' },
+    courseName: { type: String, default: '' },
+    resolutionCategory: { type: String, default: '' },
+    remediationAction: { type: String, default: '' },
+    reviewerName: { type: String, default: '' },
+    reviewerTitle: { type: String, default: '' },
+    pipelineStatus: { type: String, default: '' },
+    scheduledCleanupAt: { type: Date },
+    pdfDeletedFromCloudinary: { type: Boolean, default: false },
     
     // [DEPRECATED] Encrypted Physical Payload Verification (Superseded by client IndexedDB encrypted auto-sync)
     /** @deprecated Physical file download deprecated. Submissions auto-sync via encrypted client IndexedDB */

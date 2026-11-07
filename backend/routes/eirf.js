@@ -672,6 +672,16 @@ router.post('/test/eirf/submit', async (req, res) => {
                        '127.0.0.1';
         const cleanIp = rawIp.replace(/^::ffff:/, '');
 
+        let extractedProofUrl = req.body.uploadedProofUrl || req.body.proofUrl || '';
+        if (!extractedProofUrl && formAnswers && typeof formAnswers === 'object') {
+            for (const val of Object.values(formAnswers)) {
+                if (val && typeof val === 'object' && val.fileUrl) {
+                    extractedProofUrl = val.fileUrl;
+                    break;
+                }
+            }
+        }
+
         const mergedTechContext = {
             ...(technicalContext || {}),
             ip: cleanIp,
@@ -706,11 +716,13 @@ router.post('/test/eirf/submit', async (req, res) => {
             technicalContext: mergedTechContext,
             additionalAnswers: additionalAnswers || {},
             formAnswers: formAnswers || {},
+            uploadedProofUrl: extractedProofUrl,
             encryptedPayloadUploaded: !!rawPayload,
             payloadFileName: rawFileName,
             verificationStatus,
             verificationDetails,
             status: 'pending_review',
+            pipelineStatus: 'EIRF_SUBMITTED',
             submittedAt: new Date(),
             filedAt: new Date(),
             expiresAt
@@ -726,6 +738,9 @@ router.post('/test/eirf/submit', async (req, res) => {
             submission.eirfStatus = verificationStatus === 'DISCREPANCY_FLAGGED' ? 'discrepancy' : 'pending';
             submission.pipelineStatus = 'EIRF_SUBMITTED';
             submission.eirfReportId = reportId;
+            if (extractedProofUrl) {
+                submission.eirfProofUrl = extractedProofUrl;
+            }
             await submission.save();
         } else {
             const db = getJSONData();
@@ -740,6 +755,9 @@ router.post('/test/eirf/submit', async (req, res) => {
             submission.eirfStatus = verificationStatus === 'DISCREPANCY_FLAGGED' ? 'discrepancy' : 'pending';
             submission.pipelineStatus = 'EIRF_SUBMITTED';
             submission.eirfReportId = reportId;
+            if (extractedProofUrl) {
+                submission.eirfProofUrl = extractedProofUrl;
+            }
             saveJSONData(db);
         }
 
@@ -769,21 +787,151 @@ router.post('/test/eirf/submit', async (req, res) => {
     }
 });
 
-// 4. Admin: List All EIRF Reports
+// 4. Admin: List All EIRF Reports & Flagged Examination Incidents
 router.get('/admin/eirf/list', requireAdmin, async (req, res) => {
     try {
+        let reports = [];
+        let flaggedSubmissions = [];
+
         if (dbState.useMongo) {
-            const reports = await EIRFReportModel.find()
+            reports = await EIRFReportModel.find()
                 .select('-decryptedPayloadSnapshot -proctoringLogSnapshot')
                 .sort({ submittedAt: -1 })
                 .lean();
-            return res.json(reports);
+
+            flaggedSubmissions = await TestSubmissionModel.find({
+                $or: [
+                    { hasEirfFlag: true },
+                    { eirfStatus: { $in: ['pending', 'discrepancy', 'approved', 'rejected'] } },
+                    { pipelineStatus: { $in: ['FLAGGED', 'GENERATING_QUESTIONS', 'QUESTIONS_GENERATED', 'SENDING_INVITE_EMAIL', 'AWAITING_EIRF', 'EIRF_SUBMITTED', 'SENDING_CONFIRMATION_EMAIL', 'UNDER_REVIEW', 'EXPIRED', 'VERDICT_ISSUED'] } }
+                ]
+            }).sort({ submittedAt: -1 }).lean();
         } else {
             const db = getJSONData();
             db.eirfReports = db.eirfReports || [];
-            const safeReports = db.eirfReports.map(({ decryptedPayloadSnapshot, proctoringLogSnapshot, ...rest }) => rest);
-            return res.json(safeReports);
+            reports = db.eirfReports.map(({ decryptedPayloadSnapshot, proctoringLogSnapshot, ...rest }) => rest);
+            db.testSubmissions = db.testSubmissions || [];
+            flaggedSubmissions = db.testSubmissions.filter(s => 
+                s.hasEirfFlag ||
+                ['pending', 'discrepancy', 'approved', 'rejected'].includes(s.eirfStatus) ||
+                ['FLAGGED', 'GENERATING_QUESTIONS', 'QUESTIONS_GENERATED', 'SENDING_INVITE_EMAIL', 'AWAITING_EIRF', 'EIRF_SUBMITTED', 'SENDING_CONFIRMATION_EMAIL', 'UNDER_REVIEW', 'EXPIRED', 'VERDICT_ISSUED'].includes(s.pipelineStatus)
+            );
         }
+
+        const reportBySubId = new Map();
+        reports.forEach(r => {
+            if (r.submissionId) {
+                reportBySubId.set(String(r.submissionId), r);
+                reportBySubId.set(String(resolveToObjectId(r.submissionId)), r);
+            }
+        });
+
+        const mergedMap = new Map();
+
+        // 1. Populate from flagged submissions
+        flaggedSubmissions.forEach(sub => {
+            const rawSubId = String(sub._id || sub.id);
+            const bicsId = toBicsId(rawSubId);
+            const rep = reportBySubId.get(rawSubId) || (sub.eirfReportId ? reports.find(r => r.reportId === sub.eirfReportId) : null);
+
+            let maxFullscreenSeconds = 0;
+            let maxTabSwitchSeconds = 0;
+            (sub.proctoringLog?.events || []).forEach(ev => {
+                let dur = Number(ev.durationSeconds || 0);
+                if (!dur && ev.details) {
+                    const m1 = ev.details.match(/for\s+(\d+)\s+seconds/i);
+                    const m2 = ev.details.match(/Max:\s*(\d+)s/i);
+                    const m3 = ev.details.match(/after\s+(\d+)\s+seconds/i);
+                    if (m1) dur = parseInt(m1[1], 10);
+                    else if (m2) dur = parseInt(m2[1], 10);
+                    else if (m3) dur = parseInt(m3[1], 10);
+                }
+                const t = (ev.type || '').toUpperCase();
+                if (t.includes('FULLSCREEN')) {
+                    maxFullscreenSeconds = Math.max(maxFullscreenSeconds, dur);
+                } else if (t.includes('TAB')) {
+                    maxTabSwitchSeconds = Math.max(maxTabSwitchSeconds, dur);
+                }
+            });
+
+            const isExpired = (sub.eirfExpiresAt && new Date(sub.eirfExpiresAt) < new Date()) || sub.pipelineStatus === 'EXPIRED';
+            const pipelineStatus = rep?.status === 'approved' || rep?.status === 'rejected' || sub.pipelineStatus === 'VERDICT_ISSUED'
+                ? 'VERDICT_ISSUED'
+                : (rep ? (rep.pipelineStatus || 'UNDER_REVIEW') : (isExpired ? 'EXPIRED' : (sub.pipelineStatus || 'AWAITING_EIRF')));
+
+            let triggerViolation = 'Proctoring Warning Threshold';
+            if (maxFullscreenSeconds > 5) {
+                triggerViolation = `Fullscreen Exit (${maxFullscreenSeconds}s)`;
+            } else if (maxTabSwitchSeconds > 5) {
+                triggerViolation = `Tab Switch (${maxTabSwitchSeconds}s)`;
+            } else if ((sub.proctoringLog?.warnings || 0) >= 3) {
+                triggerViolation = `3 Proctor Compliance Strikes`;
+            }
+
+            mergedMap.set(rawSubId, {
+                _id: rep?._id || rawSubId,
+                reportId: rep?.reportId || sub.eirfReportId || 'Pending Filing',
+                submissionId: bicsId,
+                rawSubmissionId: rawSubId,
+                bicsId,
+                candidateName: sub.candidateName || rep?.candidateName || 'Candidate',
+                studentId: sub.studentId || rep?.studentId || 'N/A',
+                testTitle: sub.testTitle || rep?.testTitle || 'Online Assessment',
+                testId: sub.testId,
+                submittedAt: sub.submittedAt,
+                eirfSubmittedAt: rep?.submittedAt || null,
+                expiresAt: sub.eirfExpiresAt || rep?.expiresAt || null,
+                isExpired,
+                pipelineStatus,
+                status: rep?.status || (pipelineStatus === 'EXPIRED' ? 'expired' : (sub.eirfStatus || 'pending_filing')),
+                eirfStatus: sub.eirfStatus || rep?.status || (pipelineStatus === 'EXPIRED' ? 'expired' : 'pending'),
+                verificationStatus: rep?.verificationStatus || (rep ? 'PENDING' : 'AWAITING_STUDENT'),
+                primaryCause: rep?.primaryCause || (pipelineStatus === 'EXPIRED' ? 'Filing Expired (45 min statutory window elapsed)' : 'Awaiting Candidate Incident Report'),
+                triggerViolation,
+                maxFullscreenSeconds,
+                maxTabSwitchSeconds,
+                uploadedProofUrl: rep?.uploadedProofUrl || sub.eirfProofUrl || '',
+                pdfUrl: rep?.pdfUrl || '',
+                hasEirfFlag: true
+            });
+        });
+
+        // 2. Add reports not matched directly by submission ID
+        reports.forEach(rep => {
+            const rawSubId = String(rep.submissionId || rep.reportId);
+            if (!mergedMap.has(rawSubId)) {
+                const bicsId = toBicsId(rawSubId);
+                mergedMap.set(rawSubId, {
+                    _id: rep._id,
+                    reportId: rep.reportId,
+                    submissionId: bicsId,
+                    rawSubmissionId: rawSubId,
+                    bicsId,
+                    candidateName: rep.candidateName || 'Candidate',
+                    studentId: rep.studentId || 'N/A',
+                    testTitle: rep.testTitle || 'Online Assessment',
+                    testId: rep.testId,
+                    submittedAt: rep.submittedAt,
+                    eirfSubmittedAt: rep.submittedAt,
+                    expiresAt: rep.expiresAt,
+                    isExpired: false,
+                    pipelineStatus: rep.status === 'approved' || rep.status === 'rejected' ? 'VERDICT_ISSUED' : (rep.pipelineStatus || 'UNDER_REVIEW'),
+                    status: rep.status || 'pending_review',
+                    eirfStatus: rep.status || 'pending',
+                    verificationStatus: rep.verificationStatus || 'PENDING',
+                    primaryCause: rep.primaryCause || 'Incident Flagged',
+                    triggerViolation: rep.flaggedReasons?.[0] || 'Proctoring Telemetry Alert',
+                    maxFullscreenSeconds: 0,
+                    maxTabSwitchSeconds: 0,
+                    uploadedProofUrl: rep.uploadedProofUrl || '',
+                    pdfUrl: rep.pdfUrl || '',
+                    hasEirfFlag: true
+                });
+            }
+        });
+
+        const list = Array.from(mergedMap.values()).sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
+        return res.json(list);
     } catch (e) {
         console.error("Admin EIRF list error:", e);
         return res.status(500).json({ error: e.message });
@@ -824,6 +972,7 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
                 return res.status(404).json({ error: "EIRF Incident Report not found." });
             }
             report.status = status;
+            report.pipelineStatus = 'VERDICT_ISSUED';
             report.adminRemarks = adminRemarks || '';
             report.courseCode = finalCourseCode;
             report.courseName = finalCourseName;
@@ -838,6 +987,19 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
             submission = await TestSubmissionModel.findById(report.submissionId);
             if (submission) {
                 submission.eirfStatus = status;
+                submission.pipelineStatus = 'VERDICT_ISSUED';
+                if (status === 'approved') {
+                    submission.verificationStatus = 'released';
+                } else if (status === 'rejected') {
+                    submission.verificationStatus = 'annulled';
+                    if (submission.evaluation) {
+                        submission.evaluation.mcqScore = 0;
+                        submission.evaluation.codingScore = 0;
+                        submission.evaluation.totalScore = 0;
+                        submission.evaluation.percentage = 0;
+                        submission.evaluation.adminRemarks = `Annulled by Committee: ${finalResolutionCategory} (${finalRemediationAction})`;
+                    }
+                }
                 await submission.save();
             }
         } else {
@@ -848,6 +1010,7 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
                 return res.status(404).json({ error: "EIRF Incident Report not found." });
             }
             db.eirfReports[idx].status = status;
+            db.eirfReports[idx].pipelineStatus = 'VERDICT_ISSUED';
             db.eirfReports[idx].adminRemarks = adminRemarks || '';
             db.eirfReports[idx].courseCode = finalCourseCode;
             db.eirfReports[idx].courseName = finalCourseName;
@@ -863,6 +1026,20 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
             const subIdx = db.testSubmissions.findIndex(s => String(s._id || s.id) === String(report.submissionId));
             if (subIdx !== -1) {
                 db.testSubmissions[subIdx].eirfStatus = status;
+                db.testSubmissions[subIdx].pipelineStatus = 'VERDICT_ISSUED';
+                if (status === 'approved') {
+                    db.testSubmissions[subIdx].verificationStatus = 'released';
+                } else if (status === 'rejected') {
+                    db.testSubmissions[subIdx].verificationStatus = 'annulled';
+                    if (db.testSubmissions[subIdx].evaluation) {
+                        db.testSubmissions[subIdx].evaluation.mcqScore = 0;
+                        db.testSubmissions[subIdx].evaluation.codingScore = 0;
+                        db.testSubmissions[subIdx].evaluation.totalScore = 0;
+                        db.testSubmissions[subIdx].evaluation.percentage = 0;
+                        db.testSubmissions[subIdx].evaluation.adminRemarks = `Annulled by Committee: ${finalResolutionCategory} (${finalRemediationAction})`;
+                    }
+                }
+                submission = db.testSubmissions[subIdx];
             }
             saveJSONData(db);
         }
@@ -990,6 +1167,132 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
         console.error("Admin EIRF action error:", e);
         return res.status(500).json({ error: e.message });
     }
+});
+
+// Helper: Stream on-demand cryptographically signed BICS Verdict PDF
+async function streamVerdictPdfForReport(reportId, res) {
+    try {
+        let report = null;
+        let submission = null;
+        let candidate = null;
+        let testConfig = null;
+
+        const targetId = resolveToObjectId(reportId);
+
+        if (dbState.useMongo) {
+            const query = mongoose.Types.ObjectId.isValid(targetId)
+                ? { $or: [{ _id: targetId }, { reportId: String(reportId) }, { submissionId: String(targetId) }, { submissionId: String(reportId) }] }
+                : { $or: [{ reportId: String(reportId) }, { submissionId: String(targetId) }, { submissionId: String(reportId) }] };
+            report = await EIRFReportModel.findOne(query).lean();
+
+            if (!report) {
+                submission = await TestSubmissionModel.findOne({
+                    $or: [{ _id: targetId }, { id: targetId }, { _id: reportId }, { id: reportId }]
+                }).lean();
+                if (submission) {
+                    report = await EIRFReportModel.findOne({
+                        $or: [{ submissionId: String(submission._id || submission.id) }, { reportId: String(reportId) }]
+                    }).lean();
+                }
+            } else if (report.submissionId) {
+                submission = await TestSubmissionModel.findById(resolveToObjectId(report.submissionId)).lean();
+            }
+
+            if (submission) {
+                candidate = await CandidateModel.findById(submission.candidateId).lean();
+                testConfig = await TestConfigModel.findById(submission.testId).lean();
+            }
+        } else {
+            const db = getJSONData();
+            db.eirfReports = db.eirfReports || [];
+            report = db.eirfReports.find(r => 
+                String(r.reportId) === String(reportId) || 
+                String(r._id) === String(reportId) || 
+                String(r.submissionId) === String(targetId) ||
+                String(r.submissionId) === String(reportId)
+            );
+
+            db.testSubmissions = db.testSubmissions || [];
+            if (!report) {
+                submission = db.testSubmissions.find(s => 
+                    String(s._id || s.id) === String(targetId) || 
+                    String(s._id || s.id) === String(reportId) ||
+                    toBicsId(s._id || s.id) === reportId
+                );
+                if (submission) {
+                    report = db.eirfReports.find(r => String(r.submissionId) === String(submission._id || submission.id));
+                }
+            } else if (report.submissionId) {
+                submission = db.testSubmissions.find(s => String(s._id || s.id) === String(resolveToObjectId(report.submissionId)));
+            }
+
+            if (submission) {
+                candidate = (db.candidates || []).find(c => String(c._id || c.id) === String(submission.candidateId) || c.studentId === submission.studentId);
+                testConfig = (db.tests || []).find(t => String(t._id || t.id) === String(submission.testId));
+            }
+        }
+
+        if (!report && !submission) {
+            return res.status(404).json({ error: 'Official EIRF record or examination submission not found.' });
+        }
+
+        const status = (report?.status || submission?.eirfStatus || 'approved').toLowerCase();
+        const finalCourseCode = report?.courseCode || 'R526CS01T';
+        const finalCourseName = report?.courseName || testConfig?.title || 'Academic Assessment';
+        const finalResolutionCategory = report?.resolutionCategory || (status === 'approved' ? 'Technical Glitch / Environmental Disruption' : 'Unexplained Window Deviation Confirmed');
+        const finalRemediationAction = report?.remediationAction || (status === 'approved' ? 'Provisional Assessment Restored & Validated' : 'Examination Score Annulled (Zero Points)');
+        const finalReviewerName = report?.reviewerName || 'Academic Integrity Board Convener';
+        const finalReviewerTitle = report?.reviewerTitle || 'Convener, Examination Disciplinary Committee';
+        const finalRemarks = report?.adminRemarks || 'Standard academic disciplinary committee evaluation.';
+
+        const studentId = report?.studentId || candidate?.studentId || submission?.studentId || '2026002';
+        const targetReportId = report?.reportId || `EIRF-2026-${String(reportId).slice(-6).toUpperCase()}`;
+
+        const digitalHash = report?.digitalHash || generateDigitalVerdictHash(
+            report?.submissionId || submission?._id || reportId,
+            studentId,
+            targetReportId,
+            report?.reviewedAt || new Date()
+        );
+
+        const proxyUrl = `https://bicsportal.netlify.app/media/eirf/${targetReportId}.pdf`;
+        const deadlineDateStr = formatISTDate(new Date(Date.now() + 48 * 60 * 60 * 1000));
+
+        const pdfBuffer = await generateEirfVerdictPdfBuffer({
+            report: report || { reportId: targetReportId, status, studentId, candidateName: submission?.candidateName },
+            submission,
+            test: testConfig,
+            candidate,
+            courseCode: finalCourseCode,
+            courseName: finalCourseName,
+            adminRemarks: finalRemarks,
+            resolutionCategory: finalResolutionCategory,
+            remediationAction: finalRemediationAction,
+            reviewerName: finalReviewerName,
+            reviewerTitle: finalReviewerTitle,
+            pdfProxyUrl: proxyUrl,
+            digitalHash,
+            deadlineDateStr
+        });
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="BICS_Verdict_${targetReportId}.pdf"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        return res.send(pdfBuffer);
+    } catch (err) {
+        console.error('[EIRF Verdict PDF Generation Error]:', err);
+        return res.status(500).json({ error: 'Failed to generate signed verdict PDF: ' + err.message });
+    }
+}
+
+// 6. Admin & Student On-Demand Verdict PDF Endpoints
+router.get('/admin/eirf/verdict-pdf/:reportId', requireAdmin, async (req, res) => {
+    return streamVerdictPdfForReport(req.params.reportId, res);
+});
+
+router.get('/test/eirf/verdict-pdf/:reportId', async (req, res) => {
+    return streamVerdictPdfForReport(req.params.reportId, res);
 });
 
 // 48-Hour Cloudinary Auto-Deletion Cleanup Routine
