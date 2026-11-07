@@ -307,12 +307,10 @@ export default function AdminProctoring({
                   return testStudents.map(sub => {
                     const subId = sub.id || sub._id;
                     const isActive = sub.status === 'started';
-                    const hasEirf = sub.hasEirfFlag || sub.eirfStatus;
                     const prefix = isActive ? '[Active] ' : '[Completed] ';
-                    const eirfBadge = hasEirf ? ' ⚠️ [EIRF]' : '';
                     return (
                       <option key={subId} value={subId}>
-                        {prefix} {sub.candidateName} ({sub.studentId}){eirfBadge}
+                        {prefix} {sub.candidateName} ({sub.studentId})
                       </option>
                     );
                   });
