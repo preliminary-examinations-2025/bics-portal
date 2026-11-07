@@ -3,6 +3,16 @@
   command = "npm run build"
 
 [[redirects]]
+  from = "/assessment/bics_logo.png"
+  to = "/bics_logo.png"
+  status = 200
+
+[[redirects]]
+  from = "/assessment/logo.png"
+  to = "/logo.png"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

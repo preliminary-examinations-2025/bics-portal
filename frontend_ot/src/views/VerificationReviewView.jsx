@@ -124,8 +124,8 @@ export function VerificationReviewView({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <img 
-            src={`${import.meta.env.BASE_URL}bics_logo.png`} 
-            onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+            src="/bics_logo.png" 
+            onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }} 
             alt="BICS Logo" 
             style={{ height: '36px', width: '36px', objectFit: 'contain' }} 
           />
@@ -805,8 +805,8 @@ export function VerificationReviewView({
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <img 
-                  src={`${import.meta.env.BASE_URL}bics_logo.png`} 
-                  onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+                  src="/bics_logo.png" 
+                  onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }} 
                   alt="BICS Logo" 
                   style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
                 />

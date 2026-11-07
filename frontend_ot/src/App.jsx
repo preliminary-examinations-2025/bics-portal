@@ -3644,8 +3644,8 @@ function AppContent() {
         <header className="app-header">
           <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <img 
-              src={`${import.meta.env.BASE_URL}bics_logo.png`} 
-              onError={(e) => { e.currentTarget.src = '/bics_logo.png'; }} 
+              src="/bics_logo.png" 
+              onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }} 
               alt="BICS Logo" 
               style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
             />
@@ -3653,8 +3653,8 @@ function AppContent() {
           </div>
           <div className="header-right">
             <img 
-              src={`${import.meta.env.BASE_URL}logo.png`} 
-              onError={(e) => { e.currentTarget.src = '/logo.png'; }} 
+              src="/logo.png" 
+              onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}logo.png`; }} 
               alt="Portal Logo" 
               className="pe-logo" 
               style={{ height: '34px' }} 

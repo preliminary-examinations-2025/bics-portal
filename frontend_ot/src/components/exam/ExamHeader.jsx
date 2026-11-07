@@ -112,7 +112,7 @@ export const ExamHeader = ({
           flexShrink: 0
         }}>
           <img
-            src={`${import.meta.env.BASE_URL}bics_logo.png`}
+            src="/bics_logo.png"
             alt="BICS Emblem"
             style={{
               width: '100%',
@@ -121,7 +121,11 @@ export const ExamHeader = ({
               display: 'block'
             }}
             onError={(e) => {
-              e.currentTarget.style.display = 'none';
+              if (e.currentTarget.getAttribute('src') !== `${import.meta.env.BASE_URL}bics_logo.png`) {
+                e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`;
+              } else {
+                e.currentTarget.style.display = 'none';
+              }
             }}
           />
         </div>
