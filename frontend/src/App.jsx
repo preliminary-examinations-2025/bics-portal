@@ -2594,19 +2594,26 @@ int main() {
     }, 0);
 
     const updatedAnswers = selectedExamSubmission.answers?.map(ans => {
-      const questionConfig = testConfig?.questions?.find(q => q.id === ans.questionId);
+      const questionConfig = testConfig?.questions?.find(q => String(q.id || q._id) === String(ans.questionId));
       const evalRes = codingEvaluationResults[ans.questionId];
 
       let updatedTestCaseResults = ans.testCaseResults;
       if (evalRes && evalRes.results && Array.isArray(evalRes.results) && evalRes.results.length > 0) {
         updatedTestCaseResults = evalRes.results.map((r, rIdx) => {
           const tc = questionConfig?.testCases?.[rIdx];
-          const isAccepted = r.status === 'Accepted';
-          const pts = tc ? Number(tc.points || 0) : 0;
+          const isAccepted = r.status === 'Accepted' || r.status === 'passed';
+          const pts = tc ? Number(tc.points || 0) : Number(r.points || 0);
           return {
+            testCaseIndex: rIdx,
             status: r.status || (isAccepted ? 'Accepted' : 'Wrong Answer'),
             points: pts,
-            scoredPoints: isAccepted ? pts : 0
+            scoredPoints: isAccepted ? pts : 0,
+            actualOutput: typeof r.actualOutput === 'string' ? r.actualOutput : (r.stdout !== undefined ? r.stdout : (r.userOutput || '')),
+            expectedOutput: typeof r.expectedOutput === 'string' ? r.expectedOutput : (r.output || tc?.output || tc?.expectedOutput || ''),
+            input: typeof r.input === 'string' ? r.input : (tc?.input || tc?.sampleInput || ''),
+            isSample: Boolean(tc?.isSample || r.isSample),
+            executionTimeMs: Number(r.executionTimeMs || r.time || 0),
+            memoryUsedKb: Number(r.memoryUsedKb || r.memory || 0)
           };
         });
       }
@@ -2614,7 +2621,10 @@ int main() {
       return {
         ...ans,
         score: adminGradingAnswers[ans.questionId] !== undefined ? Number(adminGradingAnswers[ans.questionId]) : ans.score,
-        testCaseResults: updatedTestCaseResults || ans.testCaseResults
+        testCaseResults: updatedTestCaseResults || ans.testCaseResults,
+        rawResults: evalRes ? (evalRes.results || null) : ans.rawResults,
+        compileError: evalRes ? (evalRes.compileError || null) : (ans.compileError || null),
+        consoleTab: ans.consoleTab || 'result'
       };
     });
 
@@ -2657,9 +2667,13 @@ int main() {
     }));
     
     try {
+      const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${API_BASE}/tests/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ sourceCode, testCases })
       });
       const data = await res.json();
@@ -2725,7 +2739,7 @@ int main() {
     
     selectedExamSubmission.answers?.forEach(ans => {
       if (ans.type === 'coding') {
-        const questionConfig = testConfig.questions?.find(q => q.id === ans.questionId);
+        const questionConfig = testConfig.questions?.find(q => String(q.id || q._id) === String(ans.questionId));
         if (questionConfig && ans.submittedCode) {
           runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig.testCases);
         }

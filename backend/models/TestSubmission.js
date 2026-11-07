@@ -2,8 +2,9 @@ const mongoose = require('mongoose');
 
 const AnswerSchema = new mongoose.Schema({
     questionId: String,
-    type: String, // 'mcq', 'coding', or 'web'
-    selectedOptionIndex: Number, // for MCQ
+    type: String, // 'mcq', 'mcc', 'scc', 'coding', or 'web'
+    selectedOptionIndex: mongoose.Schema.Types.Mixed, // allows Number for MCQ or Array/null for MCC
+    selectedOptionIndices: [{ type: Number }], // for MCC (multi-choice multi-correct)
     submittedCode: String, // for Coding (C++)
     selectedLanguage: String, // Selected programming language (c, cpp, python, java)
     submittedHtml: String, // for Web Coding (HTML)
@@ -14,13 +15,20 @@ const AnswerSchema = new mongoose.Schema({
     isObjectionResolved: { type: Boolean, default: false },
     isManuallyGraded: { type: Boolean, default: false },
     testCaseResults: [{
+        testCaseIndex: Number,
         status: String,
         points: Number,
         scoredPoints: Number,
         actualOutput: String,
         expectedOutput: String,
-        input: String
-    }]
+        input: String,
+        isSample: Boolean,
+        executionTimeMs: Number,
+        memoryUsedKb: Number
+    }],
+    compileError: String,
+    consoleTab: String,
+    rawResults: mongoose.Schema.Types.Mixed
 }, { _id: false });
 
 const TestSubmissionSchema = new mongoose.Schema({
@@ -74,6 +82,58 @@ const TestSubmissionSchema = new mongoose.Schema({
     securityMetadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     hasEirfFlag: { type: Boolean, default: false },
     eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },
+    flaggedReasons: [String],
+    pipelineStatus: { 
+        type: String, 
+        enum: [
+            'QUEUED',
+            'CLEARED',
+            'FLAGGED',
+            'GENERATING_QUESTIONS',
+            'QUESTIONS_GENERATED',
+            'SENDING_INVITE_EMAIL',
+            'AWAITING_EIRF',
+            'EIRF_SUBMITTED',
+            'SENDING_CONFIRMATION_EMAIL',
+            'UNDER_REVIEW',
+            'EXPIRED',
+            'FAILED'
+        ], 
+        default: 'QUEUED',
+        index: true 
+    },
+    pipelineLock: {
+        isLocked: { type: Boolean, default: false },
+        lockedAt: { type: Date, default: null },
+        workerId: { type: String, default: null }
+    },
+    pipelineHistory: [{
+        step: { type: String, required: true },
+        status: { type: String, enum: ['STARTED', 'COMPLETED', 'FAILED', 'RETRY'], required: true },
+        timestamp: { type: Date, default: Date.now },
+        durationMs: { type: Number, default: 0 },
+        details: { type: mongoose.Schema.Types.Mixed },
+        error: { type: String }
+    }],
+    generatedQuestions: [{
+        questionId: { type: String, required: true },
+        questionType: { type: String, enum: ['TEXT', 'RADIO', 'CHECKBOX', 'FILE_UPLOAD'], default: 'TEXT' },
+        category: { type: String, default: 'GENERAL' },
+        questionText: { type: String, required: true },
+        context: { type: String, default: '' },
+        placeholder: { type: String, default: '' },
+        options: [{ type: String }],
+        isRequired: { type: Boolean, default: true },
+        required: { type: Boolean, default: true },
+        requiresProof: { type: Boolean, default: false },
+        proofGuidance: { type: String, default: '' }
+    }],
+    eirfToken: { type: String, index: true },
+    eirfExpiresAt: { type: Date, index: true },
+    pipelineRetries: { type: Number, default: 0 },
+    lastPipelineError: { type: String, default: null },
+    submissionReason: { type: String, default: 'manual' },
+    /** @deprecated Superseded by direct client IndexedDB & server submission payload. Physical payload downloads deprecated. */
     encryptedDbPayload: { type: String, default: '' },
     answers: [AnswerSchema],
     evaluation: {
@@ -116,6 +176,9 @@ TestSubmissionSchema.index(
 
 // High-speed index for dead-man's switch reaper worker
 TestSubmissionSchema.index({ status: 1, lastHeartbeatAt: 1, isDeleted: 1 });
+
+// High-speed index for EIRF sequential pipeline worker
+TestSubmissionSchema.index({ pipelineStatus: 1, 'pipelineLock.isLocked': 1, isDeleted: 1 });
 
 const TestSubmissionModel = mongoose.model('TestSubmissionV3', TestSubmissionSchema, 'testsubmissions_v3');
 

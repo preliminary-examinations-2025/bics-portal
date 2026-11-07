@@ -40,17 +40,45 @@ function calculateSubmissionScore(submission, test) {
             ans.score = qPoints;
             ans.isBonusAwarded = true;
         } 
-        // 2. MCQ Automated Scoring (if not manually overridden or objection resolved)
-        else if (quest && quest.type === 'mcq') {
+        // 2. MCQ Automated Scoring (Single Choice SCC & Multi Choice MCC)
+        else if (quest && (quest.type === 'mcq' || quest.type === 'scc' || quest.type === 'mcc')) {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
-                    if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                        ans.score = qPoints;
+                const isMulti = quest.isMultiChoice || quest.type === 'mcc' || quest.category === 'Multiple Choice' || Array.isArray(quest.correctOptionIndices);
+
+                if (isMulti) {
+                    const correctSet = new Set(
+                        Array.isArray(quest.correctOptionIndices)
+                            ? quest.correctOptionIndices.map(Number)
+                            : (quest.correctOptionIndex !== undefined && quest.correctOptionIndex !== null ? [Number(quest.correctOptionIndex)] : [])
+                    );
+                    const selectedSet = new Set(
+                        Array.isArray(ans.selectedOptionIndices)
+                            ? ans.selectedOptionIndices.map(Number)
+                            : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [Number(ans.selectedOptionIndex)] : [])
+                    );
+
+                    // Strict all-or-nothing: marks are ONLY awarded when all correct options are selected and no incorrect options
+                    let isExactMatch = correctSet.size > 0 && correctSet.size === selectedSet.size;
+                    if (isExactMatch) {
+                        for (let val of correctSet) {
+                            if (!selectedSet.has(val)) {
+                                isExactMatch = false;
+                                break;
+                            }
+                        }
+                    }
+                    ans.score = isExactMatch ? qPoints : 0;
+                } else {
+                    // Single Choice Correct (SCC)
+                    if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
+                        if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
+                            ans.score = qPoints;
+                        } else {
+                            ans.score = 0;
+                        }
                     } else {
                         ans.score = 0;
                     }
-                } else {
-                    ans.score = 0;
                 }
             }
         }

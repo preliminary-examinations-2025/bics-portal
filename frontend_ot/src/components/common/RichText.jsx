@@ -11,7 +11,10 @@ export const RichText = React.memo(function RichText({ text, style, className })
     const codeBlocks = [];
     const imageBlocks = [];
     let placeholderIndex = 0;
-    let formatted = String(raw).replace(/\r\n/g, '\n');
+    let formatted = String(raw)
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\u00A0/g, ' ');
 
     const escapeHtml = (str) => {
       if (!str) return '';
@@ -89,9 +92,17 @@ export const RichText = React.memo(function RichText({ text, style, className })
       return `<code style="font-family: 'Roboto Mono', Consolas, monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 90%; border: 1px solid #cbd5e1; color: #002147; font-weight: 600;">${tag}</code>`;
     });
 
-    // Convert section headers (Input, Output, Note, Constraints, etc.)
-    formatted = formatted.replace(/^(?:#{1,6}\s+)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation|Additional Requirements|Question):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?$/gim, (m, title) => {
-      return `%%SECTIONTITLE%%${title}%%ENDSECTIONTITLE%%`;
+    // Convert horizontal rules: ---, ***, ___ on their own line
+    formatted = formatted.replace(/^(?:---|___|\*\*\*)\s*$/gm, '%%HORIZONTALRULE%%');
+
+    // Convert generic markdown headings: # through ###### into section titles (supporting indentation, wrappers & trailing hashes)
+    formatted = formatted.replace(/^[ \t]*(?:&lt;p&gt;|&lt;div&gt;|<p>|<div>)?\s*#{1,6}\s*(.+?)\s*#*\s*(?:&lt;\/p&gt;|&lt;\/div&gt;|<\/p>|<\/div>)?$/gim, (m, heading) => {
+      return `%%SECTIONTITLE%%${heading.trim()}%%ENDSECTIONTITLE%%`;
+    });
+
+    // Convert section headers without # or with optional # (Input, Output, Note, Constraints, Example 1, etc.)
+    formatted = formatted.replace(/^[ \t]*(?:&lt;p&gt;|&lt;div&gt;|<p>|<div>)?\s*(?:#{1,6}\s*)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Input Format|Output Format|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation|Additional Requirements|Question|Example(?:\s+\d+)?(?::[^\n]*)?):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?\s*(?:&lt;\/p&gt;|&lt;\/div&gt;|<\/p>|<\/div>)?$/gim, (m, title) => {
+      return `%%SECTIONTITLE%%${title.trim()}%%ENDSECTIONTITLE%%`;
     });
 
     // Parse lines in a paragraph into formatted HTML with tab-indented points
@@ -134,6 +145,12 @@ export const RichText = React.memo(function RichText({ text, style, className })
           return;
         }
 
+        // Check for horizontal rule: ---, ***, ___
+        if (/^(?:---|___|\*\*\*)\s*$/.test(trimmedLine) || trimmedLine === '%%HORIZONTALRULE%%') {
+          resultLines.push('<hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;" />');
+          return;
+        }
+
         // Normal paragraph line
         resultLines.push(`<div style="line-height: 1.7; margin-bottom: 4px; text-align: justify; text-align-last: left;">${trimmedLine}</div>`);
       });
@@ -149,14 +166,21 @@ export const RichText = React.memo(function RichText({ text, style, className })
       const trimmed = p.trim();
       if (!trimmed) return;
 
-      if (trimmed.includes('%%SECTIONTITLE%%')) {
-        const parts = trimmed.split(/(%%SECTIONTITLE%%.*?%%ENDSECTIONTITLE%%)/g);
+      if (trimmed === '%%HORIZONTALRULE%%' || /^(?:---|___|\*\*\*)\s*$/.test(trimmed)) {
+        htmlChunks.push('<hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;" />');
+        return;
+      }
+
+      if (trimmed.includes('%%SECTIONTITLE%%') || trimmed.includes('%%HORIZONTALRULE%%')) {
+        const parts = trimmed.split(/(%%SECTIONTITLE%%.*?%%ENDSECTIONTITLE%%|%%HORIZONTALRULE%%)/g);
         parts.forEach(part => {
           const pt = part.trim();
           if (!pt) return;
           if (pt.startsWith('%%SECTIONTITLE%%') && pt.endsWith('%%ENDSECTIONTITLE%%')) {
             const titleName = pt.replace('%%SECTIONTITLE%%', '').replace('%%ENDSECTIONTITLE%%', '');
             htmlChunks.push(`<div class="cf-section-title" style="font-weight: bold; color: #002147; font-size: 10.5pt; margin-top: 14px; margin-bottom: 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; text-align: left;">${titleName}</div>`);
+          } else if (pt === '%%HORIZONTALRULE%%' || /^(?:---|___|\*\*\*)\s*$/.test(pt)) {
+            htmlChunks.push('<hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;" />');
           } else {
             const content = parseLinesWithIndentation(pt);
             htmlChunks.push(`<div class="cf-paragraph" style="margin-bottom: 10px; line-height: 1.7; text-align: justify; text-align-last: left;">${content}</div>`);

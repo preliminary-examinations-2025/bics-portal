@@ -479,6 +479,8 @@ function AppContent() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const disconnectTimerRef = useRef(null);
+  const disconnectDeadlineRef = useRef(null);
+  const offlineStartMonotonicRef = useRef(null);
 
   // Authoritative Server Time Synchronization Engine
   const serverClockOffsetRef = useRef(0);
@@ -969,10 +971,16 @@ function AppContent() {
     }
   };
 
-  const loadEirfDetails = async (subId) => {
+  const loadEirfDetails = async (subId, tokenFromUrl) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}`);
+      const urlToken = tokenFromUrl || new URLSearchParams(window.location.search).get('token') || '';
+      const queryParam = urlToken ? `?token=${encodeURIComponent(urlToken)}` : '';
+      const headers = { 'Content-Type': 'application/json' };
+      if (urlToken) {
+        headers['x-eirf-token'] = urlToken;
+      }
+      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}${queryParam}`, { headers });
       const data = await res.json();
       if (!res.ok || data.error || data.isExpired) {
         setVerifyError(data.error || "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.");
@@ -980,7 +988,7 @@ function AppContent() {
         setLoading(false);
         return;
       }
-      setEirfDetails(data);
+      setEirfDetails({ ...data, token: urlToken || data.token });
       setFlow('eirf_form');
       const eTitle = data.testTitle || 'BICS Examination';
       document.title = `Emergency Incident Report Form (EIRF) - ${eTitle} | BICS Portal`;
@@ -1039,13 +1047,23 @@ function AppContent() {
       return;
     }
 
-    // 2. Strict Single Evaluation Route: /assessment/evaluation/:id
-    if (path.startsWith('/assessment/evaluation/')) {
+    // 2. Strict EIRF Routes: /assessment/evaluation/eirf/:submissionId?token=... OR /assessment/eirf/:submissionId?token=...
+    if (path.startsWith('/assessment/evaluation/eirf/') || path.startsWith('/assessment/eirf/')) {
       const parts = path.split('/').filter(Boolean);
-      // Expected: ['assessment', 'evaluation', ':id']
-      const subId = parts[2] || searchParams.get('submissionId') || searchParams.get('id');
-      if (subId) {
-        loadSubmissionVerification(subId);
+      // For /assessment/evaluation/eirf/:submissionId -> parts: ['assessment', 'evaluation', 'eirf', ':id']
+      // For /assessment/eirf/:submissionId -> parts: ['assessment', 'eirf', ':id']
+      const eirfSubId = (parts[2] === 'eirf' ? parts[3] : parts[2]) || searchParams.get('submissionId') || searchParams.get('id');
+      const parsedToken = searchParams.get('token');
+
+      if (!parsedToken) {
+        setVerifyError("Security Authorization Required: Invalid or missing EIRF access token. Please access the Emergency Incident Report Form using the secure magic link delivered to your registered email.");
+        document.title = "EIRF - Access Denied | BICS Portal";
+        setLoading(false);
+        return;
+      }
+
+      if (eirfSubId) {
+        loadEirfDetails(eirfSubId, parsedToken);
         return;
       }
       setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
@@ -1053,13 +1071,14 @@ function AppContent() {
       return;
     }
 
-    // 3. Strict EIRF Route: /assessment/eirf/:submissionId
-    if (path.startsWith('/assessment/eirf/')) {
+    // 3. Strict Answer Sheet Verification Routes: /assessment/evaluation/answer-sheet/:submissionId OR /assessment/evaluation/:submissionId
+    if (path.startsWith('/assessment/evaluation/answer-sheet/') || path.startsWith('/assessment/evaluation/')) {
       const parts = path.split('/').filter(Boolean);
-      // Expected: ['assessment', 'eirf', ':submissionId']
-      const eirfSubId = parts[2] || searchParams.get('submissionId') || searchParams.get('id');
-      if (eirfSubId) {
-        loadEirfDetails(eirfSubId);
+      // For /assessment/evaluation/answer-sheet/:id -> parts: ['assessment', 'evaluation', 'answer-sheet', ':id']
+      // For /assessment/evaluation/:id -> parts: ['assessment', 'evaluation', ':id']
+      const subId = (parts[2] === 'answer-sheet' ? parts[3] : parts[2]) || searchParams.get('submissionId') || searchParams.get('id');
+      if (subId && subId !== 'eirf' && subId !== 'answer-sheet') {
+        loadSubmissionVerification(subId);
         return;
       }
       setVerifyError("You do not have permission to view this directory or page using the credentials that you supplied.");
@@ -1074,8 +1093,8 @@ function AppContent() {
 
   // Dynamically update browser tab title based on route and examination/verification state
   useEffect(() => {
-    const isEirfRoute = window.location.pathname.startsWith('/assessment/eirf') || flow === 'eirf_form';
-    const isSubmissionsRoute = window.location.pathname.startsWith('/assessment/evaluation') || flow === 'verification_review';
+    const isEirfRoute = window.location.pathname.startsWith('/assessment/evaluation/eirf') || window.location.pathname.startsWith('/assessment/eirf') || flow === 'eirf_form';
+    const isSubmissionsRoute = window.location.pathname.startsWith('/assessment/evaluation/answer-sheet') || window.location.pathname.startsWith('/assessment/evaluation') || flow === 'verification_review';
 
     if (verifyError) {
       document.title = "Server Error";
@@ -1194,12 +1213,16 @@ function AppContent() {
           questionId: q.id || q._id,
           type: q.type,
           selectedOptionIndex: cachedAns ? cachedAns.selectedOptionIndex : null,
+          selectedOptionIndices: cachedAns?.selectedOptionIndices || (cachedAns?.selectedOptionIndex !== undefined && cachedAns?.selectedOptionIndex !== null ? [cachedAns.selectedOptionIndex] : []),
           submittedCode: cachedAns ? cachedAns.submittedCode : (q.initialTemplate || DEFAULT_TEMPLATES.cpp),
           selectedLanguage: cachedAns ? (cachedAns.selectedLanguage || 'cpp') : 'cpp',
           submittedHtml: cachedAns ? cachedAns.submittedHtml : (q.initialHtml || q.initialCode?.html || ''),
           submittedCss: cachedAns ? cachedAns.submittedCss : (q.initialCss || q.initialCode?.css || ''),
           submittedJs: cachedAns ? cachedAns.submittedJs : (q.initialJs || q.initialCode?.js || ''),
           testCaseResults: cachedAns?.testCaseResults || [],
+          rawResults: cachedAns?.rawResults || (Array.isArray(cachedAns?.testCaseResults) && cachedAns.testCaseResults.length > 0 ? cachedAns.testCaseResults : null),
+          compileError: cachedAns?.compileError || null,
+          consoleTab: cachedAns?.consoleTab || (cachedAns?.testCaseResults?.length > 0 || cachedAns?.compileError ? 'result' : 'testcase'),
           score: cachedAns?.score !== undefined ? cachedAns.score : 0,
           isSavedByUser: !!cachedAns?.isSavedByUser
         };
@@ -1357,7 +1380,7 @@ function AppContent() {
         lastLoggedWarnings.current.inspectAttempts = inspectAttempts || 0;
 
         syncProctoringLogs(proctoringWarnings, finalEventType, finalMsg).finally(() => {
-          autoSubmitExam(proctoringWarnings);
+          autoSubmitExam(proctoringWarnings, 'strikes_exceeded');
         });
       }
       return;
@@ -1423,10 +1446,6 @@ function AppContent() {
             endTime,
             durationSeconds
           );
-          // Individual major warning threshold: > 5s sets EIRF flag
-          if (durationSeconds > 5) {
-            setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
-          }
         }
       }
     };
@@ -1498,10 +1517,6 @@ function AppContent() {
           endTime,
           durationSeconds
         );
-        // Individual major warning threshold: > 5s sets EIRF flag
-        if (durationSeconds > 5) {
-          setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
-        }
       }
     };
 
@@ -1638,7 +1653,7 @@ function AppContent() {
       setExamTimeLeft(remainingSec);
       if (remainingSec <= 0) {
         clearInterval(timer);
-        autoSubmitExam(proctoringWarnings);
+        finalizeExamSubmission(examAnswersRef.current || examAnswers, proctoringWarnings, 'submitted', 'timer_completed');
       }
     }, 1000);
 
@@ -1663,9 +1678,7 @@ function AppContent() {
     const thresholdSec = getMinorWarningThresholdSeconds();
     if (count >= thresholdSec && !hasTriggeredMinorEirfRef.current) {
       hasTriggeredMinorEirfRef.current = true;
-      console.warn(`[PROCTORING_THRESHOLD]: ${count}s of minor proctoring warnings reached (5% threshold of ${test?.duration || 60}m exam: ${thresholdSec}s, reason: ${reason}). Setting EIRF flag to true.`);
-
-      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+      console.warn(`[PROCTORING_THRESHOLD]: ${count}s of minor proctoring warnings reached (5% threshold of ${test?.duration || 60}m exam: ${thresholdSec}s, reason: ${reason}). Telemetry logged for post-exam evaluation.`);
 
       logProctoringEvent(
         submission,
@@ -2615,7 +2628,12 @@ function AppContent() {
     if (test.questions[selectedQuestionIndex]) {
       const activeAns = currentAnswers[selectedQuestionIndex];
       const activeQuest = test.questions[selectedQuestionIndex];
-      setDraftMCQ(activeAns?.selectedOptionIndex ?? null);
+      const isMulti = activeQuest.isMultiChoice || activeQuest.type === 'mcc' || activeQuest.category === 'Multiple Choice';
+      if (isMulti) {
+        setDraftMCQ(Array.isArray(activeAns?.selectedOptionIndices) ? activeAns.selectedOptionIndices : (activeAns?.selectedOptionIndex !== undefined && activeAns?.selectedOptionIndex !== null ? [activeAns.selectedOptionIndex] : []));
+      } else {
+        setDraftMCQ(activeAns?.selectedOptionIndex ?? null);
+      }
       setDraftCode(activeAns?.submittedCode ?? '');
       setDraftLanguage(activeAns?.selectedLanguage ?? 'cpp');
       setDraftHtml(activeAns?.submittedHtml ?? (activeQuest.initialHtml || activeQuest.initialCode?.html || ''));
@@ -2624,9 +2642,25 @@ function AppContent() {
       setDraftQIdx(selectedQuestionIndex);
       setWebActiveTab('html');
       setWebConsoleLogs([]);
-      setRunResults(null);
-      setCompileError(null);
-      setConsoleTab('testcase');
+
+      // Restore latest C++ / coding evaluation state if previously submitted:
+      if (activeAns?.rawResults && activeAns.rawResults.length > 0) {
+        setRunResults(activeAns.rawResults);
+        setCompileError(null);
+        setConsoleTab(activeAns.consoleTab || 'result');
+      } else if (activeAns?.testCaseResults && activeAns.testCaseResults.length > 0) {
+        setRunResults(activeAns.testCaseResults);
+        setCompileError(activeAns.compileError || null);
+        setConsoleTab(activeAns.consoleTab || 'result');
+      } else if (activeAns?.compileError) {
+        setRunResults(null);
+        setCompileError(activeAns.compileError);
+        setConsoleTab('result');
+      } else {
+        setRunResults(null);
+        setCompileError(null);
+        setConsoleTab('testcase');
+      }
     }
   }, [selectedQuestionIndex, test]);
 
@@ -2656,10 +2690,15 @@ function AppContent() {
     const currentList = Array.isArray(examAnswersRef.current) ? [...examAnswersRef.current] : [...examAnswers];
     if (test?.questions && test.questions[selectedQuestionIndex]) {
       const activeQ = test.questions[selectedQuestionIndex];
+      const isMulti = Boolean(activeQ.isMultiChoice || activeQ.type === 'mcc' || activeQ.category === 'Multiple Choice');
       const existing = currentList[selectedQuestionIndex] || { questionId: activeQ.id, type: activeQ.type };
+      const multiIndices = isMulti
+        ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
+        : (existing.selectedOptionIndices || []);
       currentList[selectedQuestionIndex] = {
         ...existing,
         selectedOptionIndex: draftMCQ !== undefined ? draftMCQ : existing.selectedOptionIndex,
+        selectedOptionIndices: multiIndices,
         submittedCode: draftCode !== undefined ? draftCode : existing.submittedCode,
         selectedLanguage: draftLanguage || existing.selectedLanguage || 'cpp',
         submittedHtml: draftHtml !== undefined ? draftHtml : existing.submittedHtml,
@@ -2674,10 +2713,17 @@ function AppContent() {
 
   // Sync draft buffers into global answers list
   const handleSaveAndNext = () => {
+    const activeQuestion = test?.questions?.[selectedQuestionIndex];
+    const isMulti = Boolean(activeQuestion && (activeQuestion.isMultiChoice || activeQuestion.type === 'mcc' || activeQuestion.category === 'Multiple Choice'));
+    const multiIndices = isMulti
+      ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
+      : (examAnswers[selectedQuestionIndex]?.selectedOptionIndices || []);
+
     const updated = [...examAnswers];
     updated[selectedQuestionIndex] = {
       ...updated[selectedQuestionIndex],
       selectedOptionIndex: draftMCQ,
+      selectedOptionIndices: multiIndices,
       submittedCode: draftCode,
       selectedLanguage: draftLanguage,
       submittedHtml: draftHtml,
@@ -2688,7 +2734,6 @@ function AppContent() {
     examAnswersRef.current = updated;
     setExamAnswers(updated);
 
-    const activeQuestion = test.questions?.[selectedQuestionIndex];
     if (activeQuestion) {
       const qNum = selectedQuestionIndex + 1;
       if (activeQuestion.type === 'mcq' && draftMCQ !== null) {
@@ -2746,10 +2791,18 @@ function AppContent() {
     if (!subId) return;
 
     const sendHeartbeat = async () => {
+      // Dual-layer connectivity check: If browser is offline, local loopback (localhost) pings
+      // must NOT falsely cancel the disconnect countdown!
+      if (!navigator.onLine || !isOnline) {
+        startDisconnectCountdown();
+        return;
+      }
+
       try {
         const res = await fetch(`${API_BASE}/tests/heartbeat/${subId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(4000)
         });
         if (res.ok) {
           cancelDisconnectCountdown();
@@ -2768,9 +2821,9 @@ function AppContent() {
       }
     };
 
-    // Immediate ping + periodic 12-second pulse
+    // Immediate ping + periodic 5-second pulse
     sendHeartbeat();
-    const interval = setInterval(sendHeartbeat, 12000);
+    const interval = setInterval(sendHeartbeat, 5000);
     return () => clearInterval(interval);
   }, [flow, submission]);
 
@@ -2940,14 +2993,24 @@ function AppContent() {
     logProctoringEvent(submission, 'CODE_RUN', `Ran C++ compilation for Q${selectedQuestionIndex + 1}.`);
 
     try {
+      const userAuth = getActiveAuthToken();
+      const examToken = getActiveExamToken();
+
       const res = await fetch(`${API_BASE}/tests/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+          ...(examToken ? { 'x-exam-token': examToken } : {})
+        },
         body: JSON.stringify({
+          questionId: activeQuestion.id || activeQuestion._id,
+          testId: test?.id || test?._id,
           sourceCode: draftCode,
           testCases: allCases,
           timeLimitMs: activeQuestion.timeLimitMs || 2000,
-          memoryLimitMb: activeQuestion.memoryLimitMb || 128
+          memoryLimitMb: activeQuestion.memoryLimitMb || 128,
+          token: examToken
         })
       });
       const data = await res.json();
@@ -2964,7 +3027,7 @@ function AppContent() {
           }));
           setExamAnswers(prev => {
             const updated = [...prev];
-            const qId = activeQuestion.id;
+            const qId = activeQuestion.id || activeQuestion._id;
             const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
             if (existingIdx !== -1) {
               updated[existingIdx] = {
@@ -2972,12 +3035,16 @@ function AppContent() {
                 submittedCode: draftCode,
                 selectedLanguage: draftLanguage,
                 testCaseResults: formattedErrResults,
+                rawResults: null,
+                compileError: data.compileError || "Failed to compile C++ code.",
+                consoleTab: 'result',
                 score: 0
               };
             }
             examAnswersRef.current = updated;
             const subId = submission?.id || submission?._id || 'new_attempt';
             safePersistDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`, updated);
+            saveServerDraft(updated);
             return updated;
           });
         } else {
@@ -2985,23 +3052,26 @@ function AppContent() {
           setRunResults(rawResults);
           const formattedResults = rawResults.map((r, rIdx) => {
             const tc = allCases[rIdx] || {};
-            const isAccepted = r.status === 'Accepted';
-            const pts = Number(tc.points || 0);
+            const isAccepted = r.status === 'Accepted' || r.status === 'passed';
+            const pts = Number(r.points !== undefined ? r.points : (tc.points || 0));
             const scored = isAccepted ? pts : 0;
             return {
               status: r.status || 'Failed',
               points: pts,
               scoredPoints: scored,
               actualOutput: r.actualOutput !== undefined ? r.actualOutput : (r.stdout || ''),
-              expectedOutput: tc.output || '',
-              input: tc.input || ''
+              expectedOutput: r.expectedOutput !== undefined ? r.expectedOutput : (tc.output || ''),
+              input: r.input !== undefined ? r.input : (tc.input || ''),
+              isSample: r.isSample !== undefined ? r.isSample : (tc.isSample ?? (rIdx === 0)),
+              executionTimeMs: r.executionTimeMs,
+              memoryUsedKb: r.memoryUsedKb
             };
           });
           const questionScore = formattedResults.reduce((acc, curr) => acc + curr.scoredPoints, 0);
 
           setExamAnswers(prev => {
             const updated = [...prev];
-            const qId = activeQuestion.id;
+            const qId = activeQuestion.id || activeQuestion._id;
             const existingIdx = updated.findIndex(a => String(a.questionId) === String(qId));
             if (existingIdx !== -1) {
               updated[existingIdx] = {
@@ -3009,6 +3079,9 @@ function AppContent() {
                 submittedCode: draftCode,
                 selectedLanguage: draftLanguage,
                 testCaseResults: formattedResults,
+                rawResults: rawResults,
+                compileError: null,
+                consoleTab: 'result',
                 score: questionScore
               };
             } else {
@@ -3018,12 +3091,16 @@ function AppContent() {
                 submittedCode: draftCode,
                 selectedLanguage: draftLanguage,
                 testCaseResults: formattedResults,
+                rawResults: rawResults,
+                compileError: null,
+                consoleTab: 'result',
                 score: questionScore
               });
             }
             examAnswersRef.current = updated;
             const subId = submission?.id || submission?._id || 'new_attempt';
             safePersistDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`, updated);
+            saveServerDraft(updated);
             return updated;
           });
         }
@@ -3089,13 +3166,13 @@ function AppContent() {
       "Submit Examination?",
       "Are you sure you want to finalize and submit your exam answers? You will not be able to re-enter this exam.",
       () => {
-        finalizeExamSubmission(examAnswers, proctoringWarnings, 'submitted');
+        finalizeExamSubmission(examAnswers, proctoringWarnings, 'submitted', 'manual');
       }
     );
   };
 
-  const autoSubmitExam = (warningsObj) => {
-    finalizeExamSubmission(examAnswers, warningsObj, 'auto-submitted');
+  const autoSubmitExam = (warningsObj, reason = 'auto-submitted') => {
+    finalizeExamSubmission(examAnswers, warningsObj, 'auto-submitted', reason);
   };
 
   const encryptEirfPayloadClient = async (payloadObj, studentId, submissionId) => {
@@ -3107,6 +3184,12 @@ function AppContent() {
     }
   };
 
+  /**
+   * @deprecated [DEPRECATED] Physical EIRF payload file download is obsolete.
+   * Disconnected submissions are now saved securely to client IndexedDB & AES-encrypted
+   * localStorage, and automatically synchronized to the server upon network reconnection
+   * (or via FinishedView) without triggering browser popups or manual file uploads.
+   */
   const downloadEirfBackupFile = async (subObj, candObj, answersArr, pWarnings) => {
     try {
       const subId = subObj?._id || subObj?.id || 'submission';
@@ -3181,7 +3264,7 @@ function AppContent() {
   };
 
   const isFinalizingRef = useRef(false);
-  const finalizeExamSubmission = async (answersList, warningsObj, statusVal) => {
+  const finalizeExamSubmission = async (answersList, warningsObj, statusVal, reasonVal = 'manual') => {
     if (isFinalizingRef.current) return;
     isFinalizingRef.current = true;
     setSubmittingExam(true);
@@ -3197,16 +3280,20 @@ function AppContent() {
     const fullPLog = getProctoringLogPayload(warningsObj);
     const isActuallyOnline = Boolean(navigator.onLine && isOnline);
 
-    // Auto-generate .eirf backup file ONLY on genuine network drop or auto-submit violation termination
-    if (!isActuallyOnline || statusVal === 'auto-submitted') {
-      try {
-        downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
-      } catch (eirfErr) {
-        console.warn("EIRF backup generation failed:", eirfErr);
-      }
-    }
+    // Offline / disconnect data is preserved in IndexedDB & localStorage without triggering file downloads
 
     if (!isActuallyOnline) {
+      if (offlineStartMonotonicRef.current !== null) {
+        const elapsedOffline = Math.round(((performance.now() - offlineStartMonotonicRef.current) / 1000) * 10) / 10;
+        if (!fullPLog.events) fullPLog.events = [];
+        fullPLog.events.push({
+          type: 'NETWORK_OFFLINE',
+          details: `Candidate finalized exam while offline (${elapsedOffline}s elapsed disconnected).`,
+          timestamp: new Date().toISOString(),
+          durationSeconds: elapsedOffline
+        });
+      }
+
       const pendingSubmitKey = `bics_pending_submit_${subId}`;
       const payload = {
         submissionId: subId,
@@ -3216,8 +3303,7 @@ function AppContent() {
         answers: answersList,
         proctoringLog: fullPLog,
         status: statusVal,
-        hasEirfFlag: true,
-        eirfStatus: 'pending'
+        submissionReason: reasonVal
       };
 
       // 1. High-capacity IndexedDB persistence (Item 8)
@@ -3231,7 +3317,6 @@ function AppContent() {
         localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
       }
       setHasPendingSubmit(true);
-      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
       
       if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
       if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -3261,27 +3346,15 @@ function AppContent() {
             answers: answersList,
             proctoringLog: fullPLog,
             status: statusVal,
-            hasEirfFlag: Boolean(
-              submission?.hasEirfFlag || 
-              statusVal === 'auto-submitted' ||
-              ((warningsObj?.fullscreenExits || 0) + (warningsObj?.tabSwitches || 0) >= 3) ||
-              (fullPLog?.events || []).some(ev => {
-                let dur = Number(ev.durationSeconds || 0);
-                if (!dur && ev.details) {
-                  const m = ev.details.match(/(\d+)\s+seconds/i);
-                  if (m && m[1]) dur = parseInt(m[1], 10);
-                }
-                const isMajor = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || 
-                                ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || 
-                                (ev.type && (ev.type.includes('FULLSCREEN') || ev.type.includes('TAB')));
-                return isMajor && dur > 5;
-              })
-            )
+            submissionReason: reasonVal
           })
         });
 
         const data = await res.json();
-        if (data.success) {
+        if (data.success || res.status === 409 || data.isFinalized || (data.error && data.error.includes("permanently closed"))) {
+          if (data.submission) {
+            setSubmission(data.submission);
+          }
           submitSuccess = true;
           break;
         } else if (data.error && data.error.includes("already being processed")) {
@@ -3376,7 +3449,6 @@ function AppContent() {
     }
     setHasPendingSubmit(true);
     setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
-    downloadEirfBackupFile(submission, candidate, answersList, warningsObj);
 
     if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
     if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -3395,26 +3467,47 @@ function AppContent() {
       clearInterval(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
     }
+    disconnectDeadlineRef.current = null;
     setDisconnectCountdown(null);
   };
 
   const startDisconnectCountdown = () => {
-    if (disconnectTimerRef.current) return;
-    setDisconnectCountdown(50);
+    // If timer is already running with an active deadline, keep it ticking smoothly
+    if (disconnectDeadlineRef.current && disconnectTimerRef.current) {
+      return;
+    }
+
+    if (!disconnectDeadlineRef.current) {
+      disconnectDeadlineRef.current = Date.now() + 70000;
+    }
+
+    const initialSec = Math.max(0, Math.ceil((disconnectDeadlineRef.current - Date.now()) / 1000));
+    setDisconnectCountdown(initialSec);
+
+    if (disconnectTimerRef.current) {
+      clearInterval(disconnectTimerRef.current);
+    }
 
     disconnectTimerRef.current = setInterval(() => {
-      setDisconnectCountdown(prev => {
-        if (prev === null) return 50;
-        if (prev <= 1) {
-          clearInterval(disconnectTimerRef.current);
-          disconnectTimerRef.current = null;
-          console.warn("[Network Disconnect] 50 seconds elapsed without connection. Auto-finalizing exam.");
-          const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
-          finalizeExamSubmission(finalAnswers, proctoringWarnings, 'auto-submitted');
-          return 0;
-        }
-        return prev - 1;
-      });
+      if (!disconnectDeadlineRef.current) {
+        clearInterval(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+        setDisconnectCountdown(null);
+        return;
+      }
+
+      const remaining = Math.max(0, Math.ceil((disconnectDeadlineRef.current - Date.now()) / 1000));
+      setDisconnectCountdown(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+        disconnectDeadlineRef.current = null;
+        setDisconnectCountdown(0);
+        console.warn("[Network Disconnect] 70 seconds elapsed without connection. Auto-finalizing exam.");
+        const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
+        finalizeExamSubmission(finalAnswers, proctoringWarnings, 'auto-submitted', 'disconnect_timeout');
+      }
     }, 1000);
   };
 
@@ -3431,6 +3524,30 @@ function AppContent() {
 
     const onOnline = () => {
       cancelDisconnectCountdown();
+      if (offlineStartMonotonicRef.current !== null) {
+        const durationSec = Math.round(((performance.now() - offlineStartMonotonicRef.current) / 1000) * 10) / 10;
+        offlineStartMonotonicRef.current = null;
+        if (durationSec > 5) {
+          logProctoringEvent(
+            submission,
+            'NETWORK_OFFLINE',
+            `Candidate network disconnected for ${durationSec} seconds during active examination session.`,
+            null,
+            null,
+            durationSec
+          );
+        } else {
+          logProctoringEvent(
+            submission,
+            'NETWORK_JITTER_RECOVERED',
+            `Transient network reconnection after ${durationSec}s jitter.`,
+            null,
+            null,
+            durationSec
+          );
+        }
+      }
+
       // Drain queued offline proctoring events safely with auth (Issue B5)
       getOfflineEvents(subId).then(async events => {
         if (events && events.length > 0) {
@@ -3480,14 +3597,13 @@ function AppContent() {
 
     const onOffline = () => {
       if (flow === 'active_exam') {
-        logProctoringEvent(submission, 'NETWORK_OFFLINE', 'Candidate network disconnected during active examination session.');
-        setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+        offlineStartMonotonicRef.current = performance.now();
         // Do not trigger file downloads mid-exam. Persist active draft silently to IndexedDB
         if (submission) {
           const subId = submission._id || submission.id;
           saveOfflineDraft(`bics_draft_${test?.id}_${candidate?.id}_${subId}`, examAnswersRef.current || examAnswers).catch(() => {});
         }
-        setWebcamProctorWarning("Network Offline: Local proctoring remains active. Your answers and proctoring telemetry are secured.");
+        setWebcamProctorWarning("Network Offline: Local auto-save active. Reconnecting... (70s grace period)");
         startDisconnectCountdown();
       }
     };
@@ -3726,38 +3842,14 @@ function AppContent() {
   // VIEW: Active Proctoring Examination Workspace (Image 3 style)
   if (flow === 'active_exam') {
     return (
-      <>
-        {disconnectCountdown !== null && (
-          <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            zIndex: 999999,
-            backgroundColor: '#dc2626',
-            color: '#ffffff',
-            padding: '10px 16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '12px',
-            fontWeight: 'bold',
-            fontSize: '11pt',
-            boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
-            borderBottom: '2px solid #f87171'
-          }}>
-            <ShieldAlert size={20} />
-            <span>
-              Network Disconnected! Reconnecting to exam server... Your session will auto-finalize in <strong>{disconnectCountdown}s</strong> if connection is not restored.
-            </span>
-          </div>
-        )}
+      <div style={{ height: '100vh', width: '100vw', overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
         <ActiveExamView
           devModeActive={devModeActive}
           test={test}
           candidate={candidate}
           examTimeLeft={examTimeLeft}
           isOnline={isOnline}
+          disconnectCountdown={disconnectCountdown}
           submittingExam={submittingExam}
           handleManualSubmitExam={handleManualSubmitExam}
           webcamProctorWarning={webcamProctorWarning}
@@ -3820,7 +3912,7 @@ function AppContent() {
           setTest={setTest}
           onClipboardAttempt={handleClipboardAttempt}
         />
-      </>
+      </div>
     );
   }
 
@@ -3829,39 +3921,41 @@ function AppContent() {
   // VIEW: Emergency Incident Report Form (EIRF) Filing Terminal
   if (flow === 'eirf_form') {
     return (
-      <EirfFormView
-        eirfDetails={eirfDetails}
-        eirfFileName={eirfFileName}
-        setEirfFileName={setEirfFileName}
-        eirfFileContent={eirfFileContent}
-        setEirfFileContent={setEirfFileContent}
-        eirfDeclarationChecked={eirfDeclarationChecked}
-        setEirfDeclarationChecked={setEirfDeclarationChecked}
-        eirfExplanation={eirfExplanation}
-        setEirfExplanation={setEirfExplanation}
-        eirfPrimaryCause={eirfPrimaryCause}
-        eirfAckUnderstand={eirfAckUnderstand}
-        setEirfAckUnderstand={setEirfAckUnderstand}
-        eirfWarningCount={eirfWarningCount}
-        setEirfWarningCount={setEirfWarningCount}
-        eirfTabReason={eirfTabReason}
-        setEirfTabReason={setEirfTabReason}
-        eirfFullscreenReason={eirfFullscreenReason}
-        setEirfFullscreenReason={setEirfFullscreenReason}
-        eirfInterruptions={eirfInterruptions}
-        setEirfInterruptions={setEirfInterruptions}
-        eirfPeripherals={eirfPeripherals}
-        setEirfPeripherals={setEirfPeripherals}
-        submittingEirf={submittingEirf}
-        setSubmittingEirf={setSubmittingEirf}
-        eirfErrorMessage={eirfErrorMessage}
-        setEirfErrorMessage={setEirfErrorMessage}
-        eirfSuccessMessage={eirfSuccessMessage}
-        setEirfSuccessMessage={setEirfSuccessMessage}
-        isSubmitBtnHovered={isSubmitBtnHovered}
-        setIsSubmitBtnHovered={setIsSubmitBtnHovered}
-        loadEirfDetails={loadEirfDetails}
-      />
+      <div style={{ height: '100vh', width: '100vw', overflowY: 'auto', overflowX: 'hidden', position: 'relative', backgroundColor: '#f8fafc' }}>
+        <EirfFormView
+          eirfDetails={eirfDetails}
+          eirfFileName={eirfFileName}
+          setEirfFileName={setEirfFileName}
+          eirfFileContent={eirfFileContent}
+          setEirfFileContent={setEirfFileContent}
+          eirfDeclarationChecked={eirfDeclarationChecked}
+          setEirfDeclarationChecked={setEirfDeclarationChecked}
+          eirfExplanation={eirfExplanation}
+          setEirfExplanation={setEirfExplanation}
+          eirfPrimaryCause={eirfPrimaryCause}
+          eirfAckUnderstand={eirfAckUnderstand}
+          setEirfAckUnderstand={setEirfAckUnderstand}
+          eirfWarningCount={eirfWarningCount}
+          setEirfWarningCount={setEirfWarningCount}
+          eirfTabReason={eirfTabReason}
+          setEirfTabReason={setEirfTabReason}
+          eirfFullscreenReason={eirfFullscreenReason}
+          setEirfFullscreenReason={setEirfFullscreenReason}
+          eirfInterruptions={eirfInterruptions}
+          setEirfInterruptions={setEirfInterruptions}
+          eirfPeripherals={eirfPeripherals}
+          setEirfPeripherals={setEirfPeripherals}
+          submittingEirf={submittingEirf}
+          setSubmittingEirf={setSubmittingEirf}
+          eirfErrorMessage={eirfErrorMessage}
+          setEirfErrorMessage={setEirfErrorMessage}
+          eirfSuccessMessage={eirfSuccessMessage}
+          setEirfSuccessMessage={setEirfSuccessMessage}
+          isSubmitBtnHovered={isSubmitBtnHovered}
+          setIsSubmitBtnHovered={setIsSubmitBtnHovered}
+          loadEirfDetails={loadEirfDetails}
+        />
+      </div>
     );
   }
 
@@ -3870,24 +3964,26 @@ function AppContent() {
   // VIEW: Evaluated Answer Sheet Verification Review (Long vertically scrollable paper)
   if (flow === 'verification_review') {
     return (
-      <VerificationReviewView
-        candidate={candidate}
-        test={test}
-        submission={submission}
-        webDevPreviewTabs={webDevPreviewTabs}
-        setWebDevPreviewTabs={setWebDevPreviewTabs}
-        verificationInstructionsModalOpen={verificationInstructionsModalOpen}
-        setVerificationInstructionsModalOpen={setVerificationInstructionsModalOpen}
-        verificationConsentChecked={verificationConsentChecked}
-        setVerificationConsentChecked={setVerificationConsentChecked}
-        handleOpenObjectionModal={handleOpenObjectionModal}
-        objectionModal={objectionModal}
-        setObjectionModal={setObjectionModal}
-        handleCloseObjectionModal={handleCloseObjectionModal}
-        handleCopyObjectionId={handleCopyObjectionId}
-        handleObjectionFileUpload={handleObjectionFileUpload}
-        handleSubmitObjection={handleSubmitObjection}
-      />
+      <div style={{ height: '100vh', width: '100vw', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
+        <VerificationReviewView
+          candidate={candidate}
+          test={test}
+          submission={submission}
+          webDevPreviewTabs={webDevPreviewTabs}
+          setWebDevPreviewTabs={setWebDevPreviewTabs}
+          verificationInstructionsModalOpen={verificationInstructionsModalOpen}
+          setVerificationInstructionsModalOpen={setVerificationInstructionsModalOpen}
+          verificationConsentChecked={verificationConsentChecked}
+          setVerificationConsentChecked={setVerificationConsentChecked}
+          handleOpenObjectionModal={handleOpenObjectionModal}
+          objectionModal={objectionModal}
+          setObjectionModal={setObjectionModal}
+          handleCloseObjectionModal={handleCloseObjectionModal}
+          handleCopyObjectionId={handleCopyObjectionId}
+          handleObjectionFileUpload={handleObjectionFileUpload}
+          handleSubmitObjection={handleSubmitObjection}
+        />
+      </div>
     );
   }
 

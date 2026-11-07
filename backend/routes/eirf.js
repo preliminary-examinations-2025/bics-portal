@@ -10,33 +10,58 @@ const { formatISTDate, sendEirfVerdictEmail } = require('../utils/email');
 const { generateEirfVerdictPdfBuffer, generateDigitalVerdictHash } = require('../utils/pdfGenerator');
 const { uploadToCloudinary, cloudinary } = require('../config/cloudinary');
 const { requireAdmin } = require('../middleware/auth');
+const { runPipelineTick } = require('../workers/eirfPipelineWorker');
+const { resolveToObjectId, toBicsId, isBicsId } = require('../utils/bicsId');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+const proofUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
 
 // 1. Get EIRF Incident Details & Breakdown by Submission ID
 router.get('/test/eirf/details/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
     try {
+        const targetSubId = resolveToObjectId(submissionId);
         let submission = null;
         let candidate = null;
         let testConfig = null;
         let existingReport = null;
 
         if (dbState.useMongo) {
-            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+            if (mongoose.Types.ObjectId.isValid(targetSubId)) {
+                submission = await TestSubmissionModel.findById(targetSubId).lean();
+            }
+            if (!submission && mongoose.Types.ObjectId.isValid(submissionId)) {
                 submission = await TestSubmissionModel.findById(submissionId).lean();
             }
             if (!submission) {
-                submission = await TestSubmissionModel.findOne({ _id: submissionId }).lean();
+                submission = await TestSubmissionModel.findOne({
+                    $or: [
+                        { _id: targetSubId },
+                        { id: targetSubId },
+                        { _id: submissionId },
+                        { id: submissionId }
+                    ]
+                }).lean();
             }
             if (!submission) {
                 existingReport = await EIRFReportModel.findOne({
-                    $or: [{ reportId: String(submissionId) }, { submissionId: String(submissionId) }]
+                    $or: [
+                        { reportId: String(submissionId) },
+                        { submissionId: String(submissionId) },
+                        { submissionId: String(targetSubId) }
+                    ]
                 }).lean();
                 if (existingReport && existingReport.submissionId) {
-                    submission = await TestSubmissionModel.findById(existingReport.submissionId).lean();
+                    submission = await TestSubmissionModel.findById(resolveToObjectId(existingReport.submissionId)).lean();
                 }
             }
-            if (!submission && mongoose.Types.ObjectId.isValid(submissionId)) {
-                submission = await TestSubmissionModel.findOne({ testId: submissionId }).sort({ submittedAt: -1 }).lean();
+            if (!submission && mongoose.Types.ObjectId.isValid(targetSubId)) {
+                submission = await TestSubmissionModel.findOne({ testId: targetSubId }).sort({ submittedAt: -1 }).lean();
             }
 
             if (submission) {
@@ -44,30 +69,45 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
                 testConfig = await TestConfigModel.findById(submission.testId).lean();
                 if (!existingReport) {
                     existingReport = await EIRFReportModel.findOne({
-                        $or: [{ submissionId: String(submission._id || submission.id) }, { reportId: String(submissionId) }]
+                        $or: [
+                            { submissionId: String(submission._id || submission.id) },
+                            { submissionId: String(targetSubId) },
+                            { reportId: String(submissionId) }
+                        ]
                     }).lean();
                 }
             }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => String(s._id || s.id) === String(submissionId));
+            submission = db.testSubmissions.find(s => 
+                String(s._id || s.id) === String(targetSubId) || 
+                String(s._id || s.id) === String(submissionId) ||
+                toBicsId(s._id || s.id) === submissionId
+            );
             if (!submission) {
                 db.eirfReports = db.eirfReports || [];
-                existingReport = db.eirfReports.find(r => String(r.reportId) === String(submissionId) || String(r.submissionId) === String(submissionId));
+                existingReport = db.eirfReports.find(r => 
+                    String(r.reportId) === String(submissionId) || 
+                    String(r.submissionId) === String(submissionId) ||
+                    String(r.submissionId) === String(targetSubId)
+                );
                 if (existingReport && existingReport.submissionId) {
-                    submission = db.testSubmissions.find(s => String(s._id || s.id) === String(existingReport.submissionId));
+                    submission = db.testSubmissions.find(s => String(s._id || s.id) === String(resolveToObjectId(existingReport.submissionId)));
                 }
             }
             if (!submission) {
-                submission = db.testSubmissions.find(s => String(s.testId) === String(submissionId));
+                submission = db.testSubmissions.find(s => String(s.testId) === String(targetSubId) || String(s.testId) === String(submissionId));
             }
             if (submission) {
                 candidate = (db.candidates || []).find(c => String(c._id || c.id) === String(submission.candidateId) || c.studentId === submission.studentId);
                 testConfig = (db.tests || []).find(t => String(t._id || t.id) === String(submission.testId));
                 if (!existingReport) {
                     db.eirfReports = db.eirfReports || [];
-                    existingReport = db.eirfReports.find(r => String(r.submissionId) === String(submission._id || submission.id));
+                    existingReport = db.eirfReports.find(r => 
+                        String(r.submissionId) === String(submission._id || submission.id) ||
+                        String(r.submissionId) === String(targetSubId)
+                    );
                 }
             }
         }
@@ -176,8 +216,8 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
         const uniqueFlaggedReasons = Array.from(new Set(flaggedReasons));
 
         const submittedAt = submission.submittedAt || submission.startedAt || new Date();
-        const expiresAt = new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
-        const isExpired = Date.now() > expiresAt.getTime();
+        const expiresAt = submission.eirfExpiresAt || new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
+        const isExpired = Date.now() > new Date(expiresAt).getTime() || submission.pipelineStatus === 'EXPIRED';
 
         const isAdmin = Boolean(
             req.query.role === 'admin' ||
@@ -188,7 +228,22 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
             req.session?.admin
         );
 
-        if (isExpired && !isAdmin && !existingReport) {
+        // Security Magic Link Token Verification
+        const providedToken = req.query.token || req.headers['x-eirf-token'] || req.user?.eirfToken;
+        const isTokenMatch = Boolean(
+            submission.eirfToken &&
+            providedToken && 
+            String(providedToken).trim() === String(submission.eirfToken).trim()
+        );
+
+        if (!isAdmin && !isTokenMatch && req.user?.role !== 'admin') {
+            return res.status(403).json({
+                error: "Invalid or expired EIRF access token. Please access the form using the secure link delivered to your email.",
+                invalidToken: true
+            });
+        }
+
+        if (isExpired && !isAdmin && req.user?.role !== 'admin') {
             return res.status(410).json({
                 error: "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.",
                 isExpired: true,
@@ -203,7 +258,10 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
         }
 
         return res.json({
-            submissionId,
+            submissionId: toBicsId(submission._id || submission.id) || submissionId,
+            bicsId: toBicsId(submission._id || submission.id) || submissionId,
+            rawSubmissionId: String(submission._id || submission.id),
+            token: submission.eirfToken || providedToken || '',
             studentId: submission.studentId || candidate?.studentId || 'Candidate',
             candidateName: submission.candidateName || candidate?.name || 'Candidate',
             testId: submission.testId,
@@ -214,6 +272,8 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
             existingReport: sanitizedExistingReport,
             hasEirfFlag,
             eirfNoticeEmailSent: Boolean(submission.eirfNoticeEmailSent),
+            generatedQuestions: submission.generatedQuestions || [],
+            pipelineStatus: submission.pipelineStatus || (hasEirfFlag ? 'AWAITING_EIRF' : 'CLEARED'),
             proctoringTelemetry: {
                 fullscreenExits: submission.proctoringLog?.fullscreenExits || 0,
                 tabSwitches: submission.proctoringLog?.tabSwitches || 0,
@@ -250,6 +310,92 @@ router.get('/test/eirf/public-key', (req, res) => {
     }
 });
 
+// 1.2 Upload Candidate Supporting Evidence / Proof (JPG, PNG, PDF <= 5MB)
+router.post('/test/eirf/upload-proof', proofUpload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No evidence file uploaded.' });
+        }
+
+        const submissionId = req.body.submissionId;
+        const providedToken = req.body.token || req.query.token || req.headers['x-eirf-token'] || req.user?.eirfToken;
+
+        const isAdmin = Boolean(
+            req.user?.role === 'admin' ||
+            req.headers['x-admin-role'] === 'admin' ||
+            req.headers['x-api-secret'] ||
+            req.session?.admin
+        );
+
+        if (!isAdmin) {
+            if (!submissionId || !providedToken) {
+                return res.status(403).json({ error: "EIRF submission ID and authorization token required." });
+            }
+            const targetSubId = resolveToObjectId(submissionId);
+            let sub = null;
+            if (dbState.useMongo) {
+                if (mongoose.Types.ObjectId.isValid(targetSubId)) {
+                    sub = await TestSubmissionModel.findById(targetSubId).select('eirfToken eirfExpiresAt pipelineStatus').lean();
+                }
+                if (!sub) {
+                    sub = await TestSubmissionModel.findOne({
+                        $or: [{ _id: targetSubId }, { id: targetSubId }, { _id: submissionId }, { id: submissionId }]
+                    }).select('eirfToken eirfExpiresAt pipelineStatus').lean();
+                }
+            } else {
+                const db = getJSONData();
+                sub = (db.testSubmissions || []).find(s => 
+                    String(s._id || s.id) === String(targetSubId) || 
+                    String(s._id || s.id) === String(submissionId)
+                );
+            }
+
+            if (!sub || !sub.eirfToken || String(sub.eirfToken).trim() !== String(providedToken).trim()) {
+                return res.status(403).json({ error: "Invalid EIRF authorization token. Access denied." });
+            }
+
+            const expiresAt = sub.eirfExpiresAt || new Date(Date.now() + 45 * 60 * 1000);
+            if (Date.now() > new Date(expiresAt).getTime() || sub.pipelineStatus === 'EXPIRED') {
+                return res.status(410).json({ error: "The EIRF 45-minute submission window has expired. Proof uploads are closed." });
+            }
+        }
+
+        const fileName = req.file.originalname || 'evidence_proof.png';
+        const fileBuffer = req.file.buffer;
+        const mimeType = req.file.mimetype || 'image/png';
+
+        const useCloudinary = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+        let fileUrl = '';
+
+        if (useCloudinary) {
+            const folder = `BICS_2026/eirf_proofs/${submissionId}`;
+            const resourceType = mimeType.includes('pdf') ? 'raw' : 'image';
+            fileUrl = await uploadToCloudinary(fileBuffer, folder, resourceType);
+        } else {
+            // Local fallback
+            const uploadDir = path.join(__dirname, '..', 'public', 'uploads', 'eirf_proofs');
+            if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+            }
+            const safeFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+            const filePath = path.join(uploadDir, safeFileName);
+            fs.writeFileSync(filePath, fileBuffer);
+            fileUrl = `/uploads/eirf_proofs/${safeFileName}`;
+        }
+
+        return res.json({
+            success: true,
+            fileUrl,
+            fileName,
+            fileSize: req.file.size,
+            mimeType
+        });
+    } catch (err) {
+        console.error('[EIRF Proof Upload Error]:', err);
+        return res.status(500).json({ error: 'Failed to upload supporting evidence: ' + err.message });
+    }
+});
+
 // 2. Generate & save encrypted database payload for EIRF backup (.eirf)
 router.post('/test/eirf/generate-payload', async (req, res) => {
     const { submissionId, studentId: reqStudentId, answers, proctoringLog } = req.body;
@@ -258,17 +404,27 @@ router.post('/test/eirf/generate-payload', async (req, res) => {
     }
 
     try {
+        const targetSubId = resolveToObjectId(submissionId);
         let submission = null;
         if (dbState.useMongo) {
-            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+            if (mongoose.Types.ObjectId.isValid(targetSubId)) {
+                submission = await TestSubmissionModel.findById(targetSubId);
+            }
+            if (!submission && mongoose.Types.ObjectId.isValid(submissionId)) {
                 submission = await TestSubmissionModel.findById(submissionId);
             }
             if (!submission) {
-                submission = await TestSubmissionModel.findOne({ _id: submissionId });
+                submission = await TestSubmissionModel.findOne({
+                    $or: [{ _id: targetSubId }, { id: targetSubId }, { _id: submissionId }, { id: submissionId }]
+                });
             }
         } else {
             const db = getJSONData();
-            submission = (db.testSubmissions || []).find(s => String(s._id || s.id) === String(submissionId));
+            submission = (db.testSubmissions || []).find(s => 
+                String(s._id || s.id) === String(targetSubId) || 
+                String(s._id || s.id) === String(submissionId) ||
+                toBicsId(s._id || s.id) === submissionId
+            );
         }
 
         if (!submission) {
@@ -346,16 +502,22 @@ router.post('/test/eirf/submit', async (req, res) => {
     }
 
     try {
+        const targetSubId = resolveToObjectId(submissionId);
         let submission = null;
         let candidate = null;
         let testConfig = null;
 
         if (dbState.useMongo) {
-            if (mongoose.Types.ObjectId.isValid(submissionId)) {
+            if (mongoose.Types.ObjectId.isValid(targetSubId)) {
+                submission = await TestSubmissionModel.findById(targetSubId);
+            }
+            if (!submission && mongoose.Types.ObjectId.isValid(submissionId)) {
                 submission = await TestSubmissionModel.findById(submissionId);
             }
             if (!submission) {
-                submission = await TestSubmissionModel.findOne({ _id: submissionId });
+                submission = await TestSubmissionModel.findOne({
+                    $or: [{ _id: targetSubId }, { id: targetSubId }, { _id: submissionId }, { id: submissionId }]
+                });
             }
             if (submission) {
                 candidate = await CandidateModel.findById(submission.candidateId).lean();
@@ -364,7 +526,11 @@ router.post('/test/eirf/submit', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => String(s._id || s.id) === String(submissionId));
+            submission = db.testSubmissions.find(s => 
+                String(s._id || s.id) === String(targetSubId) || 
+                String(s._id || s.id) === String(submissionId) ||
+                toBicsId(s._id || s.id) === submissionId
+            );
             if (submission) {
                 candidate = (db.candidates || []).find(c => String(c._id || c.id) === String(submission.candidateId) || c.studentId === submission.studentId);
                 testConfig = (db.tests || []).find(t => String(t._id || t.id) === String(submission.testId));
@@ -373,6 +539,38 @@ router.post('/test/eirf/submit', async (req, res) => {
 
         if (!submission) {
             return res.status(404).json({ error: "Examination submission record not found." });
+        }
+
+        // Strict 45-Minute Token Authorization Gate
+        const providedToken = req.body.token || req.query.token || req.headers['x-eirf-token'] || req.user?.eirfToken;
+        const isAdmin = Boolean(
+            req.user?.role === 'admin' ||
+            req.headers['x-admin-role'] === 'admin' ||
+            req.session?.admin
+        );
+
+        const isTokenMatch = Boolean(
+            submission.eirfToken &&
+            providedToken &&
+            String(providedToken).trim() === String(submission.eirfToken).trim()
+        );
+
+        if (!isAdmin && !isTokenMatch) {
+            return res.status(403).json({
+                error: "Invalid or missing EIRF authorization token. Access denied.",
+                invalidToken: true
+            });
+        }
+
+        const submittedAt = submission.submittedAt || submission.startedAt || new Date();
+        const expiresAt = submission.eirfExpiresAt || new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
+        const isExpired = Date.now() > new Date(expiresAt).getTime() || submission.pipelineStatus === 'EXPIRED';
+
+        if (!isAdmin && isExpired) {
+            return res.status(410).json({
+                error: "The Emergency Incident Report Form (EIRF) 45-minute submission window has expired.",
+                isExpired: true
+            });
         }
 
         const studentId = submission.studentId || candidate?.studentId || 'Candidate';
@@ -467,11 +665,6 @@ router.post('/test/eirf/submit', async (req, res) => {
         }
 
         const reportId = generateEirfReportId();
-        const submittedAt = submission.submittedAt || new Date();
-        const expiresAt = new Date(new Date(submittedAt).getTime() + 45 * 60 * 1000);
-        if (Date.now() > expiresAt.getTime()) {
-            return res.status(410).json({ success: false, error: "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link." });
-        }
 
         const rawIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
                        req.socket?.remoteAddress || 
@@ -531,6 +724,8 @@ router.post('/test/eirf/submit', async (req, res) => {
             );
             submission.hasEirfFlag = true;
             submission.eirfStatus = verificationStatus === 'DISCREPANCY_FLAGGED' ? 'discrepancy' : 'pending';
+            submission.pipelineStatus = 'EIRF_SUBMITTED';
+            submission.eirfReportId = reportId;
             await submission.save();
         } else {
             const db = getJSONData();
@@ -543,8 +738,17 @@ router.post('/test/eirf/submit', async (req, res) => {
             }
             submission.hasEirfFlag = true;
             submission.eirfStatus = verificationStatus === 'DISCREPANCY_FLAGGED' ? 'discrepancy' : 'pending';
+            submission.pipelineStatus = 'EIRF_SUBMITTED';
+            submission.eirfReportId = reportId;
             saveJSONData(db);
         }
+
+        // Trigger sequential pipeline worker Step 3 (confirmation email -> advance to UNDER_REVIEW)
+        setImmediate(() => {
+            runPipelineTick().catch(err => {
+                console.error("[EIRF_PIPELINE] Asynchronous EIRF submit trigger error:", err);
+            });
+        });
 
         await logSystemAction(
             studentId,

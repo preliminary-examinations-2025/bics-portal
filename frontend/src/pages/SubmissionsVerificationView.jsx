@@ -182,7 +182,8 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                         onClick={() => {
                           const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
                           const authParam = userToken ? `?authToken=${encodeURIComponent(userToken)}` : '';
-                          window.location.href = `${otBase}/evaluation/${sub.id || sub._id}${authParam}`;
+                          const subId = sub.bicsId || sub.id || sub._id;
+                          window.location.href = `${otBase}/evaluation/answer-sheet/${subId}${authParam}`;
                         }}
                         style={{
                           display: 'inline-flex',

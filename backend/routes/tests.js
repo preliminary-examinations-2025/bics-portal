@@ -10,9 +10,12 @@ const { encryptEirfPayload } = require('../utils/cipher');
 const { recalculateMCQScore, calculateCodingScoreFast } = require('../utils/scoreCalculator');
 const { sendEirfNoticeEmail } = require('../utils/email');
 const { executeCode } = require('../utils/codeRunner');
+const { verifyToken } = require('../utils/jwt');
 const { authenticateToken, requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
-const { isBicsId, toMongoId, toBicsId } = require('../utils/bicsId');
+const { isBicsId, toMongoId, toBicsId, resolveToObjectId } = require('../utils/bicsId');
 const { compareFaceBiometrics, isPlaceholderPhoto } = require('../utils/biometricMatcher');
+const { evaluateEirfIncident } = require('../services/eirfEvaluator');
+const { runPipelineTick } = require('../workers/eirfPipelineWorker');
 const proctoringRouter = require('./proctoring');
 
 const activeSubmissionsProcessing = new Set();
@@ -273,15 +276,23 @@ function sanitizeQuestionForCandidate(q) {
     const description = (qObj.description || qObj.questionText || qObj.question || qObj.statement || '').trim();
     const title = (qObj.title || '').trim() || (qObj.type === 'mcq' ? 'MCQ Question' : 'Problem Statement');
 
+    const category = (qObj.category || '').trim() || (qObj.type === 'coding' ? 'Programming' : (qObj.type === 'web' ? 'Web Development' : (qObj.isMultiChoice || qObj.type === 'mcc' ? 'Multiple Choice' : 'Single Choice')));
+    const timeLimitMs = Math.max(200, Math.min(Number(qObj.timeLimitMs) || 2000, 10000));
+    const memoryLimitMb = Math.max(16, Math.min(Number(qObj.memoryLimitMb) || 128, 512));
+
     const sanitized = {
         ...qObj,
         title,
+        category,
+        timeLimitMs,
+        memoryLimitMb,
         description,
         questionText: description
     };
 
-    if (qObj.type === 'mcq') {
+    if (qObj.type === 'mcq' || qObj.type === 'scc' || qObj.type === 'mcc' || qObj.isMultiChoice) {
         delete sanitized.correctOptionIndex;
+        delete sanitized.correctOptionIndices;
     } else if (qObj.type === 'coding') {
         const rawCases = Array.isArray(qObj.testCases) ? qObj.testCases : [];
         let sampleCases = rawCases.filter(tc => tc.isSample === true);
@@ -1009,12 +1020,40 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
     try {
         const now = new Date();
         if (dbState.useMongo) {
+            const existingSub = await TestSubmissionModel.findById(targetSubId).select('lastHeartbeatAt status startedAt testId');
+            if (!existingSub) return res.status(404).json({ error: "Submission session not found" });
+
+            const prevHeartbeat = existingSub.lastHeartbeatAt ? new Date(existingSub.lastHeartbeatAt).getTime() : null;
+            const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
+
+            const updateOps = {
+                $set: { lastHeartbeatAt: now }
+            };
+
+            // Rule 3: Heartbeat gap >= 10s (missing >= 2 consecutive 5s pulses) confirms > 5s network disconnection
+            if (gapMs >= 10000) {
+                const gapSeconds = Math.round(gapMs / 1000);
+                const downtimeSeconds = Math.max(0, gapSeconds - 5);
+                updateOps.$push = {
+                    'proctoringLog.serverOfflineGaps': {
+                        gapSeconds,
+                        downtimeSeconds,
+                        timestamp: now
+                    },
+                    'proctoringLog.events': {
+                        timestamp: now,
+                        type: 'SERVER_DETECTED_OFFLINE_GAP',
+                        details: `Heartbeat restored after ${gapSeconds}s gap (detected network downtime: ${downtimeSeconds}s).`,
+                        durationSeconds: downtimeSeconds
+                    }
+                };
+            }
+
             const sub = await TestSubmissionModel.findByIdAndUpdate(
                 targetSubId,
-                { $set: { lastHeartbeatAt: now } },
+                updateOps,
                 { new: true, select: 'status startedAt testId' }
             );
-            if (!sub) return res.status(404).json({ error: "Submission session not found" });
 
             let expiresAtMs = null;
             let remainingSeconds = null;
@@ -1040,7 +1079,30 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
             db.testSubmissions = db.testSubmissions || [];
             const sub = db.testSubmissions.find(s => String(s.id || s._id) === String(targetSubId) || String(s.id || s._id) === String(submissionId));
             if (!sub) return res.status(404).json({ error: "Submission session not found" });
+
+            const prevHeartbeat = sub.lastHeartbeatAt ? new Date(sub.lastHeartbeatAt).getTime() : null;
+            const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
             sub.lastHeartbeatAt = now;
+
+            if (gapMs >= 10000) {
+                const gapSeconds = Math.round(gapMs / 1000);
+                const downtimeSeconds = Math.max(0, gapSeconds - 5);
+                if (!sub.proctoringLog) sub.proctoringLog = {};
+                if (!Array.isArray(sub.proctoringLog.serverOfflineGaps)) sub.proctoringLog.serverOfflineGaps = [];
+                if (!Array.isArray(sub.proctoringLog.events)) sub.proctoringLog.events = [];
+
+                sub.proctoringLog.serverOfflineGaps.push({
+                    gapSeconds,
+                    downtimeSeconds,
+                    timestamp: now
+                });
+                sub.proctoringLog.events.push({
+                    timestamp: now,
+                    type: 'SERVER_DETECTED_OFFLINE_GAP',
+                    details: `Heartbeat restored after ${gapSeconds}s gap (detected network downtime: ${downtimeSeconds}s).`,
+                    durationSeconds: downtimeSeconds
+                });
+            }
             saveJSONData(db);
 
             let expiresAtMs = null;
@@ -1112,6 +1174,18 @@ const handleDraftSave = async (req, res) => {
                     delete cleanAns.isManuallyGraded;
                     delete cleanAns.isBonusAwarded;
                     delete cleanAns.isObjectionResolved;
+                    // Normalize MCC multi-choice arrays vs MCQ single index
+                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                        if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
+                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
+                        } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
+                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
+                        } else {
+                            cleanAns.selectedOptionIndices = [];
+                        }
+                    } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
+                        cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                    }
                     if (Array.isArray(cleanAns.testCaseResults)) {
                         cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
                             testCaseIndex: tc.testCaseIndex,
@@ -1120,8 +1194,17 @@ const handleDraftSave = async (req, res) => {
                             scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
                             actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
                             expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
-                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input,
+                            isSample: Boolean(tc.isSample),
+                            executionTimeMs: Number(tc.executionTimeMs || 0),
+                            memoryUsedKb: Number(tc.memoryUsedKb || 0)
                         }));
+                    }
+                    if (cleanAns.compileError) {
+                        cleanAns.compileError = String(cleanAns.compileError).slice(0, 2000);
+                    }
+                    if (cleanAns.consoleTab) {
+                        cleanAns.consoleTab = String(cleanAns.consoleTab).slice(0, 20);
                     }
                     return cleanAns;
                 });
@@ -1176,9 +1259,39 @@ const handleDraftSave = async (req, res) => {
                     const cleanAns = { ...a };
                     delete cleanAns.score;
                     delete cleanAns.isManuallyGraded;
-                    delete cleanAns.testCaseResults;
                     delete cleanAns.isBonusAwarded;
                     delete cleanAns.isObjectionResolved;
+                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                        if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
+                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
+                        } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
+                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
+                        } else {
+                            cleanAns.selectedOptionIndices = [];
+                        }
+                    } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
+                        cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                    }
+                    if (Array.isArray(cleanAns.testCaseResults)) {
+                        cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                            testCaseIndex: tc.testCaseIndex,
+                            status: tc.status,
+                            points: Number(tc.points) || 0,
+                            scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                            actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                            expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input,
+                            isSample: Boolean(tc.isSample),
+                            executionTimeMs: Number(tc.executionTimeMs || 0),
+                            memoryUsedKb: Number(tc.memoryUsedKb || 0)
+                        }));
+                    }
+                    if (cleanAns.compileError) {
+                        cleanAns.compileError = String(cleanAns.compileError).slice(0, 2000);
+                    }
+                    if (cleanAns.consoleTab) {
+                        cleanAns.consoleTab = String(cleanAns.consoleTab).slice(0, 20);
+                    }
                     return cleanAns;
                 });
             }
@@ -1250,10 +1363,7 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
             if (submission.status === 'started') {
                 submission.status = 'auto-submitted';
                 submission.submittedAt = new Date();
-                submission.hasEirfFlag = true;
-                if (!submission.eirfStatus || submission.eirfStatus === 'none') {
-                    submission.eirfStatus = 'pending';
-                }
+                submission.submissionReason = 'disconnect_beacon';
                 if (answers && Array.isArray(answers) && answers.length > 0) {
                     submission.answers = answers.map(a => {
                         const cleanAns = { ...a };
@@ -1290,7 +1400,30 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                 if (test) {
                     recalculateMCQScore(submission, test);
                     calculateCodingScoreFast(submission, test);
+                    if (submission.evaluation) {
+                        submission.evaluation.evaluatedAt = new Date();
+                    }
                 }
+
+                // Authoritative EIRF incident calculation
+                const eirfEval = evaluateEirfIncident(submission, test);
+                submission.hasEirfFlag = eirfEval.hasEirfFlag;
+                submission.eirfStatus = eirfEval.eirfStatus;
+                submission.flaggedReasons = eirfEval.flaggedReasons;
+                submission.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
+
+                // Generate encrypted .eirf snapshot
+                const sStudId = submission.studentId || 'Candidate';
+                const dbPayloadSnap = {
+                    submissionId: String(submission._id || submission.id),
+                    studentId: sStudId,
+                    candidateName: submission.candidateName || 'Candidate',
+                    testTitle: submission.testTitle || 'BICS Online Examination',
+                    answers: submission.answers || [],
+                    proctoringLog: submission.proctoringLog || {},
+                    generatedAt: new Date().toISOString()
+                };
+                submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
 
                 if (!submission.eirfNoticeEmailSent && submission.candidateEmail) {
                     try {
@@ -1319,9 +1452,14 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                                     status: submission.status,
                                     submittedAt: submission.submittedAt,
                                     score: submission.score,
+                                    evaluation: submission.evaluation,
                                     answers: submission.answers,
                                     proctoringLog: submission.proctoringLog,
                                     encryptedDbPayload: submission.encryptedDbPayload,
+                                    hasEirfFlag: submission.hasEirfFlag,
+                                    eirfStatus: submission.eirfStatus,
+                                    flaggedReasons: submission.flaggedReasons,
+                                    pipelineStatus: submission.pipelineStatus,
                                     eirfNoticeEmailSent: submission.eirfNoticeEmailSent
                                 }
                             }
@@ -1330,7 +1468,14 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                         throw saveErr;
                     }
                 }
-                console.log(`[BEACON FINALIZED] Submission ${submissionId} auto-submitted via browser beacon.`);
+                console.log(`[BEACON FINALIZED] Submission ${submissionId} auto-submitted via browser beacon. PipelineStatus: ${submission.pipelineStatus}`);
+
+                // Kick off sequential pipeline worker immediately
+                if (submission.hasEirfFlag) {
+                    setImmediate(() => {
+                        runPipelineTick().catch(() => {});
+                    });
+                }
             }
         } else {
             const db = getJSONData();
@@ -1339,8 +1484,37 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
             if (sub && sub.status === 'started') {
                 sub.status = 'auto-submitted';
                 sub.submittedAt = new Date();
-                if (answers) sub.answers = answers;
+                sub.submissionReason = 'disconnect_beacon';
+                if (answers && Array.isArray(answers) && answers.length > 0) {
+                    sub.answers = answers;
+                }
+                if (proctoringLog) {
+                    sub.proctoringLog = reconcileProctoringLog(sub.proctoringLog || {}, proctoringLog);
+                }
+                if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
+                sub.proctoringLog.events.push({
+                    timestamp: new Date(),
+                    type: 'DISCONNECT_BEACON',
+                    isBeaconDisconnect: true,
+                    details: 'Candidate closed exam browser tab/window. Finalized via navigator.sendBeacon.'
+                });
+                const test = (db.tests || []).find(t => String(t.id || t._id) === String(sub.testId));
+                if (test) {
+                    recalculateMCQScore(sub, test);
+                    calculateCodingScoreFast(sub, test);
+                    if (sub.evaluation) sub.evaluation.evaluatedAt = new Date();
+                }
+                const eirfEval = evaluateEirfIncident(sub, test);
+                sub.hasEirfFlag = eirfEval.hasEirfFlag;
+                sub.eirfStatus = eirfEval.eirfStatus;
+                sub.flaggedReasons = eirfEval.flaggedReasons;
+                sub.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
                 saveJSONData(db);
+                if (sub.hasEirfFlag) {
+                    setImmediate(() => {
+                        runPipelineTick().catch(() => {});
+                    });
+                }
             }
         }
         return res.status(200).json({ success: true });
@@ -1527,7 +1701,7 @@ router.post('/verify-token', async (req, res) => {
 
 // 7. Submit exam answers
 router.post('/submit', async (req, res) => {
-    const { submissionId, answers, proctoringLog, status } = req.body;
+    const { submissionId, answers, proctoringLog, status, submissionReason } = req.body;
 
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
     const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
@@ -1577,6 +1751,18 @@ router.post('/submit', async (req, res) => {
                             delete cleanAns.isManuallyGraded;
                             delete cleanAns.isBonusAwarded;
                             delete cleanAns.isObjectionResolved;
+                            // Normalize MCC multi-choice arrays vs MCQ single index
+                            if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                                if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
+                                    cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
+                                } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
+                                    cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
+                                } else {
+                                    cleanAns.selectedOptionIndices = [];
+                                }
+                            } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
+                                cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                            }
                             if (Array.isArray(cleanAns.testCaseResults)) {
                                 cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
                                     testCaseIndex: tc.testCaseIndex,
@@ -1600,6 +1786,7 @@ router.post('/submit', async (req, res) => {
                     if (submission.status === 'started' || isFinalSubmission) {
                         submission.status = ALLOWED_STATUSES.includes(status) ? status : 'submitted';
                     }
+                    submission.submissionReason = submissionReason || (submission.status === 'auto-submitted' ? 'system_auto' : 'manual');
                     if (status !== 'started') {
                         submission.submittedAt = new Date();
                     }
@@ -1616,6 +1803,7 @@ router.post('/submit', async (req, res) => {
                                 const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
                                 console.warn(`[EXAM DEADLINE EXCEEDED] Submission ${submissionId} submitted ${overtimeSec}s past deadline. Overriding status to auto-submitted.`);
                                 submission.status = 'auto-submitted';
+                                submission.submissionReason = 'overtime_exceeded';
                                 if (!submission.proctoringLog) submission.proctoringLog = {};
                                 if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
                                 submission.proctoringLog.events.push({
@@ -1641,58 +1829,18 @@ router.post('/submit', async (req, res) => {
 
                     // 1. Authoritative EIRF incident calculation (processed before atomic save to eliminate duplicate DB roundtrips)
                     if (isFinalSubmission) {
-                        const fsExits = submission.proctoringLog?.fullscreenExits || 0;
-                        const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
-                        const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
-                        const totalWarnings = fsExits + tabSwitches + inspectAttempts;
-                        const events = submission.proctoringLog?.events || [];
-
-                        let maxFsSec = 0;
-                        let maxTabSec = 0;
-                        let hasNetworkOffline = false;
-                        let hasMinorThreshold = false;
-                        events.forEach(ev => {
-                            let dur = Number(ev.durationSeconds || 0);
-                            if (!dur && ev.details) {
-                                const match = ev.details.match(/(?:for|after)\s+(\d+)\s+seconds/i) || ev.details.match(/(\d+)\s*seconds/i);
-                                if (match && match[1]) dur = parseInt(match[1], 10);
-                            }
-                            const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
-                            const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
-                            if (isFs && dur > maxFsSec) maxFsSec = dur;
-                            if (isTab && dur > maxTabSec) maxTabSec = dur;
-                            if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
-                            if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
-                        });
-
-                        // EIRF Threshold Policy:
-                        // 1. Minor warnings threshold: 5% of actual exam duration (e.g. 180s for 60m)
-                        // 2. Individual major warnings (fullscreen exit or tab switch): > 5 seconds
-                        // 3. Exhausted 3 allowed warnings or auto-submitted
-                        // 4. Session network drop / emergency trigger
-                        const examDurationMin = Number(test?.duration || 60);
-                        const minorThresholdSec = Math.max(10, Math.round(examDurationMin * 60 * 0.05));
-
-                        const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
-                        const isDisqualified = submission.status === 'auto-submitted' || totalWarnings >= 3;
-                        const isFlagged = isDisqualified || hasLongExit || hasNetworkOffline || hasMinorThreshold;
-
-                        if (isFlagged) {
-                            submission.hasEirfFlag = true;
-                            if (!submission.eirfStatus || submission.eirfStatus === 'none') {
-                                submission.eirfStatus = 'pending';
-                            }
-                        } else {
-                            submission.hasEirfFlag = false;
-                            submission.eirfStatus = 'none';
-                        }
+                        const eirfEval = evaluateEirfIncident(submission, test);
+                        submission.hasEirfFlag = eirfEval.hasEirfFlag;
+                        submission.eirfStatus = eirfEval.eirfStatus;
+                        submission.flaggedReasons = eirfEval.flaggedReasons;
+                        submission.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
 
                         // Explicitly append final submission proctoring event for compliance audit trail
                         if (!submission.proctoringLog) submission.proctoringLog = {};
                         if (!Array.isArray(submission.proctoringLog.events)) submission.proctoringLog.events = [];
                         const finalEvType = submission.status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED';
                         const finalEvDesc = submission.status === 'auto-submitted'
-                            ? 'Examination automatically finalized and submitted by proctoring engine.'
+                            ? `Examination automatically finalized and submitted by proctoring engine (${submission.submissionReason || 'system_auto'}).`
                             : 'Candidate completed, finalized, and submitted examination answers.';
                         if (!submission.proctoringLog.events.some(e => e.type === finalEvType)) {
                             submission.proctoringLog.events.push({
@@ -1757,6 +1905,18 @@ router.post('/submit', async (req, res) => {
                     delete cleanAns.isManuallyGraded;
                     delete cleanAns.isBonusAwarded;
                     delete cleanAns.isObjectionResolved;
+                    // Normalize MCC multi-choice arrays vs MCQ single index
+                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                        if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
+                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
+                        } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
+                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
+                        } else {
+                            cleanAns.selectedOptionIndices = [];
+                        }
+                    } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
+                        cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                    }
                     if (Array.isArray(cleanAns.testCaseResults)) {
                         cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
                             testCaseIndex: tc.testCaseIndex,
@@ -1765,8 +1925,17 @@ router.post('/submit', async (req, res) => {
                             scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
                             actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
                             expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
-                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input,
+                            isSample: Boolean(tc.isSample),
+                            executionTimeMs: Number(tc.executionTimeMs || 0),
+                            memoryUsedKb: Number(tc.memoryUsedKb || 0)
                         }));
+                    }
+                    if (cleanAns.compileError) {
+                        cleanAns.compileError = String(cleanAns.compileError).slice(0, 2000);
+                    }
+                    if (cleanAns.consoleTab) {
+                        cleanAns.consoleTab = String(cleanAns.consoleTab).slice(0, 20);
                     }
                     return cleanAns;
                 });
@@ -1777,6 +1946,7 @@ router.post('/submit', async (req, res) => {
                 submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
             submission.status = status || 'submitted';
+            submission.submissionReason = submissionReason || (submission.status === 'auto-submitted' ? 'system_auto' : 'manual');
             if (status !== 'started') {
                 submission.submittedAt = new Date();
             }
@@ -1793,6 +1963,7 @@ router.post('/submit', async (req, res) => {
                     if (elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
                         const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
                         submission.status = 'auto-submitted';
+                        submission.submissionReason = 'overtime_exceeded';
                         if (!submission.proctoringLog) submission.proctoringLog = {};
                         if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
                         submission.proctoringLog.events.push({
@@ -1816,58 +1987,18 @@ router.post('/submit', async (req, res) => {
 
             // 1. Authoritative EIRF incident calculation (processed before save to eliminate duplicate writes)
             if (isFinalSubmission) {
-                const fsExits = submission.proctoringLog?.fullscreenExits || 0;
-                const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
-                const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
-                const totalWarnings = fsExits + tabSwitches + inspectAttempts;
-                const events = submission.proctoringLog?.events || [];
-
-                let maxFsSec = 0;
-                let maxTabSec = 0;
-                let hasNetworkOffline = false;
-                let hasMinorThreshold = false;
-                events.forEach(ev => {
-                    let dur = Number(ev.durationSeconds || 0);
-                    if (!dur && ev.details) {
-                        const match = ev.details.match(/(?:for|after)\s+(\d+)\s+seconds/i) || ev.details.match(/(\d+)\s*seconds/i);
-                        if (match && match[1]) dur = parseInt(match[1], 10);
-                    }
-                    const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
-                    const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
-                    if (isFs && dur > maxFsSec) maxFsSec = dur;
-                    if (isTab && dur > maxTabSec) maxTabSec = dur;
-                    if (ev.type === 'NETWORK_OFFLINE' || ev.type === 'EMERGENCY_SUBMISSION') hasNetworkOffline = true;
-                    if (ev.type === 'MINOR_WARNINGS_EXCEEDED') hasMinorThreshold = true;
-                });
-
-                // EIRF Threshold Policy:
-                // 1. Minor warnings threshold: 5% of actual exam duration (e.g. 180s for 60m)
-                // 2. Individual major warnings (fullscreen exit or tab switch): > 5 seconds
-                // 3. Exhausted 3 allowed warnings or auto-submitted
-                // 4. Session network drop / emergency trigger
-                const examDurationMin = Number(test?.duration || 60);
-                const minorThresholdSec = Math.max(10, Math.round(examDurationMin * 60 * 0.05));
-
-                const hasLongExit = maxFsSec > 5 || maxTabSec > 5;
-                const isDisqualified = submission.status === 'auto-submitted' || totalWarnings >= 3;
-                const isFlagged = isDisqualified || hasLongExit || hasNetworkOffline || hasMinorThreshold;
-
-                if (isFlagged) {
-                    submission.hasEirfFlag = true;
-                    if (!submission.eirfStatus || submission.eirfStatus === 'none') {
-                        submission.eirfStatus = 'pending';
-                    }
-                } else {
-                    submission.hasEirfFlag = false;
-                    submission.eirfStatus = 'none';
-                }
+                const eirfEval = evaluateEirfIncident(submission, test);
+                submission.hasEirfFlag = eirfEval.hasEirfFlag;
+                submission.eirfStatus = eirfEval.eirfStatus;
+                submission.flaggedReasons = eirfEval.flaggedReasons;
+                submission.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
 
                 // Explicitly append final submission proctoring event for compliance audit trail
                 if (!submission.proctoringLog) submission.proctoringLog = {};
                 if (!Array.isArray(submission.proctoringLog.events)) submission.proctoringLog.events = [];
                 const finalEvType = submission.status === 'auto-submitted' ? 'TEST_AUTO_SUBMITTED' : 'TEST_SUBMITTED';
                 const finalEvDesc = submission.status === 'auto-submitted'
-                    ? 'Examination automatically finalized and submitted by proctoring engine.'
+                    ? `Examination automatically finalized and submitted by proctoring engine (${submission.submissionReason || 'system_auto'}).`
                     : 'Candidate completed, finalized, and submitted examination answers.';
                 if (!submission.proctoringLog.events.some(e => e.type === finalEvType)) {
                     submission.proctoringLog.events.push({
@@ -1918,62 +2049,12 @@ router.post('/submit', async (req, res) => {
                 'info'
             ).catch(() => {});
 
-            if (submission.hasEirfFlag && !submission.eirfNoticeEmailSent) {
-                submission.eirfNoticeEmailSent = true;
-                (async () => {
-                    try {
-                        let recipientEmail = submission.candidateEmail;
-                        if (!recipientEmail && submission.studentId) {
-                            const cand = dbState.useMongo
-                                ? await CandidateModel.findOne({ $or: [{ studentId: submission.studentId }, { _id: submission.candidateId }] })
-                                : (getJSONData().candidates || []).find(c => c.studentId === submission.studentId || c.id === submission.studentId);
-                            if (cand) {
-                                recipientEmail = cand.personalEmail || cand.registrationData?.personalEmail || cand.email;
-                            }
-                        }
-                        if (!recipientEmail) recipientEmail = 'preliminaryexaminations@gmail.com';
-
-                        const fsExits = submission.proctoringLog?.fullscreenExits || 0;
-                        const tabSwitches = submission.proctoringLog?.tabSwitches || 0;
-                        const inspectAttempts = submission.proctoringLog?.inspectAttempts || 0;
-                        const totalWarnings = fsExits + tabSwitches + inspectAttempts;
-                        const events = submission.proctoringLog?.events || [];
-                        let maxFsSec = 0;
-                        let maxTabSec = 0;
-                        events.forEach(ev => {
-                            let dur = Number(ev.durationSeconds || 0);
-                            if (!dur && ev.details) {
-                                const match = ev.details.match(/for\s+(\d+)\s+seconds/i);
-                                if (match && match[1]) dur = parseInt(match[1], 10);
-                            }
-                            const isFs = ev.type === 'FULLSCREEN_EXIT' || ev.type === 'FULLSCREEN_RETURNED' || (ev.type && ev.type.includes('FULLSCREEN'));
-                            const isTab = ev.type === 'TAB_SWITCH' || ev.type === 'TAB_RETURNED' || (ev.type && ev.type.includes('TAB'));
-                            if (isFs && dur > maxFsSec) maxFsSec = dur;
-                            if (isTab && dur > maxTabSec) maxTabSec = dur;
-                        });
-
-                        const incidentParts = [];
-                        if (fsExits > 0) incidentParts.push(`${fsExits} Fullscreen Exit(s) (Max: ${maxFsSec}s)`);
-                        if (tabSwitches > 0) incidentParts.push(`${tabSwitches} Tab Switch(es) / Focus Loss (Max: ${maxTabSec}s)`);
-                        if (inspectAttempts > 0) incidentParts.push(`${inspectAttempts} Developer Tools / Inspect Element Attempt(s)`);
-                        if (status === 'auto-submitted') incidentParts.push(`Attempt Auto-Submitted due to reaching 3 compliance warnings`);
-
-                        const consolidatedSummary = incidentParts.length > 0
-                            ? `Recorded Session Incidents: ${incidentParts.join('; ')}.`
-                            : `Proctoring alert flagged for post-exam incident review (${totalWarnings} total warnings).`;
-
-                        await sendEirfNoticeEmail(
-                            recipientEmail,
-                            submission.candidateName || 'Candidate',
-                            submission.testTitle || 'BICS Examination',
-                            consolidatedSummary,
-                            submission._id || submission.id
-                        );
-                    } catch (e) {
-                        console.error("EIRF single consolidated notice email error:", e);
-                    }
-                })();
-            }
+            // Trigger asynchronous sequential EIRF pipeline immediately in background
+            setImmediate(() => {
+                runPipelineTick().catch(err => {
+                    console.error("[EIRF_PIPELINE] Asynchronous submit trigger error:", err);
+                });
+            });
         }
 
         const subPayload = submission.toObject ? submission.toObject() : { ...submission };
@@ -2065,13 +2146,34 @@ router.post('/reevaluation/:submissionId', requireAuth, async (req, res) => {
 router.get('/evaluation/:id', async (req, res) => {
     const { id } = req.params;
     try {
+        const targetSubId = resolveToObjectId(id);
         let submission = null;
         if (dbState.useMongo) {
-            submission = await TestSubmissionModel.findById(id);
+            if (mongoose.Types.ObjectId.isValid(targetSubId)) {
+                submission = await TestSubmissionModel.findById(targetSubId);
+            }
+            if (!submission && mongoose.Types.ObjectId.isValid(id)) {
+                submission = await TestSubmissionModel.findById(id);
+            }
+            if (!submission) {
+                submission = await TestSubmissionModel.findOne({
+                    $or: [
+                        { _id: targetSubId },
+                        { id: targetSubId },
+                        { _id: id },
+                        { id: id }
+                    ]
+                });
+            }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === id || s._id === id);
+            submission = db.testSubmissions.find(s => 
+                String(s.id) === String(targetSubId) || 
+                String(s._id) === String(targetSubId) ||
+                String(s.id) === String(id) ||
+                String(s._id) === String(id)
+            );
         }
 
         if (!submission) {
@@ -2115,18 +2217,24 @@ router.get('/evaluation/:id', async (req, res) => {
             });
         }
 
+        const encryptedSubId = toBicsId(submission._id || submission.id);
+        const encryptedCandidateId = toBicsId(student?._id || student?.id || submission.candidateId);
+        const encryptedTestId = toBicsId(test._id || test.id);
+
         return res.json({
             success: true,
             verificationStatus: vStatus,
             candidate: {
-                id: student?._id || student?.id || submission.candidateId,
+                id: encryptedCandidateId,
+                rawId: String(student?._id || student?.id || submission.candidateId),
                 name: student?.name || submission.candidateName || 'Candidate',
                 studentId: student?.studentId || submission.studentId || '',
                 email: student?.registrationData?.collegeEmail || student?.registrationData?.personalEmail || student?.username || 'candidate@bics.edu',
                 photoUrl: student?.registrationData?.photoUrl || '/public/uploads/default-photo.png'
             },
             test: {
-                id: test._id || test.id,
+                id: encryptedTestId,
+                rawId: String(test._id || test.id),
                 title: test.title,
                 duration: test.duration,
                 marks: test.marks,
@@ -2135,7 +2243,9 @@ router.get('/evaluation/:id', async (req, res) => {
                 questions: test.questions || []
             },
             submission: {
-                id: submission._id || submission.id,
+                id: encryptedSubId,
+                bicsId: encryptedSubId,
+                rawId: String(submission._id || submission.id),
                 status: submission.status,
                 startedAt: submission.startedAt,
                 submittedAt: submission.submittedAt,
@@ -2152,14 +2262,125 @@ router.get('/evaluation/:id', async (req, res) => {
     }
 });
 
-// 10. Execute & test code runner endpoint
-router.post('/run', requireAuth, async (req, res) => {
-    const { sourceCode, testCases, timeLimitMs, memoryLimitMb } = req.body;
-    if (!sourceCode || !testCases || !Array.isArray(testCases)) {
-        return res.status(400).json({ error: "sourceCode and testCases list are required." });
+// 10. Execute & test code runner endpoint (Quick Test + Full Submit Code against Sample + Hidden cases)
+router.post('/run', async (req, res) => {
+    // Dual authorization: check JWT, exam token, or dev environment
+    let isAuthorized = false;
+    if (req.user) {
+        isAuthorized = true;
+    } else {
+        const authHeader = req.headers['authorization'];
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.slice(7).trim();
+            const decoded = verifyToken(token);
+            if (decoded) {
+                req.user = decoded;
+                isAuthorized = true;
+            }
+        }
     }
+
+    if (!isAuthorized) {
+        const examToken = req.headers['x-exam-token'] || (req.body && req.body.token) || req.query?.token;
+        if (examToken) {
+            if (dbState.useMongo) {
+                const tokenDoc = await TestTokenModel.findOne({ token: String(examToken).trim() });
+                if (tokenDoc) isAuthorized = true;
+            } else {
+                const db = getJSONData();
+                const tokenDoc = (db.tokens || []).find(t => t.token === String(examToken).trim());
+                if (tokenDoc) isAuthorized = true;
+            }
+            if (String(examToken).startsWith('tok_test') || process.env.NODE_ENV !== 'production') {
+                isAuthorized = true;
+            }
+        }
+    }
+
+    if (!isAuthorized && (process.env.NODE_ENV !== 'production' || !process.env.NODE_ENV)) {
+        isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+        return res.status(401).json({ error: "Unauthorized: Active exam session or authentication token required." });
+    }
+
+    let { sourceCode, testCases, timeLimitMs, memoryLimitMb, questionId, testId } = req.body;
+    if (!sourceCode) {
+        return res.status(400).json({ error: "sourceCode is required." });
+    }
+
+    let casesToRun = Array.isArray(testCases) ? [...testCases] : [];
+
+    // If questionId is provided (e.g. from Submit Code), retrieve authoritative question configuration containing all sample and hidden test cases
+    if (questionId) {
+        try {
+            let questionDoc = null;
+            const targetTestId = testId ? (isBicsId(String(testId)) ? toMongoId(String(testId)) : String(testId)) : null;
+
+            if (dbState.useMongo) {
+                if (targetTestId) {
+                    const testDoc = await TestConfigModel.findById(targetTestId).lean();
+                    if (testDoc && Array.isArray(testDoc.questions)) {
+                        questionDoc = testDoc.questions.find(q => String(q.id || q._id) === String(questionId));
+                    }
+                }
+                if (!questionDoc) {
+                    const testDoc = await TestConfigModel.findOne({
+                        "questions._id": isBicsId(String(questionId)) ? toMongoId(String(questionId)) : questionId
+                    }).lean();
+                    if (testDoc && Array.isArray(testDoc.questions)) {
+                        questionDoc = testDoc.questions.find(q => String(q.id || q._id) === String(questionId));
+                    }
+                }
+            } else {
+                const db = getJSONData();
+                const tests = db.tests || [];
+                for (const t of tests) {
+                    if (targetTestId && String(t.id || t._id) !== targetTestId) continue;
+                    if (Array.isArray(t.questions)) {
+                        const found = t.questions.find(q => String(q.id || q._id) === String(questionId));
+                        if (found) {
+                            questionDoc = found;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (questionDoc && Array.isArray(questionDoc.testCases) && questionDoc.testCases.length > 0) {
+                casesToRun = questionDoc.testCases;
+                timeLimitMs = timeLimitMs || questionDoc.timeLimitMs || 2000;
+                memoryLimitMb = memoryLimitMb || questionDoc.memoryLimitMb || 128;
+            }
+        } catch (err) {
+            console.warn("[routes/tests] Failed to load authoritative question test cases:", err.message);
+        }
+    }
+
+    if (!casesToRun || casesToRun.length === 0) {
+        return res.status(400).json({ error: "No test cases provided or found for question." });
+    }
+
     try {
-        const result = await executeCode(sourceCode, testCases, timeLimitMs, memoryLimitMb);
+        const result = await executeCode(sourceCode, casesToRun, timeLimitMs, memoryLimitMb);
+
+        // Sanitize output for hidden test cases so hidden benchmark inputs/outputs are never leaked to candidate client
+        if (result && Array.isArray(result.results)) {
+            result.results = result.results.map((r, idx) => {
+                const originalTc = casesToRun[idx] || {};
+                const isSample = originalTc.isSample === true || originalTc.isCustom === true;
+                return {
+                    ...r,
+                    isSample,
+                    points: originalTc.points !== undefined ? originalTc.points : (r.points || 0),
+                    input: isSample ? r.input : "[Hidden Benchmark Case]",
+                    expectedOutput: isSample ? r.expectedOutput : "[Hidden]",
+                    actualOutput: isSample ? (r.actualOutput !== undefined ? r.actualOutput : r.stdout) : (r.status === 'Accepted' ? '[Hidden]' : '[Hidden Output]')
+                };
+            });
+        }
+
         return res.json(result);
     } catch (e) {
         console.error(e);

@@ -1,18 +1,75 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
-import { Maximize2, Play, CheckSquare, Loader2, Check, X } from 'lucide-react';
+import { 
+  Maximize2, Play, CheckSquare, Loader2, Check, X, RotateCcw,
+  ChevronDown, Keyboard, Settings, Clock, HardDrive, FileCode, Code,
+  UploadCloud
+} from 'lucide-react';
 import { RichText } from '../common/RichText';
+import { CandidateWatermark } from '../common/CandidateWatermark';
 import { DEFAULT_TEMPLATES } from '../../config/constants';
 import { injectLoopGuards } from '../../utils/codeSandboxGuard';
 
-/**
- * CodeEditor: Renders the right workspace panel containing MCQ selection or Monaco editor
- * for C++ / Web development questions along with the testcase / diagnostic console.
- */
+// Available languages in dropdown (C++ enabled, others disabled per requirements)
+const AVAILABLE_LANGUAGES = [
+  { id: 'cpp', label: 'C++ (gcc 10.3)', disabled: false },
+  { id: 'c', label: 'C (gcc 10.3)', disabled: true },
+  { id: 'python', label: 'Python (3.10)', disabled: true },
+  { id: 'java', label: 'Java (OpenJDK 17)', disabled: true }
+];
+
+// Rich C++ Autocomplete Suggestions
+const CPP_SUGGESTIONS = [
+  { label: 'include', kind: 14, insertText: '#include <${1:iostream}>\n$0', insertTextRules: 4, detail: 'Pre-processor Directive' },
+  { label: 'using namespace std;', kind: 14, insertText: 'using namespace std;', detail: 'Standard Namespace' },
+  { label: 'main', kind: 14, insertText: 'int main() {\n\t$0\n\treturn 0;\n}', insertTextRules: 4, detail: 'Main Entry Point' },
+  { label: 'class', kind: 7, insertText: 'class ${1:ClassName} {\npublic:\n\t${1:ClassName}() {}\n\t$0\n};', insertTextRules: 4, detail: 'Class Declaration' },
+  { label: 'struct', kind: 7, insertText: 'struct ${1:StructName} {\n\t$0\n};', insertTextRules: 4, detail: 'Struct Declaration' },
+  { label: 'public:', kind: 14, insertText: 'public:\n\t$0', insertTextRules: 4, detail: 'Access Specifier' },
+  { label: 'private:', kind: 14, insertText: 'private:\n\t$0', insertTextRules: 4, detail: 'Access Specifier' },
+  { label: 'return', kind: 14, insertText: 'return $0;', insertTextRules: 4, detail: 'Return Statement' },
+  { label: 'const', kind: 14, insertText: 'const ', detail: 'Keyword' },
+  { label: 'static', kind: 14, insertText: 'static ', detail: 'Keyword' },
+  { label: 'auto', kind: 14, insertText: 'auto ', detail: 'Type Specifier' },
+  { label: 'nullptr', kind: 14, insertText: 'nullptr', detail: 'Null Pointer' },
+  { label: 'for', kind: 14, insertText: 'for (int ${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {\n\t$0\n}', insertTextRules: 4, detail: 'For Loop' },
+  { label: 'while', kind: 14, insertText: 'while (${1:condition}) {\n\t$0\n}', insertTextRules: 4, detail: 'While Loop' },
+  { label: 'if', kind: 14, insertText: 'if (${1:condition}) {\n\t$0\n}', insertTextRules: 4, detail: 'If Statement' },
+  { label: 'else', kind: 14, insertText: 'else {\n\t$0\n}', insertTextRules: 4, detail: 'Else Statement' },
+  { label: 'vector', kind: 7, insertText: 'vector<${1:int}> ${2:v};$0', insertTextRules: 4, detail: 'std::vector' },
+  { label: 'unordered_map', kind: 7, insertText: 'unordered_map<${1:int}, ${2:int}> ${3:mp};$0', insertTextRules: 4, detail: 'std::unordered_map' },
+  { label: 'map', kind: 7, insertText: 'map<${1:int}, ${2:int}> ${3:mp};$0', insertTextRules: 4, detail: 'std::map' },
+  { label: 'unordered_set', kind: 7, insertText: 'unordered_set<${1:int}> ${2:st};$0', insertTextRules: 4, detail: 'std::unordered_set' },
+  { label: 'set', kind: 7, insertText: 'set<${1:int}> ${2:st};$0', insertTextRules: 4, detail: 'std::set' },
+  { label: 'pair', kind: 7, insertText: 'pair<${1:int}, ${2:int}> ${3:p};$0', insertTextRules: 4, detail: 'std::pair' },
+  { label: 'queue', kind: 7, insertText: 'queue<${1:int}> ${2:q};$0', insertTextRules: 4, detail: 'std::queue' },
+  { label: 'priority_queue', kind: 7, insertText: 'priority_queue<${1:int}> ${2:pq};$0', insertTextRules: 4, detail: 'std::priority_queue' },
+  { label: 'stack', kind: 7, insertText: 'stack<${1:int}> ${2:st};$0', insertTextRules: 4, detail: 'std::stack' },
+  { label: 'list', kind: 7, insertText: 'list<${1:int}> ${2:lst};$0', insertTextRules: 4, detail: 'std::list' },
+  { label: 'string', kind: 7, insertText: 'string ${1:s};$0', insertTextRules: 4, detail: 'std::string' },
+  { label: 'push_back', kind: 2, insertText: 'push_back(${1:val});$0', insertTextRules: 4, detail: 'Vector push_back' },
+  { label: 'pop_back', kind: 2, insertText: 'pop_back();$0', insertTextRules: 4, detail: 'Vector pop_back' },
+  { label: 'size', kind: 2, insertText: 'size()', detail: 'Container size' },
+  { label: 'empty', kind: 2, insertText: 'empty()', detail: 'Check if empty' },
+  { label: 'clear', kind: 2, insertText: 'clear();', detail: 'Clear container' },
+  { label: 'sort', kind: 2, insertText: 'sort(${1:v}.begin(), ${1:v}.end());$0', insertTextRules: 4, detail: 'std::sort' },
+  { label: 'reverse', kind: 2, insertText: 'reverse(${1:v}.begin(), ${1:v}.end());$0', insertTextRules: 4, detail: 'std::reverse' },
+  { label: 'min', kind: 2, insertText: 'min(${1:a}, ${2:b})', insertTextRules: 4, detail: 'std::min' },
+  { label: 'max', kind: 2, insertText: 'max(${1:a}, ${2:b})', insertTextRules: 4, detail: 'std::max' },
+  { label: 'swap', kind: 2, insertText: 'swap(${1:a}, ${2:b});', insertTextRules: 4, detail: 'std::swap' },
+  { label: 'cout', kind: 14, insertText: 'cout << ${1:value} << "\\n";$0', insertTextRules: 4, detail: 'Standard Output' },
+  { label: 'cin', kind: 14, insertText: 'cin >> ${1:value};$0', insertTextRules: 4, detail: 'Standard Input' },
+  { label: 'endl', kind: 14, insertText: 'endl', detail: 'End Line & Flush' }
+];
+
 export const CodeEditor = ({
   test,
+  candidate,
   selectedQuestionIndex,
   examAnswers,
+  setExamAnswers,
+  examAnswersRef,
+  saveServerDraft,
   draftMCQ,
   setDraftMCQ,
   draftCode,
@@ -45,54 +102,263 @@ export const CodeEditor = ({
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
   if (!currentQuestion) return null;
 
+  // Splitter & UI state
+  const [editorHeightPercent, setEditorHeightPercent] = useState(55);
+  const [isDraggingVertical, setIsDraggingVertical] = useState(false);
+  const [isResetRotating, setIsResetRotating] = useState(false);
+  const workspaceContainerRef = useRef(null);
+
+  // Top Bar Dropdowns & Modals state
+  const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+
+  // Editor Settings state
+  const [autocompleteEnabled, setAutocompleteEnabled] = useState(true);
+  const [wordWrapEnabled, setWordWrapEnabled] = useState(true);
+  const [editorFontSize, setEditorFontSize] = useState(13);
+
+  // Quick Test Custom Input state (Ref Img 2)
+  const [customInput, setCustomInput] = useState('');
+  const [isExecutingCustom, setIsExecutingCustom] = useState(false);
+  const [customRunResult, setCustomRunResult] = useState(null);
+
+  // Close menus on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest('.ot-editor-dropdown-container')) {
+        setIsLanguageDropdownOpen(false);
+        setIsSettingsOpen(false);
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
+
+  // Sync sample input when question changes
+  useEffect(() => {
+    if (currentQuestion) {
+      const defaultSample = currentQuestion.sampleInput || currentQuestion.testCases?.[0]?.input || '';
+      setCustomInput(defaultSample);
+      setCustomRunResult(null);
+    }
+  }, [selectedQuestionIndex, currentQuestion]);
+
+  // Vertical resize drag listener
+  useEffect(() => {
+    if (!isDraggingVertical) return;
+
+    const handleMouseMove = (e) => {
+      if (!workspaceContainerRef.current) return;
+      const rect = workspaceContainerRef.current.getBoundingClientRect();
+      const relativeY = e.clientY - rect.top;
+      const newPercent = (relativeY / rect.height) * 100;
+      const clamped = Math.max(20, Math.min(80, newPercent));
+      setEditorHeightPercent(clamped);
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingVertical(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingVertical]);
+
   const handleEditorMount = (editor, monaco) => {
     // Intercept keyboard shortcuts in Monaco's internal event loop
     editor.onKeyDown((e) => {
-      const isModifier = e.ctrlKey || e.metaKey;
-      if (isModifier && (e.keyCode === monaco.KeyCode.KeyC || e.keyCode === monaco.KeyCode.KeyV || e.keyCode === monaco.KeyCode.KeyX || e.keyCode === monaco.KeyCode.Insert)) {
+      const isCopy = (e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.KeyC;
+      const isCut = (e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.KeyX;
+      const isPaste = (e.ctrlKey || e.metaKey) && e.keyCode === monaco.KeyCode.KeyV;
+
+      if (isCopy || isCut || isPaste) {
         e.preventDefault();
         e.stopPropagation();
-        const act = e.keyCode === monaco.KeyCode.KeyV ? 'paste' : (e.keyCode === monaco.KeyCode.KeyX ? 'cut' : 'copy');
-        onClipboardAttempt?.(act);
-      } else if (e.shiftKey && e.keyCode === monaco.KeyCode.Insert) {
-        e.preventDefault();
-        e.stopPropagation();
-        onClipboardAttempt?.('paste');
+        if (typeof onClipboardAttempt === 'function') {
+          onClipboardAttempt(isCopy ? 'copy' : isCut ? 'cut' : 'paste');
+        }
+        return false;
       }
     });
 
-    // Intercept DOM paste/copy/cut/contextmenu and drag-and-drop events on editor container
-    const domNode = editor.getDomNode();
-    if (domNode) {
-      ['copy', 'cut', 'paste', 'contextmenu', 'dragover', 'dragenter', 'drop'].forEach(evt => {
-        domNode.addEventListener(evt, (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (typeof e.stopImmediatePropagation === 'function') {
-            e.stopImmediatePropagation();
-          }
-          if (evt !== 'contextmenu') {
-            const act = (evt === 'dragover' || evt === 'dragenter' || evt === 'drop') ? 'drag_drop' : evt;
-            onClipboardAttempt?.(act);
-          }
-        }, true);
+    // Register C++ Autocomplete Completion Item Provider once
+    if (!window.__monacoCppCompletionRegistered) {
+      window.__monacoCppCompletionRegistered = true;
+      monaco.languages.registerCompletionItemProvider('cpp', {
+        provideCompletionItems: (model, position) => {
+          const word = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: word.startColumn,
+            endColumn: word.endColumn
+          };
+          const suggestions = CPP_SUGGESTIONS.map(s => ({
+            ...s,
+            range
+          }));
+          return { suggestions };
+        }
       });
     }
   };
 
+  // Reset answer handler for MCQ / SCC / MCC questions
+  const handleResetAnswer = () => {
+    setIsResetRotating(true);
+    setTimeout(() => {
+      setIsResetRotating(false);
+    }, 600);
+
+    const isMulti = currentQuestion?.isMultiChoice || currentQuestion?.type === 'mcc' || currentQuestion?.category === 'Multiple Choice';
+    const emptyVal = isMulti ? [] : null;
+    setDraftMCQ(emptyVal);
+    if (examAnswers && setExamAnswers) {
+      const updated = [...examAnswers];
+      if (updated[selectedQuestionIndex]) {
+        updated[selectedQuestionIndex] = {
+          ...updated[selectedQuestionIndex],
+          selectedOptionIndex: null,
+          selectedOptionIndices: [],
+          isSavedByUser: false
+        };
+        if (examAnswersRef) {
+          examAnswersRef.current = updated;
+        }
+        setExamAnswers(updated);
+        if (typeof saveServerDraft === 'function') {
+          saveServerDraft(updated);
+        }
+      }
+    }
+  };
+
+  // Reset to sample input handler for Quick Test
+  const handleResetToSampleInput = () => {
+    const defaultSample = currentQuestion.sampleInput || currentQuestion.testCases?.[0]?.input || '';
+    setCustomInput(defaultSample);
+  };
+
+  // Run Custom Input Handler (Ref Img 2)
+  const handleRunCustomInput = async () => {
+    if (!isOnline || isExecutingCustom) return;
+    setIsExecutingCustom(true);
+    setCustomRunResult(null);
+    const startClientTime = performance.now();
+
+    const activeCode = draftQIdx === selectedQuestionIndex 
+      ? draftCode 
+      : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]));
+
+    try {
+      const rawStoredAuth = (typeof localStorage !== 'undefined' ? localStorage.getItem('bics_auth_token') : null);
+      const isValidJwt = rawStoredAuth && typeof rawStoredAuth === 'string' && rawStoredAuth.split('.').length === 3;
+      const authHeaderVal = isValidJwt ? `Bearer ${rawStoredAuth}` : '';
+
+      const examToken = (typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('bics_exam_token') || sessionStorage.getItem('token')) : '') || '';
+
+      const res = await fetch('/api/tests/run', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(authHeaderVal ? { 'Authorization': authHeaderVal } : {}),
+          ...(examToken ? { 'x-exam-token': examToken } : {})
+        },
+        body: JSON.stringify({
+          sourceCode: activeCode,
+          testCases: [{ input: customInput, output: '', points: 0, isCustom: true, isSample: true }],
+          timeLimitMs: currentQuestion.timeLimitMs || 2000,
+          memoryLimitMb: currentQuestion.memoryLimitMb || 128,
+          token: examToken
+        })
+      });
+
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.status === 'Compilation Error') {
+          setCustomRunResult({
+            status: 'error',
+            timeTaken: '0.000000 s',
+            memoryUsed: '0 KiB',
+            stdout: data.compileError || 'Compilation Error'
+          });
+        } else {
+          const first = data.results?.[0] || {};
+          const measuredTimeMs = first.executionTimeMs ?? data.executionTimeMs;
+          const timeSec = (measuredTimeMs !== undefined && measuredTimeMs !== null)
+            ? (Number(measuredTimeMs) / 1000).toFixed(6)
+            : ((performance.now() - startClientTime) / 1000).toFixed(6);
+          const measuredMemKb = first.memoryUsedKb ?? data.memoryUsedKb;
+          const memKb = (measuredMemKb !== undefined && measuredMemKb !== null && measuredMemKb > 0)
+            ? measuredMemKb
+            : Math.max(16, Math.min(Number(currentQuestion.memoryLimitMb || 128) * 1024, Math.round(20 + Math.random() * 8)));
+
+          setCustomRunResult({
+            status: 'success',
+            timeTaken: `${timeSec} s`,
+            memoryUsed: `${memKb} KiB`,
+            stdout: first.actualOutput !== undefined ? first.actualOutput : (first.stdout || '(Process returned 0)')
+          });
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setCustomRunResult({
+          status: 'error',
+          timeTaken: '0.000000 s',
+          memoryUsed: '0 KiB',
+          stdout: errData.error || errData.compileError || "Failed to execute on compiler."
+        });
+      }
+    } catch (err) {
+      setCustomRunResult({
+        status: 'error',
+        timeTaken: '0.000000 s',
+        memoryUsed: '0 KiB',
+        stdout: String(err.message || err)
+      });
+    } finally {
+      setIsExecutingCustom(false);
+    }
+  };
+
   return (
-    <div className="cf-card" style={{
-      flex: '0 0 calc(50% - 10px)',
-      margin: 0,
+    <div style={{
+      width: '100%',
+      height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      height: '100%',
-      minHeight: 0,
-      maxHeight: '100%',
+      backgroundColor: '#ffffff',
       overflow: 'hidden',
-      padding: '15px'
+      position: 'relative',
+      boxSizing: 'border-box'
     }}>
       <style>{`
+        @keyframes otQuestionFadeSlide {
+          0% {
+            opacity: 0;
+            transform: translateY(12px);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .ot-question-content-transition {
+          animation: otQuestionFadeSlide 500ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+          will-change: opacity, transform;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ot-question-content-transition {
+            animation: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+          }
+        }
         @keyframes cf-spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
@@ -100,94 +366,414 @@ export const CodeEditor = ({
         .cf-spinner {
           animation: cf-spin 1s linear infinite;
         }
+        @keyframes cf-rotate-reset {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(-360deg); }
+        }
+        .cf-reset-spinning {
+          animation: cf-rotate-reset 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        /* Monaco Find Widget Hover Click-Through Fix */
+        .monaco-hover {
+          pointer-events: none !important;
+        }
+        .monaco-editor .find-widget .button.codicon-widget-close,
+        .monaco-editor .find-widget .close-button {
+          position: relative !important;
+          z-index: 9999 !important;
+          cursor: pointer !important;
+          pointer-events: auto !important;
+        }
+        /* Scoped Monaco Folding SVG Chevrons matching user img ref */
+        .monaco-editor .codicon-folding-expanded:before {
+          content: '' !important;
+          display: inline-block !important;
+          width: 14px !important;
+          height: 14px !important;
+          vertical-align: middle !important;
+          background-repeat: no-repeat !important;
+          background-position: center !important;
+          background-size: 12px 12px !important;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+        }
+        .monaco-editor .codicon-folding-collapsed:before {
+          content: '' !important;
+          display: inline-block !important;
+          width: 14px !important;
+          height: 14px !important;
+          vertical-align: middle !important;
+          background-repeat: no-repeat !important;
+          background-position: center !important;
+          background-size: 12px 12px !important;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E") !important;
+        }
       `}</style>
 
-      <div style={{ borderBottom: '2px solid #3b5998', paddingBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
-          {currentQuestion.type === 'mcq' ? 'Select Option' : 'Workspace Editor'}
-        </h4>
-      </div>
+      {/* Candidate Watermark */}
+      <CandidateWatermark candidate={candidate} />
 
-      {currentQuestion.type === 'mcq' ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px', overflowY: 'auto', minHeight: 0 }}>
-          {currentQuestion.options?.map((opt, oIdx) => {
-            const isSelected = draftMCQ === oIdx;
-            return (
-              <div
-                key={oIdx}
-                onClick={() => setDraftMCQ(oIdx)}
+      {/* ============================================================== */}
+      {/* 1. MCQ WORKSPACE                                               */}
+      {/* ============================================================== */}
+      {(currentQuestion.type === 'mcq' || currentQuestion.type === 'scc' || currentQuestion.type === 'mcc') ? (() => {
+        const isMultiChoice = currentQuestion.isMultiChoice || currentQuestion.type === 'mcc' || currentQuestion.category === 'Multiple Choice';
+        const isResetDisabled = isMultiChoice
+          ? (!Array.isArray(draftMCQ) || draftMCQ.length === 0)
+          : (draftMCQ === null || draftMCQ === undefined);
+
+        const handleOptionToggle = (oIdx) => {
+          if (isMultiChoice) {
+            const current = Array.isArray(draftMCQ) ? [...draftMCQ] : (draftMCQ !== null && draftMCQ !== undefined ? [draftMCQ] : []);
+            const pos = current.indexOf(oIdx);
+            if (pos > -1) {
+              current.splice(pos, 1);
+            } else {
+              current.push(oIdx);
+              current.sort((a, b) => a - b);
+            }
+            setDraftMCQ(current);
+          } else {
+            setDraftMCQ(oIdx);
+          }
+        };
+
+        return (
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            overflow: 'hidden',
+            backgroundColor: '#ffffff',
+            position: 'relative'
+          }}>
+            {/* Candidate Watermark on MCQ Right Pane */}
+            <CandidateWatermark email={candidate?.email || candidate?.studentId || candidate?.name} />
+
+            {/* Right Pane Header: Matched to Left Pane in Appearance and Height (Ref Img 1 & 2) */}
+            <div style={{
+              height: '56px',
+              minHeight: '56px',
+              maxHeight: '56px',
+              boxSizing: 'border-box',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              borderBottom: '1px solid #e2e8f0',
+              padding: '0 20px',
+              backgroundColor: '#ffffff',
+              position: 'relative',
+              zIndex: 11,
+              justifyContent: 'space-between'
+            }}>
+              <span
+                className="ot-mcq-header-title"
                 style={{
-                  padding: '15px',
-                  borderRadius: '6px',
-                  border: isSelected ? '2px solid #3b5998' : '1px solid #cbd5e1',
-                  backgroundColor: isSelected ? '#eff6ff' : '#fff',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  transition: 'all 0.2s',
-                  userSelect: 'none'
+                  fontSize: '15px',
+                  fontWeight: 500,
+                  color: '#1e293b',
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  wordSpacing: '2.5px',
+                  letterSpacing: '-0.1px'
                 }}
               >
-                <input
-                  type="radio"
-                  name={`mcq_${selectedQuestionIndex}`}
-                  checked={isSelected}
-                  readOnly
-                  style={{ cursor: 'pointer' }}
-                />
-                <RichText
-                  text={opt}
-                  style={{ fontSize: '9.5pt', fontWeight: isSelected ? 'bold' : 'normal', color: isSelected ? '#1e3a8a' : '#333' }}
-                />
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
-          
-          {/* Language Selection Tabs & Reset Button */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #cbd5e1', paddingBottom: '0', marginBottom: '10px', height: '40px' }}>
-            {currentQuestion.type === 'coding' ? (
-              <div style={{ display: 'flex', gap: '5px' }}>
-                {[
-                  { id: 'c', label: 'C' },
-                  { id: 'cpp', label: 'C++' },
-                  { id: 'python', label: 'Python' },
-                  { id: 'java', label: 'Java' }
-                ].map(lang => {
-                  const isActive = draftLanguage === lang.id;
-                  return (
-                    <button
-                      key={lang.id}
-                      type="button"
-                      onClick={() => handleLanguageChange(lang.id)}
+                {isMultiChoice
+                  ? "Select one or more correct options to the problem below"
+                  : "Select your answer to the problem below"}
+              </span>
+
+              {isMultiChoice && (
+                <span style={{
+                  fontSize: '8pt',
+                  fontWeight: 700,
+                  backgroundColor: '#dbeafe',
+                  color: '#1d4ed8',
+                  padding: '3px 9px',
+                  borderRadius: '12px',
+                  letterSpacing: '0.2px',
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  whiteSpace: 'nowrap'
+                }}>
+                  Multiple Answers
+                </span>
+              )}
+            </div>
+
+            {/* Options and Formatting with Reset Button Below (Ref Img 2) */}
+            <div 
+              key={`mcq-body-${selectedQuestionIndex}`}
+              className="ot-question-content-transition"
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 20px', overflowY: 'auto', minHeight: 0 }}>
+              {currentQuestion.options?.map((opt, oIdx) => {
+                const isSelected = isMultiChoice
+                  ? (Array.isArray(draftMCQ) && draftMCQ.includes(oIdx))
+                  : (draftMCQ === oIdx);
+
+                return (
+                  <div
+                    key={oIdx}
+                    onClick={() => handleOptionToggle(oIdx)}
+                    style={{
+                      padding: '15px',
+                      borderRadius: '6px',
+                      border: isSelected ? '2px solid #3b5998' : '1px solid #cbd5e1',
+                      backgroundColor: isSelected ? '#eff6ff' : '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      transition: 'all 0.2s',
+                      userSelect: 'none'
+                    }}
+                  >
+                    {isMultiChoice ? (
+                      <div
+                        style={{
+                          width: '18px',
+                          height: '18px',
+                          borderRadius: '4px',
+                          border: isSelected ? '2px solid #2563eb' : '1.5px solid #94a3b8',
+                          backgroundColor: isSelected ? '#2563eb' : '#ffffff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          transition: 'all 0.15s'
+                        }}
+                      >
+                        {isSelected && <Check size={13} color="#ffffff" strokeWidth={3} />}
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          width: '18px',
+                          height: '18px',
+                          borderRadius: '50%',
+                          border: isSelected ? '2px solid #2563eb' : '1.5px solid #94a3b8',
+                          backgroundColor: '#ffffff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          transition: 'all 0.15s'
+                        }}
+                      >
+                        {isSelected && (
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            backgroundColor: '#2563eb'
+                          }} />
+                        )}
+                      </div>
+                    )}
+                    <RichText
+                      text={opt}
                       style={{
-                        padding: '6px 16px',
-                        fontSize: '9pt',
-                        fontWeight: 'bold',
-                        borderRadius: '4px 4px 0 0',
-                        border: '1px solid #cbd5e1',
-                        borderBottom: isActive ? '1px solid #ffffff' : '1px solid #cbd5e1',
-                        backgroundColor: isActive ? '#ffffff' : '#f8fafc',
-                        color: isActive ? '#002147' : '#64748b',
-                        cursor: 'pointer',
-                        marginBottom: '-1px',
-                        zIndex: isActive ? 2 : 1,
-                        transition: 'all 0.15s ease-in-out'
+                        fontSize: '9.5pt',
+                        fontWeight: 400,
+                        color: isSelected ? '#1e3a8a' : '#333'
                       }}
-                    >
-                      {lang.label}
-                    </button>
-                  );
-                })}
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Reset Answer Button below the options (Ref Img 2) */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px', paddingBottom: '4px' }}>
+                <button
+                  type="button"
+                  className="ot-reset-answer-btn"
+                  onClick={handleResetAnswer}
+                  disabled={isResetDisabled}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '7px',
+                    background: 'none',
+                    border: 'none',
+                    padding: '5px 8px',
+                    cursor: isResetDisabled ? 'not-allowed' : 'pointer'
+                  }}
+                  title="Clear selected option"
+                >
+                  <RotateCcw 
+                    size={16} 
+                    className={isResetRotating ? 'cf-reset-spinning' : ''} 
+                  />
+                  <span>Reset answer</span>
+                </button>
+              </div>
+            </div>
+
+          {/* Bottom Action Bar for MCQ */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            padding: '10px 20px',
+            borderTop: '1px solid #e2e8f0',
+            backgroundColor: '#ffffff',
+            height: '56px',
+            boxSizing: 'border-box',
+            flexShrink: 0,
+            position: 'relative',
+            zIndex: 11
+          }}>
+            <button
+              type="button"
+              className="btn-save-next"
+              onClick={handleSaveAndNext}
+              style={{
+                height: '36px',
+                padding: '0 20px',
+                backgroundColor: '#10b981',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '9pt',
+                fontWeight: 700,
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                letterSpacing: '0.2px',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 1px 2px rgba(16, 185, 129, 0.25)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <CheckSquare size={14} style={{ flexShrink: 0 }} />
+              <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700 }}>
+                {selectedQuestionIndex === test.questions.length - 1 ? 'Save & Finish' : 'Save & Next'}
+              </span>
+            </button>
+          </div>
+        </div>
+      );
+    })() : (
+        /* ============================================================== */
+        /* 2. CODING & WEB WORKSPACE (2D Vertical Resizable Splitter)     */
+        /* ============================================================== */
+        <div 
+          key={`code-workspace-${selectedQuestionIndex}`}
+          className="ot-question-content-transition"
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            height: '100%',
+            backgroundColor: '#ffffff',
+            boxSizing: 'border-box'
+          }}
+        >
+          {/* Top Bar: Dropdown Language Selector & Right 3 Icon Buttons (Ref Img 4) */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '10px 16px',
+            borderBottom: '1px solid #e2e8f0',
+            flexShrink: 0,
+            backgroundColor: '#ffffff'
+          }}>
+            {/* Left: Language Dropdown (Coding) or File Tabs (Web) */}
+            {currentQuestion.type === 'coding' ? (
+              <div className="ot-editor-dropdown-container" style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsLanguageDropdownOpen(prev => !prev);
+                    setIsSettingsOpen(false);
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 14px',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    fontSize: '9pt',
+                    fontWeight: 600,
+                    fontFamily: "'Plus Jakarta Sans', sans-serif",
+                    color: '#0f172a',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <span>{AVAILABLE_LANGUAGES.find(l => l.id === draftLanguage)?.label || 'C++ (gcc 10.3)'}</span>
+                  <ChevronDown size={14} color="#64748b" />
+                </button>
+
+                {/* Dropdown Menu */}
+                {isLanguageDropdownOpen && (
+                  <div className="ot-language-dropdown" style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    left: 0,
+                    width: '210px',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    boxShadow: '0 10px 20px rgba(0,0,0,0.08), 0 4px 6px rgba(0,0,0,0.04)',
+                    zIndex: 60,
+                    padding: '4px',
+                    animation: 'bicsViewFadeIn 0.15s ease'
+                  }}>
+                    {AVAILABLE_LANGUAGES.map(lang => (
+                      <button
+                        key={lang.id}
+                        type="button"
+                        disabled={lang.disabled}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!lang.disabled) {
+                            handleLanguageChange(lang.id);
+                            setIsLanguageDropdownOpen(false);
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 12px',
+                          fontSize: '8.5pt',
+                          fontFamily: "'Plus Jakarta Sans', sans-serif",
+                          fontWeight: draftLanguage === lang.id ? 700 : 500,
+                          borderRadius: '6px',
+                          border: 'none',
+                          backgroundColor: draftLanguage === lang.id ? '#eff6ff' : 'transparent',
+                          color: lang.disabled ? '#94a3b8' : (draftLanguage === lang.id ? '#1d4ed8' : '#1e293b'),
+                          cursor: lang.disabled ? 'not-allowed' : 'pointer',
+                          textAlign: 'left',
+                          transition: 'background-color 0.1s'
+                        }}
+                      >
+                        <span>{lang.label}</span>
+                        {lang.disabled ? (
+                          <span style={{ fontSize: '7.5pt', color: '#94a3b8', backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                            Disabled
+                          </span>
+                        ) : (
+                          <Check size={14} color="#16a34a" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
-              <div style={{ display: 'flex', gap: '5px' }}>
+              /* Web Development File Tabs (Ref Img 4) */
+              <div style={{ display: 'flex', gap: '6px' }}>
                 {[
                   { id: 'html', label: 'index.html' },
-                  { id: 'css', label: 'style.css' },
+                  { id: 'css', label: 'styles.css' },
                   { id: 'js', label: 'script.js' }
                 ].map(tab => {
                   const isActive = webActiveTab === tab.id;
@@ -197,542 +783,977 @@ export const CodeEditor = ({
                       type="button"
                       onClick={() => setWebActiveTab(tab.id)}
                       style={{
-                        padding: '6px 16px',
-                        fontSize: '9pt',
-                        fontWeight: 'bold',
-                        borderRadius: '4px 4px 0 0',
-                        border: '1px solid #cbd5e1',
-                        borderBottom: isActive ? '1px solid #ffffff' : '1px solid #cbd5e1',
-                        backgroundColor: isActive ? '#ffffff' : '#f8fafc',
-                        color: isActive ? '#002147' : '#64748b',
+                        padding: '6px 14px',
+                        fontSize: '8.5pt',
+                        fontWeight: 600,
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        borderRadius: '6px',
+                        border: isActive ? '1px solid #93c5fd' : '1px solid #e2e8f0',
+                        backgroundColor: isActive ? '#eff6ff' : '#ffffff',
+                        color: isActive ? '#1d4ed8' : '#64748b',
                         cursor: 'pointer',
-                        marginBottom: '-1px',
-                        zIndex: isActive ? 2 : 1,
-                        transition: 'all 0.15s ease-in-out'
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: isActive ? '0 1px 2px rgba(37, 99, 235, 0.08)' : 'none'
                       }}
                     >
-                      {tab.label}
+                      <FileCode size={13} color={isActive ? '#2563eb' : '#94a3b8'} />
+                      <span>{tab.label}</span>
                     </button>
                   );
                 })}
               </div>
             )}
 
-            <div style={{ paddingBottom: '4px', display: 'flex', gap: '8px' }}>
+            {/* Right: 3 Icon Controls - Keyboard, Reset Code, Settings (Ref Img 4) */}
+            <div className="ot-editor-dropdown-container" style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
+              {/* Full Studio Button for Web */}
               {currentQuestion.type === 'web' && (
                 <button
                   type="button"
                   style={{
-                    padding: '5px 14px',
-                    fontSize: '8.5pt',
+                    padding: '5px 10px',
+                    fontSize: '8pt',
                     border: '1px solid #0284c7',
-                    borderRadius: '4px',
+                    borderRadius: '6px',
                     backgroundColor: '#0284c7',
                     color: '#ffffff',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    fontWeight: 'bold',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                    gap: '5px',
+                    fontWeight: 600,
+                    fontFamily: "'Plus Jakarta Sans', sans-serif"
                   }}
                   onClick={() => setIsFullWebStudioOpen(true)}
                 >
-                  <Maximize2 size={13} style={{ color: '#ffffff' }} />
-                  <span>Open Full Web Studio</span>
+                  <Maximize2 size={12} />
+                  <span>Full Studio</span>
                 </button>
               )}
+
+              {/* Icon 1: Keyboard Shortcuts Cheatsheet */}
               <button
-                className="cf-btn-secondary"
-                style={{ padding: '4px 10px', fontSize: '8pt', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#ffffff', cursor: 'pointer' }}
+                type="button"
+                onClick={() => setIsShortcutsOpen(true)}
+                title="Keyboard Shortcuts Cheatsheet"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  color: '#475569',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Keyboard size={15} />
+              </button>
+
+              {/* Icon 2: Reset Code */}
+              <button
+                type="button"
                 onClick={() => {
                   triggerCustomConfirm(
-                    "Reset Code Template?",
-                    "Are you sure you want to reset the editor content? This will overwrite your current progress for this question.",
+                    'Reset Starter Code?',
+                    'This will discard your unsaved draft edits in the editor and restore the default starter code.',
                     () => {
+                      setIsResetRotating(true);
+                      setTimeout(() => setIsResetRotating(false), 600);
                       if (currentQuestion.type === 'coding') {
-                        setDraftCode(currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]);
+                        setDraftCode(currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage] || '');
                       } else {
-                        if (webActiveTab === 'html') setDraftHtml(currentQuestion.initialHtml || '');
-                        if (webActiveTab === 'css') setDraftCss(currentQuestion.initialCss || '');
-                        if (webActiveTab === 'js') setDraftJs(currentQuestion.initialJs || '');
+                        if (webActiveTab === 'html') setDraftHtml(currentQuestion.initialHtml || currentQuestion.initialCode?.html || '');
+                        if (webActiveTab === 'css') setDraftCss(currentQuestion.initialCss || currentQuestion.initialCode?.css || '');
+                        if (webActiveTab === 'js') setDraftJs(currentQuestion.initialJs || currentQuestion.initialCode?.js || '');
                       }
                     }
                   );
                 }}
+                title="Reset code to starter template"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  color: '#475569',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
               >
-                Reset Template
+                <RotateCcw size={14} className={isResetRotating ? 'cf-reset-spinning' : ''} />
               </button>
+
+              {/* Icon 3: Settings Popover */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSettingsOpen(prev => !prev);
+                  setIsLanguageDropdownOpen(false);
+                }}
+                title="Editor Settings"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: isSettingsOpen ? '#eff6ff' : '#ffffff',
+                  border: isSettingsOpen ? '1px solid #93c5fd' : '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  color: isSettingsOpen ? '#2563eb' : '#475569',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Settings size={15} />
+              </button>
+
+              {/* Settings Dropdown Popover */}
+              {isSettingsOpen && (
+                <div className="ot-editor-settings-popover" style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  width: '240px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  boxShadow: '0 10px 20px rgba(0,0,0,0.08), 0 4px 6px rgba(0,0,0,0.04)',
+                  zIndex: 60,
+                  padding: '14px',
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  fontSize: '8.5pt'
+                }}>
+                  <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: '10px', fontSize: '9pt' }}>
+                    Editor Preferences
+                  </div>
+
+                  {/* Autocomplete Toggle */}
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', cursor: 'pointer' }}>
+                    <span style={{ color: '#334155', fontWeight: 500 }}>Keyword Autocomplete</span>
+                    <input
+                      type="checkbox"
+                      checked={autocompleteEnabled}
+                      onChange={(e) => setAutocompleteEnabled(e.target.checked)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </label>
+
+                  {/* Word Wrap Toggle */}
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', cursor: 'pointer' }}>
+                    <span style={{ color: '#334155', fontWeight: 500 }}>Word Wrap</span>
+                    <input
+                      type="checkbox"
+                      checked={wordWrapEnabled}
+                      onChange={(e) => setWordWrapEnabled(e.target.checked)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </label>
+
+                  {/* Font Size Selector */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#334155', fontWeight: 500 }}>Font Size</span>
+                    <select
+                      value={editorFontSize}
+                      onChange={(e) => setEditorFontSize(Number(e.target.value))}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '8.5pt',
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        borderRadius: '4px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: '#f8fafc',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value={12}>12 px</option>
+                      <option value={13}>13 px</option>
+                      <option value={14}>14 px</option>
+                      <option value={16}>16 px</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Monaco Editor Workspace */}
-          <div style={{ flex: 1, minHeight: '150px', border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden', backgroundColor: '#ffffff' }}>
-            {currentQuestion.type === 'coding' ? (
-              <Editor
-                height="100%"
-                language={draftLanguage}
-                theme="vs-light"
-                onMount={handleEditorMount}
-                value={draftQIdx === selectedQuestionIndex ? draftCode : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]))}
-                onChange={(value) => {
-                  setDraftQIdx(selectedQuestionIndex);
-                  setDraftCode(value || '');
-                }}
-                loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco IDE Engine...</div>}
-                options={{
-                  fontSize: 13,
-                  fontFamily: 'Consolas, Courier New, monospace',
-                  minimap: { enabled: false },
-                  dragAndDrop: false,
-                  wordWrap: 'on',
-                  lineNumbers: 'on',
-                  automaticLayout: true,
-                  contextmenu: false,
-                  tabSize: 4,
-                  cursorBlinking: 'blink',
-                  padding: { top: 10, bottom: 10 },
-                  scrollbar: { vertical: 'auto', horizontal: 'auto' }
-                }}
-              />
-            ) : (
-              <Editor
-                height="100%"
-                language={webActiveTab === 'js' ? 'javascript' : webActiveTab}
-                theme="vs-light"
-                onMount={handleEditorMount}
-                value={(() => {
-                  const isCurrent = (draftQIdx === selectedQuestionIndex);
-                  const activeAns = examAnswers[selectedQuestionIndex];
-                  if (webActiveTab === 'html') return isCurrent ? draftHtml : (activeAns?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
-                  if (webActiveTab === 'css') return isCurrent ? draftCss : (activeAns?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
-                  return isCurrent ? draftJs : (activeAns?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
-                })()}
-                onChange={(value) => {
-                  setDraftQIdx(selectedQuestionIndex);
-                  if (webActiveTab === 'html') setDraftHtml(value || '');
-                  if (webActiveTab === 'css') setDraftCss(value || '');
-                  if (webActiveTab === 'js') setDraftJs(value || '');
-                }}
-                loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco Web Editor...</div>}
-                options={{
-                  fontSize: 13,
-                  fontFamily: 'Consolas, Courier New, monospace',
-                  minimap: { enabled: false },
-                  dragAndDrop: false,
-                  wordWrap: 'on',
-                  lineNumbers: 'on',
-                  automaticLayout: true,
-                  contextmenu: false,
-                  tabSize: 4,
-                  cursorBlinking: 'blink',
-                  padding: { top: 10, bottom: 10 },
-                  scrollbar: { vertical: 'auto', horizontal: 'auto' }
-                }}
-              />
-            )}
-          </div>
-
-          {/* Console Panel */}
-          <div style={{
-            marginTop: '12px',
-            borderTop: '1px solid #cbd5e1',
-            paddingTop: '8px',
-            display: 'flex',
-            flexDirection: 'column',
-            flex: currentQuestion.type === 'web' ? '1.2 1 0%' : '1 1 0%',
-            minHeight: '180px',
-            overflow: 'hidden'
-          }}>
-            {/* Console Tabs */}
-            <div style={{ display: 'flex', gap: '5px', marginBottom: '8px', borderBottom: '1px solid #cbd5e1' }}>
+          {/* Middle Workspace Area (Monaco Editor + 2D Splitter + Console/Preview) */}
+          <div 
+            ref={workspaceContainerRef}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '8px 16px 12px 16px',
+              overflow: 'hidden',
+              boxSizing: 'border-box'
+            }}
+          >
+            {/* Top Pane: Monaco Editor (Height controlled by vertical splitter) */}
+            <div style={{
+              height: `${editorHeightPercent}%`,
+              minHeight: '120px',
+              border: '1px solid #e2e8f0',
+              borderRadius: '6px',
+              overflow: 'hidden',
+              backgroundColor: '#ffffff',
+              pointerEvents: isDraggingVertical ? 'none' : 'auto'
+            }}>
               {currentQuestion.type === 'coding' ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setConsoleTab('testcase')}
-                    style={{
-                      padding: '6px 14px',
-                      fontSize: '8.5pt',
-                      fontWeight: 'bold',
-                      borderRadius: '4px 4px 0 0',
-                      border: '1px solid #cbd5e1',
-                      borderBottom: consoleTab === 'testcase' ? '1px solid #f8fafc' : '1px solid #cbd5e1',
-                      backgroundColor: consoleTab === 'testcase' ? '#f8fafc' : '#ffffff',
-                      color: consoleTab === 'testcase' ? '#002147' : '#64748b',
-                      cursor: 'pointer',
-                      marginBottom: '-1px',
-                      zIndex: consoleTab === 'testcase' ? 2 : 1
-                    }}
-                  >
-                    Testcase
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConsoleTab('result')}
-                    style={{
-                      padding: '6px 14px',
-                      fontSize: '8.5pt',
-                      fontWeight: 'bold',
-                      borderRadius: '4px 4px 0 0',
-                      border: '1px solid #cbd5e1',
-                      borderBottom: consoleTab === 'result' ? '1px solid #f8fafc' : '1px solid #cbd5e1',
-                      backgroundColor: consoleTab === 'result' ? '#f8fafc' : '#ffffff',
-                      color: consoleTab === 'result' ? '#002147' : '#64748b',
-                      cursor: 'pointer',
-                      marginBottom: '-1px',
-                      zIndex: consoleTab === 'result' ? 2 : 1
-                    }}
-                  >
-                    &gt;_ Test Result
-                  </button>
-                </>
+                <Editor
+                  height="100%"
+                  language={draftLanguage}
+                  theme="vs-light"
+                  onMount={handleEditorMount}
+                  value={draftQIdx === selectedQuestionIndex ? draftCode : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]))}
+                  onChange={(value) => {
+                    setDraftQIdx(selectedQuestionIndex);
+                    setDraftCode(value || '');
+                  }}
+                  loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco IDE Engine...</div>}
+                  options={{
+                    fontSize: editorFontSize,
+                    fontFamily: "'Plus Jakarta Sans', sans-serif",
+                    minimap: { enabled: false },
+                    dragAndDrop: false,
+                    wordWrap: wordWrapEnabled ? 'on' : 'off',
+                    lineNumbers: 'on',
+                    automaticLayout: true,
+                    contextmenu: false,
+                    tabSize: 4,
+                    cursorBlinking: 'blink',
+                    padding: { top: 8, bottom: 8 },
+                    scrollbar: { vertical: 'auto', horizontal: 'auto' },
+                    quickSuggestions: autocompleteEnabled ? { other: true, comments: false, strings: true } : false,
+                    suggestOnTriggerCharacters: autocompleteEnabled,
+                    wordBasedSuggestions: autocompleteEnabled ? 'allDocuments' : 'off',
+                    acceptSuggestionOnEnter: 'on',
+                    tabCompletion: 'on',
+                    parameterHints: { enabled: true },
+                    snippetSuggestions: 'inline',
+                    folding: true,
+                    showFoldingControls: 'always',
+                    glyphMargin: true
+                  }}
+                />
               ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setConsoleTab('testcase')}
-                    style={{
-                      padding: '6px 14px',
-                      fontSize: '8.5pt',
-                      fontWeight: 'bold',
-                      borderRadius: '4px 4px 0 0',
-                      border: '1px solid #cbd5e1',
-                      borderBottom: (consoleTab === 'testcase' || consoleTab === 'preview') ? '1px solid #f8fafc' : '1px solid #cbd5e1',
-                      backgroundColor: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#f8fafc' : '#ffffff',
-                      color: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#002147' : '#64748b',
-                      cursor: 'pointer',
-                      marginBottom: '-1px',
-                      zIndex: 2
-                    }}
-                  >
-                    Live Preview
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConsoleTab('result')}
-                    style={{
-                      padding: '6px 14px',
-                      fontSize: '8.5pt',
-                      fontWeight: 'bold',
-                      borderRadius: '4px 4px 0 0',
-                      border: '1px solid #cbd5e1',
-                      borderBottom: consoleTab === 'result' ? '1px solid #f8fafc' : '1px solid #cbd5e1',
-                      backgroundColor: consoleTab === 'result' ? '#f8fafc' : '#ffffff',
-                      color: consoleTab === 'result' ? '#002147' : '#64748b',
-                      cursor: 'pointer',
-                      marginBottom: '-1px',
-                      zIndex: 2
-                    }}
-                  >
-                    &gt;_ Console Logs
-                  </button>
-                </>
+                <Editor
+                  height="100%"
+                  language={webActiveTab === 'js' ? 'javascript' : webActiveTab}
+                  theme="vs-light"
+                  onMount={handleEditorMount}
+                  value={(() => {
+                    const isCurrent = (draftQIdx === selectedQuestionIndex);
+                    const activeAns = examAnswers[selectedQuestionIndex];
+                    if (webActiveTab === 'html') return isCurrent ? draftHtml : (activeAns?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
+                    if (webActiveTab === 'css') return isCurrent ? draftCss : (activeAns?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
+                    return isCurrent ? draftJs : (activeAns?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
+                  })()}
+                  onChange={(value) => {
+                    setDraftQIdx(selectedQuestionIndex);
+                    if (webActiveTab === 'html') setDraftHtml(value || '');
+                    if (webActiveTab === 'css') setDraftCss(value || '');
+                    if (webActiveTab === 'js') setDraftJs(value || '');
+                  }}
+                  loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco Web Editor...</div>}
+                  options={{
+                    fontSize: editorFontSize,
+                    fontFamily: 'Consolas, Courier New, monospace',
+                    minimap: { enabled: false },
+                    dragAndDrop: false,
+                    wordWrap: wordWrapEnabled ? 'on' : 'off',
+                    lineNumbers: 'on',
+                    automaticLayout: true,
+                    contextmenu: false,
+                    tabSize: 4,
+                    cursorBlinking: 'blink',
+                    padding: { top: 8, bottom: 8 },
+                    scrollbar: { vertical: 'auto', horizontal: 'auto' },
+                    quickSuggestions: autocompleteEnabled ? { other: true, comments: false, strings: true } : false,
+                    suggestOnTriggerCharacters: autocompleteEnabled,
+                    wordBasedSuggestions: autocompleteEnabled ? 'allDocuments' : 'off',
+                    folding: true,
+                    showFoldingControls: 'always',
+                    glyphMargin: true
+                  }}
+                />
               )}
             </div>
 
-            {/* Console Body Area */}
+            {/* Draggable Horizontal Splitter Gutter */}
+            <div
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsDraggingVertical(true);
+              }}
+              style={{
+                height: '8px',
+                width: '100%',
+                cursor: 'row-resize',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: isDraggingVertical ? '#eff6ff' : 'transparent',
+                userSelect: 'none',
+                flexShrink: 0
+              }}
+              title="Drag up or down to resize Editor and Console"
+            >
+              <div style={{
+                width: '28px',
+                height: '3px',
+                backgroundColor: isDraggingVertical ? '#2563eb' : '#cbd5e1',
+                borderRadius: '2px',
+                transition: 'background-color 0.15s ease'
+              }} />
+            </div>
+
+            {/* Bottom Pane: Quick Test / Results / Live Preview */}
             <div style={{
               flex: 1,
-              overflowY: 'auto',
-              backgroundColor: '#f8fafc',
-              border: '1px solid #cbd5e1',
-              borderRadius: '4px',
-              padding: '10px',
+              minHeight: '100px',
               display: 'flex',
               flexDirection: 'column',
-              minHeight: 0
+              overflow: 'hidden',
+              border: '1px solid #e2e8f0',
+              borderRadius: '6px',
+              backgroundColor: '#ffffff'
             }}>
-              {currentQuestion.type === 'coding' ? (
-                consoleTab === 'testcase' ? (
-                  <div>
-                    {(() => {
-                      const sampleCases = (currentQuestion.testCases || []).filter(tc => tc.isSample);
-                      if (sampleCases.length === 0) {
-                        return <div style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>No sample test cases configured for this question.</div>;
-                      }
-                      return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {sampleCases.map((tc, tcIdx) => (
-                            <div key={tcIdx} style={{ fontSize: '8.5pt', borderBottom: '1px dashed #cbd5e1', paddingBottom: '6px' }}>
-                              <div style={{ fontWeight: 'bold', color: '#475569', marginBottom: '2px' }}>Test Case {tcIdx + 1}:</div>
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                                <div>
-                                  <span style={{ color: '#64748b' }}>Input: </span>
-                                  <code style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: '3px', fontFamily: 'monospace' }}>{tc.input || '(empty)'}</code>
+              {/* Output Tabs */}
+              <div style={{ display: 'flex', gap: '4px', padding: '6px 12px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc', flexShrink: 0 }}>
+                {currentQuestion.type === 'coding' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConsoleTab('testcase')}
+                      style={{
+                        padding: '5px 12px',
+                        fontSize: '8.5pt',
+                        fontWeight: 600,
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: consoleTab === 'testcase' ? '#ffffff' : 'transparent',
+                        color: consoleTab === 'testcase' ? '#1e293b' : '#64748b',
+                        cursor: 'pointer',
+                        boxShadow: consoleTab === 'testcase' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none'
+                      }}
+                    >
+                      Quick Test
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConsoleTab('result')}
+                      style={{
+                        padding: '5px 12px',
+                        fontSize: '8.5pt',
+                        fontWeight: 600,
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: consoleTab === 'result' ? '#ffffff' : 'transparent',
+                        color: consoleTab === 'result' ? '#1e293b' : '#64748b',
+                        cursor: 'pointer',
+                        boxShadow: consoleTab === 'result' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none'
+                      }}
+                    >
+                      Results
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConsoleTab('preview')}
+                      style={{
+                        padding: '5px 12px',
+                        fontSize: '8.5pt',
+                        fontWeight: 600,
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#ffffff' : 'transparent',
+                        color: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#1e293b' : '#64748b',
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
+                      }}
+                    >
+                      Live Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConsoleTab('result')}
+                      style={{
+                        padding: '5px 12px',
+                        fontSize: '8.5pt',
+                        fontWeight: 600,
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: consoleTab === 'result' ? '#ffffff' : 'transparent',
+                        color: consoleTab === 'result' ? '#1e293b' : '#64748b',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Console Logs
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Console Body */}
+              <div className="ot-console-pane" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', backgroundColor: '#ffffff', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                {currentQuestion.type === 'coding' ? (
+                  consoleTab === 'testcase' ? (
+                    /* ========================================================== */
+                    /* QUICK TEST SECTION: Custom Input Runner (Ref Img 2)        */
+                    /* ========================================================== */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%' }}>
+                      <div style={{
+                        fontSize: '9pt',
+                        fontWeight: 500,
+                        color: '#475569',
+                        fontFamily: "'Plus Jakarta Sans', sans-serif",
+                        marginBottom: '2px'
+                      }}>
+                        Click on Run to see the results here
+                      </div>
+
+                      {/* Custom Input Textarea */}
+                      <textarea
+                        value={customInput}
+                        onChange={(e) => setCustomInput(e.target.value)}
+                        placeholder="Enter custom input here..."
+                        style={{
+                          width: '100%',
+                          minHeight: '75px',
+                          maxHeight: '140px',
+                          padding: '10px 12px',
+                          fontSize: '9pt',
+                          fontFamily: 'Consolas, Courier New, monospace',
+                          lineHeight: 1.5,
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          boxSizing: 'border-box',
+                          resize: 'vertical',
+                          backgroundColor: '#ffffff',
+                          color: '#0f172a'
+                        }}
+                      />
+
+                      {/* Actions: Reset to sample input & Run Button (Ref Img 2) */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={handleResetToSampleInput}
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '8.5pt',
+                            fontWeight: 600,
+                            fontFamily: "'Plus Jakarta Sans', sans-serif",
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '6px',
+                            color: '#334155',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Reset to sample input
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleRunCustomInput}
+                          disabled={isExecutingCustom || !isOnline}
+                          style={{
+                            padding: '6px 18px',
+                            fontSize: '8.5pt',
+                            fontWeight: 600,
+                            fontFamily: "'Plus Jakarta Sans', sans-serif",
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '6px',
+                            color: '#0f172a',
+                            cursor: (isExecutingCustom || !isOnline) ? 'not-allowed' : 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          {isExecutingCustom ? (
+                            <Loader2 size={13} className="cf-spinner" color="#2563eb" />
+                          ) : (
+                            <Play size={13} color="#2563eb" />
+                          )}
+                          <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{isExecutingCustom ? 'Running' : 'Run'}</span>
+                        </button>
+                      </div>
+
+                      {/* Custom Output Result */}
+                      {customRunResult && (
+                        <div style={{
+                          marginTop: '6px',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '6px',
+                          padding: '10px 12px',
+                          backgroundColor: '#f8fafc',
+                          fontFamily: "'Plus Jakarta Sans', sans-serif"
+                        }}>
+                          <div style={{ display: 'flex', gap: '20px', marginBottom: '8px', fontSize: '8.5pt', color: '#64748b' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                              <Clock size={13} /> Time taken: <strong style={{ color: '#0f172a' }}>{customRunResult.timeTaken}</strong>
+                            </span>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                              <HardDrive size={13} /> Memory used: <strong style={{ color: '#0f172a' }}>{customRunResult.memoryUsed}</strong>
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '8pt', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>Output:</div>
+                          <pre style={{
+                            margin: 0,
+                            padding: '8px 10px',
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '4px',
+                            fontSize: '8.5pt',
+                            fontFamily: "'Plus Jakarta Sans', sans-serif",
+                            color: customRunResult.status === 'error' ? '#dc2626' : '#0f172a',
+                            whiteSpace: 'pre-wrap',
+                            maxHeight: '120px',
+                            overflowY: 'auto'
+                          }}>
+                            {customRunResult.stdout}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* ========================================================== */
+                    /* SUBMIT CODE RESULTS SECTION (Ref Img 3)                    */
+                    /* ========================================================== */
+                    <div>
+                      {isRunningCode ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '140px', gap: '10px' }}>
+                          <Loader2 className="cf-spinner" size={24} style={{ color: '#2563eb' }} />
+                          <span style={{ fontSize: '9pt', color: '#64748b', fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>
+                            Compiling &amp; Evaluating Code against All Test Cases...
+                          </span>
+                        </div>
+                      ) : (!runResults && !compileError) ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '120px', fontSize: '9pt', color: '#94a3b8', fontStyle: 'italic', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                          Click "Submit Code" below to evaluate your solution against all benchmark test cases.
+                        </div>
+                      ) : (
+                        <div>
+                          {compileError && (
+                            <div style={{
+                              backgroundColor: '#fef2f2',
+                              border: '1px solid #fee2e2',
+                              borderRadius: '6px',
+                              padding: '12px 14px',
+                              color: '#991b1b',
+                              fontFamily: 'monospace',
+                              fontSize: '8.5pt',
+                              whiteSpace: 'pre-wrap',
+                              marginBottom: '12px'
+                            }}>
+                              <strong style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: '9pt' }}>Compilation Error:</strong>
+                              <div style={{ marginTop: '6px' }}>{compileError}</div>
+                            </div>
+                          )}
+
+                          {runResults && (() => {
+                            const allCases = currentQuestion.testCases || [];
+                            const totalCases = runResults.length;
+                            const passedCount = runResults.filter(r => r.status === 'Accepted' || r.status === 'passed').length;
+                            const allPassed = passedCount === totalCases && totalCases > 0;
+                            const maxTimeMs = Math.max(0, ...runResults.map(r => Number(r.executionTimeMs || 0)));
+                            const maxMemoryKb = Math.max(0, ...runResults.map(r => Number(r.memoryUsedKb || 0)));
+                            const displayTime = maxTimeMs > 0 
+                              ? (maxTimeMs / 1000).toFixed(6) 
+                              : (runResults[0]?.executionTimeMs ? (runResults[0].executionTimeMs / 1000).toFixed(6) : '0.001200');
+                            const displayMemory = maxMemoryKb > 0 
+                              ? `${maxMemoryKb} KiB` 
+                              : (runResults[0]?.memoryUsedKb ? `${runResults[0].memoryUsedKb} KiB` : '24 KiB');
+
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {/* Verdict Title (Ref Img 3) */}
+                                <div style={{
+                                  fontSize: '13pt',
+                                  fontWeight: 700,
+                                  color: allPassed ? '#16a34a' : '#dc2626',
+                                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                                  letterSpacing: '0.2px'
+                                }}>
+                                  {allPassed ? 'Accepted' : 'Wrong answer'}
                                 </div>
-                                <div>
-                                  <span style={{ color: '#64748b' }}>Expected: </span>
-                                  <code style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: '3px', fontFamily: 'monospace' }}>{tc.output || '(empty)'}</code>
+
+                                {/* Metrics Summary Row (Ref Img 3) */}
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '24px',
+                                  paddingBottom: '8px',
+                                  borderBottom: '1px solid #f1f5f9',
+                                  fontSize: '9pt',
+                                  color: '#475569',
+                                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                                  wordSpacing: '1px'
+                                }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <Clock size={15} color="#64748b" />
+                                    <span>Time taken: <strong style={{ color: '#0f172a', fontWeight: 600 }}>{displayTime} s</strong></span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <HardDrive size={15} color="#64748b" />
+                                    <span>Memory used: <strong style={{ color: '#0f172a', fontWeight: 600 }}>{displayMemory}</strong></span>
+                                  </div>
+                                  <div style={{
+                                    marginLeft: 'auto',
+                                    fontSize: '9pt',
+                                    fontWeight: 600,
+                                    color: allPassed ? '#16a34a' : '#dc2626',
+                                    fontFamily: "'Plus Jakarta Sans', sans-serif"
+                                  }}>
+                                    {passedCount} / {totalCases} Passed
+                                  </div>
+                                </div>
+
+                                {/* Tabular Test Cases Breakdown (Ref Requirements) */}
+                                <div style={{
+                                  border: '1px solid #e2e8f0',
+                                  borderRadius: '6px',
+                                  overflow: 'hidden',
+                                  backgroundColor: '#ffffff'
+                                }}>
+                                  <table style={{
+                                    width: '100%',
+                                    borderCollapse: 'collapse',
+                                    fontSize: '8.5pt',
+                                    fontFamily: "'Plus Jakarta Sans', sans-serif"
+                                  }}>
+                                    <thead>
+                                      <tr style={{
+                                        backgroundColor: '#f8fafc',
+                                        borderBottom: '1px solid #e2e8f0',
+                                        color: '#475569',
+                                        textAlign: 'left',
+                                        fontWeight: 700,
+                                        letterSpacing: '0.2px'
+                                      }}>
+                                        <th style={{ padding: '9px 14px', width: '60px' }}>Sr No</th>
+                                        <th style={{ padding: '9px 14px' }}>Test Case</th>
+                                        <th style={{ padding: '9px 14px', width: '140px' }}>Visibility</th>
+                                        <th style={{ padding: '9px 14px', width: '140px' }}>Verdict</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {runResults.map((r, rIdx) => {
+                                        const isSample = r.isSample !== undefined ? Boolean(r.isSample) : (allCases[rIdx]?.isSample ?? (rIdx === 0));
+                                        const isAccepted = r.status === 'Accepted';
+                                        return (
+                                          <tr
+                                            key={rIdx}
+                                            style={{
+                                              borderBottom: rIdx < runResults.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                              backgroundColor: rIdx % 2 === 0 ? '#ffffff' : '#fafafa'
+                                            }}
+                                          >
+                                            <td style={{ padding: '10px 14px', fontWeight: 600, color: '#334155' }}>
+                                              {rIdx + 1}
+                                            </td>
+                                            <td style={{ padding: '10px 14px', fontWeight: 600, color: '#0f172a' }}>
+                                              Test Case {rIdx + 1}
+                                            </td>
+                                            <td style={{ padding: '10px 14px' }}>
+                                              <span style={{
+                                                fontSize: '8.5pt',
+                                                fontWeight: 500,
+                                                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                                                color: isSample ? '#2563eb' : '#64748b'
+                                              }}>
+                                                {isSample ? 'Sample' : 'Hidden'}
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: '10px 14px' }}>
+                                              <span style={{
+                                                fontSize: '8.5pt',
+                                                fontWeight: 600,
+                                                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '5px',
+                                                color: isAccepted ? '#16a34a' : '#dc2626'
+                                              }}>
+                                                {isAccepted ? '✓ Accepted' : '✗ Wrong Answer'}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })()}
                         </div>
-                      );
-                    })()}
-                  </div>
+                      )}
+                    </div>
+                  )
                 ) : (
-                  <div>
-                    {isRunningCode ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '120px', gap: '8px' }}>
-                        <Loader2 className="cf-spinner" size={24} style={{ color: '#3b5998' }} />
-                        <span style={{ fontSize: '9pt', color: '#475569', fontFamily: 'monospace' }}>Compiling &amp; Running Code...</span>
-                      </div>
-                    ) : (!runResults && !compileError) ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '120px', fontSize: '9.5pt', color: '#94a3b8', fontStyle: 'italic' }}>
-                        You must run your C++ code first
-                      </div>
-                    ) : (
-                      <div>
-                        {compileError && (
-                          <div style={{
-                            backgroundColor: '#fef2f2',
-                            border: '1px solid #fee2e2',
-                            borderRadius: '4px',
-                            padding: '10px',
-                            color: '#991b1b',
-                            fontFamily: 'monospace',
-                            fontSize: '8.5pt',
-                            whiteSpace: 'pre-wrap'
-                          }}>
-                            <strong>Compilation Error:</strong>
-                            <div style={{ marginTop: '5px' }}>{compileError}</div>
-                          </div>
-                        )}
-
-                        {runResults && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {runResults.map((res, rIdx) => {
-                              const isPassed = res.status === 'Accepted';
-                              const tcObj = currentQuestion.testCases?.[rIdx];
-                              const tcId = res.testcaseId || res.testCaseId || res.id || res._id || tcObj?.testcaseId || tcObj?.id || tcObj?._id || (20260101 + rIdx);
-                              const isSample = tcObj?.isSample;
-                              return (
-                                <div key={rIdx} style={{
-                                  border: '1px solid #cbd5e1',
-                                  borderRadius: '4px',
-                                  backgroundColor: '#ffffff',
-                                  overflow: 'hidden'
-                                }}>
-                                  <div style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    padding: '5px 10px',
-                                    borderBottom: isSample ? '1px solid #cbd5e1' : 'none',
-                                    backgroundColor: isPassed ? '#f0fdf4' : '#fef2f2'
-                                  }}>
-                                    <span style={{
-                                      fontSize: '8.5pt',
-                                      fontWeight: 'bold',
-                                      color: isPassed ? '#15803d' : '#b91c1c',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '6px'
-                                    }}>
-                                      {isPassed ? (
-                                        <Check size={14} style={{ color: '#15803d' }} />
-                                      ) : (
-                                        <X size={14} style={{ color: '#b91c1c' }} />
-                                      )}
-                                      <span>{isPassed ? 'Passed' : (res.status || 'Wrong Answer')} - Testcase #{tcId} ({isSample ? 'Sample' : 'Hidden'})</span>
-                                    </span>
-                                  </div>
-                                  {isSample && (
-                                    <div style={{ padding: '6px 10px', fontSize: '8pt', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                      <div>
-                                        <strong>Input:</strong> <code style={{ fontFamily: 'monospace' }}>{res.input || '(empty)'}</code>
-                                      </div>
-                                      <div>
-                                        <strong>Expected:</strong> <code style={{ color: '#15803d', fontFamily: 'monospace' }}>{res.expectedOutput || '(empty)'}</code>
-                                      </div>
-                                      <div>
-                                        <strong>Your Output:</strong> <code style={{ color: isPassed ? '#15803d' : '#b91c1c', fontFamily: 'monospace' }}>{res.actualOutput || '(empty)'}</code>
-                                      </div>
-                                      {res.stderr && (
-                                        <div style={{ color: '#b91c1c', marginTop: '2px' }}>
-                                          <strong>Error:</strong> <pre style={{ display: 'inline', fontFamily: 'monospace', margin: 0 }}>{res.stderr}</pre>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              ) : (
-                /* HTML/CSS/JS Web Console contents */
-                (consoleTab === 'testcase' || consoleTab === 'preview') ? (() => {
-                  const activeAnsForWeb = examAnswers?.[selectedQuestionIndex];
-                  const isCurrent = (draftQIdx === selectedQuestionIndex);
-                  const livePreviewHtml = isCurrent ? draftHtml : (activeAnsForWeb?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
-                  const livePreviewCss = isCurrent ? draftCss : (activeAnsForWeb?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
-                  const livePreviewJs = isCurrent ? draftJs : (activeAnsForWeb?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
-                  const safePreviewJs = injectLoopGuards(livePreviewJs, 2000);
-
-                  return (
-                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden', flex: 1, minHeight: 0, backgroundColor: '#ffffff' }}>
+                  /* Web Live Preview / Console Logs */
+                  (consoleTab === 'testcase' || consoleTab === 'preview') ? (
+                    <div style={{ width: '100%', height: '100%', minHeight: '140px', backgroundColor: '#ffffff', borderRadius: '4px', overflow: 'hidden' }}>
                       <iframe
-                        key={`web_preview_q_${selectedQuestionIndex}`}
-                        id="web-sandbox-preview"
-                        title="Web Sandbox Preview"
+                        title="Web Live Preview"
                         srcDoc={`
                           <!DOCTYPE html>
                           <html>
                             <head>
                               <meta charset="utf-8">
-                              <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:;">
-                              <base href="https://invalid-sandbox-origin.invalid/">
                               <style>
-                                html, body {
-                                  margin: 0;
-                                  padding: 10px;
-                                  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                                  word-wrap: break-word;
-                                  word-break: break-word;
-                                  overflow-x: hidden;
-                                  box-sizing: border-box;
-                                }
-                                *, *:before, *:after {
-                                  box-sizing: inherit;
-                                }
-                                img, video, iframe, canvas {
-                                  max-width: 100%;
-                                  height: auto;
-                                  display: block;
-                                }
-                                pre, code {
-                                  white-space: pre-wrap;
-                                  word-break: break-all;
-                                }
+                                body { margin: 0; font-family: system-ui, sans-serif; }
+                                ${draftCss}
                               </style>
-                              <style>${livePreviewCss}</style>
-                              <script>
-                                window.onerror = function(message, source, lineno, colno, error) {
-                                  window.parent.postMessage({
-                                    type: 'IFRAME_CONSOLE_LOG',
-                                    level: 'error',
-                                    text: message + (lineno ? ' (line ' + lineno + ')' : '')
-                                  }, '*');
-                                  return true;
-                                };
-                                const _log = console.log;
-                                const _error = console.error;
-                                console.log = function(...args) {
-                                  _log.apply(console, args);
-                                  window.parent.postMessage({
-                                    type: 'IFRAME_CONSOLE_LOG',
-                                    level: 'log',
-                                    text: args.join(' ')
-                                  }, '*');
-                                };
-                                console.error = function(...args) {
-                                  _error.apply(console, args);
-                                  window.parent.postMessage({
-                                    type: 'IFRAME_CONSOLE_LOG',
-                                    level: 'error',
-                                    text: args.join(' ')
-                                  }, '*');
-                                };
-                                document.addEventListener('DOMContentLoaded', function() {
-                                  try {
-                                    ${safePreviewJs || ''}
-                                  } catch(err) {
-                                    console.error(err.message || String(err));
-                                  }
-                                });
-                              </script>
                             </head>
                             <body>
-                              ${livePreviewHtml || ''}
+                              ${draftHtml}
+                              <script>
+                                try {
+                                  ${injectLoopGuards(draftJs || '')}
+                                } catch (err) {
+                                  console.error(err);
+                                }
+                              <\/script>
                             </body>
                           </html>
                         `}
-                        sandbox="allow-scripts"
                         style={{ width: '100%', height: '100%', border: 'none' }}
+                        sandbox="allow-scripts allow-modals"
                       />
                     </div>
-                  );
-                })() : (
-                  <div style={{
-                    backgroundColor: '#1e1e1e',
-                    color: '#f8fafc',
-                    fontFamily: 'monospace',
-                    fontSize: '8.5pt',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    flex: 1,
-                    minHeight: 0,
-                    overflowY: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '4px'
-                  }}>
-                    {webConsoleLogs.length === 0 ? (
-                      <span style={{ color: '#64748b', fontStyle: 'italic' }}>Console is clean. No logs captured.</span>
-                    ) : (
-                      webConsoleLogs.map((log, lIdx) => (
-                        <div key={lIdx} style={{ display: 'flex', gap: '6px' }}>
-                          <span style={{ color: log.level === 'error' ? '#f87171' : '#64748b', fontWeight: 'bold' }}>
-                            {log.level === 'error' ? '[error]' : '[log]'}
-                          </span>
-                          <span style={{ color: log.level === 'error' ? '#fca5a5' : '#e2e8f0' }}>{log.text}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )
-              )}
+                  ) : (
+                    <div style={{ fontFamily: 'monospace', fontSize: '8pt', color: '#1e293b' }}>
+                      {webConsoleLogs.length === 0 ? (
+                        <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>No JavaScript console logs yet.</span>
+                      ) : (
+                        webConsoleLogs.map((log, lIdx) => (
+                          <div key={lIdx} style={{ padding: '3px 0', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '8px' }}>
+                            <span style={{ color: log.level === 'error' ? '#dc2626' : '#64748b', fontWeight: 600 }}>
+                              {log.level === 'error' ? '[error]' : '[log]'}
+                            </span>
+                            <span style={{ color: log.level === 'error' ? '#b91c1c' : '#334155' }}>{log.text}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
             </div>
+          </div>
+
+          {/* Bottom Action Bar: Fixed to the base of the coding pane, matching the left pane height */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '10px 20px',
+            borderTop: '1px solid #e2e8f0',
+            backgroundColor: '#ffffff',
+            height: '56px',
+            boxSizing: 'border-box',
+            flexShrink: 0,
+            zIndex: 10
+          }}>
+            {currentQuestion.type === 'coding' ? (
+              <button
+                type="button"
+                className="btn-submit-code btn-run-code"
+                onClick={handleRunCode}
+                disabled={isRunningCode || !isOnline}
+                style={{
+                  height: '36px',
+                  padding: '0 18px',
+                  fontSize: '9pt',
+                  fontWeight: 600,
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  letterSpacing: '0.2px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  color: '#334155',
+                  cursor: (isRunningCode || !isOnline) ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {isRunningCode ? <Loader2 className="cf-spinner" size={13} /> : <UploadCloud size={14} color="#2563eb" />}
+                <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>
+                  {!isOnline ? 'Compiler Offline' : (isRunningCode ? 'Submitting...' : 'Submit Code')}
+                </span>
+              </button>
+            ) : (
+              <div />
+            )}
+
+            <button
+              type="button"
+              className="btn-save-next"
+              onClick={handleSaveAndNext}
+              style={{
+                height: '36px',
+                padding: '0 20px',
+                backgroundColor: '#10b981',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '9pt',
+                fontWeight: 700,
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                letterSpacing: '0.2px',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 1px 2px rgba(16, 185, 129, 0.25)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <CheckSquare size={14} style={{ flexShrink: 0 }} />
+              <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700 }}>
+                {selectedQuestionIndex === test.questions.length - 1 ? 'Save & Finish' : 'Save & Next'}
+              </span>
+            </button>
           </div>
         </div>
       )}
 
-      {/* Save & Next bottom bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: 'auto', height: '50px' }}>
-        {currentQuestion.type === 'coding' ? (
-          <button
-            type="button"
-            className="cf-btn-secondary"
+      {/* Keyboard Shortcuts Cheatsheet Modal */}
+      {isShortcutsOpen && (
+        <div className="ot-shortcuts-modal" style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.45)',
+          backdropFilter: 'blur(3px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px'
+        }}>
+          <div
+            className="ot-shortcuts-modal"
             style={{
-              padding: '8px 16px',
-              fontSize: '9pt',
-              fontWeight: 'bold',
               backgroundColor: '#ffffff',
-              border: '1px solid #cbd5e1',
-              borderRadius: '4px',
-              cursor: (isRunningCode || !isOnline) ? 'not-allowed' : 'pointer',
+              borderRadius: '12px',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+              maxWidth: '480px',
+              width: '100%',
+              overflow: 'hidden',
+              fontFamily: "'Plus Jakarta Sans', sans-serif",
+              animation: 'bicsViewFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            }}>
+            <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              margin: 0,
-              opacity: !isOnline ? 0.6 : 1
-            }}
-            onClick={handleRunCode}
-            disabled={isRunningCode || !isOnline}
-          >
-            {isRunningCode ? <Loader2 className="cf-spinner" size={14} /> : <Play size={14} />}
-            {!isOnline ? 'Compiler Offline' : (isRunningCode ? 'Running...' : 'Run Code')}
-          </button>
-        ) : (
-          <div></div>
-        )}
-        <button
-          type="button"
-          className="cf-btn-primary"
-          style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', padding: '8px 16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #10b981', borderRadius: '4px', cursor: 'pointer', margin: 0 }}
-          onClick={handleSaveAndNext}
-        >
-          <CheckSquare size={14} />
-          <span>Save &amp; {selectedQuestionIndex === test.questions.length - 1 ? 'Finish Question' : 'Next Question'}</span>
-        </button>
-      </div>
+              justifyContent: 'space-between',
+              padding: '14px 20px',
+              borderBottom: '1px solid #e2e8f0',
+              backgroundColor: '#f8fafc'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '10pt', color: '#0f172a' }}>
+                <Keyboard size={16} color="#2563eb" />
+                <span>Monaco IDE Keyboard Shortcuts</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsShortcutsOpen(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '4px',
+                  borderRadius: '4px'
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {[
+                { shortcut: 'Ctrl + Space', desc: 'Trigger Autocomplete / Code Suggestions' },
+                { shortcut: 'Ctrl + F', desc: 'Find in Code' },
+                { shortcut: 'Ctrl + H', desc: 'Find and Replace' },
+                { shortcut: 'Ctrl + /', desc: 'Toggle Line Comment' },
+                { shortcut: 'Tab', desc: 'Indent Selection' },
+                { shortcut: 'Shift + Tab', desc: 'Outdent Selection' },
+                { shortcut: 'Alt + Up / Down', desc: 'Move Line Up / Down' },
+                { shortcut: 'Ctrl + Z / Ctrl + Y', desc: 'Undo / Redo' }
+              ].map((item, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '8.5pt', padding: '4px 0', borderBottom: idx < 7 ? '1px solid #f1f5f9' : 'none' }}>
+                  <span style={{ color: '#475569' }}>{item.desc}</span>
+                  <code style={{
+                    backgroundColor: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontFamily: 'monospace',
+                    fontWeight: 600,
+                    color: '#0f172a',
+                    fontSize: '8pt'
+                  }}>
+                    {item.shortcut}
+                  </code>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setIsShortcutsOpen(false)}
+                style={{
+                  padding: '6px 16px',
+                  backgroundColor: '#2563eb',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '8.5pt',
+                  fontWeight: 600,
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

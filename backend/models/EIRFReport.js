@@ -25,10 +25,14 @@ const EIRFReportSchema = new mongoose.Schema({
     additionalAnswers: mongoose.Schema.Types.Mixed,
     formAnswers: mongoose.Schema.Types.Mixed,
     
-    // Encrypted Payload Verification Results
+    // [DEPRECATED] Encrypted Physical Payload Verification (Superseded by client IndexedDB encrypted auto-sync)
+    /** @deprecated Physical file download deprecated. Submissions auto-sync via encrypted client IndexedDB */
     encryptedPayloadUploaded: { type: Boolean, default: false },
+    /** @deprecated Legacy .eirf file name if uploaded */
     payloadFileName: String,
+    /** @deprecated Legacy Cloudinary payload URL if uploaded */
     payloadUrl: String,
+    /** @deprecated Snapshot from legacy physical .eirf file */
     decryptedPayloadSnapshot: mongoose.Schema.Types.Mixed,
     verificationStatus: { type: String, enum: ['VERIFIED_MATCH', 'DISCREPANCY_FLAGGED', 'PAYLOAD_MISSING', 'DECRYPTION_FAILED'], default: 'VERIFIED_MATCH' },
     verificationDetails: {

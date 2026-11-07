@@ -15,6 +15,8 @@ const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { encryptEirfPayload } = require('../utils/cipher');
 const { recalculateMCQScore, calculateCodingScoreFast } = require('../routes/tests');
 const { sendEirfNoticeEmail } = require('../utils/email');
+const { evaluateEirfIncident } = require('../services/eirfEvaluator');
+const { runPipelineTick } = require('./eirfPipelineWorker');
 
 let reaperIntervalId = null;
 let isReaping = false;
@@ -56,11 +58,8 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                     console.log(`[DEAD-MAN REAPER] Auto-finalizing abandoned session ${sub._id} (${sub.candidateName || sub.studentId}) - Inactive for ${idleSeconds}s.`);
 
                     sub.status = 'auto-submitted';
+                    sub.submissionReason = 'dead_man_reaper';
                     sub.submittedAt = new Date();
-                    sub.hasEirfFlag = true;
-                    if (!sub.eirfStatus || sub.eirfStatus === 'none') {
-                        sub.eirfStatus = 'pending';
-                    }
 
                     if (!sub.proctoringLog) sub.proctoringLog = {};
                     if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
@@ -72,13 +71,21 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                     });
 
                     // Evaluate marks if test configuration exists
+                    let testDoc = null;
                     if (sub.testId) {
-                        const test = await TestConfigModel.findById(sub.testId);
-                        if (test) {
-                            recalculateMCQScore(sub, test);
-                            calculateCodingScoreFast(sub, test);
+                        testDoc = await TestConfigModel.findById(sub.testId);
+                        if (testDoc) {
+                            recalculateMCQScore(sub, testDoc);
+                            calculateCodingScoreFast(sub, testDoc);
                         }
                     }
+
+                    // Authoritative server-side EIRF incident evaluation
+                    const eirfEval = evaluateEirfIncident(sub, testDoc);
+                    sub.hasEirfFlag = eirfEval.hasEirfFlag;
+                    sub.eirfStatus = eirfEval.eirfStatus;
+                    sub.flaggedReasons = eirfEval.flaggedReasons;
+                    sub.pipelineStatus = 'FLAGGED';
 
                     // Generate encrypted .eirf snapshot
                     const sStudId = sub.studentId || 'Candidate';
@@ -93,22 +100,11 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                     };
                     sub.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(sub._id || sub.id));
 
-                    if (!sub.eirfNoticeEmailSent && sub.candidateEmail) {
-                        try {
-                            await sendEirfNoticeEmail(
-                                sub.candidateEmail,
-                                sub.candidateName || 'Candidate',
-                                sub.testTitle || 'BICS Online Examination',
-                                `Session auto-finalized by server dead-man switch: Candidate heartbeat lost for ${idleSeconds}s (browser crash, connection loss, or power trip).`,
-                                String(sub._id || sub.id)
-                            );
-                            sub.eirfNoticeEmailSent = true;
-                        } catch (mailErr) {
-                            console.error(`[DEAD-MAN REAPER] Failed to send EIRF notice email:`, mailErr.message);
-                        }
-                    }
-
                     await sub.save();
+                    // Kick off sequential pipeline to generate questions and dispatch tokenized magic link
+                    setImmediate(() => {
+                        runPipelineTick().catch(() => {});
+                    });
                 } catch (subErr) {
                     console.error(`[DEAD-MAN REAPER] Error finalizing session ${sub._id}:`, subErr.message);
                 }
@@ -127,11 +123,8 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
 
                     if (now - startT > maxIdleMs && now - hbT > maxIdleMs) {
                         sub.status = 'auto-submitted';
+                        sub.submissionReason = 'dead_man_reaper';
                         sub.submittedAt = new Date();
-                        sub.hasEirfFlag = true;
-                        if (!sub.eirfStatus || sub.eirfStatus === 'none') {
-                            sub.eirfStatus = 'pending';
-                        }
                         if (!sub.proctoringLog) sub.proctoringLog = {};
                         if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
                         sub.proctoringLog.events.push({
@@ -139,6 +132,12 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                             type: 'DISCONNECT_REAPED',
                             details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 45s.'
                         });
+
+                        const eirfEval = evaluateEirfIncident(sub);
+                        sub.hasEirfFlag = eirfEval.hasEirfFlag;
+                        sub.eirfStatus = eirfEval.eirfStatus;
+                        sub.flaggedReasons = eirfEval.flaggedReasons;
+                        sub.pipelineStatus = 'FLAGGED';
                         changed = true;
                     }
                 }

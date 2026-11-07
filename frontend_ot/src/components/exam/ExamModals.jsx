@@ -550,7 +550,7 @@ export const ExamModals = ({
                       <li>Write standard C++ code inside the Monaco IDE editor in the right workspace.</li>
                       <li>Read input using <code>std::cin</code> / <code>scanf</code> and output results using <code>std::cout</code> / <code>printf</code>.</li>
                       <li><strong>Do NOT print extra text</strong> like <code>"Enter value: "</code> as this will cause exact output test cases to fail.</li>
-                      <li>Click <strong>Run Code</strong> to compile with GCC and test your logic against sample inputs.</li>
+                      <li>Click <strong>Submit Code</strong> to compile with GCC and test your logic against sample inputs.</li>
                     </ul>
                   </div>
 

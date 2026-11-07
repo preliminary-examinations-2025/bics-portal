@@ -16,7 +16,12 @@ export const ExamProctorOverlay = ({
   devModeActive
 }) => {
   React.useEffect(() => {
-    if (examVideoRef?.current && webcamStream) {
+    if (
+      examVideoRef?.current && 
+      webcamStream && 
+      typeof MediaStream !== 'undefined' && 
+      webcamStream instanceof MediaStream
+    ) {
       if (examVideoRef.current.srcObject !== webcamStream) {
         examVideoRef.current.srcObject = webcamStream;
       }

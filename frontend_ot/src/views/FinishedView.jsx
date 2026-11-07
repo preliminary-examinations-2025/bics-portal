@@ -293,10 +293,9 @@ export function FinishedView({
 
                     setSyncStatus('initiating');
                     try {
-                      // Ensure hasEirfFlag is explicitly true for offline recovery pipeline (Item 7)
+                      // Submit cached payload for server-side evaluation and storage
                       const finalPayload = {
-                        ...payload,
-                        hasEirfFlag: true
+                        ...payload
                       };
 
                       setSyncStatus('uploading');

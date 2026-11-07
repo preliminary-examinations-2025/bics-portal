@@ -1,8 +1,9 @@
-import React from 'react';
-import { CheckSquare, Flag, HelpCircle, Grid } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Grid } from 'lucide-react';
 import { RichText } from '../common/RichText';
 import { CandidateWatermark } from '../common/CandidateWatermark';
 import { DEFAULT_TEMPLATES } from '../../config/constants';
+import { isQuestionAnswered as checkIsAnswered } from '../../utils/examAnswerStatus';
 
 /**
  * QuestionViewer: Displays the left pane of the active exam, including question prompt,
@@ -13,10 +14,8 @@ export const QuestionViewer = ({
   candidate,
   selectedQuestionIndex,
   setSelectedQuestionIndex,
-  isSidebarOpen,
-  setIsSidebarOpen,
+  onNavigate,
   setShowQuestionPalette,
-  setShowQuestionInfoModal,
   examAnswers,
   setTest,
   activeQuestionBtnRef,
@@ -31,174 +30,254 @@ export const QuestionViewer = ({
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
   if (!currentQuestion) return null;
 
-  const isFlagged = currentQuestion.flaggedForReview || false;
-
-  const cleanStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
-
-  const isQuestionAnswered = (q, qIdx) => {
-    const ans = examAnswers[qIdx];
-    if (!ans) {
-      if (q.type === 'mcq' && qIdx === selectedQuestionIndex) {
-        return draftMCQ !== null && draftMCQ !== undefined;
-      }
-      return false;
-    }
-
-    if (q.type === 'mcq') {
-      const selOpt = (qIdx === selectedQuestionIndex && draftMCQ !== undefined && draftMCQ !== null)
-        ? draftMCQ
-        : ans.selectedOptionIndex;
-      return selOpt !== null && selOpt !== undefined;
-    } else if (q.type === 'web') {
-      const initHtml = cleanStr(q.initialHtml || q.initialCode?.html || '');
-      const initCss = cleanStr(q.initialCss || q.initialCode?.css || '');
-      const initJs = cleanStr(q.initialJs || q.initialCode?.js || '');
-
-      const curHtml = cleanStr(qIdx === selectedQuestionIndex && draftHtml !== undefined ? draftHtml : ans.submittedHtml);
-      const curCss = cleanStr(qIdx === selectedQuestionIndex && draftCss !== undefined ? draftCss : ans.submittedCss);
-      const curJs = cleanStr(qIdx === selectedQuestionIndex && draftJs !== undefined ? draftJs : ans.submittedJs);
-
-      return (curHtml !== '' && curHtml !== initHtml) || 
-             (curCss !== '' && curCss !== initCss) || 
-             (curJs !== '' && curJs !== initJs) ||
-             Boolean(ans.isSavedByUser);
+  const navigateTo = (idx) => {
+    if (typeof onNavigate === 'function') {
+      onNavigate(idx);
     } else {
-      const initCode = cleanStr(q.initialTemplate || DEFAULT_TEMPLATES[ans?.selectedLanguage || draftLanguage || 'cpp'] || '');
-      const curCode = cleanStr(qIdx === selectedQuestionIndex && draftCode !== undefined ? draftCode : ans.submittedCode);
-      return (curCode.length > 0 && curCode !== initCode) || Boolean(ans.isSavedByUser);
+      setSelectedQuestionIndex(idx);
     }
   };
 
+  const isQuestionAnswered = (q, qIdx) => {
+    const ans = examAnswers[qIdx];
+    const isCurrent = qIdx === selectedQuestionIndex;
+    const drafts = isCurrent ? {
+      draftMCQ,
+      draftCode,
+      draftLanguage,
+      draftHtml,
+      draftCss,
+      draftJs
+    } : {};
+    return checkIsAnswered(q, ans, drafts);
+  };
+
+  // Auto-scroll active question button into view centered within the navigation track
+  useEffect(() => {
+    if (activeQuestionBtnRef?.current && navTrackRef?.current) {
+      const btn = activeQuestionBtnRef.current;
+      const track = navTrackRef.current;
+      const btnLeft = btn.offsetLeft;
+      const btnWidth = btn.offsetWidth;
+      const trackWidth = track.clientWidth;
+      const targetScrollLeft = btnLeft - (trackWidth / 2) + (btnWidth / 2);
+
+      track.scrollTo({
+        left: Math.max(0, targetScrollLeft),
+        behavior: 'smooth'
+      });
+    }
+  }, [selectedQuestionIndex]);
+
   return (
-    <div className="cf-card" style={{ flex: '0 0 calc(50% - 10px)', margin: 0, height: '100%', maxHeight: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+    <div style={{
+      width: '100%',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      backgroundColor: '#ffffff',
+      overflow: 'hidden',
+      position: 'relative',
+      padding: 0,
+      margin: 0,
+      boxSizing: 'border-box'
+    }}>
       <CandidateWatermark email={candidate?.email || candidate?.studentId || candidate?.name} />
       
-      {/* 1. Fixed Header */}
-      <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #3b5998', paddingBottom: '8px', zIndex: 11, marginBottom: '10px' }}>
-        <h4 style={{ color: '#002147', fontWeight: 'bold', fontSize: '11pt', margin: 0 }}>
-          Question {selectedQuestionIndex + 1} of {test.questions.length}
-        </h4>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            type="button"
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '4px 10px',
-              fontSize: '8.5pt',
-              fontWeight: 'bold',
-              backgroundColor: isSidebarOpen ? '#faf5ff' : '#ffffff',
-              border: isSidebarOpen ? '2px solid #a855f7' : '1px solid #cbd5e1',
-              color: '#7e22ce',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease-in-out',
-              margin: 0
-            }}
-            title={isSidebarOpen ? "Close Questions Panel" : "Open Questions Panel"}
-          >
-            <CheckSquare size={13} style={{ color: '#7e22ce' }} />
-            <span>Questions Panel</span>
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => {
-              const updatedQuestions = [...test.questions];
-              updatedQuestions[selectedQuestionIndex].flaggedForReview = !isFlagged;
-              setTest({ ...test, questions: updatedQuestions });
-            }}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '8.5pt',
-              fontWeight: 'bold',
-              padding: '4px 10px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              border: '1px solid #c084fc',
-              backgroundColor: isFlagged ? '#a855f7' : '#ffffff',
-              color: isFlagged ? '#ffffff' : '#7e22ce',
-              transition: 'all 0.2s ease-in-out',
-              margin: 0
-            }}
-            title={isFlagged ? "Remove Flag" : "Flag for Review"}
-          >
-            <Flag size={13} fill={isFlagged ? '#ffffff' : 'none'} style={{ color: isFlagged ? '#ffffff' : '#7e22ce' }} />
-            <span>{isFlagged ? 'Flagged for Review' : 'Flag for Review'}</span>
-          </button>
+      {/* 1. Fixed Header with Question Index, Section Name (Ref Img 3), Category and Points */}
+      <div style={{
+        height: '56px',
+        minHeight: '56px',
+        maxHeight: '56px',
+        boxSizing: 'border-box',
+        flexShrink: 0,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderBottom: '1px solid #e2e8f0',
+        padding: '0 20px',
+        zIndex: 11,
+        gap: '10px',
+        flexWrap: 'nowrap'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          {/* Question Index with generous word and letter spacing (Ref Img 1) */}
+          <h4 style={{
+            color: '#0f172a',
+            fontWeight: 600,
+            fontSize: '11pt',
+            margin: 0,
+            whiteSpace: 'nowrap',
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            letterSpacing: '0.4px',
+            wordSpacing: '4px'
+          }}>
+            Question {selectedQuestionIndex + 1} of {test.questions.length}
+          </h4>
 
-          <span className="status-badge" style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '2px 8px', borderRadius: '4px', fontSize: '8pt', fontWeight: 'bold' }}>
-            POINTS: {currentQuestion.points || 0}
+          {/* Section Pill (Ref Img 3) */}
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            backgroundColor: '#f1f5f9',
+            color: '#1e293b',
+            borderRadius: '14px',
+            padding: '3px 12px',
+            fontSize: '8.5pt',
+            fontWeight: 600,
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            whiteSpace: 'nowrap'
+          }}>
+            Section: {currentQuestion.section || currentQuestion.sectionName || (currentQuestion.type === 'coding' ? 'Easy-c-moca' : (currentQuestion.type === 'web' ? 'Web Studio' : 'General Aptitude'))}
           </span>
+
+          {/* Question Category / Type Tag next to Section */}
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            backgroundColor: '#f1f5f9',
+            color: '#475569',
+            borderRadius: '14px',
+            padding: '3px 12px',
+            fontSize: '8.5pt',
+            fontWeight: 600,
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            whiteSpace: 'nowrap'
+          }}>
+            {currentQuestion.category || (currentQuestion.type === 'coding' ? 'Programming' : (currentQuestion.type === 'web' ? 'Web Development' : ((currentQuestion.isMultiChoice || currentQuestion.type === 'mcc') ? 'Multiple Choice' : 'Single Choice')))}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <div
+            title={`Full score for this question: ${Number(currentQuestion.points || 0).toFixed(2)}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              flexShrink: 0,
+              userSelect: 'none',
+              cursor: 'help'
+            }}
+          >
+            <svg width="18px" height="18px" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="10" stroke="#9CA3AF" strokeWidth="2" />
+              <path d="M12 7l1.5 3.5h3.5l-2.8 2.3L15 16.5l-3-2.2-3 2.2 1.3-3.7L7.5 10.5h3.5L12 7z" stroke="#4B5563" strokeWidth="1.5" strokeLinejoin="round" />
+            </svg>
+            <span style={{
+              fontFamily: "'Plus Jakarta Sans', sans-serif",
+              fontSize: '10pt',
+              fontWeight: 700,
+              color: '#1e293b',
+              letterSpacing: '0.2px'
+            }}>
+              {Number(currentQuestion.points || 0).toFixed(2)}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* 2. Scrollable Question Content Body */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '15px', paddingRight: '4px', marginBottom: '10px' }}>
-        {/* Question Title Header */}
-        <div style={{ zIndex: 11, marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+      {/* 2. Scrollable Question Content Body with comfortable typography & smooth transition */}
+      <div 
+        key={`q-body-${selectedQuestionIndex}`}
+        className="ot-question-content-transition"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px',
+          padding: '16px 20px',
+          fontSize: '10pt',
+          lineHeight: '1.65',
+          color: '#334155'
+        }}>
+        {/* Question Title Header: Prominently sized in Plus Jakarta Sans */}
+        <style>{`
+          @keyframes otQuestionFadeSlide {
+            0% {
+              opacity: 0;
+              transform: translateY(12px);
+            }
+            100% {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+          .ot-question-content-transition {
+            animation: otQuestionFadeSlide 500ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
+            will-change: opacity, transform;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .ot-question-content-transition {
+              animation: none !important;
+              opacity: 1 !important;
+              transform: none !important;
+            }
+          }
+          .cf-question-title-text,
+          .cf-question-title-text * {
+            font-family: 'Plus Jakarta Sans', sans-serif !important;
+          }
+          .cf-question-title-text,
+          .cf-question-title-text .cf-paragraph,
+          .cf-question-title-text .cf-paragraph div,
+          .cf-question-title-text div {
+            font-family: 'Plus Jakarta Sans', sans-serif !important;
+            font-size: 15pt !important;
+            font-weight: 700 !important;
+            color: #0f172a !important;
+            line-height: 1.35 !important;
+            letter-spacing: -0.2px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            text-align: left !important;
+            text-align-last: left !important;
+          }
+          .cf-question-title-text .katex,
+          .cf-question-title-text .katex * {
+            font-family: KaTeX_Main, 'Times New Roman', serif !important;
+          }
+        `}</style>
+        <div style={{ zIndex: 11, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <RichText
               text={currentQuestion.title || `Question ${selectedQuestionIndex + 1}`}
-              style={{ fontSize: '13pt', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.4' }}
+              className="cf-question-title-text"
+              style={{
+                fontSize: '15pt',
+                fontWeight: 700,
+                color: '#0f172a',
+                lineHeight: '1.35',
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                letterSpacing: '-0.2px'
+              }}
             />
-            {currentQuestion.type === 'coding' && (
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <span style={{ fontSize: '7.5pt', fontWeight: '600', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1' }}>
-                  ⏱️ {(currentQuestion.timeLimitMs || 2000) / 1000}s
-                </span>
-                <span style={{ fontSize: '7.5pt', fontWeight: '600', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1' }}>
-                  💾 {currentQuestion.memoryLimitMb || 128} MB
-                </span>
-              </div>
-            )}
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowQuestionInfoModal(true)}
-            title="View Question Instructions & Evaluation Criteria"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '4px 12px',
-              backgroundColor: '#f0f9ff',
-              border: '1px solid #bae6fd',
-              borderRadius: '20px',
-              color: '#0284c7',
-              fontSize: '8.5pt',
-              fontWeight: '600',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease-in-out',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
-            }}
-          >
-            <HelpCircle size={14} style={{ color: '#0284c7' }} />
-            <span>Question Info</span>
-          </button>
         </div>
 
-        {/* MCQ Questions Rendering */}
-        {currentQuestion.type === 'mcq' && (
-          <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ backgroundColor: '#f8fafc', padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+        {/* MCQ Questions Rendering: Question statement FIRST, prompt guidance AFTER question ends */}
+        {(currentQuestion.type === 'mcq' || currentQuestion.type === 'scc' || currentQuestion.type === 'mcc') && (
+          <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {(currentQuestion.description || currentQuestion.questionText || currentQuestion.statement) && (
+              <div style={{ fontSize: '10pt', lineHeight: '1.7', color: '#334155' }}>
+                <RichText
+                  text={currentQuestion.description || currentQuestion.questionText || currentQuestion.statement}
+                />
+              </div>
+            )}
+            <div style={{ backgroundColor: '#f8fafc', padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: '5px', marginTop: '2px' }}>
               <RichText
-                text="Select the correct response option from the right workspace panel."
-                style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: '1.4', fontStyle: 'italic' }}
+                text={
+                  (currentQuestion.isMultiChoice || currentQuestion.type === 'mcc' || currentQuestion.category === 'Multiple Choice')
+                    ? "Select one or more correct options from the right workspace panel."
+                    : "Select the correct response option from the right workspace panel."
+                }
+                style={{ fontSize: '9pt', color: '#64748b', lineHeight: '1.45', fontStyle: 'italic' }}
               />
             </div>
-            {(currentQuestion.description || currentQuestion.questionText || currentQuestion.statement) && (
-              <RichText
-                text={currentQuestion.description || currentQuestion.questionText || currentQuestion.statement}
-                style={{ fontSize: '10.5pt', color: '#1e293b', lineHeight: '1.75', padding: '4px 0' }}
-              />
-            )}
           </div>
         )}
 
@@ -213,7 +292,7 @@ export const QuestionViewer = ({
         )}
 
         {/* Coding & Web questions: Render description in blue container */}
-        {currentQuestion.type !== 'mcq' && (
+        {currentQuestion.type !== 'mcq' && currentQuestion.type !== 'scc' && currentQuestion.type !== 'mcc' && (
           <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div style={{ backgroundColor: '#f0f9ff', padding: '16px', border: '1px solid #bae6fd', borderRadius: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
               <RichText
@@ -253,13 +332,39 @@ export const QuestionViewer = ({
         )}
       </div>
 
-      {/* 3. Fixed Bottom Navigation Footer */}
-      <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '12px', marginTop: 'auto', alignItems: 'center', flexWrap: 'nowrap', gap: '8px', width: '100%', overflow: 'hidden' }}>
+      {/* 3. Fixed Bottom Navigation Footer - Base aligned at exactly 56px height to match right pane */}
+      <div style={{
+        flexShrink: 0,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderTop: '1px solid #e2e8f0',
+        padding: '10px 20px',
+        marginTop: 'auto',
+        height: '56px',
+        boxSizing: 'border-box',
+        flexWrap: 'nowrap',
+        gap: '8px',
+        width: '100%',
+        overflow: 'hidden',
+        backgroundColor: '#ffffff'
+      }}>
         <button
           className="cf-btn-secondary"
           disabled={selectedQuestionIndex === 0}
-          onClick={() => setSelectedQuestionIndex(selectedQuestionIndex - 1)}
-          style={{ padding: '6px 10px', fontSize: '9pt', flexShrink: 0, whiteSpace: 'nowrap' }}
+          onClick={() => navigateTo(selectedQuestionIndex - 1)}
+          style={{
+            padding: '7px 12px',
+            fontSize: '9pt',
+            fontWeight: 600,
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+            borderRadius: '5px',
+            border: '1px solid #cbd5e1',
+            backgroundColor: '#ffffff',
+            cursor: selectedQuestionIndex === 0 ? 'not-allowed' : 'pointer'
+          }}
         >
           ← Previous
         </button>
@@ -268,7 +373,7 @@ export const QuestionViewer = ({
           ref={navTrackRef}
           style={{ 
             display: 'flex', 
-            gap: '5px', 
+            gap: '6px', 
             overflowX: 'auto', 
             flex: 1, 
             padding: '2px 0', 
@@ -286,9 +391,9 @@ export const QuestionViewer = ({
             let borderColor = '#cbd5e1';
 
             if (isActive) {
-              bgColor = isAnswered ? '#16a34a' : '#3b5998';
-              textColor = '#fff';
-              borderColor = isAnswered ? '#16a34a' : '#3b5998';
+              bgColor = isAnswered ? '#dcfce7' : '#dbeafe';
+              textColor = isAnswered ? '#15803d' : '#1d4ed8';
+              borderColor = isAnswered ? '#16a34a' : '#2563eb';
             } else if (isAnswered) {
               bgColor = '#dcfce7';
               textColor = '#15803d';
@@ -299,17 +404,18 @@ export const QuestionViewer = ({
               <button
                 key={qIdx}
                 ref={isActive ? activeQuestionBtnRef : null}
-                onClick={() => setSelectedQuestionIndex(qIdx)}
+                onClick={() => navigateTo(qIdx)}
                 style={{
                   minWidth: '32px',
                   height: '32px',
-                  padding: '0 6px',
+                  padding: '0 4px',
                   fontSize: '9pt',
-                  fontWeight: isActive ? 'bold' : 'normal',
+                  fontWeight: isActive ? 700 : 600,
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
                   backgroundColor: bgColor,
                   color: textColor,
                   border: isActive ? `2px solid ${borderColor}` : `1px solid ${borderColor}`,
-                  borderRadius: '4px',
+                  borderRadius: '5px',
                   cursor: 'pointer',
                   flexShrink: 0,
                   transition: 'all 0.15s'
@@ -326,25 +432,42 @@ export const QuestionViewer = ({
           className="cf-btn-secondary"
           onClick={() => setShowQuestionPalette(true)}
           style={{
-            padding: '6px 8px',
+            padding: '6px 10px',
             fontSize: '9pt',
+            fontWeight: 600,
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
             flexShrink: 0,
             display: 'inline-flex',
             alignItems: 'center',
             gap: '4px',
-            whiteSpace: 'nowrap'
+            whiteSpace: 'nowrap',
+            borderRadius: '5px',
+            border: '1px solid #cbd5e1',
+            backgroundColor: '#ffffff',
+            cursor: 'pointer'
           }}
-          title="Question Overview Palette"
+          title="Question Overview Grid"
         >
-          <Grid size={14} />
+          <Grid size={13} />
           <span>Grid</span>
         </button>
 
         <button
           className="cf-btn-secondary"
           disabled={selectedQuestionIndex === test.questions.length - 1}
-          onClick={() => setSelectedQuestionIndex(selectedQuestionIndex + 1)}
-          style={{ padding: '6px 10px', fontSize: '9pt', flexShrink: 0, whiteSpace: 'nowrap' }}
+          onClick={() => navigateTo(selectedQuestionIndex + 1)}
+          style={{
+            padding: '7px 12px',
+            fontSize: '9pt',
+            fontWeight: 600,
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+            borderRadius: '5px',
+            border: '1px solid #cbd5e1',
+            backgroundColor: '#ffffff',
+            cursor: selectedQuestionIndex === test.questions.length - 1 ? 'not-allowed' : 'pointer'
+          }}
         >
           Next →
         </button>

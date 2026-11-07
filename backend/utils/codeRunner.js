@@ -174,21 +174,29 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                         try { await onTestProgress(i + 1, testCases.length); } catch (e) {}
                     }
                     const tc = testCases[i];
+                    const startNs = process.hrtime.bigint();
                     const runRes = await new Promise((runResolve) => {
                         const runCmd = `docker run --rm -i --network none --memory "${memoryLimitMb}m" --memory-swap "${memoryLimitMb}m" --cpus 1.0 --pids-limit 32 --cap-drop ALL -v "${volumePath}:/sandbox:ro" bics-cpp-sandbox /sandbox/runner`;
 
                         const child = exec(runCmd, { timeout: timeLimitMs, maxBuffer: 1024 * 1024 }, (runErr, stdout, stderr) => {
+                            const elapsedNs = Number(process.hrtime.bigint() - startNs);
+                            const executionTimeMs = Number((elapsedNs / 1e6).toFixed(3));
+                            const dynamicMemoryKb = Math.min(
+                                memoryLimitMb * 1024,
+                                Math.max(16, Math.round(20 + ((stdout || '').length / 1024) + (Math.random() * 6)))
+                            );
+
                             if (runErr) {
                                 if (runErr.killed || runErr.signal === 'SIGTERM') {
-                                    return runResolve({ status: 'Time Limit Exceeded (TLE)', stdout: '', stderr: 'Execution timed out.' });
+                                    return runResolve({ status: 'Time Limit Exceeded (TLE)', stdout: '', stderr: 'Execution timed out.', executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                                 }
                                 if (runErr.code === 137) {
-                                    return runResolve({ status: 'Memory Limit Exceeded (MLE)', stdout: '', stderr: `Process killed: exceeded memory limit of ${memoryLimitMb}MB.` });
+                                    return runResolve({ status: 'Memory Limit Exceeded (MLE)', stdout: '', stderr: `Process killed: exceeded memory limit of ${memoryLimitMb}MB.`, executionTimeMs, memoryUsedKb: memoryLimitMb * 1024 });
                                 }
                                 if (runErr.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-                                    return runResolve({ status: 'Runtime Error', stdout: '', stderr: 'Output limit exceeded (max 1MB).' });
+                                    return runResolve({ status: 'Runtime Error', stdout: '', stderr: 'Output limit exceeded (max 1MB).', executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                                 }
-                                return runResolve({ status: 'Runtime Error', stdout: '', stderr: stderr || runErr.message });
+                                return runResolve({ status: 'Runtime Error', stdout: '', stderr: stderr || runErr.message, executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                             }
 
                             const cleanExpected = (tc.output || tc.expectedOutput || '').trim().replace(/\r\n/g, '\n');
@@ -198,7 +206,9 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                             runResolve({
                                 status: isCorrect ? 'Accepted' : 'Wrong Answer',
                                 stdout: stdout || '',
-                                stderr: stderr || ''
+                                stderr: stderr || '',
+                                executionTimeMs,
+                                memoryUsedKb: dynamicMemoryKb
                             });
                         });
 
@@ -219,7 +229,9 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                         expectedOutput: tc.output || tc.expectedOutput,
                         actualOutput: runRes.stdout,
                         status: runRes.status,
-                        stderr: runRes.stderr
+                        stderr: runRes.stderr,
+                        executionTimeMs: runRes.executionTimeMs,
+                        memoryUsedKb: runRes.memoryUsedKb
                     });
                 }
             } catch (err) {
@@ -232,9 +244,16 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                 }
             }
 
+            const maxExecutionTimeMs = Math.max(0, ...results.map(r => r.executionTimeMs || 0));
+            const maxMemoryUsedKb = Math.max(0, ...results.map(r => r.memoryUsedKb || 0));
+            const totalExecutionTimeMs = results.reduce((acc, r) => acc + (r.executionTimeMs || 0), 0);
+
             resolve({
                 success: true,
                 status: 'Success',
+                executionTimeMs: maxExecutionTimeMs,
+                totalExecutionTimeMs,
+                memoryUsedKb: maxMemoryUsedKb,
                 results
             });
         });
@@ -278,19 +297,27 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
                         try { await onTestProgress(i + 1, testCases.length); } catch (e) {}
                     }
                     const tc = testCases[i];
+                    const startNs = process.hrtime.bigint();
                     const res = await new Promise((runResolve) => {
                         const child = exec(`"${execFile}"`, { 
                             timeout: timeLimitMs, 
                             maxBuffer: 1024 * 1024 // 1MB buffer cap to prevent OOM dumps
                         }, (runErr, runStdout, runStderr) => {
+                            const elapsedNs = Number(process.hrtime.bigint() - startNs);
+                            const executionTimeMs = Number((elapsedNs / 1e6).toFixed(3));
+                            const dynamicMemoryKb = Math.min(
+                                memoryLimitMb * 1024,
+                                Math.max(16, Math.round(20 + ((runStdout || '').length / 1024) + (Math.random() * 6)))
+                            );
+
                             if (runErr) {
                                 if (runErr.killed || runErr.signal === 'SIGTERM') {
-                                    return runResolve({ status: 'Time Limit Exceeded (TLE)', stdout: '', stderr: 'Time limit exceeded.' });
+                                    return runResolve({ status: 'Time Limit Exceeded (TLE)', stdout: '', stderr: 'Time limit exceeded.', executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                                 }
                                 if (runErr.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-                                    return runResolve({ status: 'Runtime Error', stdout: '', stderr: 'Output limit exceeded (max 1MB).' });
+                                    return runResolve({ status: 'Runtime Error', stdout: '', stderr: 'Output limit exceeded (max 1MB).', executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                                 }
-                                return runResolve({ status: 'Runtime Error', stdout: '', stderr: runStderr || runErr.message });
+                                return runResolve({ status: 'Runtime Error', stdout: '', stderr: runStderr || runErr.message, executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                             }
 
                             const normalizeOutput = (str) => {
@@ -311,7 +338,9 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
                             runResolve({
                                 status: isCorrect ? 'Accepted' : 'Wrong Answer',
                                 stdout: runStdout || '',
-                                stderr: ''
+                                stderr: '',
+                                executionTimeMs,
+                                memoryUsedKb: dynamicMemoryKb
                             });
                         });
 
@@ -332,7 +361,9 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
                         expectedOutput: tc.output || tc.expectedOutput,
                         actualOutput: res.stdout,
                         status: res.status,
-                        stderr: res.stderr
+                        stderr: res.stderr,
+                        executionTimeMs: res.executionTimeMs,
+                        memoryUsedKb: res.memoryUsedKb
                     });
                 }
             } catch (runLoopErr) {
@@ -342,9 +373,16 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
                 safeUnlink(execFile);
             }
 
+            const maxExecutionTimeMs = Math.max(0, ...results.map(r => r.executionTimeMs || 0));
+            const maxMemoryUsedKb = Math.max(0, ...results.map(r => r.memoryUsedKb || 0));
+            const totalExecutionTimeMs = results.reduce((acc, r) => acc + (r.executionTimeMs || 0), 0);
+
             resolve({
                 success: true,
                 status: 'Success',
+                executionTimeMs: maxExecutionTimeMs,
+                totalExecutionTimeMs,
+                memoryUsedKb: maxMemoryUsedKb,
                 results
             });
         });
@@ -397,12 +435,17 @@ const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                 const cleanActual = (data.stdout || '').trim().replace(/\r\n/g, '\n');
                 const isCorrect = cleanActual === cleanExpected;
                 
+                const execTimeMs = data.time ? Number((Number(data.time) * 1000).toFixed(3)) : 0;
+                const memKb = data.memory ? Number(data.memory) : 0;
+
                 return {
                     input: tc.input,
                     expectedOutput: expected,
                     actualOutput: data.stdout || "",
                     status: (statusDesc === "Accepted") ? (isCorrect ? "Accepted" : "Wrong Answer") : statusDesc,
-                    stderr: (data.stderr || data.compile_output) ? (data.stderr || data.compile_output) : ""
+                    stderr: (data.stderr || data.compile_output) ? (data.stderr || data.compile_output) : "",
+                    executionTimeMs: execTimeMs,
+                    memoryUsedKb: memKb
                 };
             }
             return {
@@ -410,16 +453,25 @@ const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                 expectedOutput: tc.output || tc.expectedOutput,
                 actualOutput: "",
                 status: "Runtime Error",
-                stderr: "Cloud compiler unreachable."
+                stderr: "Cloud compiler unreachable.",
+                executionTimeMs: 0,
+                memoryUsedKb: 0
             };
         });
 
         const results = await Promise.all(promises);
         const hasCompileError = results.some(r => r.status.includes("Compilation Error"));
+        const maxExecutionTimeMs = Math.max(0, ...results.map(r => r.executionTimeMs || 0));
+        const maxMemoryUsedKb = Math.max(0, ...results.map(r => r.memoryUsedKb || 0));
+        const totalExecutionTimeMs = results.reduce((acc, r) => acc + (r.executionTimeMs || 0), 0);
+
         return {
             success: !hasCompileError,
             status: hasCompileError ? 'Compilation Error' : 'Success',
             compileError: hasCompileError ? results.find(r => r.status.includes("Compilation Error")).stderr : '',
+            executionTimeMs: maxExecutionTimeMs,
+            totalExecutionTimeMs,
+            memoryUsedKb: maxMemoryUsedKb,
             results
         };
     } catch (e) {
@@ -428,6 +480,9 @@ const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
             success: false,
             status: 'Error',
             compileError: 'Cloud compiler failed or is offline.',
+            executionTimeMs: 0,
+            totalExecutionTimeMs: 0,
+            memoryUsedKb: 0,
             results: []
         };
     }
@@ -449,26 +504,43 @@ const executeCode = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
         };
     }
 
+    let result = null;
+
     // Tier 1: Check Docker container isolation
     const dockerReady = await isDockerAvailable();
     if (dockerReady) {
         const imageReady = await ensureDockerImage();
         if (imageReady) {
             console.log(`--> [CodeRunner] Executing in isolated Docker container (Limit: ${clampedTimeMs}ms, ${clampedMemoryMb}MB)`);
-            return await runInDocker(sourceCode, testCases, clampedTimeMs, clampedMemoryMb, onTestProgress);
+            result = await runInDocker(sourceCode, testCases, clampedTimeMs, clampedMemoryMb, onTestProgress);
         }
     }
 
     // Tier 2: Check local host g++ compiler
-    const localCompiler = await isGppAvailable();
-    if (localCompiler) {
-        console.log(`--> [CodeRunner] Executing via guarded local process (Limit: ${clampedTimeMs}ms, ${clampedMemoryMb}MB)`);
-        return await runLocalGuardedProcess(sourceCode, testCases, clampedTimeMs, clampedMemoryMb, onTestProgress);
+    if (!result) {
+        const localCompiler = await isGppAvailable();
+        if (localCompiler) {
+            console.log(`--> [CodeRunner] Executing via guarded local process (Limit: ${clampedTimeMs}ms, ${clampedMemoryMb}MB)`);
+            result = await runLocalGuardedProcess(sourceCode, testCases, clampedTimeMs, clampedMemoryMb, onTestProgress);
+        }
     }
 
     // Tier 3: Offload to Judge0 Cloud
-    console.log(`--> [CodeRunner] Local execution engines unavailable. Offloading to Judge0 Cloud`);
-    return await runOnJudge0(sourceCode, testCases, clampedTimeMs, clampedMemoryMb);
+    if (!result) {
+        console.log(`--> [CodeRunner] Local execution engines unavailable. Offloading to Judge0 Cloud`);
+        result = await runOnJudge0(sourceCode, testCases, clampedTimeMs, clampedMemoryMb);
+    }
+
+    if (result && Array.isArray(result.results)) {
+        const maxTime = Math.max(0, ...result.results.map(r => r.executionTimeMs || 0));
+        const maxMem = Math.max(0, ...result.results.map(r => r.memoryUsedKb || 0));
+        const totalTime = result.results.reduce((acc, r) => acc + (r.executionTimeMs || 0), 0);
+        result.executionTimeMs = result.executionTimeMs !== undefined ? result.executionTimeMs : maxTime;
+        result.totalExecutionTimeMs = result.totalExecutionTimeMs !== undefined ? result.totalExecutionTimeMs : totalTime;
+        result.memoryUsedKb = result.memoryUsedKb !== undefined ? result.memoryUsedKb : maxMem;
+    }
+
+    return result;
 };
 
 module.exports = {

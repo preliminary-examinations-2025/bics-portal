@@ -48,6 +48,9 @@ scratch/
 backend/keys/*.pem
 backend/keys/
 
+# Workbench Backups
+frontend_ot/src/views/.backup/
+
 # AI Agent & IDE Internal Metadata
 .agents/
 .claude/
@@ -64,3 +67,6 @@ crop_*.png
 test_*.js
 .VSCodeCounter/
 
+
+# Local OT Workbench
+ot_workbench/

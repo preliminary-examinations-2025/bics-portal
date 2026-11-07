@@ -3,14 +3,16 @@ const mongoose = require('mongoose');
 const QuestionSchema = new mongoose.Schema({
     id: String,
     type: String, // 'mcq', 'coding', or 'web'
+    category: { type: String, default: '' }, // 'Multiple Choice', 'Programming', or 'Web Development'
     title: String, // Standardized short title / summary for all question types
     description: String, // Standardized full description / problem statement for all question types
     points: Number,
     section: String,
     grantBonusToAll: { type: Boolean, default: false },
-    // MCQ
+    // MCQ / Single Choice (SCC) / Multi Choice (MCC)
     options: [String],
     correctOptionIndex: Number,
+    correctOptionIndices: [{ type: Number }],
     isMultiChoice: { type: Boolean, default: false },
     // Coding
     initialTemplate: String,

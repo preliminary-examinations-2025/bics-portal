@@ -170,10 +170,22 @@ router.post('/', async (req, res) => {
             const title = (qObj.title || '').trim() || `Question ${qIdx + 1}`;
             const description = (qObj.description || qObj.questionText || qObj.question || qObj.statement || '').trim();
             const qId = qObj.id || qObj._id || `q_${Date.now()}_${qIdx + 1}`;
+            const isMulti = qObj.isMultiChoice || qObj.type === 'mcc' || qObj.category === 'Multiple Choice' || (Array.isArray(qObj.correctOptionIndices) && qObj.correctOptionIndices.length > 0);
+            const category = (qObj.category || '').trim() || (qObj.type === 'coding' ? 'Programming' : (qObj.type === 'web' ? 'Web Development' : (isMulti ? 'Multiple Choice' : 'Single Choice')));
+            const timeLimitMs = Math.max(200, Math.min(Number(qObj.timeLimitMs) || 2000, 10000));
+            const memoryLimitMb = Math.max(16, Math.min(Number(qObj.memoryLimitMb) || 128, 512));
+            const correctOptionIndices = Array.isArray(qObj.correctOptionIndices)
+                ? qObj.correctOptionIndices.map(Number)
+                : (qObj.correctOptionIndex !== undefined && qObj.correctOptionIndex !== null ? [Number(qObj.correctOptionIndex)] : []);
             return {
                 ...qObj,
                 id: qId,
                 title,
+                category,
+                isMultiChoice: !!isMulti,
+                correctOptionIndices,
+                timeLimitMs,
+                memoryLimitMb,
                 description,
                 questionText: description
             };
@@ -559,11 +571,36 @@ router.post('/evaluate/:submissionId', async (req, res) => {
             if (answers && Array.isArray(answers)) {
                 answers.forEach(item => {
                     const existingAns = (submission.answers || []).find(a => String(a.questionId) === String(item.questionId));
-                    if (existingAns && item.score !== undefined && !isNaN(item.score)) {
-                        const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
-                        const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
-                        existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
-                        existingAns.isManuallyGraded = true;
+                    if (existingAns) {
+                        if (item.score !== undefined && !isNaN(item.score)) {
+                            const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
+                            const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
+                            existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
+                            existingAns.isManuallyGraded = true;
+                        }
+                        if (Array.isArray(item.testCaseResults)) {
+                            existingAns.testCaseResults = item.testCaseResults.map((tc, tcIdx) => ({
+                                testCaseIndex: tc.testCaseIndex !== undefined ? tc.testCaseIndex : tcIdx,
+                                status: tc.status || 'Pending',
+                                points: Number(tc.points) || 0,
+                                scoredPoints: Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0)),
+                                actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 2000) : (tc.actualOutput || ''),
+                                expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 2000) : (tc.expectedOutput || ''),
+                                input: typeof tc.input === 'string' ? tc.input.slice(0, 1000) : (tc.input || ''),
+                                isSample: Boolean(tc.isSample),
+                                executionTimeMs: Number(tc.executionTimeMs || 0),
+                                memoryUsedKb: Number(tc.memoryUsedKb || 0)
+                            }));
+                        }
+                        if (item.rawResults) {
+                            existingAns.rawResults = item.rawResults;
+                        }
+                        if (item.compileError !== undefined) {
+                            existingAns.compileError = item.compileError;
+                        }
+                        if (item.consoleTab) {
+                            existingAns.consoleTab = item.consoleTab;
+                        }
                     }
                 });
             }
@@ -601,11 +638,36 @@ router.post('/evaluate/:submissionId', async (req, res) => {
             if (answers && Array.isArray(answers)) {
                 answers.forEach(item => {
                     const existingAns = (submission.answers || []).find(a => String(a.questionId) === String(item.questionId));
-                    if (existingAns && item.score !== undefined && !isNaN(item.score)) {
-                        const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
-                        const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
-                        existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
-                        existingAns.isManuallyGraded = true;
+                    if (existingAns) {
+                        if (item.score !== undefined && !isNaN(item.score)) {
+                            const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
+                            const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
+                            existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
+                            existingAns.isManuallyGraded = true;
+                        }
+                        if (Array.isArray(item.testCaseResults)) {
+                            existingAns.testCaseResults = item.testCaseResults.map((tc, tcIdx) => ({
+                                testCaseIndex: tc.testCaseIndex !== undefined ? tc.testCaseIndex : tcIdx,
+                                status: tc.status || 'Pending',
+                                points: Number(tc.points) || 0,
+                                scoredPoints: Number(tc.scoredPoints !== undefined ? tc.scoredPoints : (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0)),
+                                actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 2000) : (tc.actualOutput || ''),
+                                expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 2000) : (tc.expectedOutput || ''),
+                                input: typeof tc.input === 'string' ? tc.input.slice(0, 1000) : (tc.input || ''),
+                                isSample: Boolean(tc.isSample),
+                                executionTimeMs: Number(tc.executionTimeMs || 0),
+                                memoryUsedKb: Number(tc.memoryUsedKb || 0)
+                            }));
+                        }
+                        if (item.rawResults) {
+                            existingAns.rawResults = item.rawResults;
+                        }
+                        if (item.compileError !== undefined) {
+                            existingAns.compileError = item.compileError;
+                        }
+                        if (item.consoleTab) {
+                            existingAns.consoleTab = item.consoleTab;
+                        }
                     }
                 });
             }

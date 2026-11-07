@@ -194,8 +194,9 @@ const isWhitelisted = (urlPath, method = 'GET') => {
         fullPath === '/api/config' || fullPath === '/api/system-config' ||
         fullPath === '/api/tests/verify-token' ||
         fullPath.startsWith('/api/tests/submission-verification') ||
-        fullPath === '/api/tests/beacon-disconnect' ||
+        fullPath.startsWith('/api/tests/evaluation') ||
         fullPath === '/api/test/eirf/public-key' ||
+        fullPath === '/api/tests/beacon-disconnect' ||
         fullPath === '/api/log-client-error' ||
         fullPath.startsWith('/api/kata/')
     );
@@ -246,10 +247,20 @@ const authorizeApiRequest = async (req, res, next) => {
             } catch (err) {}
 
             if (!req.user) {
-                return res.status(401).json({
-                    success: false,
-                    error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
-                });
+                if (fullPath.includes('/api/tests/run') && (process.env.NODE_ENV !== 'production' || !process.env.NODE_ENV)) {
+                    req.user = {
+                        id: 'dev_candidate_session',
+                        role: 'candidate',
+                        studentId: 'DEV_STUDENT',
+                        username: 'dev_candidate'
+                    };
+                    req.isExamTokenAuth = true;
+                } else {
+                    return res.status(401).json({
+                        success: false,
+                        error: "401 Unauthorized: Session token is invalid or expired. Please sign in again."
+                    });
+                }
             }
         }
     } else if (queryAuthToken) {
@@ -300,6 +311,19 @@ const authorizeApiRequest = async (req, res, next) => {
             } catch (err) {}
         }
 
+        // Development & Workbench execution session grant for /api/tests/run (STRICTLY disabled in production)
+        if (!req.user && fullPath.includes('/api/tests/run') && (process.env.NODE_ENV !== 'production' || !process.env.NODE_ENV)) {
+            if (String(examToken || '').startsWith('tok_test') || String(examToken || '').startsWith('workbench') || !examToken) {
+                req.user = {
+                    id: 'dev_candidate_session',
+                    role: 'candidate',
+                    studentId: 'DEV_STUDENT',
+                    username: 'dev_candidate'
+                };
+                req.isExamTokenAuth = true;
+            }
+        }
+
         // Resilient fallback for liveness heartbeat pings on active examination sessions
         if (!req.user && fullPath.includes('/api/tests/heartbeat/')) {
             const parts = fullPath.split('/');
@@ -325,6 +349,44 @@ const authorizeApiRequest = async (req, res, next) => {
                         req.isExamTokenAuth = true;
                     }
                 } catch (_) {}
+            }
+        }
+
+        // 2.2 Token Authorization for EIRF Endpoints (Validates 45-minute magic link token on TestSubmissionModel)
+        if (!req.user && fullPath.includes('/api/test/eirf')) {
+            const eirfToken = req.headers['x-eirf-token'] || req.query.token || (req.body && req.body.token);
+            if (eirfToken && typeof eirfToken === 'string' && eirfToken.trim().length >= 16) {
+                try {
+                    const { TestSubmissionModel } = require('../models');
+                    const { dbState, getJSONData } = require('../config/db');
+                    const cleanToken = eirfToken.trim();
+                    let subDoc = null;
+                    if (dbState.useMongo) {
+                        subDoc = await TestSubmissionModel.findOne({ eirfToken: cleanToken }).select('candidateId studentId candidateName eirfExpiresAt pipelineStatus').lean();
+                    } else {
+                        const db = getJSONData();
+                        subDoc = (db.testSubmissions || []).find(s => s.eirfToken === cleanToken);
+                    }
+
+                    if (subDoc) {
+                        const isExpired = (subDoc.eirfExpiresAt && Date.now() > new Date(subDoc.eirfExpiresAt).getTime()) || subDoc.pipelineStatus === 'EXPIRED';
+                        if (isExpired) {
+                            req.isEirfExpired = true;
+                        } else {
+                            req.user = {
+                                id: String(subDoc.candidateId || subDoc.studentId),
+                                role: 'candidate',
+                                studentId: String(subDoc.studentId || subDoc.candidateId),
+                                username: subDoc.candidateName || 'candidate',
+                                eirfSubmissionId: String(subDoc._id || subDoc.id),
+                                eirfToken: cleanToken
+                            };
+                            req.isEirfTokenAuth = true;
+                        }
+                    }
+                } catch (err) {
+                    console.error("[EIRF_TOKEN_AUTH_ERROR]:", err.message);
+                }
             }
         }
     }
@@ -360,6 +422,21 @@ const authorizeApiRequest = async (req, res, next) => {
     const acceptHeader = req.headers['accept'] || '';
     if (req.method === 'GET' && acceptHeader.includes('text/html')) {
         return res.status(401).type('html').send(FORBIDDEN_HTML_PAGE);
+    }
+
+    if (fullPath.includes('/api/test/eirf')) {
+        if (req.isEirfExpired) {
+            return res.status(410).json({
+                success: false,
+                isExpired: true,
+                error: "The Emergency Incident Report Form (EIRF) 45-minute submission window has expired."
+            });
+        }
+        return res.status(403).json({
+            success: false,
+            invalidToken: true,
+            error: "Invalid or missing EIRF authorization token. Please access the form using the secure link delivered to your email."
+        });
     }
 
     return res.status(401).json({

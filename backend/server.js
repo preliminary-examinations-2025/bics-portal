@@ -132,6 +132,8 @@ app.use(async (err, req, res, next) => {
 const { startIngestionWorker } = require('./services/lectureIngestionWorker');
 // Dead-Man's Switch Background Reaper Worker (Item 2.4)
 const { startSubmissionReaper } = require('./workers/submissionReaper');
+// Autonomous Sequential EIRF Pipeline Worker (Phase 1)
+const { startEirfPipelineWorker } = require('./workers/eirfPipelineWorker');
 // Kata Contests Automated Weekend Scheduler & Reconciler
 const { startKataScheduler } = require('./utils/kataScheduler');
 // Kata AI Hourly Evaluator & Plagiarism Detector (Gemini Direct API)
@@ -165,6 +167,8 @@ if (process.env.NODE_ENV !== 'test' && (process.env.NODE_ENV !== 'production' ||
         startIngestionWorker();
         // Start dead-man's switch reaper worker for abandoned exam sessions
         startSubmissionReaper();
+        // Start autonomous sequential EIRF pipeline worker
+        startEirfPipelineWorker();
         // Start Kata weekly contests scheduler
         startKataScheduler();
         // Start Kata AI hourly evaluation worker

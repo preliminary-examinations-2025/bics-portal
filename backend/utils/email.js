@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { toBicsId } = require('./bicsId');
 
 const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
@@ -129,14 +130,15 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
     const basePortalUrl = process.env.PORTAL_URL || process.env.DASHBOARD_URL || defaultPortalUrl;
     const cleanBase = basePortalUrl.replace(/\/+$/, '');
 
-    const eirfUrl = `${cleanBase}/assessment/eirf/${submissionId}`;
+    const bicsSubId = toBicsId(submissionId) || submissionId;
+    const eirfUrl = extraData.magicLink || `${cleanBase}/assessment/evaluation/eirf/${bicsSubId}${extraData.token ? `?token=${extraData.token}` : ''}`;
 
     const nowIST = formatISTDate(new Date());
-    const deadlineIST = formatISTDate(new Date(Date.now() + 45 * 60 * 1000));
+    const deadlineIST = formatISTDate(extraData.expiresAt || new Date(Date.now() + 45 * 60 * 1000));
 
     const noticeTitle = 'BICS Emergency Incident Report Notice';
     const noticeIntro = `An automated proctoring alert or session disruption was recorded during your recent online examination ${examTitle} on ${nowIST}.`;
-    const noticeActionText = `To maintain examination integrity and ensure your score is validated, you are required to complete the Emergency Incident Report Form (EIRF) and upload your downloaded local backup file (.eirf).`;
+    const noticeActionText = `To maintain examination integrity and ensure your score is validated, you are required to complete the Emergency Incident Report Form (EIRF) within 45 minutes.`;
     const buttonLabel = 'Complete Emergency Incident Report →';
     const subjectText = `BICS Emergency Incident Report Notice - ${examTitle}`;
 
@@ -162,7 +164,7 @@ const sendEirfNoticeEmail = async (toEmail, name, examTitle, incidentSummary, su
                         notice_action_text: noticeActionText,
                         button_label: buttonLabel,
                         student_id: extraData.studentId || 'Candidate',
-                        submission_id: String(submissionId),
+                        submission_id: String(bicsSubId),
                         exam_title: examTitle,
                         incident_timestamp: nowIST,
                         expiry_deadline_ist: deadlineIST,
@@ -268,9 +270,103 @@ const sendEirfVerdictEmail = async (toEmail, name, examTitle, verdictStatus, adm
     }
 };
 
+const sendCleanSubmissionEmail = async (toEmail, name, examTitle, submissionId, extraData = {}) => {
+    const nowIST = formatISTDate(new Date());
+    const subjectText = `Examination Submitted Successfully - ${examTitle}`;
+    console.log(`\n==================================================`);
+    console.log(`[CLEAN EXAM SUBMISSION CONFIRMATION EMAIL]`);
+    console.log(`Recipient: ${toEmail} (${name})`);
+    console.log(`Exam Title: ${examTitle}`);
+    console.log(`Submission ID: ${submissionId}`);
+    console.log(`Timestamp: ${nowIST}`);
+    console.log(`Compliance Status: COMPLIANT (Zero Proctoring Discrepancies)`);
+    console.log(`==================================================\n`);
+
+    const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
+    const ejsTemplateId = process.env.EMAILJS_CONFIRM_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID;
+    const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const ejsPrivateKey = process.env.EMAILJS_PRIVATE_KEY;
+
+    if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
+        try {
+            await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    service_id: ejsServiceId,
+                    template_id: ejsTemplateId,
+                    user_id: ejsPublicKey,
+                    accessToken: ejsPrivateKey || undefined,
+                    template_params: {
+                        to_email: toEmail,
+                        email: toEmail,
+                        to_name: name,
+                        name: name,
+                        subject: subjectText,
+                        exam_title: examTitle,
+                        submission_id: String(submissionId),
+                        submitted_at: nowIST,
+                        status: 'COMPLIANT - Submitted Successfully'
+                    }
+                })
+            });
+        } catch (err) {
+            console.error(`[CLEAN_SUBMISSION_EMAIL_ERROR]:`, err.message);
+        }
+    }
+};
+
+const sendEirfConfirmationEmail = async (toEmail, name, examTitle, reportId, extraData = {}) => {
+    const nowIST = formatISTDate(new Date());
+    const subjectText = `EIRF Received & Pending Faculty Review - ${examTitle}`;
+    console.log(`\n==================================================`);
+    console.log(`[EIRF FILING CONFIRMATION EMAIL]`);
+    console.log(`Recipient: ${toEmail} (${name})`);
+    console.log(`Report ID: ${reportId}`);
+    console.log(`Exam Title: ${examTitle}`);
+    console.log(`Timestamp: ${nowIST}`);
+    console.log(`Status: UNDER_REVIEW (Academic Examination Committee)`);
+    console.log(`==================================================\n`);
+
+    const ejsServiceId = process.env.EMAILJS_SERVICE_ID;
+    const ejsTemplateId = process.env.EMAILJS_CONFIRM_TEMPLATE_ID || process.env.EMAILJS_TEMPLATE_ID;
+    const ejsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
+    const ejsPrivateKey = process.env.EMAILJS_PRIVATE_KEY;
+
+    if (ejsServiceId && ejsTemplateId && ejsPublicKey) {
+        try {
+            await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    service_id: ejsServiceId,
+                    template_id: ejsTemplateId,
+                    user_id: ejsPublicKey,
+                    accessToken: ejsPrivateKey || undefined,
+                    template_params: {
+                        to_email: toEmail,
+                        email: toEmail,
+                        to_name: name,
+                        name: name,
+                        subject: subjectText,
+                        exam_title: examTitle,
+                        report_id: String(reportId),
+                        received_at: nowIST,
+                        status: 'UNDER_REVIEW'
+                    }
+                })
+            });
+        } catch (err) {
+            console.error(`[EIRF_CONFIRMATION_EMAIL_ERROR]:`, err.message);
+        }
+    }
+};
+
 module.exports = {
     sendVerificationEmail,
     formatISTDate,
     sendEirfNoticeEmail,
-    sendEirfVerdictEmail
+    sendEirfVerdictEmail,
+    sendCleanSubmissionEmail,
+    sendEirfConfirmationEmail
 };

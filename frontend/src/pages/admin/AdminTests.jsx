@@ -539,11 +539,13 @@ export default function AdminTests({
                                         const nextType = opt.value;
                                         updated[editingQuestionIdx].type = nextType;
                                         if (nextType === 'mcq') {
+                                          updated[editingQuestionIdx].category = 'Multiple Choice';
                                           if (!updated[editingQuestionIdx].options || updated[editingQuestionIdx].options.length === 0) {
                                             updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
                                             updated[editingQuestionIdx].correctOptionIndex = 0;
                                           }
                                         } else if (nextType === 'coding') {
+                                          updated[editingQuestionIdx].category = 'Programming';
                                           if (!updated[editingQuestionIdx].initialTemplate) {
                                             updated[editingQuestionIdx].initialTemplate = '#include <iostream>\nusing namespace std;\n\nint main() {\n    return 0;\n}';
                                           }
@@ -558,6 +560,7 @@ export default function AdminTests({
                                             updated[editingQuestionIdx].testCases = [{ input: '', output: '', isSample: true, points: 10 }];
                                           }
                                         } else if (nextType === 'web') {
+                                          updated[editingQuestionIdx].category = 'Web Development';
                                           if (!updated[editingQuestionIdx].initialHtml) {
                                             updated[editingQuestionIdx].initialHtml = '<h1>Hello World</h1>';
                                             updated[editingQuestionIdx].initialCss = 'h1 {\n  color: red;\n}';
@@ -591,6 +594,22 @@ export default function AdminTests({
                                     </button>
                                   ))}
                                 </div>
+                              </div>
+                              <div className="cf-input-group">
+                                <label className="cf-label">Question Category</label>
+                                <select
+                                  className="cf-input"
+                                  value={newExamQuestions[editingQuestionIdx]?.category || (newExamQuestions[editingQuestionIdx]?.type === 'coding' ? 'Programming' : (newExamQuestions[editingQuestionIdx]?.type === 'web' ? 'Web Development' : 'Multiple Choice'))}
+                                  onChange={e => {
+                                    const updated = [...newExamQuestions];
+                                    updated[editingQuestionIdx].category = e.target.value;
+                                    setNewExamQuestions(updated);
+                                  }}
+                                >
+                                  <option value="Multiple Choice">Multiple Choice</option>
+                                  <option value="Programming">Programming</option>
+                                  <option value="Web Development">Web Development</option>
+                                </select>
                               </div>
                               <div className="cf-input-group">
                                 <label className="cf-label">Points Allocation</label>
@@ -1088,6 +1107,7 @@ export default function AdminTests({
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                                     type: 'mcq',
+                                    category: 'Multiple Choice',
                                     title: 'Question ' + (newExamQuestions.length + 1),
                                     description: 'Choose the correct answer for the question below.',
                                     questionText: 'Choose the correct answer for the question below.',
@@ -1109,6 +1129,7 @@ export default function AdminTests({
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                                     type: 'coding',
+                                    category: 'Programming',
                                     title: 'Question ' + (newExamQuestions.length + 1) + ' - C++ Coding Problem',
                                     description: 'Write a C++ program to solve...',
                                     questionText: 'Write a C++ program to solve...',
@@ -1133,6 +1154,7 @@ export default function AdminTests({
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
                                     type: 'web',
+                                    category: 'Web Development',
                                     title: 'Question ' + (newExamQuestions.length + 1) + ' - Web Design Problem',
                                     description: 'Build a responsive card component with HTML and CSS.',
                                     questionText: 'Build a responsive card component with HTML and CSS.',
@@ -1403,7 +1425,7 @@ export default function AdminTests({
                         </h4>
 
                         {selectedExamSubmission.answers?.map((ans, idx) => {
-                          const questionConfig = testConfig?.questions?.[idx] || testConfig?.questions?.find(q => q.id === ans.questionId);
+                          const questionConfig = testConfig?.questions?.[idx] || testConfig?.questions?.find(q => String(q.id || q._id) === String(ans.questionId));
                           const maxPts = Number(questionConfig?.points || 0);
                           const isBonusQuestion = Boolean(questionConfig?.grantBonusToAll || questionConfig?.isBonus);
 
@@ -1605,72 +1627,88 @@ export default function AdminTests({
                                       </button>
                                     </div>
 
-                                    {codingEvaluationResults[ans.questionId]?.isRunning && (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '8.5pt', color: '#64748b', padding: '5px 0' }}>
-                                        <Loader2 className="spinner" size={14} style={{ color: '#3b5998', width: '14px', height: '14px' }} />
-                                        <span>Compiling source code and executing test cases on host server...</span>
-                                      </div>
-                                    )}
+                                    {(() => {
+                                      const evalData = codingEvaluationResults[ans.questionId];
+                                      const isRunning = Boolean(evalData?.isRunning);
+                                      const compErr = evalData ? evalData.compileError : ans.compileError;
+                                      const tcResults = evalData?.results || (ans.testCaseResults && ans.testCaseResults.length > 0 ? ans.testCaseResults : null);
 
-                                    {!codingEvaluationResults[ans.questionId]?.isRunning && codingEvaluationResults[ans.questionId]?.compileError && (
-                                      <div style={{ borderLeft: '4px solid #ef4444', backgroundColor: '#fef2f2', padding: '10px', borderRadius: '2px', fontSize: '8.5pt', fontFamily: 'monospace', color: '#b91c1c', overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
-                                        <strong>Compilation Error:</strong><br />
-                                        {codingEvaluationResults[ans.questionId].compileError}
-                                      </div>
-                                    )}
+                                      if (isRunning) {
+                                        return (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '8.5pt', color: '#64748b', padding: '5px 0' }}>
+                                            <Loader2 className="spinner" size={14} style={{ color: '#3b5998', width: '14px', height: '14px' }} />
+                                            <span>Compiling source code and executing test cases on host server...</span>
+                                          </div>
+                                        );
+                                      }
 
-                                    {!codingEvaluationResults[ans.questionId]?.isRunning && codingEvaluationResults[ans.questionId]?.results && (
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                        {codingEvaluationResults[ans.questionId].results.map((res, rIdx) => {
-                                          const tcId = questionConfig?.testCases?.[rIdx]?._id || questionConfig?.testCases?.[rIdx]?.id || (20260101 + rIdx);
-                                          const statusLower = String(res.status || '').toLowerCase();
-                                          const isPassed = res.passed === true || statusLower === 'accepted' || statusLower === 'passed' || statusLower.includes('accept');
-                                          const rawInp = res.input ?? res.sampleInput ?? questionConfig?.testCases?.[rIdx]?.input ?? questionConfig?.testCases?.[rIdx]?.sampleInput ?? '';
-                                          const rawExp = res.expectedOutput ?? res.output ?? res.sampleOutput ?? questionConfig?.testCases?.[rIdx]?.output ?? questionConfig?.testCases?.[rIdx]?.expectedOutput ?? '';
-                                          const rawAct = (res.actualOutput !== undefined && res.actualOutput !== null && res.actualOutput !== '')
-                                            ? res.actualOutput
-                                            : ((res.stdout !== undefined && res.stdout !== null && res.stdout !== '')
-                                                ? res.stdout
-                                                : (res.userOutput || (isPassed ? (rawExp || '(matched expected)') : '')));
+                                      if (compErr) {
+                                        return (
+                                          <div style={{ borderLeft: '4px solid #ef4444', backgroundColor: '#fef2f2', padding: '10px', borderRadius: '2px', fontSize: '8.5pt', fontFamily: 'monospace', color: '#b91c1c', overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+                                            <strong>Compilation Error:</strong><br />
+                                            {compErr}
+                                          </div>
+                                        );
+                                      }
 
-                                          const fmt = (v) => {
-                                            if (v === undefined || v === null || String(v).trim() === '') return '(empty)';
-                                            const str = String(v).replace(/\r\n/g, ' ').replace(/\n/g, ' ').trim();
-                                            return str.length > 30 ? str.substring(0, 30) + '...' : str;
-                                          };
+                                      if (tcResults && tcResults.length > 0) {
+                                        return (
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {tcResults.map((res, rIdx) => {
+                                              const tcId = questionConfig?.testCases?.[rIdx]?._id || questionConfig?.testCases?.[rIdx]?.id || (20260101 + rIdx);
+                                              const statusLower = String(res.status || '').toLowerCase();
+                                              const isPassed = res.passed === true || statusLower === 'accepted' || statusLower === 'passed' || statusLower.includes('accept');
+                                              const rawInp = res.input ?? res.sampleInput ?? questionConfig?.testCases?.[rIdx]?.input ?? questionConfig?.testCases?.[rIdx]?.sampleInput ?? '';
+                                              const rawExp = res.expectedOutput ?? res.output ?? res.sampleOutput ?? questionConfig?.testCases?.[rIdx]?.output ?? questionConfig?.testCases?.[rIdx]?.expectedOutput ?? '';
+                                              const rawAct = (res.actualOutput !== undefined && res.actualOutput !== null && res.actualOutput !== '')
+                                                ? res.actualOutput
+                                                : ((res.stdout !== undefined && res.stdout !== null && res.stdout !== '')
+                                                    ? res.stdout
+                                                    : (res.userOutput || (isPassed ? (rawExp || '(matched expected)') : '')));
 
-                                          return (
-                                            <div key={rIdx} style={{ fontSize: '8.5pt', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
-                                              <div style={{
-                                                padding: '6px 10px',
-                                                backgroundColor: isPassed ? '#f0fdf4' : '#fef2f2',
-                                                borderBottom: '1px solid #cbd5e1',
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                fontWeight: 'bold'
-                                              }}>
-                                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
-                                                  {isPassed ? <Check size={14} /> : <X size={14} />}
-                                                  <span>Testcase #{tcId} ({questionConfig?.testCases?.[rIdx]?.isSample ? 'Sample' : 'Hidden'}): {res.status}</span>
-                                                </span>
-                                                <span style={{ fontSize: '8pt', color: '#64748b' }}>Points: {questionConfig?.testCases?.[rIdx]?.points || 0}</span>
-                                              </div>
-                                              <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '8pt', color: '#475569', fontFamily: 'monospace' }}>
-                                                <div><strong>Input:</strong> <code title={String(rawInp || '(empty)')}>{fmt(rawInp)}</code></div>
-                                                <div><strong>Expected Output:</strong> <code title={String(rawExp || '(empty)')}>{fmt(rawExp)}</code></div>
-                                                <div><strong>Candidate Output:</strong> <code title={String(rawAct || '(empty)')} style={{ color: isPassed ? '#166534' : '#991b1b' }}>{fmt(rawAct)}</code></div>
-                                                {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code>{fmt(res.stderr)}</code></div>}
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
+                                              const fmt = (v) => {
+                                                if (v === undefined || v === null || String(v).trim() === '') return '(empty)';
+                                                const str = String(v).replace(/\r\n/g, ' ').replace(/\n/g, ' ').trim();
+                                                return str.length > 30 ? str.substring(0, 30) + '...' : str;
+                                              };
 
-                                    {!codingEvaluationResults[ans.questionId] && (
-                                      <span style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>Autograder is ready. Click run or wait for background verification.</span>
-                                    )}
+                                              return (
+                                                <div key={rIdx} style={{ fontSize: '8.5pt', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
+                                                  <div style={{
+                                                    padding: '6px 10px',
+                                                    backgroundColor: isPassed ? '#f0fdf4' : '#fef2f2',
+                                                    borderBottom: '1px solid #cbd5e1',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    fontWeight: 'bold'
+                                                  }}>
+                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
+                                                      {isPassed ? <Check size={14} /> : <X size={14} />}
+                                                      <span>Testcase #{tcId} ({questionConfig?.testCases?.[rIdx]?.isSample || res.isSample ? 'Sample' : 'Hidden'}): {res.status || (isPassed ? 'Accepted' : 'Failed')}</span>
+                                                    </span>
+                                                    <span style={{ fontSize: '8pt', color: '#64748b' }}>
+                                                      Points: {res.points !== undefined ? res.points : (questionConfig?.testCases?.[rIdx]?.points || 0)}
+                                                      {res.executionTimeMs ? (" • " + res.executionTimeMs + "ms") : ''}
+                                                    </span>
+                                                  </div>
+                                                  <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '8pt', color: '#475569', fontFamily: 'monospace' }}>
+                                                    <div><strong>Input:</strong> <code title={String(rawInp || '(empty)')}>{fmt(rawInp)}</code></div>
+                                                    <div><strong>Expected Output:</strong> <code title={String(rawExp || '(empty)')}>{fmt(rawExp)}</code></div>
+                                                    <div><strong>Candidate Output:</strong> <code title={String(rawAct || '(empty)')} style={{ color: isPassed ? '#166534' : '#991b1b' }}>{fmt(rawAct)}</code></div>
+                                                    {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code>{fmt(res.stderr)}</code></div>}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <span style={{ fontSize: '8.5pt', color: '#64748b', fontStyle: 'italic' }}>Autograder is ready. Click 'Run Compiler Test Cases' or wait for background verification.</span>
+                                      );
+                                    })()}
                                   </div>
 
                                   {/* Itemized Score Input for Coding */}
