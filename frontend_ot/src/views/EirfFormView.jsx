@@ -1014,9 +1014,9 @@ export const EirfFormView = ({
                 onMouseEnter={() => setIsSubmitBtnHovered(true)}
                 onMouseLeave={() => setIsSubmitBtnHovered(false)}
                 style={{
-                  backgroundColor: submittingEirf ? '#94a3b8' : (isSubmitBtnHovered ? '#38bdf8' : '#0284c7'),
-                  borderColor: submittingEirf ? '#94a3b8' : (isSubmitBtnHovered ? '#38bdf8' : '#0284c7'),
-                  color: '#ffffff',
+                  backgroundColor: submittingEirf ? '#f1f5f9' : (isSubmitBtnHovered ? '#dbeafe' : '#eff6ff'),
+                  border: `1px solid ${submittingEirf ? '#e2e8f0' : (isSubmitBtnHovered ? '#93c5fd' : '#bfdbfe')}`,
+                  color: submittingEirf ? '#94a3b8' : '#1d4ed8',
                   padding: '12px 28px',
                   borderRadius: '6px',
                   fontSize: '10pt',
@@ -1026,7 +1026,7 @@ export const EirfFormView = ({
                   gap: '8px',
                   cursor: submittingEirf ? 'not-allowed' : 'pointer',
                   transition: 'all 0.2s ease',
-                  boxShadow: isSubmitBtnHovered && !submittingEirf ? '0 4px 12px rgba(56, 189, 248, 0.4)' : 'none'
+                  boxShadow: isSubmitBtnHovered && !submittingEirf ? '0 2px 8px rgba(59, 130, 246, 0.15)' : 'none'
                 }}
               >
                 {submittingEirf ? (

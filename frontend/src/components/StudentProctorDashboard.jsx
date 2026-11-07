@@ -511,9 +511,9 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                         position: 'absolute',
                         bottom: '8px',
                         right: '8px',
-                        backgroundColor: isMuted ? 'rgba(239, 68, 68, 0.9)' : 'rgba(16, 185, 129, 0.9)',
-                        color: '#fff',
-                        border: 'none',
+                        backgroundColor: isMuted ? 'rgba(254, 242, 242, 0.95)' : 'rgba(236, 253, 245, 0.95)',
+                        color: isMuted ? '#b91c1c' : '#047857',
+                        border: isMuted ? '1px solid #fecaca' : '1px solid #a7f3d0',
                         borderRadius: '3px',
                         padding: '3px 8px',
                         fontSize: '7.5pt',
@@ -563,9 +563,9 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                         position: 'absolute',
                         bottom: '6px',
                         right: '6px',
-                        backgroundColor: 'rgba(0, 33, 71, 0.85)',
-                        color: '#ffffff',
-                        border: 'none',
+                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                        color: '#1e293b',
+                        border: '1px solid #cbd5e1',
                         borderRadius: '3px',
                         padding: '2px 6px',
                         fontSize: '7pt',
@@ -661,8 +661,16 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
                   <button
                     onClick={handleTerminateExam}
-                    className="cf-btn-primary"
-                    style={{ padding: '6px 14px', fontSize: '8.5pt', backgroundColor: '#dc2626', borderColor: '#dc2626', fontWeight: 'bold' }}
+                    style={{
+                      padding: '6px 14px',
+                      fontSize: '8.5pt',
+                      backgroundColor: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      color: '#b91c1c',
+                      fontWeight: 'bold',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
                   >
                     Disqualify Candidate
                   </button>
@@ -690,11 +698,12 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                     fontSize: '8pt',
                     borderRadius: '3px',
                     border: '1px solid',
-                    borderColor: logViewMode === 'timeline' ? '#002147' : '#cbd5e1',
-                    backgroundColor: logViewMode === 'timeline' ? '#002147' : '#ffffff',
-                    color: logViewMode === 'timeline' ? '#ffffff' : '#475569',
+                    borderColor: logViewMode === 'timeline' ? '#7dd3fc' : '#cbd5e1',
+                    backgroundColor: logViewMode === 'timeline' ? '#e0f2fe' : '#ffffff',
+                    color: logViewMode === 'timeline' ? '#0369a1' : '#475569',
                     cursor: 'pointer',
-                    fontWeight: 'bold'
+                    fontWeight: 'bold',
+                    transition: 'all 0.15s ease'
                   }}
                 >
                   Timeline Log ({logs.length})
@@ -706,11 +715,12 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                     fontSize: '8pt',
                     borderRadius: '3px',
                     border: '1px solid',
-                    borderColor: logViewMode === 'gallery' ? '#002147' : '#cbd5e1',
-                    backgroundColor: logViewMode === 'gallery' ? '#002147' : '#ffffff',
-                    color: logViewMode === 'gallery' ? '#ffffff' : '#475569',
+                    borderColor: logViewMode === 'gallery' ? '#7dd3fc' : '#cbd5e1',
+                    backgroundColor: logViewMode === 'gallery' ? '#e0f2fe' : '#ffffff',
+                    color: logViewMode === 'gallery' ? '#0369a1' : '#475569',
                     cursor: 'pointer',
-                    fontWeight: 'bold'
+                    fontWeight: 'bold',
+                    transition: 'all 0.15s ease'
                   }}
                 >
                   Evidence Snapshots ({snapshots.length})
@@ -1277,8 +1287,9 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '6px',
-                          backgroundColor: '#002147',
-                          color: '#ffffff',
+                          backgroundColor: '#ffffff',
+                          color: '#0369a1',
+                          border: '1px solid #bae6fd',
                           padding: '6px 12px',
                           borderRadius: '4px',
                           fontSize: '8pt',
@@ -1309,22 +1320,44 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                     />
                     <div style={{ display: 'flex', gap: '10px' }}>
                       <button
+                        type="button"
                         onClick={() => {
                           setPendingActionType('approve');
                           setIsCourseModalOpen(true);
                         }}
-                        className="cf-btn-primary"
-                        style={{ flex: 1, backgroundColor: '#059669', borderColor: '#059669', padding: '8px', fontSize: '8.5pt', fontWeight: 'bold' }}
+                        style={{
+                          flex: 1,
+                          backgroundColor: '#ecfdf5',
+                          border: '1px solid #a7f3d0',
+                          color: '#047857',
+                          padding: '8px',
+                          fontSize: '8.5pt',
+                          fontWeight: 'bold',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
                       >
                         Approve EIRF Report
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setPendingActionType('reject');
                           setIsCourseModalOpen(true);
                         }}
-                        className="cf-btn-primary"
-                        style={{ flex: 1, backgroundColor: '#dc2626', borderColor: '#dc2626', padding: '8px', fontSize: '8.5pt', fontWeight: 'bold' }}
+                        style={{
+                          flex: 1,
+                          backgroundColor: '#fef2f2',
+                          border: '1px solid #fecaca',
+                          color: '#b91c1c',
+                          padding: '8px',
+                          fontSize: '8.5pt',
+                          fontWeight: 'bold',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
                       >
                         Reject EIRF Report
                       </button>
@@ -1525,13 +1558,14 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                   fontSize: '8.5pt',
                   fontWeight: 'bold',
                   borderRadius: '4px',
-                  border: 'none',
-                  backgroundColor: pendingActionType === 'approve' ? '#059669' : '#dc2626',
-                  color: '#ffffff',
+                  border: pendingActionType === 'approve' ? '1px solid #a7f3d0' : '1px solid #fecaca',
+                  backgroundColor: pendingActionType === 'approve' ? '#ecfdf5' : '#fef2f2',
+                  color: pendingActionType === 'approve' ? '#047857' : '#b91c1c',
                   cursor: submittingAction ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '6px',
+                  transition: 'all 0.15s ease'
                 }}
               >
                 {submittingAction && <Loader2 className="animate-spin" size={14} />}

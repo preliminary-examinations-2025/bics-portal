@@ -196,10 +196,10 @@ export default function AdminProctoring({
             fontSize: '9pt',
             fontWeight: 'bold',
             border: 'none',
-            borderBottom: adminTab === 'feeds' ? '2px solid #002147' : '2px solid transparent',
+            borderBottom: adminTab === 'feeds' ? '2px solid #0284c7' : '2px solid transparent',
             marginBottom: '-2px',
             backgroundColor: adminTab === 'feeds' ? '#ffffff' : 'transparent',
-            color: adminTab === 'feeds' ? '#002147' : '#64748b',
+            color: adminTab === 'feeds' ? '#0284c7' : '#64748b',
             cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
@@ -235,8 +235,9 @@ export default function AdminProctoring({
           <FileText size={16} /> EIRF Incident Adjudication Queue
           {countUnderReview > 0 && (
             <span style={{
-              backgroundColor: '#d97706',
-              color: '#ffffff',
+              backgroundColor: '#fef3c7',
+              color: '#92400e',
+              border: '1px solid #fde68a',
               fontSize: '7.5pt',
               padding: '1px 7px',
               borderRadius: '10px',
@@ -439,11 +440,12 @@ export default function AdminProctoring({
                     padding: '5px 12px',
                     fontSize: '8pt',
                     fontWeight: eirfFilter === f.id ? 'bold' : 'normal',
-                    backgroundColor: eirfFilter === f.id ? '#002147' : '#ffffff',
-                    color: eirfFilter === f.id ? '#ffffff' : '#475569',
-                    border: `1px solid ${eirfFilter === f.id ? '#002147' : '#cbd5e1'}`,
+                    backgroundColor: eirfFilter === f.id ? '#e0f2fe' : '#ffffff',
+                    color: eirfFilter === f.id ? '#0369a1' : '#475569',
+                    border: `1px solid ${eirfFilter === f.id ? '#7dd3fc' : '#cbd5e1'}`,
                     borderRadius: '20px',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
                   }}
                 >
                   {f.label}
@@ -672,10 +674,10 @@ export default function AdminProctoring({
                                     fontSize: '7.5pt',
                                     fontWeight: 'bold',
                                     padding: '4px 8px',
-                                    backgroundColor: '#f1f5f9',
+                                    backgroundColor: '#f8fafc',
                                     border: '1px solid #cbd5e1',
                                     borderRadius: '4px',
-                                    color: '#002147',
+                                    color: '#0369a1',
                                     textDecoration: 'none'
                                   }}
                                 >
@@ -689,15 +691,16 @@ export default function AdminProctoring({
                                 style={{
                                   display: 'inline-flex',
                                   alignItems: 'center',
-                                  gap: '4px',
+                                  gap: '5px',
                                   fontSize: '7.5pt',
                                   fontWeight: 'bold',
                                   padding: '5px 10px',
-                                  backgroundColor: isReview ? '#d97706' : '#002147',
-                                  border: 'none',
+                                  backgroundColor: isReview ? '#fffbeb' : '#f0f9ff',
+                                  border: `1px solid ${isReview ? '#fde68a' : '#bae6fd'}`,
                                   borderRadius: '4px',
-                                  color: '#ffffff',
-                                  cursor: 'pointer'
+                                  color: isReview ? '#b45309' : '#0369a1',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease'
                                 }}
                               >
                                 <Eye size={12} /> {isReview ? 'Adjudicate Now' : 'Forensic Audit'}

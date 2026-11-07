@@ -284,14 +284,15 @@ export function VerificationReviewView({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: '#002147',
-                color: '#ffffff',
+                backgroundColor: '#ffffff',
+                color: '#047857',
+                border: '1px solid #a7f3d0',
                 padding: '8px 14px',
                 borderRadius: '6px',
                 fontSize: '8pt',
                 fontWeight: 'bold',
                 textDecoration: 'none',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                boxShadow: '0 1px 2px rgba(16, 185, 129, 0.05)'
               }}
             >
               <ExternalLink size={13} /> View Signed Verdict Certificate
@@ -312,8 +313,9 @@ export function VerificationReviewView({
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{
-                backgroundColor: '#dc2626',
-                color: '#ffffff',
+                backgroundColor: '#fee2e2',
+                color: '#dc2626',
+                border: '1px solid #fecaca',
                 padding: '10px',
                 borderRadius: '50%',
                 display: 'flex',
@@ -340,13 +342,15 @@ export function VerificationReviewView({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: '#991b1b',
-                color: '#ffffff',
+                backgroundColor: '#ffffff',
+                color: '#b91c1c',
+                border: '1px solid #fecaca',
                 padding: '8px 14px',
                 borderRadius: '6px',
                 fontSize: '8pt',
                 fontWeight: 'bold',
-                textDecoration: 'none'
+                textDecoration: 'none',
+                boxShadow: '0 1px 2px rgba(220, 38, 38, 0.05)'
               }}
             >
               <ExternalLink size={13} /> View Decision Notice
