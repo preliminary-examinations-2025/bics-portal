@@ -94,6 +94,7 @@ export const CodeEditor = ({
   compileError,
   isOnline,
   handleSaveAndNext,
+  handleCodeReset,
   triggerCustomConfirm,
   setIsFullWebStudioOpen,
   webConsoleLogs,
@@ -867,10 +868,16 @@ export const CodeEditor = ({
                       setTimeout(() => setIsResetRotating(false), 600);
                       if (currentQuestion.type === 'coding') {
                         setDraftCode(currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage] || '');
+                        if (typeof handleCodeReset === 'function') {
+                          handleCodeReset(selectedQuestionIndex, 'coding');
+                        }
                       } else {
                         if (webActiveTab === 'html') setDraftHtml(currentQuestion.initialHtml || currentQuestion.initialCode?.html || '');
                         if (webActiveTab === 'css') setDraftCss(currentQuestion.initialCss || currentQuestion.initialCode?.css || '');
                         if (webActiveTab === 'js') setDraftJs(currentQuestion.initialJs || currentQuestion.initialCode?.js || '');
+                        if (typeof handleCodeReset === 'function') {
+                          handleCodeReset(selectedQuestionIndex, 'web');
+                        }
                       }
                     }
                   );

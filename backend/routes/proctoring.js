@@ -86,6 +86,7 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                         endTime: endTime || null,
                         durationSeconds: durationSeconds ? Number(durationSeconds) : 0
                     });
+                    submission.proctoringLog.events.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
 
                     const detailsLower = (details || '').toLowerCase();
                     const isExitEvent = type === 'FULLSCREEN_EXIT' && 
@@ -182,6 +183,7 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                 endTime: endTime || null,
                 durationSeconds: durationSeconds ? Number(durationSeconds) : 0
             });
+            submission.proctoringLog.events.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
 
             const detailsLower = (details || '').toLowerCase();
             const isExitEvent = type === 'FULLSCREEN_EXIT' && 

@@ -740,7 +740,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       return firstIdx === idx;
                     }).map((log, idx) => {
                       const isWarning = log.type?.includes('ALERT') || log.type?.includes('EXIT') || log.type?.includes('DISQUALIFIED') || log.type?.includes('WARNING') || log.type?.includes('VOICE') || log.type?.includes('CLIPBOARD');
-                      const isNonViolation = ['CODE_RUN', 'OPTION_MARKED', 'CODE_SAVED', 'CONSENT_ACCEPTED', 'TEST_STARTED', 'TEST_SUBMITTED', 'TEST_AUTO_SUBMITTED', 'PROCTORING_ALLOWED'].includes(log.type);
+                      const isNonViolation = ['CODE_RUN', 'OPTION_MARKED', 'OPTION_CLEARED', 'CODE_SAVED', 'CODE_RESET', 'WEB_SAVED', 'WEB_RESET', 'CONSENT_ACCEPTED', 'TEST_STARTED', 'TEST_SUBMITTED', 'TEST_AUTO_SUBMITTED', 'PROCTORING_ALLOWED'].includes(log.type);
                       
                       // Match snapshot by time or category if available (strictly exclude routine non-violation actions)
                       const matchingSnapshots = isNonViolation ? [] : snapshots.filter(s => {

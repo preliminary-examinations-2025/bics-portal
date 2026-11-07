@@ -630,6 +630,13 @@ function AppContent() {
   const [consoleTab, setConsoleTab] = useState('testcase'); // 'testcase' or 'result'
   const [activeProctorToasts, setActiveProctorToasts] = useState({});
 
+  // Authentic pre-exam click telemetry & option state tracking refs
+  const consentAcceptedTimeRef = useRef(typeof window !== 'undefined' ? (sessionStorage.getItem('bics_consent_accepted_at') || null) : null);
+  const proctoringAllowedTimeRef = useRef(typeof window !== 'undefined' ? (sessionStorage.getItem('bics_proctoring_allowed_at') || null) : null);
+  const lastLoggedOptionRef = useRef({}); // { [qId]: serializedOption }
+  const lastLoggedCodeRef = useRef({});   // { [qId]: sourceCode }
+  const lastLoggedWebRef = useRef({});    // { [qId]: `${html}__${css}__${js}` }
+
   // Helper functions for persistent multi-toast proctoring alerts
   const addProctorToast = (id, toastData) => {
     setActiveProctorToasts(prev => ({
@@ -1309,6 +1316,11 @@ function AppContent() {
       setWebcamStream(stream);
       setWebcamGranted(true);
       setMicGranted(true); // Grant microphone concurrently as well
+      const nowIso = new Date().toISOString();
+      proctoringAllowedTimeRef.current = nowIso;
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('bics_proctoring_allowed_at', nowIso);
+      }
       // Schedule background idle preload now that candidate granted camera permission
       preloadBlazeFaceIdle();
       setTimeout(() => {
@@ -1607,10 +1619,15 @@ function AppContent() {
       lastLoggedWarnings.current = { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 };
       setProctoringWarnings({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
 
-      // Log initial proctoring events
-      logProctoringEvent(data.submission, 'TEST_STARTED', `${candidate.name || 'Candidate'} started the test.`);
-      logProctoringEvent(data.submission, 'PROCTORING_ALLOWED', 'Webcam and microphone access allowed.');
-      logProctoringEvent(data.submission, 'CONSENT_ACCEPTED', 'Malpractice undertaking (Clause 4) & Proctoring consent (Clause 2) accepted.');
+      // Retrieve authentic historical user click timestamps
+      const consentTime = consentAcceptedTimeRef.current || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_consent_accepted_at') : null) || new Date().toISOString();
+      const proctorTime = proctoringAllowedTimeRef.current || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_proctoring_allowed_at') : null) || new Date().toISOString();
+      const startTime = new Date().toISOString();
+
+      // Log initial proctoring events with genuine chronological timestamps
+      logProctoringEvent(data.submission, 'CONSENT_ACCEPTED', 'Malpractice undertaking (Clause 4) & Proctoring consent (Clause 2) accepted.', null, null, 0, consentTime);
+      logProctoringEvent(data.submission, 'PROCTORING_ALLOWED', 'Webcam and microphone access allowed.', null, null, 0, proctorTime);
+      logProctoringEvent(data.submission, 'TEST_STARTED', `${candidate.name || 'Candidate'} started the test.`, null, null, 0, startTime);
 
       // Upload baseline photograph to server / Cloudinary
       if (baselinePhoto && data.submission) {
@@ -1878,7 +1895,7 @@ function AppContent() {
     }
   };
 
-  const logProctoringEvent = async (subObj, type, details, startTime, endTime, durationSeconds) => {
+  const logProctoringEvent = async (subObj, type, details, startTime, endTime, durationSeconds, customTimestamp) => {
     try {
       const targetSub = subObj || submission;
       if (!targetSub) return;
@@ -1887,7 +1904,7 @@ function AppContent() {
       const evtObj = {
         type,
         details,
-        timestamp: new Date().toISOString(),
+        timestamp: customTimestamp ? new Date(customTimestamp).toISOString() : new Date().toISOString(),
         startTime: startTime ? new Date(startTime).toISOString() : null,
         endTime: endTime ? new Date(endTime).toISOString() : null,
         durationSeconds: durationSeconds ? Number(durationSeconds) : 0
@@ -2696,11 +2713,68 @@ function AppContent() {
     saveOfflineDraft(storageKey, data).catch(() => {});
   };
 
+  // Helper to format option letters (handles single letter 'A' or multiple '[A, C]')
+  const formatOptionLabel = (val, isMulti) => {
+    if (isMulti) {
+      if (!Array.isArray(val) || val.length === 0) return 'None';
+      return val.map(idx => String.fromCharCode(65 + Number(idx))).join(', ');
+    }
+    if (val === null || val === undefined) return 'None';
+    return String.fromCharCode(65 + Number(val));
+  };
+
+  // Centralized telemetry recorder for objective questions (MCQ / SCC / MCC)
+  const recordOptionMarked = (qIndex, newSelection, isExplicitReset = false) => {
+    if (!test?.questions || !test.questions[qIndex]) return;
+    const qObj = test.questions[qIndex];
+    const qNum = qIndex + 1;
+    const qId = String(qObj.id || qObj._id || `q_${qNum}`);
+    const isMulti = Boolean(qObj.isMultiChoice || qObj.type === 'mcc' || qObj.category === 'Multiple Choice');
+
+    const serialized = JSON.stringify(newSelection);
+    if (!isExplicitReset && lastLoggedOptionRef.current[qId] === serialized) {
+      return; // Already logged this exact option state for this question
+    }
+    lastLoggedOptionRef.current[qId] = serialized;
+
+    const isCleared = isExplicitReset || (isMulti 
+      ? (!Array.isArray(newSelection) || newSelection.length === 0)
+      : (newSelection === null || newSelection === undefined));
+
+    const label = formatOptionLabel(newSelection, isMulti);
+    const details = isCleared 
+      ? `Cleared answer selection for Q${qNum}.` 
+      : (isMulti 
+          ? `Marked options [${label}] for Q${qNum}.` 
+          : `Marked option ${label} for Q${qNum}.`);
+
+    logProctoringEvent(submission, isCleared ? 'OPTION_CLEARED' : 'OPTION_MARKED', details);
+  };
+
+  // Wrapper for draft MCQ state changes that records telemetry immediately on user action
+  const handleDraftMCQChange = (newVal) => {
+    setDraftMCQ(newVal);
+    recordOptionMarked(selectedQuestionIndex, newVal);
+  };
+
+  // Handler for explicit starter code reset action
+  const handleCodeReset = (qIndex, qType) => {
+    const qNum = qIndex + 1;
+    if (qType === 'coding') {
+      const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+      logProctoringEvent(submission, 'CODE_RESET', `Reset ${langName} code for Q${qNum} to starter template.`);
+    } else if (qType === 'web') {
+      logProctoringEvent(submission, 'WEB_RESET', `Reset Web Dev files for Q${qNum} to initial starter templates.`);
+    }
+  };
+
   // Synchronously commit active draft buffers into examAnswersRef.current and return latest answers
   const commitActiveDraftToAnswers = () => {
     const currentList = Array.isArray(examAnswersRef.current) ? [...examAnswersRef.current] : [...examAnswers];
     if (test?.questions && test.questions[selectedQuestionIndex]) {
       const activeQ = test.questions[selectedQuestionIndex];
+      const qNum = selectedQuestionIndex + 1;
+      const qId = String(activeQ.id || activeQ._id || `q_${qNum}`);
       const isMulti = Boolean(activeQ.isMultiChoice || activeQ.type === 'mcc' || activeQ.category === 'Multiple Choice');
       const existing = currentList[selectedQuestionIndex] || { questionId: activeQ.id, type: activeQ.type };
       const multiIndices = isMulti
@@ -2718,6 +2792,29 @@ function AppContent() {
       };
       examAnswersRef.current = currentList;
       setExamAnswers(currentList);
+
+      // Telemetry sync on question switch:
+      if (activeQ.type === 'mcq' || activeQ.type === 'scc' || activeQ.type === 'mcc') {
+        recordOptionMarked(selectedQuestionIndex, draftMCQ);
+      } else if (activeQ.type === 'coding') {
+        if (draftCode && (draftCode || '').trim().length > 0 && lastLoggedCodeRef.current[qId] !== draftCode) {
+          lastLoggedCodeRef.current[qId] = draftCode;
+          const lines = (draftCode || '').split('\n').length;
+          const chars = (draftCode || '').length;
+          const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+          logProctoringEvent(submission, 'CODE_SAVED', `Saved ${langName} code for Q${qNum} (${lines} lines, ${chars} chars).`);
+        }
+      } else if (activeQ.type === 'web') {
+        const combinedWeb = `${draftHtml || ''}__${draftCss || ''}__${draftJs || ''}`;
+        const hasContent = (draftHtml || '').trim().length > 0 || (draftCss || '').trim().length > 0 || (draftJs || '').trim().length > 0;
+        if (hasContent && lastLoggedWebRef.current[qId] !== combinedWeb) {
+          lastLoggedWebRef.current[qId] = combinedWeb;
+          const hLen = (draftHtml || '').length;
+          const cLen = (draftCss || '').length;
+          const jLen = (draftJs || '').length;
+          logProctoringEvent(submission, 'WEB_SAVED', `Saved Web Dev solution for Q${qNum} (HTML: ${hLen} chars, CSS: ${cLen} chars, JS: ${jLen} chars).`);
+        }
+      }
     }
     return currentList;
   };
@@ -2747,11 +2844,21 @@ function AppContent() {
 
     if (activeQuestion) {
       const qNum = selectedQuestionIndex + 1;
-      if (activeQuestion.type === 'mcq' && draftMCQ !== null) {
-        const optionLetter = String.fromCharCode(65 + draftMCQ);
-        logProctoringEvent(submission, 'OPTION_MARKED', `Marked option ${optionLetter} for Q${qNum}.`);
+      const qId = String(activeQuestion.id || activeQuestion._id || `q_${qNum}`);
+      if (activeQuestion.type === 'mcq' || activeQuestion.type === 'scc' || activeQuestion.type === 'mcc') {
+        recordOptionMarked(selectedQuestionIndex, draftMCQ);
       } else if (activeQuestion.type === 'coding') {
-        logProctoringEvent(submission, 'CODE_SAVED', `Saved C++ code for Q${qNum}.`);
+        lastLoggedCodeRef.current[qId] = draftCode;
+        const lines = (draftCode || '').split('\n').length;
+        const chars = (draftCode || '').length;
+        const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+        logProctoringEvent(submission, 'CODE_SAVED', `Saved ${langName} code for Q${qNum} (${lines} lines, ${chars} chars).`);
+      } else if (activeQuestion.type === 'web') {
+        lastLoggedWebRef.current[qId] = `${draftHtml || ''}__${draftCss || ''}__${draftJs || ''}`;
+        const hLen = (draftHtml || '').length;
+        const cLen = (draftCss || '').length;
+        const jLen = (draftJs || '').length;
+        logProctoringEvent(submission, 'WEB_SAVED', `Saved Web Dev solution for Q${qNum} (HTML: ${hLen} chars, CSS: ${cLen} chars, JS: ${jLen} chars).`);
       }
     }
     
@@ -3001,7 +3108,9 @@ function AppContent() {
     setConsoleTab('result');
     setRunResults(null);
     setCompileError(null);
-    logProctoringEvent(submission, 'CODE_RUN', `Ran C++ compilation for Q${selectedQuestionIndex + 1}.`);
+    const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+    const tcCount = allCases.length;
+    logProctoringEvent(submission, 'CODE_RUN', `Ran ${langName} compilation for Q${selectedQuestionIndex + 1} (${tcCount} test case${tcCount === 1 ? '' : 's'}).`);
 
     try {
       const userAuth = getActiveAuthToken();
@@ -3774,7 +3883,14 @@ function AppContent() {
           setConsentRulesChecked={setConsentRulesChecked}
           consentProctoringChecked={consentProctoringChecked}
           setConsentProctoringChecked={setConsentProctoringChecked}
-          onProceedToSystemChecks={() => setFlow('system_checks')}
+          onProceedToSystemChecks={() => {
+            const nowIso = new Date().toISOString();
+            consentAcceptedTimeRef.current = nowIso;
+            if (typeof window !== 'undefined') {
+              sessionStorage.setItem('bics_consent_accepted_at', nowIso);
+            }
+            setFlow('system_checks');
+          }}
         />
       </div>
     );
@@ -3879,7 +3995,8 @@ function AppContent() {
           examAnswersRef={examAnswersRef}
           setExamAnswers={setExamAnswers}
           draftMCQ={draftMCQ}
-          setDraftMCQ={setDraftMCQ}
+          setDraftMCQ={handleDraftMCQChange}
+          handleCodeReset={handleCodeReset}
           draftCode={draftCode}
           setDraftCode={setDraftCode}
           draftLanguage={draftLanguage}

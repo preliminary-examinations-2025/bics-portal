@@ -58,6 +58,7 @@ export const ActiveExamView = ({
   runResults,
   compileError,
   handleSaveAndNext,
+  handleCodeReset,
   triggerCustomConfirm,
   showWarningModal,
   setShowWarningModal,
@@ -350,6 +351,7 @@ export const ActiveExamView = ({
             compileError={compileError}
             isOnline={isOnline}
             handleSaveAndNext={handleSaveAndNext}
+            handleCodeReset={handleCodeReset}
             triggerCustomConfirm={triggerCustomConfirm}
             setIsFullWebStudioOpen={setIsFullWebStudioOpen}
             webConsoleLogs={webConsoleLogs}
