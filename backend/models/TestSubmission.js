@@ -97,7 +97,8 @@ const TestSubmissionSchema = new mongoose.Schema({
             'SENDING_CONFIRMATION_EMAIL',
             'UNDER_REVIEW',
             'EXPIRED',
-            'FAILED'
+            'FAILED',
+            'VERDICT_ISSUED'
         ], 
         default: 'QUEUED',
         index: true 
