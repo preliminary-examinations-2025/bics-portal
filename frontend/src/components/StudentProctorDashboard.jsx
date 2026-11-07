@@ -100,7 +100,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   };
 
   useEffect(() => {
-    if (activeTab === 'eirf' || sub.hasEirfFlag || sub.eirfStatus) {
+    if (activeTab === 'eirf' || sub.hasEirfFlag || (sub.eirfStatus && sub.eirfStatus !== 'none')) {
       fetchEirfDetails();
     }
   }, [subId, activeTab]);

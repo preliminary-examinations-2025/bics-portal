@@ -205,7 +205,7 @@ async function callGeminiApi(promptObj) {
         throw new Error('GEMINI_API_KEY is not configured in backend environment');
     }
 
-    const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+    const candidateModels = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite'];
 
     for (const model of candidateModels) {
         const controller = new AbortController();
@@ -218,7 +218,7 @@ async function callGeminiApi(promptObj) {
                 systemInstruction: { parts: [{ text: promptObj.systemInstruction }] },
                 generationConfig: {
                     temperature: 0.2,
-                    maxOutputTokens: 2500,
+                    maxOutputTokens: 4096,
                     responseMimeType: 'application/json'
                 }
             };
@@ -259,7 +259,7 @@ async function callGroqApi(promptObj) {
         throw new Error('GROQ_API_KEY is not configured in backend environment');
     }
 
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    const groqModels = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
 
     for (const model of groqModels) {
         const controller = new AbortController();

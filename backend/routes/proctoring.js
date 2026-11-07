@@ -122,7 +122,7 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                     const isMajorExit = type === 'FULLSCREEN_EXIT' || type === 'FULLSCREEN_RETURNED' || 
                                         type === 'TAB_SWITCH' || type === 'TAB_RETURNED' ||
                                         (type && (type.includes('FULLSCREEN') || type.includes('TAB')));
-                    if ((isMajorExit && dur > 5) || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
+                    if ((isMajorExit && dur > 5) || (type === 'NETWORK_OFFLINE' && dur > 5) || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
                         submission.hasEirfFlag = true;
                         if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                             submission.eirfStatus = 'pending';
@@ -219,7 +219,7 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             const isMajorExit = type === 'FULLSCREEN_EXIT' || type === 'FULLSCREEN_RETURNED' || 
                                 type === 'TAB_SWITCH' || type === 'TAB_RETURNED' ||
                                 (type && (type.includes('FULLSCREEN') || type.includes('TAB')));
-            if ((isMajorExit && dur > 5) || type === 'NETWORK_OFFLINE' || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
+            if ((isMajorExit && dur > 5) || (type === 'NETWORK_OFFLINE' && dur > 5) || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
                 submission.hasEirfFlag = true;
                 if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                     submission.eirfStatus = 'pending';
