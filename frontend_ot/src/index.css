@@ -792,8 +792,18 @@ pre code, pre code *,
 
 
 /* ==========================================================================
-   EIRF FORM VIEW: VERTICAL SCROLLABILITY & PLUS JAKARTA SANS TYPOGRAPHY
+   EIRF FORM VIEW: NATIVE NORMALLY SCROLLABLE DOCUMENT & PLUS JAKARTA SANS
    ========================================================================== */
+html.eirf-active,
+body.eirf-active,
+body.eirf-active #root {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+}
+
 .eirf-view-container,
 .eirf-view-container *,
 .eirf-print-area,
@@ -802,10 +812,8 @@ pre code, pre code *,
 }
 
 .eirf-view-container {
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: contain;
+    width: 100%;
+    min-height: 100vh;
 }
 
 .eirf-view-container input,

@@ -280,8 +280,6 @@ export const EirfFormView = ({
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'flex-start',
-        overflowY: 'auto',
-        overflowX: 'hidden',
         fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
       }}
     >

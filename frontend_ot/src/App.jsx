@@ -860,14 +860,25 @@ function AppContent() {
   // Set Google ecosystem font starting at the terms page ('terms_conditions') onwards.
   // The login page ('verify_login') strictly retains the main portal's font (verdana, arial, sans-serif).
   useEffect(() => {
-    const isProctoringOrLater = ['terms_conditions', 'system_checks', 'biometric_check', 'guidelines_setup', 'active_exam', 'finished', 'verification_review'].includes(flow);
+    const isProctoringOrLater = ['terms_conditions', 'system_checks', 'biometric_check', 'guidelines_setup', 'active_exam', 'finished', 'verification_review', 'eirf_form'].includes(flow);
     if (isProctoringOrLater) {
       document.body.classList.add('ot-google-font');
     } else {
       document.body.classList.remove('ot-google-font');
     }
+
+    if (flow === 'eirf_form') {
+      document.documentElement.classList.add('eirf-active');
+      document.body.classList.add('eirf-active');
+    } else {
+      document.documentElement.classList.remove('eirf-active');
+      document.body.classList.remove('eirf-active');
+    }
+
     return () => {
       document.body.classList.remove('ot-google-font');
+      document.documentElement.classList.remove('eirf-active');
+      document.body.classList.remove('eirf-active');
     };
   }, [flow]);
 
@@ -3921,7 +3932,7 @@ function AppContent() {
   // VIEW: Emergency Incident Report Form (EIRF) Filing Terminal
   if (flow === 'eirf_form') {
     return (
-      <div style={{ height: '100vh', width: '100vw', overflowY: 'auto', overflowX: 'hidden', position: 'relative', backgroundColor: '#f8fafc' }}>
+      <div style={{ minHeight: '100vh', width: '100%', position: 'relative', backgroundColor: '#f8fafc' }}>
         <EirfFormView
           eirfDetails={eirfDetails}
           eirfFileName={eirfFileName}
