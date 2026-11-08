@@ -8,6 +8,7 @@ const { logSystemAction } = require('../utils/logger');
 const { encryptEirfPayload, decryptEirfPayload, getPublicKeyPem, getPublicKeyDerBase64 } = require('../utils/cipher');
 const { formatISTDate, sendEirfVerdictEmail } = require('../utils/email');
 const { generateEirfVerdictPdfBuffer, generateDigitalVerdictHash } = require('../utils/pdfGenerator');
+const { sendEirfVerdictApprovedEmail, sendEirfVerdictRejectedEmail } = require('../services/brevoEmailService');
 const { uploadToCloudinary, cloudinary } = require('../config/cloudinary');
 const { requireAdmin } = require('../middleware/auth');
 const { runPipelineTick } = require('../workers/eirfPipelineWorker');
@@ -1255,15 +1256,34 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
                     }
                 }
 
-                await sendEirfVerdictEmail(
-                    candidateEmail,
-                    candidateName,
-                    examTitleStr,
-                    status,
-                    adminRemarks,
-                    finalPdfUrl,
-                    { studentId, submissionId: report.submissionId }
-                );
+                // Dispatch Brevo verdict email with 2-page verdict PDF directly attached
+                try {
+                    const verdictOptions = {
+                        adminRemarks,
+                        resolutionCategory: finalResolutionCategory,
+                        remediationAction: finalRemediationAction,
+                        reviewerName: finalReviewerName,
+                        courseCode: finalCourseCode,
+                        courseName: finalCourseName
+                    };
+                    if (status === 'approved') {
+                        await sendEirfVerdictApprovedEmail(report._id || report.reportId || reportId, verdictOptions);
+                    } else if (status === 'rejected') {
+                        await sendEirfVerdictRejectedEmail(report._id || report.reportId || reportId, verdictOptions);
+                    }
+                } catch (brevoErr) {
+                    console.error("[EIRF_BREVO_VERDICT_ERROR]:", brevoErr.message);
+                    // Legacy fallback
+                    await sendEirfVerdictEmail(
+                        candidateEmail,
+                        candidateName,
+                        examTitleStr,
+                        status,
+                        adminRemarks,
+                        finalPdfUrl,
+                        { studentId, submissionId: report.submissionId }
+                    ).catch(() => {});
+                }
 
                 console.log(`[EIRF_BACKGROUND_PIPELINE]: Verdict PDF generated, uploaded & email dispatched for ${report.reportId}. Proxy URL: ${finalPdfUrl}`);
             } catch (bgErr) {

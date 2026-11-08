@@ -190,7 +190,19 @@ const TestSubmissionSchema = new mongoose.Schema({
         resolutionNote: String,
         resolvedMarks: Number,
         resolvedAt: Date
-    }]
+    }],
+    emailsSent: {
+        testSubmitted: { type: Boolean, default: false },
+        testSubmittedAt: { type: Date, default: null },
+        eirfFiling: { type: Boolean, default: false },
+        eirfFilingAt: { type: Date, default: null },
+        eirfApproved: { type: Boolean, default: false },
+        eirfApprovedAt: { type: Date, default: null },
+        eirfRejected: { type: Boolean, default: false },
+        eirfRejectedAt: { type: Date, default: null },
+        otrfSent: { type: Boolean, default: false },
+        otrfSentAt: { type: Date, default: null }
+    }
 });
 
 // Single-attempt compound unique index (prevents parallel double-attempt race conditions)

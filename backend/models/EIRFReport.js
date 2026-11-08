@@ -62,7 +62,13 @@ const EIRFReportSchema = new mongoose.Schema({
     submittedAt: { type: Date, default: Date.now },
     expiresAt: Date,
     reviewedAt: Date,
-    reviewedBy: String
+    reviewedBy: String,
+    emailsSent: {
+        approved: { type: Boolean, default: false },
+        approvedAt: { type: Date, default: null },
+        rejected: { type: Boolean, default: false },
+        rejectedAt: { type: Date, default: null }
+    }
 }, { versionKey: false, timestamps: true });
 
 const EIRFReportModel = mongoose.model('EIRFReport', EIRFReportSchema, 'eirf_reports');

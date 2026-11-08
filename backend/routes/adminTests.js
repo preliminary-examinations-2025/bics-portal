@@ -8,6 +8,7 @@ const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
 const { resolveToObjectId, isBicsId, isMongoId, toBicsId, toMongoId } = require('../utils/bicsId');
+const { dispatchOtrfBatchForClosedTest } = require('../services/brevoEmailService');
 
 const findTestConfig = async (id) => {
     if (!id) return null;
@@ -66,6 +67,14 @@ router.post('/set-verification-status/:id', async (req, res) => {
             saveJSONData(db);
             await logSystemAction('admin', 'VERIFICATION_STATUS_CHANGE', `Set verificationStatus for test "${test.title}" (${id}) to ${status}`, 'info');
         }
+
+        // Trigger first-time OTRF batch dispatch when verification is closed
+        if (status === 'closed') {
+            dispatchOtrfBatchForClosedTest(id).catch(err => {
+                console.error(`[ADMIN_TESTS] Error dispatching OTRF batch for closed test ${id}:`, err);
+            });
+        }
+
         return res.json({ success: true, verificationStatus: updatedStatus, answersReleased: isReleased });
     } catch (e) {
         console.error(e);
@@ -117,6 +126,14 @@ router.post('/toggle-release/:id', async (req, res) => {
             saveJSONData(db);
             await logSystemAction('admin', 'ANSWERS_RELEASE_TOGGLE', `Updated verificationStatus for test "${test.title}" (${id}) to ${verificationStatus}`, 'info');
         }
+
+        // Trigger first-time OTRF batch dispatch when verification is toggled to closed
+        if (verificationStatus === 'closed') {
+            dispatchOtrfBatchForClosedTest(id).catch(err => {
+                console.error(`[ADMIN_TESTS] Error dispatching OTRF batch for toggled-closed test ${id}:`, err);
+            });
+        }
+
         return res.json({ success: true, verificationStatus, answersReleased });
     } catch (e) {
         console.error(e);

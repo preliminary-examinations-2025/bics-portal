@@ -29,6 +29,10 @@ const {
     sendCleanSubmissionEmail, 
     sendEirfConfirmationEmail 
 } = require('../utils/email');
+const {
+    sendTestSubmittedEmail,
+    sendEirfFilingNoticeEmail
+} = require('../services/brevoEmailService');
 const { toBicsId } = require('../utils/bicsId');
 const eirfLlmService = require('../services/eirfLlmService');
 
@@ -189,6 +193,13 @@ async function runPipelineTick() {
                 await recordPipelineStep(sub, 'EXPIRE_SUBMISSION', 'COMPLETED', 0, { expiredAt: now });
                 await sub.save();
                 console.log(`[EIRF_PIPELINE] Submission ${sub._id} EIRF window expired. Status -> 'EXPIRED'.`);
+
+                // Deferred test submission confirmation email dispatch on expiry (if not yet sent)
+                if (!sub.emailsSent?.testSubmitted) {
+                    sendTestSubmittedEmail(sub._id).catch(err => {
+                        console.error(`[EIRF_PIPELINE] Error sending deferred submission email on expiry for ${sub._id}:`, err.message);
+                    });
+                }
             }
 
             // B.2 Orphan Recovery: Scan for finalized submissions trapped in 'QUEUED'
@@ -218,26 +229,22 @@ async function runPipelineTick() {
                 }
             }
 
-            // C. Process Clean Submissions (Send verified confirmation email)
+            // C. Process Clean Submissions (Send verified Brevo confirmation email)
             const cleanSubs = await TestSubmissionModel.find({
                 pipelineStatus: 'CLEARED',
-                'securityMetadata.cleanEmailSent': { $ne: true },
+                $or: [
+                    { 'emailsSent.testSubmitted': { $ne: true } },
+                    { 'securityMetadata.cleanEmailSent': { $ne: true } }
+                ],
                 isDeleted: false
             }).limit(5);
 
             for (const sub of cleanSubs) {
                 try {
-                    let recipientEmail = sub.candidateEmail;
-                    if (!recipientEmail && sub.candidateId) {
-                        const cand = await CandidateModel.findById(sub.candidateId).select('personalEmail email');
-                        recipientEmail = cand?.personalEmail || cand?.email;
-                    }
-                    if (recipientEmail) {
-                        await sendCleanSubmissionEmail(recipientEmail, sub.candidateName || 'Candidate', sub.testTitle || 'Exam', sub._id);
-                    }
+                    await sendTestSubmittedEmail(sub._id);
                     if (!sub.securityMetadata) sub.securityMetadata = {};
                     sub.securityMetadata.cleanEmailSent = true;
-                    await recordPipelineStep(sub, 'SEND_CLEAN_CONFIRMATION', 'COMPLETED', 0, { recipient: recipientEmail });
+                    await recordPipelineStep(sub, 'SEND_CLEAN_CONFIRMATION', 'COMPLETED', 0, { submissionId: sub._id });
                     await sub.save();
                 } catch (cleanErr) {
                     console.error(`[EIRF_PIPELINE] Error sending clean email for ${sub._id}:`, cleanErr.message);
@@ -298,6 +305,11 @@ async function runPipelineTick() {
                     sub.pipelineStatus = 'EXPIRED';
                     sub.eirfStatus = 'expired';
                     changed = true;
+                    if (!sub.emailsSent?.testSubmitted) {
+                        sendTestSubmittedEmail(sub.id || sub._id).catch(err => {
+                            console.error(`[EIRF_PIPELINE] (JSON) Error sending deferred submission email on expiry:`, err.message);
+                        });
+                    }
                 }
                 // Recover stranded finalized submissions in 'QUEUED'
                 if (['submitted', 'auto-submitted'].includes(sub.status) && sub.pipelineStatus === 'QUEUED') {
@@ -409,19 +421,15 @@ async function processSequentialJob(sub) {
             ? `Identified Incidents:\n• ${sub.flaggedReasons.join('\n• ')}`
             : `Proctoring alert flagged for post-exam incident review.`;
 
-        await sendEirfNoticeEmail(
-            recipientEmail,
-            sub.candidateName || 'Candidate',
-            sub.testTitle || 'BICS Examination',
-            summary,
-            encryptedBicsId,
-            {
-                studentId: sub.studentId,
+        // Dispatch Brevo EIRF filing notice email with official template
+        try {
+            await sendEirfFilingNoticeEmail(sub._id || sub.id || subId, {
                 magicLink,
-                token: sub.eirfToken,
                 expiresAt: sub.eirfExpiresAt
-            }
-        );
+            });
+        } catch (bErr) {
+            console.error(`[EIRF_PIPELINE] Error dispatching Brevo EIRF filing notice:`, bErr.message);
+        }
 
         sub.eirfNoticeEmailSent = true;
         sub.pipelineStatus = 'AWAITING_EIRF';
@@ -437,12 +445,22 @@ async function processSequentialJob(sub) {
     }
 
     // -------------------------------------------------------------
-    // STEP 3: Dispatch EIRF Confirmation Email
+    // STEP 3: Dispatch Deferred Test Submission Confirmation & EIRF Confirmation Email
     // -------------------------------------------------------------
     if (sub.pipelineStatus === 'EIRF_SUBMITTED' || sub.pipelineStatus === 'SENDING_CONFIRMATION_EMAIL') {
         const startT = Date.now();
         sub.pipelineStatus = 'SENDING_CONFIRMATION_EMAIL';
-        console.log(`[EIRF_PIPELINE] [Step 3] Sending EIRF confirmation email for ${subId}...`);
+        console.log(`[EIRF_PIPELINE] [Step 3] Processing EIRF submission and dispatching deferred test submission email for ${subId}...`);
+
+        // Deferred test submission confirmation: candidate filed EIRF -> test submission confirmed!
+        if (!sub.emailsSent?.testSubmitted) {
+            try {
+                await sendTestSubmittedEmail(sub._id || sub.id || subId);
+                console.log(`[EIRF_PIPELINE] [Step 3] Dispatched deferred test submission confirmation email for ${subId}.`);
+            } catch (tsErr) {
+                console.error(`[EIRF_PIPELINE] Error sending deferred test submission email for ${subId}:`, tsErr.message);
+            }
+        }
 
         let recipientEmail = sub.candidateEmail;
         if (!recipientEmail && sub.candidateId && dbState.useMongo) {

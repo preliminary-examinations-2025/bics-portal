@@ -16,6 +16,7 @@ const { isBicsId, toMongoId, toBicsId, resolveToObjectId } = require('../utils/b
 const { compareFaceBiometrics, isPlaceholderPhoto } = require('../utils/biometricMatcher');
 const { evaluateEirfIncident } = require('../services/eirfEvaluator');
 const { runPipelineTick } = require('../workers/eirfPipelineWorker');
+const { sendTestSubmittedEmail } = require('../services/brevoEmailService');
 const proctoringRouter = require('./proctoring');
 
 const activeSubmissionsProcessing = new Set();
@@ -2070,6 +2071,13 @@ router.post('/submit', async (req, res) => {
                     console.error("[EIRF_PIPELINE] Asynchronous submit trigger error:", err);
                 });
             });
+
+            // If clean submission (no EIRF flag), immediately dispatch submission confirmation email
+            if (!submission.hasEirfFlag) {
+                sendTestSubmittedEmail(submission._id || submission.id).catch(err => {
+                    console.error("[TESTS_SUBMIT] Error sending immediate submission confirmation email:", err.message);
+                });
+            }
         }
 
         const subPayload = submission.toObject ? submission.toObject() : { ...submission };
