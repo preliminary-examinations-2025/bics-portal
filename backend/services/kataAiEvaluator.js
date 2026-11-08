@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const { KataSubmissionModel } = require('../models/KataSubmission');
 const { KataContestModel } = require('../models/KataContest');
 const { KataQuestionBankModel } = require('../models/KataQuestionBank');
@@ -1188,11 +1189,13 @@ You MUST return a JSON object with this exact structure:
 }
 
 let isWebEvaluationRunning = false;
+const inFlightWebEvaluations = new Set();
 
 /**
  * Autonomous worker that finds online test submissions where AI evaluation is enabled
  * and evaluates all un-evaluated web coding questions.
  * Preserves admin manual modifications (isManuallyGraded: true is NEVER overwritten).
+ * Once evaluated (isEvaluated === true || status === 'completed'), an answer is NEVER sent to the LLM again.
  */
 async function evaluateWebCodingSubmissions(targetTestId = null) {
     if (isWebEvaluationRunning) {
@@ -1231,7 +1234,7 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                 return { success: true, evaluatedCount: 0 };
             }
 
-            // Find finalized submissions for eligible tests with pending web coding questions
+            // Find finalized submissions with pending web coding questions (strictly excludes already completed or max-retried)
             const pendingSubmissions = await TestSubmissionModel.find({
                 testId: { $in: eligibleTestIds },
                 status: { $in: ['submitted', 'auto-submitted', 'evaluated'] },
@@ -1240,10 +1243,11 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                     $elemMatch: {
                         type: 'web',
                         isManuallyGraded: { $ne: true },
+                        'aiEvaluation.isEvaluated': { $ne: true },
+                        'aiEvaluation.status': { $nin: ['completed', 'skipped'] },
                         $or: [
-                            { 'aiEvaluation.isEvaluated': { $ne: true } },
-                            { 'aiEvaluation.status': { $in: ['pending', 'failed'] } },
-                            { aiEvaluation: { $exists: false } }
+                            { 'aiEvaluation.retries': { $lt: 3 } },
+                            { 'aiEvaluation.retries': { $exists: false } }
                         ]
                     }
                 }
@@ -1258,19 +1262,36 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                 for (let ansIdx = 0; ansIdx < (sub.answers || []).length; ansIdx++) {
                     const ans = sub.answers[ansIdx];
                     if (ans.type !== 'web') continue;
-                    // Strict Guard: Admin manual marks are NEVER overwritten by AI
+                    // Strict Guard 1: Admin manual marks are NEVER overwritten by AI
                     if (ans.isManuallyGraded === true) continue;
-                    // Skip if already evaluated successfully
-                    if (ans.aiEvaluation?.isEvaluated === true && ans.aiEvaluation?.status === 'completed') continue;
+                    // Strict Guard 2: Once evaluated, NEVER send to LLM again
+                    if (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') continue;
+                    // Strict Guard 3: Max 3 retries on transient errors to prevent infinite loops
+                    if (Number(ans.aiEvaluation?.retries || 0) >= 3) continue;
+
+                    // Strict Guard 4: In-flight concurrency lock to prevent parallel double-evaluation
+                    const subIdStr = String(sub._id || sub.id);
+                    const lockKey = `${subIdStr}_${ans.questionId || ansIdx}`;
+                    if (inFlightWebEvaluations.has(lockKey)) continue;
+
+                    // Strict Guard 5: Code content fingerprint check
+                    const currentCodeHash = crypto.createHash('sha256')
+                        .update(`${ans.submittedHtml || ''}|${ans.submittedCss || ''}|${ans.submittedJs || ''}`)
+                        .digest('hex');
+                    if (ans.aiEvaluation?.codeHash && ans.aiEvaluation.codeHash === currentCodeHash && ans.aiEvaluation.isEvaluated) {
+                        continue;
+                    }
 
                     const question = (test.questions || []).find(q => String(q.id || q._id) === String(ans.questionId)) || test.questions?.[ansIdx];
                     if (!question) continue;
 
-                    // Evaluate single web answer with Zero-PII
+                    inFlightWebEvaluations.add(lockKey);
                     try {
                         console.log(`[KataAiEvaluator] Evaluating web coding answer for question "${question.title || ans.questionId}" in submission ${sub._id}...`);
                         const evalResult = await evaluateSingleWebAnswer(question, ans);
                         if (evalResult) {
+                            evalResult.codeHash = currentCodeHash;
+                            evalResult.retries = Number(ans.aiEvaluation?.retries || 0);
                             ans.aiEvaluation = evalResult;
                             if (!ans.isManuallyGraded) {
                                 ans.score = evalResult.score;
@@ -1281,13 +1302,17 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                         }
                     } catch (ansEvalErr) {
                         console.error(`[KataAiEvaluator] Failed to evaluate web answer ${ans.questionId}:`, ansEvalErr);
+                        const retries = (Number(ans.aiEvaluation?.retries) || 0) + 1;
                         ans.aiEvaluation = {
                             isEvaluated: false,
-                            status: 'failed',
+                            status: retries >= 3 ? 'failed' : 'pending',
+                            retries: retries,
                             evaluatedAt: new Date(),
                             error: ansEvalErr.message
                         };
                         modified = true;
+                    } finally {
+                        inFlightWebEvaluations.delete(lockKey);
                     }
 
                     // Pacing delay between calls to respect rate limits
@@ -1326,20 +1351,49 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                         const ans = sub.answers[ansIdx];
                         if (ans.type !== 'web') continue;
                         if (ans.isManuallyGraded === true) continue;
-                        if (ans.aiEvaluation?.isEvaluated === true && ans.aiEvaluation?.status === 'completed') continue;
+                        if (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') continue;
+                        if (Number(ans.aiEvaluation?.retries || 0) >= 3) continue;
+
+                        const subIdStr = String(sub.id || sub._id);
+                        const lockKey = `${subIdStr}_${ans.questionId || ansIdx}`;
+                        if (inFlightWebEvaluations.has(lockKey)) continue;
+
+                        const currentCodeHash = crypto.createHash('sha256')
+                            .update(`${ans.submittedHtml || ''}|${ans.submittedCss || ''}|${ans.submittedJs || ''}`)
+                            .digest('hex');
+                        if (ans.aiEvaluation?.codeHash && ans.aiEvaluation.codeHash === currentCodeHash && ans.aiEvaluation.isEvaluated) {
+                            continue;
+                        }
 
                         const question = (test.questions || []).find(q => String(q.id || q._id) === String(ans.questionId)) || test.questions?.[ansIdx];
                         if (!question) continue;
 
-                        const evalResult = await evaluateSingleWebAnswer(question, ans);
-                        if (evalResult) {
-                            ans.aiEvaluation = evalResult;
-                            if (!ans.isManuallyGraded) {
-                                ans.score = evalResult.score;
-                                ans.pendingEvaluation = false;
+                        inFlightWebEvaluations.add(lockKey);
+                        try {
+                            const evalResult = await evaluateSingleWebAnswer(question, ans);
+                            if (evalResult) {
+                                evalResult.codeHash = currentCodeHash;
+                                evalResult.retries = Number(ans.aiEvaluation?.retries || 0);
+                                ans.aiEvaluation = evalResult;
+                                if (!ans.isManuallyGraded) {
+                                    ans.score = evalResult.score;
+                                    ans.pendingEvaluation = false;
+                                }
+                                modified = true;
+                                evaluatedCount++;
                             }
+                        } catch (ansEvalErr) {
+                            const retries = (Number(ans.aiEvaluation?.retries) || 0) + 1;
+                            ans.aiEvaluation = {
+                                isEvaluated: false,
+                                status: retries >= 3 ? 'failed' : 'pending',
+                                retries: retries,
+                                evaluatedAt: new Date(),
+                                error: ansEvalErr.message
+                            };
                             modified = true;
-                            evaluatedCount++;
+                        } finally {
+                            inFlightWebEvaluations.delete(lockKey);
                         }
                     }
 

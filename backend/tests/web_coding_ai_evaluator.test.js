@@ -256,6 +256,63 @@ async function runTestSuite() {
         assert.strictEqual(mockSubmission.totalScore, 18, "totalScore must be 18");
     });
 
+    // TEST 7: Evaluated Solution Never Sent to LLM Again (Idempotency Guarantee)
+    await reportAsync("Idempotency: Evaluated solution is strictly skipped on subsequent ticks", async () => {
+        const { getJSONData, saveJSONData } = require('../config/db');
+        const db = getJSONData();
+        const testId = 'test_idempotent_1';
+        const subId = 'sub_idempotent_1';
+
+        db.tests = db.tests || [];
+        db.testSubmissions = db.testSubmissions || [];
+
+        // Setup test with enableAiEvaluation: true
+        db.tests = db.tests.filter(t => String(t.id || t._id) !== testId);
+        db.tests.push({
+            id: testId,
+            _id: testId,
+            title: 'Idempotency Test Exam',
+            enableAiEvaluation: true,
+            isDeleted: false,
+            questions: [{ id: 'q_web_1', type: 'web', points: 20, title: 'Web Test', description: 'Create a header.' }]
+        });
+
+        // Setup submission with an already-completed evaluation
+        db.testSubmissions = db.testSubmissions.filter(s => String(s.id || s._id) !== subId);
+        db.testSubmissions.push({
+            id: subId,
+            _id: subId,
+            testId: testId,
+            status: 'submitted',
+            isDeleted: false,
+            answers: [{
+                questionId: 'q_web_1',
+                type: 'web',
+                submittedHtml: '<header><h1>Title</h1></header>',
+                isManuallyGraded: false,
+                aiEvaluation: {
+                    isEvaluated: true,
+                    status: 'completed',
+                    evaluatedAt: new Date(),
+                    score: 18,
+                    maxScore: 20,
+                    modelUsed: 'gemini-2.5-flash',
+                    feedback: 'Already graded perfectly.'
+                }
+            }]
+        });
+        saveJSONData(db);
+
+        // Run worker
+        const result = await evaluateWebCodingSubmissions(testId);
+        assert.strictEqual(result.evaluatedCount, 0, "Evaluated count must be 0 because answer is already completed!");
+
+        // Clean up
+        db.tests = db.tests.filter(t => String(t.id || t._id) !== testId);
+        db.testSubmissions = db.testSubmissions.filter(s => String(s.id || s._id) !== subId);
+        saveJSONData(db);
+    });
+
     console.log("===============================================================================");
     console.log(`   TEST RUN COMPLETED: ${passedTests} Passed, ${failedTests} Failed`);
     console.log("===============================================================================");

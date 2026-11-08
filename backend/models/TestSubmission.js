@@ -42,6 +42,8 @@ const AnswerSchema = new mongoose.Schema({
         maxScore: { type: Number, default: 0 },
         percentage: { type: Number, default: 0 },
         feedback: { type: String, default: '' },
+        codeHash: { type: String, default: '' },
+        retries: { type: Number, default: 0 },
         error: { type: String, default: '' }
     }
 }, { _id: false });
