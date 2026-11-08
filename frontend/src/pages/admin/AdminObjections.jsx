@@ -657,11 +657,35 @@ export default function AdminObjections({
                           </thead>
                           <tbody>
                             {ans.testCaseResults.map((tc, tIdx) => {
-                              const tcId = tc.testcaseId || tc.testCaseId || tc.id || tc._id || q?.testCases?.[tIdx]?.testcaseId || q?.testCases?.[tIdx]?.id || q?.testCases?.[tIdx]?._id || (20260101 + tIdx);
+                              const authorTc = q?.testCases?.[tIdx] || q?.testCases?.find(c => String(c.id || c._id) === String(tc.testcaseId || tc.testCaseId || tc.id || tc._id)) || {};
+                              const tcId = authorTc.testcaseId || authorTc.id || authorTc._id || tc.testcaseId || tc.testCaseId || tc.id || tc._id || (20260101 + tIdx);
                               
-                              const rawInput = tc.input ?? tc.sampleInput ?? q?.testCases?.[tIdx]?.input ?? q?.testCases?.[tIdx]?.sampleInput ?? '';
-                              const rawExpected = tc.expectedOutput ?? tc.output ?? tc.sampleOutput ?? q?.testCases?.[tIdx]?.output ?? q?.testCases?.[tIdx]?.expectedOutput ?? '';
-                              const rawActual = tc.actualOutput ?? tc.stdout ?? tc.userOutput ?? tc.output ?? '';
+                              let rawInput = authorTc.input ?? authorTc.sampleInput ?? '';
+                              if (!rawInput && tc.input && !String(tc.input).includes('[Hidden')) {
+                                rawInput = tc.input;
+                              } else if (!rawInput && tc.sampleInput) {
+                                rawInput = tc.sampleInput;
+                              }
+
+                              let rawExpected = authorTc.output ?? authorTc.expectedOutput ?? authorTc.sampleOutput ?? '';
+                              if (!rawExpected && tc.expectedOutput && !String(tc.expectedOutput).includes('[Hidden')) {
+                                rawExpected = tc.expectedOutput;
+                              } else if (!rawExpected && tc.output) {
+                                rawExpected = tc.output;
+                              }
+
+                              let rawActual = '';
+                              if (tc.actualOutput !== undefined && tc.actualOutput !== null && !String(tc.actualOutput).includes('[Hidden')) {
+                                rawActual = tc.actualOutput;
+                              } else if (tc.stdout !== undefined && tc.stdout !== null && !String(tc.stdout).includes('[Hidden')) {
+                                rawActual = tc.stdout;
+                              } else if (tc.userOutput !== undefined && tc.userOutput !== null && !String(tc.userOutput).includes('[Hidden')) {
+                                rawActual = tc.userOutput;
+                              } else if (tc.status === 'Accepted' || tc.status === 'passed') {
+                                rawActual = rawExpected || '(matched expected)';
+                              } else {
+                                rawActual = tc.status || '(failed)';
+                              }
 
                               const formatTruncated = (val) => {
                                 if (val === undefined || val === null || String(val).trim() === '') return '(empty)';

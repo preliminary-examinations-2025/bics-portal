@@ -2017,22 +2017,44 @@ export default function AdminTests({
                                         return (
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                             {tcResults.map((res, rIdx) => {
-                                              const tcId = questionConfig?.testCases?.[rIdx]?._id || questionConfig?.testCases?.[rIdx]?.id || (20260101 + rIdx);
+                                              const authorTc = questionConfig?.testCases?.[rIdx] ||
+                                                questionConfig?.testCases?.find(tc => String(tc.id || tc._id) === String(res.testCaseId || res.id || res.testCaseIndex)) ||
+                                                {};
+                                              const tcId = authorTc._id || authorTc.id || res._id || res.id || (20260101 + rIdx);
                                               const statusLower = String(res.status || '').toLowerCase();
                                               const isPassed = res.passed === true || statusLower === 'accepted' || statusLower === 'passed' || statusLower.includes('accept');
-                                              const rawInp = res.input ?? res.sampleInput ?? questionConfig?.testCases?.[rIdx]?.input ?? questionConfig?.testCases?.[rIdx]?.sampleInput ?? '';
-                                              const rawExp = res.expectedOutput ?? res.output ?? res.sampleOutput ?? questionConfig?.testCases?.[rIdx]?.output ?? questionConfig?.testCases?.[rIdx]?.expectedOutput ?? '';
-                                              const rawAct = (res.actualOutput !== undefined && res.actualOutput !== null && res.actualOutput !== '')
-                                                ? res.actualOutput
-                                                : ((res.stdout !== undefined && res.stdout !== null && res.stdout !== '')
-                                                    ? res.stdout
-                                                    : (res.userOutput || (isPassed ? (rawExp || '(matched expected)') : '')));
+
+                                              // Authoritative benchmark input for admin (never hidden)
+                                              let rawInp = (authorTc.input !== undefined && authorTc.input !== null && String(authorTc.input).trim() !== '')
+                                                ? authorTc.input
+                                                : (authorTc.sampleInput ?? (res.input && !String(res.input).includes('[Hidden') ? res.input : ''));
+
+                                              // Authoritative benchmark expected output for admin (never hidden)
+                                              let rawExp = (authorTc.output !== undefined && authorTc.output !== null && String(authorTc.output).trim() !== '')
+                                                ? authorTc.output
+                                                : (authorTc.expectedOutput ?? (authorTc.sampleOutput ?? (res.expectedOutput && !String(res.expectedOutput).includes('[Hidden') ? res.expectedOutput : '')));
+
+                                              // Authoritative candidate actual output for admin (never hidden)
+                                              let rawAct = '';
+                                              if (res.actualOutput !== undefined && res.actualOutput !== null && !String(res.actualOutput).includes('[Hidden')) {
+                                                rawAct = res.actualOutput;
+                                              } else if (res.stdout !== undefined && res.stdout !== null && !String(res.stdout).includes('[Hidden')) {
+                                                rawAct = res.stdout;
+                                              } else if (res.userOutput !== undefined && res.userOutput !== null && !String(res.userOutput).includes('[Hidden')) {
+                                                rawAct = res.userOutput;
+                                              } else if (isPassed) {
+                                                rawAct = rawExp || '(matched expected)';
+                                              } else {
+                                                rawAct = res.status || '(failed)';
+                                              }
 
                                               const fmt = (v) => {
                                                 if (v === undefined || v === null || String(v).trim() === '') return '(empty)';
-                                                const str = String(v).replace(/\r\n/g, ' ').replace(/\n/g, ' ').trim();
-                                                return str.length > 30 ? str.substring(0, 30) + '...' : str;
+                                                const str = String(v).replace(/\r\n/g, ' ↵ ').replace(/\n/g, ' ↵ ').trim();
+                                                return str.length > 90 ? str.substring(0, 90) + '...' : str;
                                               };
+
+                                              const isSample = Boolean(authorTc.isSample || res.isSample);
 
                                               return (
                                                 <div key={rIdx} style={{ fontSize: '8.5pt', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
@@ -2047,10 +2069,10 @@ export default function AdminTests({
                                                   }}>
                                                     <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isPassed ? '#166534' : '#991b1b' }}>
                                                       {isPassed ? <Check size={14} /> : <X size={14} />}
-                                                      <span>Testcase #{tcId} ({questionConfig?.testCases?.[rIdx]?.isSample || res.isSample ? 'Sample' : 'Hidden'}): {res.status || (isPassed ? 'Accepted' : 'Failed')}</span>
+                                                      <span>Testcase #{tcId} ({isSample ? 'Sample' : 'Hidden Benchmark'}): {res.status || (isPassed ? 'Accepted' : 'Failed')}</span>
                                                     </span>
                                                     <span style={{ fontSize: '8pt', color: '#64748b' }}>
-                                                      Points: {res.points !== undefined ? res.points : (questionConfig?.testCases?.[rIdx]?.points || 0)}
+                                                      Points: {res.points !== undefined ? res.points : (authorTc.points || 0)}
                                                       {res.executionTimeMs ? (" • " + res.executionTimeMs + "ms") : ''}
                                                     </span>
                                                   </div>
@@ -2058,7 +2080,7 @@ export default function AdminTests({
                                                     <div><strong>Input:</strong> <code title={String(rawInp || '(empty)')}>{fmt(rawInp)}</code></div>
                                                     <div><strong>Expected Output:</strong> <code title={String(rawExp || '(empty)')}>{fmt(rawExp)}</code></div>
                                                     <div><strong>Candidate Output:</strong> <code title={String(rawAct || '(empty)')} style={{ color: isPassed ? '#166534' : '#991b1b' }}>{fmt(rawAct)}</code></div>
-                                                    {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code>{fmt(res.stderr)}</code></div>}
+                                                    {res.stderr && <div style={{ color: '#b91c1c' }}><strong>Stderr:</strong> <code title={String(res.stderr)}>{fmt(res.stderr)}</code></div>}
                                                   </div>
                                                 </div>
                                               );
