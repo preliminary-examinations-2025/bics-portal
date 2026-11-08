@@ -24,7 +24,7 @@ async function main() {
             collegeEmail: 'aarav.sharma@bics.edu',
             personalEmail: 'aarav.sharma@gmail.com',
             permanentAddress: 'Flat 402, Greenfield Heights, Outer Ring Road, Bengaluru - 560001',
-            photoUrl: '/public/uploads/sample-photo.png',
+            photoUrl: path.join(__dirname, '..', 'public', 'uploads', 'question-1784488860298-pexels-christian-heitz-842711.jpg'),
             signatureUrl: '/public/uploads/sample-sig.png'
         },
         eligible: true,
@@ -43,6 +43,7 @@ async function main() {
         courseName: 'Introduction to Computer Science',
         durationMinutes: 120,
         totalMarks: 50,
+        academicTerm: '2026-2027 Academic Term • Semester I',
         verificationStatus: 'closed',
         verificationClosedAt: new Date('2026-11-08T16:00:00Z'),
         questions: [
@@ -76,8 +77,10 @@ async function main() {
         biometricVerification: {
             matchStatus: 'MATCH_CONFIRMED',
             confidenceScore: 98.6,
-            challengesCompleted: '3 of 3 (Turn Head Left, Turn Head Right, Neutral Face)'
+            challengesCompleted: '3 of 3 (Turn Head Left, Turn Head Right, Neutral Face)',
+            baselinePhotoUrl: path.join(__dirname, '..', 'public', 'proctoring', '040i6i-awuh-qobz-htgmvk', '17937109805470.jpeg')
         },
+        baselinePhotoUrl: path.join(__dirname, '..', 'public', 'proctoring', '040i6i-awuh-qobz-htgmvk', '17937109805470.jpeg'),
         proctoringLog: {
             fullscreenExits: 1,
             tabSwitches: 1,

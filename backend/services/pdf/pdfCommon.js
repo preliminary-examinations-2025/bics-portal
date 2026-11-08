@@ -184,26 +184,50 @@ function drawBwSectionBand(doc, x, y, width, height, title) {
 }
 
 /**
- * Draws a 2-column key-value grid row with crisp borders
+ * Draws a 2-column key-value grid row with crisp borders, dynamic row height based on text wrapping, and clean internal padding
  */
-function drawBwGridRow(doc, x, y, width, height, label1, val1, label2, val2, colSplit = 0.5) {
-    doc.rect(x, y, width, height).strokeColor('#000000').lineWidth(0.8).stroke();
+function drawBwGridRow(doc, x, y, width, minHeight = 24, label1, val1, label2, val2, colSplit = 0.5) {
     const midX = x + width * colSplit;
+    const w1 = (label2 !== undefined ? midX - x : width) - 12;
+    const w2 = label2 !== undefined ? (x + width - midX - 12) : 0;
+
+    // Measure label heights
+    doc.fontSize(7).font('Helvetica-Bold');
+    const label1H = doc.heightOfString(label1 || '', { width: w1 });
+    const label2H = label2 !== undefined ? doc.heightOfString(label2 || '', { width: w2 }) : 0;
+
+    // Measure value heights
+    doc.fontSize(7.5).font('Helvetica');
+    const textVal1 = safeText(val1);
+    const textVal2 = label2 !== undefined ? safeText(val2) : '';
+    const val1H = doc.heightOfString(textVal1, { width: w1, lineGap: 1 });
+    const val2H = label2 !== undefined ? doc.heightOfString(textVal2, { width: w2, lineGap: 1 }) : 0;
+
+    // Calculate dynamic row height ensuring no text is ever clipped or overlapped
+    const col1Total = label1H + val1H + 7;
+    const col2Total = label2 !== undefined ? (label2H + val2H + 7) : 0;
+    const rowHeight = Math.max(minHeight, Math.ceil(Math.max(col1Total, col2Total)));
+
+    doc.rect(x, y, width, rowHeight).strokeColor('#000000').lineWidth(0.8).stroke();
     if (label2 !== undefined) {
-        doc.moveTo(midX, y).lineTo(midX, y + height).stroke();
+        doc.moveTo(midX, y).lineTo(midX, y + rowHeight).strokeColor('#000000').lineWidth(0.8).stroke();
     }
 
-    // Col 1
-    doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold').text(label1, x + 6, y + 3);
-    doc.fillColor('#000000').fontSize(7.5).font('Helvetica').text(safeText(val1), x + 6, y + 12, { width: (label2 !== undefined ? midX - x : width) - 12, lineBreak: false });
+    // Col 1 text
+    doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold')
+       .text(label1, x + 6, y + 3, { width: w1 });
+    doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
+       .text(textVal1, x + 6, y + 3 + label1H + 1.5, { width: w1, lineGap: 1 });
 
-    // Col 2
+    // Col 2 text
     if (label2 !== undefined) {
-        doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold').text(label2, midX + 6, y + 3);
-        doc.fillColor('#000000').fontSize(7.5).font('Helvetica').text(safeText(val2), midX + 6, y + 12, { width: x + width - midX - 12, lineBreak: false });
+        doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold')
+           .text(label2, midX + 6, y + 3, { width: w2 });
+        doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
+           .text(textVal2, midX + 6, y + 3 + label2H + 1.5, { width: w2, lineGap: 1 });
     }
 
-    return y + height;
+    return y + rowHeight;
 }
 
 /**

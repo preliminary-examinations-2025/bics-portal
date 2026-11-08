@@ -86,9 +86,9 @@ async function generateHallTicketPdfBuffer({
 
             const typeLabel = isMid ? 'MID-SEMESTER EXAMINATION 2026' : 'END-SEMESTER EXAMINATION 2026';
             doc.fillColor('#000000').font('Helvetica-Bold').fontSize(9.5)
-               .text(`EXAMINATION ADMISSION PASS / HALL TICKET — ${typeLabel}`, textStartX, 54, { width: headerTextWidth });
+               .text(typeLabel, textStartX, 54, { width: headerTextWidth });
 
-            doc.fillColor('#000000').font('Courier-Bold').fontSize(7.5)
+            doc.fillColor('#000000').font('Helvetica-Bold').fontSize(7.5)
                .text(`Hall Ticket No: ${tNumber}   |   Eligibility: ${isEligible ? 'CONFIRMED' : 'PROVISIONAL'}`, textStartX, 68, { width: headerTextWidth });
 
             // Thin underline divider
@@ -174,16 +174,16 @@ async function generateHallTicketPdfBuffer({
             curY += 16;
 
             // Schedule Table Header
-            const schedColWidths = [70, 165, 80, 80, 70, 70];
-            doc.rect(startX, curY, pageWidth, 16).fillAndStroke('#f3f4f6', '#000000');
+            const schedColWidths = [65, 155, 75, 85, 85, 70];
+            doc.rect(startX, curY, pageWidth, 18).fillAndStroke('#f3f4f6', '#000000');
             doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold');
-            doc.text('COURSE CODE', startX + 4, curY + 4, { width: 62 });
-            doc.text('COURSE TITLE', startX + 74, curY + 4, { width: 155 });
-            doc.text('DATE', startX + 239, curY + 4, { width: 72 });
-            doc.text('SESSION TIME', startX + 319, curY + 4, { width: 72 });
-            doc.text('MODE', startX + 399, curY + 4, { width: 62 });
-            doc.text('REPORT TIME', startX + 469, curY + 4, { width: 62 });
-            curY += 16;
+            doc.text('COURSE CODE', startX + 4, curY + 5, { width: 57 });
+            doc.text('COURSE TITLE', startX + 69, curY + 5, { width: 147 });
+            doc.text('DATE', startX + 224, curY + 5, { width: 67 });
+            doc.text('SESSION TIME', startX + 299, curY + 5, { width: 77 });
+            doc.text('MODE', startX + 384, curY + 5, { width: 77 });
+            doc.text('REPORT TIME', startX + 469, curY + 5, { width: 62 });
+            curY += 18;
 
             const defaultSchedules = [
                 {
@@ -226,15 +226,15 @@ async function generateHallTicketPdfBuffer({
             }));
 
             activeSchedules.forEach((sch) => {
-                doc.rect(startX, curY, pageWidth, 16).strokeColor('#000000').lineWidth(0.8).stroke();
-                doc.fillColor('#000000').fontSize(7).font('Helvetica');
-                doc.text(safeText(sch.code), startX + 4, curY + 4, { width: 62 });
-                doc.text(safeText(sch.name), startX + 74, curY + 4, { width: 155, lineBreak: false });
-                doc.text(safeText(sch.date), startX + 239, curY + 4, { width: 72 });
-                doc.text(safeText(sch.time), startX + 319, curY + 4, { width: 72 });
-                doc.text(safeText(sch.mode), startX + 399, curY + 4, { width: 62 });
-                doc.text(safeText(sch.report), startX + 469, curY + 4, { width: 62 });
-                curY += 16;
+                doc.rect(startX, curY, pageWidth, 18).strokeColor('#000000').lineWidth(0.8).stroke();
+                doc.fillColor('#000000').fontSize(6.5).font('Helvetica');
+                doc.text(safeText(sch.code), startX + 4, curY + 5, { width: 57 });
+                doc.text(safeText(sch.name), startX + 69, curY + 5, { width: 147, lineBreak: false });
+                doc.text(safeText(sch.date), startX + 224, curY + 5, { width: 67 });
+                doc.text(safeText(sch.time), startX + 299, curY + 5, { width: 77 });
+                doc.text(safeText(sch.mode), startX + 384, curY + 5, { width: 77, lineBreak: false });
+                doc.text(safeText(sch.report), startX + 469, curY + 5, { width: 62 });
+                curY += 18;
             });
 
             curY += 12;

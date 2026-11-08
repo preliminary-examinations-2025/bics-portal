@@ -299,20 +299,16 @@ async function generateEirfVerdictPdfBuffer({
             drawBwSectionBand(doc, startX, curY, pageWidth, 17, '1. DOCUMENT METADATA & SYSTEM CONTEXT');
             curY += 17;
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 24, 'INCIDENT TRACKING ID:', reportId, 'INITIAL SEVERITY LEVEL:', (fsExits >= 3 || tabSwitches >= 3) ? 'HIGH (Exceeded Threshold)' : 'MEDIUM (Review Flagged)', 0.5);
-            curY += 24;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'INCIDENT TRACKING ID:', reportId, 'INITIAL SEVERITY LEVEL:', (fsExits >= 3 || tabSwitches >= 3) ? 'HIGH (Exceeded Threshold)' : 'MEDIUM (Review Flagged)', 0.5);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 24, 'CANDIDATE FULL NAME:', candidateName, 'INSTITUTIONAL STUDENT ID:', studentId, 0.5);
-            curY += 24;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'CANDIDATE FULL NAME:', candidateName, 'INSTITUTIONAL STUDENT ID:', studentId, 0.5);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 24, 'REGISTERED COLLEGE EMAIL:', candidateEmail, 'COURSE CODE & TITLE:', `${safeText(courseCode)} - ${safeText(courseName)}`, 0.5);
-            curY += 24;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'REGISTERED COLLEGE EMAIL:', candidateEmail, 'COURSE CODE & TITLE:', `${safeText(courseCode)} - ${safeText(courseName)}`, 0.5);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 24, 'EXAMINATION TITLE:', testTitle, 'EXAM SESSION WINDOW:', `${examStartIST} — ${examEndIST}`, 0.5);
-            curY += 24;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'EXAMINATION TITLE:', testTitle, 'EXAM SESSION WINDOW:', `${examStartIST} — ${examEndIST}`, 0.5);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 24, 'EIRF FORM SUBMITTED AT:', reportSubmittedIST, 'ADJUDICATION TIMELINESS:', 'Compliant (Filed within mandatory limit)', 0.5);
-            curY += 30;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'EIRF FORM SUBMITTED AT:', reportSubmittedIST, 'ADJUDICATION TIMELINESS:', 'Compliant (Filed within mandatory limit)', 0.5);
+            curY += 10;
 
             // --- 2. DUAL-PHOTO IDENTITY & BIOMETRIC AUDIT ---
             drawBwSectionBand(doc, startX, curY, pageWidth, 17, '2. DUAL-PHOTO IDENTITY & BIOMETRIC VERIFICATION AUDIT');
@@ -430,14 +426,12 @@ async function generateEirfVerdictPdfBuffer({
             const screenRes = techContext.screenResolution || submission?.screenResolution || 'No details available';
             const payloadStatus = report?.verificationStatus || 'VERIFIED_MATCH';
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'CLIENT IP / NETWORK CONTEXT:', clientIp, 'BROWSER USER-AGENT:', rawBrowser.substring(0, 45), 0.45);
-            curY += 22;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'CLIENT IP / NETWORK CONTEXT:', clientIp, 'BROWSER USER-AGENT:', rawBrowser.substring(0, 45), 0.45);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'OPERATING SYSTEM / PLATFORM:', parsedOs, 'DISPLAY & HARDWARE SPECS:', screenRes, 0.45);
-            curY += 22;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'OPERATING SYSTEM / PLATFORM:', parsedOs, 'DISPLAY & HARDWARE SPECS:', screenRes, 0.45);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'PAYLOAD CROSS-VERIFICATION:', payloadStatus, 'BROWSER LOCK-DOWN INTEGRITY:', `${fsExits} exit(s), ${tabSwitches} switch(es) logged`, 0.45);
-            curY += 28;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'PAYLOAD CROSS-VERIFICATION:', payloadStatus, 'BROWSER LOCK-DOWN INTEGRITY:', `${fsExits} exit(s), ${tabSwitches} switch(es) logged`, 0.45);
+            curY += 10;
 
             // --- 4. STUDENT DEFENSE & EXTENUATING DISCLOSURES ---
             drawBwSectionBand(doc, startX, curY, pageWidth, 17, '4. STUDENT DEFENSE & EXTENUATING DISCLOSURES');
@@ -460,11 +454,10 @@ async function generateEirfVerdictPdfBuffer({
                .text(safeText(s4Narrative).substring(0, 320), startX + 6, curY + 12, { width: pageWidth - 12, lineGap: 1.2 });
             curY += 36;
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'FOCUS LOSS JUSTIFICATION:', safeText(s2Tab).substring(0, 50), 'FULLSCREEN RESTORATION CONTEXT:', safeText(s2Fs).substring(0, 50), 0.5);
-            curY += 22;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'FOCUS LOSS JUSTIFICATION:', safeText(s2Tab).substring(0, 50), 'FULLSCREEN RESTORATION CONTEXT:', safeText(s2Fs).substring(0, 50), 0.5);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'PERIPHERALS DECLARED:', safeText(s3Per).substring(0, 50), 'TECHNICAL EVIDENCE STATUS:', evidenceStatus, 0.5);
-            curY += 22;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'PERIPHERALS DECLARED:', safeText(s3Per).substring(0, 50), 'TECHNICAL EVIDENCE STATUS:', evidenceStatus, 0.5);
+            curY += 8;
 
             // Checklist Band
             doc.rect(startX, curY, pageWidth, 16).fillAndStroke('#e5e7eb', '#000000');
@@ -508,11 +501,10 @@ async function generateEirfVerdictPdfBuffer({
             doc.fillColor('#000000').fontSize(7).font('Helvetica').text(credibilityText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.2 });
             curY += 44;
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'INFRACTION HISTORY RECORD:', 'First-time formal incident report in current academic term', 'REPORTING TIMELINESS:', 'Filed within mandatory post-exam window', 0.5);
-            curY += 22;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'INFRACTION HISTORY RECORD:', 'First-time formal incident report in current academic term', 'REPORTING TIMELINESS:', 'Filed within mandatory post-exam window', 0.5);
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'CAMERA / MIC INTEGRITY:', 'Webcam active; no lens obstruction detected during session', 'CANDIDATE COOPERATION:', 'Full questionnaire completed; local payload submitted', 0.5);
-            curY += 28;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'CAMERA / MIC INTEGRITY:', 'Webcam active; no lens obstruction detected during session', 'CANDIDATE COOPERATION:', 'Full questionnaire completed; local payload submitted', 0.5);
+            curY += 10;
 
             // --- 6. FINAL RESOLUTION & ACTION PLAN ---
             drawBwSectionBand(doc, startX, curY, pageWidth, 17, '6. FINAL RESOLUTION & ACTION PLAN');
@@ -524,8 +516,8 @@ async function generateEirfVerdictPdfBuffer({
                .text(`OFFICIAL VERDICT: ${rawStatus} — ${isApproved ? 'VIOLATION DISMISSED (PROVISIONAL ASSESSMENT GRANTED)' : 'VIOLATION UPHELD (DISCIPLINARY ACTION ENFORCED)'}`, startX, curY + 8, { width: pageWidth, align: 'center' });
             curY += 26;
 
-            drawBwGridRow(doc, startX, curY, pageWidth, 22, 'RESOLUTION CLASSIFICATION:', resolvedCategory, 'REMEDIATION / PENALTY ACTION:', resolvedRemediation, 0.5);
-            curY += 22;
+            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'RESOLUTION CLASSIFICATION:', resolvedCategory, 'REMEDIATION / PENALTY ACTION:', resolvedRemediation, 0.5);
+            curY += 8;
 
             // Policy Clause & Appeals Box
             doc.rect(startX, curY, pageWidth, 36).strokeColor('#000000').lineWidth(0.8).stroke();
@@ -568,7 +560,7 @@ async function generateEirfVerdictPdfBuffer({
             doc.fillColor('#000000').font('Helvetica-Bold').text(`${deadlineIST} (Within 48 Hours)`, startX + 130, curY + 42);
 
             doc.fillColor('#000000').font('Helvetica-Bold').text('Digital Verification Hash:', startX + 8, curY + 54);
-            doc.fillColor('#000000').font('Courier-Bold').text(hashString, startX + 130, curY + 54);
+            doc.fillColor('#000000').font('Helvetica-Bold').text(hashString, startX + 130, curY + 54);
 
             doc.fillColor('#000000').font('Helvetica-Bold').text('Official Document URL:', startX + 8, curY + 66);
             doc.fillColor('#000000').fontSize(6.5).font('Helvetica').text(proxyUrlFormatted, startX + 130, curY + 66, { width: 275, lineBreak: false });
