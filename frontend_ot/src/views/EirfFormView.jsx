@@ -559,77 +559,122 @@ export const EirfFormView = ({
                       )}
 
                       {/* MODALITY 2: RADIO */}
-                      {q.questionType === 'RADIO' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {(q.options || []).map((opt, optIdx) => {
-                            const isSelected = currentVal === opt;
-                            return (
-                              <label
-                                key={optIdx}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '10px',
-                                  padding: '10px 14px',
-                                  borderRadius: '6px',
-                                  border: `1px solid ${isSelected ? '#0284c7' : '#e2e8f0'}`,
-                                  backgroundColor: isSelected ? '#f0f9ff' : '#ffffff',
-                                  cursor: 'pointer',
-                                  fontSize: '9pt',
-                                  color: isSelected ? '#002147' : '#334155',
-                                  fontWeight: isSelected ? 'bold' : 'normal',
-                                  transition: 'all 0.15s ease'
-                                }}
-                              >
-                                <input
-                                  type="radio"
-                                  name={`radio_${qId}`}
-                                  value={opt}
-                                  checked={isSelected}
-                                  onChange={() => setDynamicAnswers(prev => ({ ...prev, [qId]: opt }))}
-                                />
-                                <span>{opt}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      )}
+                      {q.questionType === 'RADIO' && (() => {
+                        const optionsList = (Array.isArray(q.options) && q.options.length > 0)
+                          ? q.options
+                          : ((q.category || '').toUpperCase().includes('ENV') || (q.questionText || '').toLowerCase().includes('physical') || (q.questionText || '').toLowerCase().includes('surroundings')
+                            ? [
+                                'Private closed room with no other individuals present',
+                                'Shared residential room / family environment with occasional movement',
+                                'College or university computer laboratory / library',
+                                'Public venue / café / coworking facility',
+                                'Mobile / transit setting'
+                              ]
+                            : [
+                                'Local ISP / Home broadband disconnection or packet drop',
+                                'Operating system notification / popup or antivirus interruption',
+                                'Accidental keyboard shortcut / trackpad gesture / peripheral disconnect',
+                                'Device power / hardware restart or low battery event',
+                                'Browser freeze / crash requiring tab reload',
+                                'Other unforeseen environmental disruption'
+                              ]);
+
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {optionsList.map((opt, optIdx) => {
+                              const isSelected = currentVal === opt;
+                              return (
+                                <label
+                                  key={optIdx}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    padding: '10px 14px',
+                                    borderRadius: '6px',
+                                    border: `1px solid ${isSelected ? '#0284c7' : '#e2e8f0'}`,
+                                    backgroundColor: isSelected ? '#f0f9ff' : '#ffffff',
+                                    cursor: 'pointer',
+                                    fontSize: '9pt',
+                                    color: isSelected ? '#002147' : '#334155',
+                                    fontWeight: isSelected ? 'bold' : 'normal',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`radio_${qId}`}
+                                    value={opt}
+                                    checked={isSelected}
+                                    onChange={() => setDynamicAnswers(prev => ({ ...prev, [qId]: opt }))}
+                                  />
+                                  <span>{opt}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
 
                       {/* MODALITY 3: CHECKBOX */}
-                      {q.questionType === 'CHECKBOX' && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
-                          {(q.options || []).map((opt, optIdx) => {
-                            const list = Array.isArray(currentVal) ? currentVal : [];
-                            const isChecked = list.includes(opt);
-                            return (
-                              <label
-                                key={optIdx}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '9px 12px',
-                                  borderRadius: '6px',
-                                  border: `1px solid ${isChecked ? '#0284c7' : '#e2e8f0'}`,
-                                  backgroundColor: isChecked ? '#f0f9ff' : '#f8fafc',
-                                  cursor: 'pointer',
-                                  fontSize: '8.5pt',
-                                  color: isChecked ? '#002147' : '#334155',
-                                  fontWeight: isChecked ? 'bold' : 'normal',
-                                  transition: 'all 0.15s ease'
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => handleDynamicCheckboxToggle(qId, opt)}
-                                />
-                                <span>{opt}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      )}
+                      {q.questionType === 'CHECKBOX' && (() => {
+                        const optionsList = (Array.isArray(q.options) && q.options.length > 0)
+                          ? q.options
+                          : ((q.category || '').toUpperCase().includes('REMEDIATION') || (q.questionText || '').toLowerCase().includes('troubleshooting') || (q.questionText || '').toLowerCase().includes('step')
+                            ? [
+                                'Toggled Wi-Fi off and on / reconnected to wireless access point',
+                                'Switched connection to mobile hotspot or USB tethering',
+                                'Rebooted home router or modem',
+                                'Closed background tasks via Task Manager / Activity Monitor',
+                                'Re-entered fullscreen immediately via on-screen button or key',
+                                'Refreshed the browser window to restore server sync',
+                                'Waited without altering system state until stability resumed'
+                              ]
+                            : [
+                                'Antivirus / security firewall notification or automated update',
+                                'Communication / collaboration tool (Discord, Microsoft Teams, Slack, WhatsApp)',
+                                'Browser extension popup or automated background tab sync',
+                                'Operating system system dialog (Windows Update, macOS notification, battery warning)',
+                                'Display / GPU utility overlay (NVIDIA GeForce Experience, AMD Radeon Software, Game Bar)',
+                                'Cloud storage synchronization (Google Drive, OneDrive, Dropbox)',
+                                'None of the above / Machine had only the test window open'
+                              ]);
+
+                        return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                            {optionsList.map((opt, optIdx) => {
+                              const list = Array.isArray(currentVal) ? currentVal : [];
+                              const isChecked = list.includes(opt);
+                              return (
+                                <label
+                                  key={optIdx}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '9px 12px',
+                                    borderRadius: '6px',
+                                    border: `1px solid ${isChecked ? '#0284c7' : '#e2e8f0'}`,
+                                    backgroundColor: isChecked ? '#f0f9ff' : '#f8fafc',
+                                    cursor: 'pointer',
+                                    fontSize: '8.5pt',
+                                    color: isChecked ? '#002147' : '#334155',
+                                    fontWeight: isChecked ? 'bold' : 'normal',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => handleDynamicCheckboxToggle(qId, opt)}
+                                  />
+                                  <span>{opt}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
 
                       {/* MODALITY 4: FILE_UPLOAD (Proof) */}
                       {q.questionType === 'FILE_UPLOAD' && (

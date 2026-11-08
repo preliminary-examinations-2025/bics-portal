@@ -1897,6 +1897,9 @@ function AppContent() {
 
   const logProctoringEvent = async (subObj, type, details, startTime, endTime, durationSeconds, customTimestamp) => {
     try {
+      if (isAutoSubmittedRef.current || submittingExam || flow === 'finished') {
+        if (type !== 'TEST_SUBMITTED' && type !== 'TEST_AUTO_SUBMITTED') return;
+      }
       const targetSub = subObj || submission;
       if (!targetSub) return;
       const subId = targetSub.id || targetSub._id;
@@ -3060,7 +3063,7 @@ function AppContent() {
 
   const saveServerDraft = async (answersList) => {
     try {
-      if (!submission) return;
+      if (!submission || isAutoSubmittedRef.current || submittingExam || flow === 'finished') return;
       const subId = submission._id || submission.id;
       if (Array.isArray(answersList)) {
         examAnswersRef.current = answersList;

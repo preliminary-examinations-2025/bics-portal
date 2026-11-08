@@ -986,21 +986,21 @@ router.post('/admin/eirf/action/:reportId', requireAdmin, async (req, res) => {
 
             submission = await TestSubmissionModel.findById(report.submissionId);
             if (submission) {
-                submission.eirfStatus = status;
-                submission.pipelineStatus = 'VERDICT_ISSUED';
-                if (status === 'approved') {
-                    submission.verificationStatus = 'released';
-                } else if (status === 'rejected') {
-                    submission.verificationStatus = 'annulled';
-                    if (submission.evaluation) {
-                        submission.evaluation.mcqScore = 0;
-                        submission.evaluation.codingScore = 0;
-                        submission.evaluation.totalScore = 0;
-                        submission.evaluation.percentage = 0;
-                        submission.evaluation.adminRemarks = `Annulled by Committee: ${finalResolutionCategory} (${finalRemediationAction})`;
-                    }
-                }
-                await submission.save();
+                const subUpdate = {
+                    eirfStatus: status,
+                    pipelineStatus: 'VERDICT_ISSUED',
+                    ...(status === 'approved' ? { verificationStatus: 'released' } : {}),
+                    ...(status === 'rejected' ? {
+                        verificationStatus: 'annulled',
+                        'evaluation.mcqScore': 0,
+                        'evaluation.codingScore': 0,
+                        'evaluation.totalScore': 0,
+                        'evaluation.percentage': 0,
+                        'evaluation.adminRemarks': `Annulled by Committee: ${finalResolutionCategory} (${finalRemediationAction})`
+                    } : {})
+                };
+                await TestSubmissionModel.updateOne({ _id: submission._id }, { $set: subUpdate });
+                submission = await TestSubmissionModel.findById(submission._id);
             }
         } else {
             const db = getJSONData();

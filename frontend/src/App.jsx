@@ -362,6 +362,7 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const isRedirectingRef = useRef(false);
+  const isLoggingOutRef = useRef(false);
 
   const [view, setViewState] = useState(() => {
     const isClean = typeof window !== 'undefined' && (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout'));
@@ -1453,8 +1454,17 @@ export default function App() {
   const [submissionsLoading, setSubmissionsLoading] = useState(true);
 
   const fetchStudentSubmissions = async (paramStudentId) => {
+    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+    if (isLoggingOutRef.current || !token) {
+      setSubmissionsLoading(false);
+      return;
+    }
     const rawId = studentProfile?.id || studentProfile?._id || user?.id || user?._id || paramStudentId;
     if (!rawId || rawId === 'STU1001' || rawId === 'admin') {
+      setSubmissionsLoading(false);
+      return;
+    }
+    if (isLoggingOutRef.current) {
       setSubmissionsLoading(false);
       return;
     }
@@ -1468,6 +1478,8 @@ export default function App() {
         setStudentSubmissions(Array.isArray(data) ? data : []);
       }
       
+      if (isLoggingOutRef.current) return;
+
       // Fetch corresponding QR verification code details
       const semType = systemConfig?.examType === 'endsem' ? 'end' : 'mid';
       const qrRes = await fetch(`${API_BASE}/candidate/ledger-qr-data/${studentId}?type=${semType}`);
@@ -1476,7 +1488,9 @@ export default function App() {
         setLedgerQrData(qrData);
       }
     } catch (e) {
-      console.error("Error fetching student submissions:", e);
+      if (!isLoggingOutRef.current) {
+        console.error("Error fetching student submissions:", e);
+      }
     } finally {
       setSubmissionsLoading(false);
       setLoadingMessage('');
@@ -3055,6 +3069,7 @@ int main() {
   };
 
   const handleLogout = () => {
+    isLoggingOutRef.current = true;
     setFeedbackAnswers({});
     setActiveCourseFeedbackIdx(0);
     setFeedbackSuccess('');
@@ -3931,7 +3946,7 @@ int main() {
       return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
     
-    if (user.role === 'student') {
+    if (user.role === 'student' || user.role === 'candidate') {
       return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     

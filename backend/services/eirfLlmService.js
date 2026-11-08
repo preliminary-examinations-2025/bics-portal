@@ -10,6 +10,25 @@ const GROQ_TIMEOUT_MS = 8000;
 const OPENROUTER_TIMEOUT_MS = 15000;
 
 /**
+ * Helper: Formats Date into 24-hour Indian Standard Time (IST, UTC+5:30) string with ' IST' suffix.
+ */
+function formatISTTimeString(dateVal) {
+    if (!dateVal) return '00:00:00 IST';
+    try {
+        const d = new Date(dateVal);
+        return d.toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }) + ' IST';
+    } catch (e) {
+        return new Date(dateVal).toISOString().slice(11, 19) + ' UTC';
+    }
+}
+
+/**
  * 1. Zero-PII Data Sanitization
  * Extracts strictly anonymized telemetry, system specs, and proctoring metrics.
  * GUARANTEE: Never transmits student names, emails, student IDs, IP addresses,
@@ -41,12 +60,12 @@ function sanitizeTelemetry(submission) {
 
     const anonymizedTimeline = [];
 
-    // Process raw events into anonymized timeline
+    // Process raw events into anonymized timeline (using IST timestamps)
     events.forEach(ev => {
         if (!ev) return;
         const dur = Number(ev.durationSeconds || 0);
         const type = String(ev.type || '');
-        const timeOffset = ev.timestamp ? new Date(ev.timestamp).toISOString().slice(11, 19) : '00:00:00';
+        const timeOffset = formatISTTimeString(ev.timestamp);
         const qIndex = (typeof ev.questionIndex === 'number' && ev.questionIndex >= 0) ? `Question #${ev.questionIndex + 1}` : 'General Exam Window';
 
         if (type.includes('FULLSCREEN')) {
@@ -85,13 +104,13 @@ function sanitizeTelemetry(submission) {
         }
     });
 
-    // Merge server-side offline gaps if tracked
+    // Merge server-side offline gaps if tracked (using IST timestamps)
     serverOfflineGaps.forEach(gap => {
         const dSec = Number(gap.downtimeSeconds || 0);
         totalOfflineSec += dSec;
         offlineGapsCount++;
         if (dSec > maxOfflineSec) maxOfflineSec = dSec;
-        const startStr = gap.gapStart ? new Date(gap.gapStart).toISOString().slice(11, 19) : '00:00:00';
+        const startStr = formatISTTimeString(gap.gapStart);
         anonymizedTimeline.push({
             time: startStr,
             event: 'SERVER_DETECTED_DISCONNECT_GAP',
@@ -156,17 +175,23 @@ function buildPrompt(sanitizedPayload) {
 Your mission is to analyze the provided anonymized proctoring telemetry logs and generate exactly 8 inquiry questions for the Emergency Incident Report Form (EIRF).
 The candidate must answer these 8 questions to explain any security flags, offline intervals, or navigation disruptions.
 
+TIME ZONE REQUIREMENT:
+All proctoring telemetry timestamps are recorded in Indian Standard Time (IST, UTC+5:30). When referencing incident times in question contexts, descriptions, or placeholders, ALWAYS preserve Indian Standard Time (e.g. 'At 13:33:20 IST, a 28s network disconnection occurred').
+
 STRICT QUESTION DISTRIBUTION REQUIREMENTS (EXACTLY 8 QUESTIONS):
 1. Q1 [TEXT]: Descriptive primary narrative explaining the root cause that led to the security flags or disconnects during the exam.
-2. Q2 [RADIO]: Single-choice classification of the incident cause (Provide at least 5 mutually exclusive, realistic options like ISP outage, OS notification/popup, accidental trackpad/shortcut, hardware/battery failure, browser freeze).
-3. Q3 [TEXT]: Contextual drilldown into the peak violation or longest disconnect event (Reference the actual logged timestamp and duration from the telemetry).
-4. Q4 [CHECKBOX]: Multi-choice identifying active background software, utilities, or popups (Provide at least 5 realistic options like Antivirus scan, Discord/Teams/Slack, browser extensions, OS update dialog, GPU/display utility, or None of the above).
-5. Q5 [RADIO]: Single-choice inquiry into physical testing surroundings (Options: Private closed room, Shared residential room, University computer lab, Public space/café, Mobile transit).
-6. Q6 [CHECKBOX]: Multi-choice identifying immediate candidate remediation/troubleshooting steps taken (Options: Toggled Wi-Fi, Switched to mobile hotspot, Rebooted router, Closed apps in Task Manager, Re-entered fullscreen immediately, Refreshed page, Waited for stabilization).
+2. Q2 [RADIO]: Single-choice classification of the incident cause (Provide at least 5-6 mutually exclusive, realistic options).
+3. Q3 [TEXT]: Contextual drilldown into the peak violation or longest disconnect event (Reference the actual logged timestamp in IST and duration from the telemetry).
+4. Q4 [CHECKBOX]: Multi-choice identifying active background software, utilities, or popups (Provide at least 5-6 realistic options).
+5. Q5 [RADIO]: Single-choice inquiry into physical testing surroundings (Provide 5 distinct realistic environment options).
+6. Q6 [CHECKBOX]: Multi-choice identifying immediate candidate remediation/troubleshooting steps taken (Provide at least 5-7 troubleshooting actions).
 7. Q7 [TEXT]: Formal academic integrity declaration affirming no secondary devices, unauthorized notes, or third parties were consulted during interruptions.
 8. Q8 [FILE_UPLOAD]: Technical verification proof request (Screenshots/photos of ISP outage SMS, router status lights, Windows Event Viewer, or battery warning).
    - Set "isRequired": ${isSevere ? 'true' : 'false'} (True if severe outage or multiple warnings occurred, False if minor blurs only).
    - Provide clear "proofGuidance" specifying accepted formats (JPG, PNG, PDF <= 5MB).
+
+CRITICAL REQUIREMENT FOR RADIO AND CHECKBOX QUESTIONS:
+For questionType "RADIO" and "CHECKBOX", the "options" array MUST NEVER BE EMPTY. You MUST provide at least 4 to 7 realistic string options for candidates to select from.
 
 JSON OUTPUT FORMAT:
 You MUST respond with valid JSON only. No markdown fences, no conversational text.
@@ -185,7 +210,26 @@ You MUST respond with valid JSON only. No markdown fences, no conversational tex
       "requiresProof": false,
       "proofGuidance": ""
     },
-    ... (Q2 through Q8)
+    {
+      "questionId": "Q2",
+      "questionType": "RADIO",
+      "category": "INCIDENT_CLASSIFICATION",
+      "questionText": "Which of the following best classifies the primary cause of the incident?",
+      "context": "Select the most accurate root cause classification.",
+      "placeholder": "",
+      "options": [
+        "Local ISP / Home broadband disconnection or packet drop",
+        "Operating system notification / popup or antivirus interruption",
+        "Accidental keyboard shortcut / trackpad gesture / peripheral disconnect",
+        "Device power / hardware restart or low battery event",
+        "Browser freeze / crash requiring tab reload",
+        "Other unforeseen environmental disruption"
+      ],
+      "isRequired": true,
+      "requiresProof": false,
+      "proofGuidance": ""
+    },
+    ... (Q3 through Q8)
   ]
 }`;
 
@@ -556,7 +600,41 @@ function validateAndNormalizeQuestions(rawText, sanitizedPayload) {
             else if (rawType.includes('CHECKBOX') || rawType === 'MULTI_CHOICE') safeType = 'CHECKBOX';
             else if (rawType.includes('FILE') || rawType.includes('UPLOAD') || rawType.includes('PROOF')) safeType = 'FILE_UPLOAD';
 
-            const opts = Array.isArray(q.options) ? q.options.filter(o => typeof o === 'string' && o.trim().length > 0) : [];
+            // Extract options from various potential LLM keys (options, choices, items, selections)
+            const rawOpts = Array.isArray(q.options) ? q.options :
+                           (Array.isArray(q.choices) ? q.choices :
+                           (Array.isArray(q.items) ? q.items :
+                           (Array.isArray(q.selections) ? q.selections : [])));
+
+            let opts = rawOpts.filter(o => typeof o === 'string' && o.trim().length > 0);
+
+            // Guard: If choice question has no options, backfill immediately from deterministic template
+            if ((safeType === 'RADIO' || safeType === 'CHECKBOX') && opts.length === 0) {
+                const fallbackList = deterministicInquirySynthesizer(sanitizedPayload);
+                const matchingFallback = fallbackList.find(fb => fb.questionId === q.questionId || fb.category === q.category) || fallbackList[idx];
+                if (matchingFallback && Array.isArray(matchingFallback.options) && matchingFallback.options.length > 0) {
+                    opts = [...matchingFallback.options];
+                } else if (safeType === 'RADIO') {
+                    opts = [
+                        'Local ISP / Home broadband disconnection or packet drop',
+                        'Operating system notification / popup or antivirus interruption',
+                        'Accidental keyboard shortcut / trackpad gesture / peripheral disconnect',
+                        'Device power / hardware restart or low battery event',
+                        'Browser freeze / crash requiring tab reload',
+                        'Other unforeseen environmental disruption'
+                    ];
+                } else {
+                    opts = [
+                        'Toggled Wi-Fi off and on / reconnected to wireless access point',
+                        'Switched connection to mobile hotspot or USB tethering',
+                        'Rebooted home router or modem',
+                        'Closed background tasks via Task Manager / Activity Monitor',
+                        'Re-entered fullscreen immediately via on-screen button or key',
+                        'Refreshed the browser window to restore server sync',
+                        'None of the above / Machine had only the test window open'
+                    ];
+                }
+            }
 
             return {
                 questionId: q.questionId || `Q${idx + 1}`,

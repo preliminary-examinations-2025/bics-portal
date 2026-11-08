@@ -84,44 +84,44 @@ export default function NavigationLayout() {
             <nav className="sidebar-menu">
               {user.role === 'admin' ? (
                 <>
-                  <NavLink to="/main/admin/dashboard" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/dashboard" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Settings size={16} /> Portal Settings
                   </NavLink>
-                  <NavLink to="/main/admin/candidates" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/candidates" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Users size={16} /> Candidates
                   </NavLink>
-                  <NavLink to="/main/admin/attendance" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/attendance" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <FileText size={16} /> Examination Attendance
                   </NavLink>
-                  <NavLink to="/main/admin/coursework" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/coursework" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <BookOpen size={16} /> Coursework
                   </NavLink>
-                  <NavLink to="/main/admin/logs" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/logs" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Activity size={16} /> System Logs
                   </NavLink>
-                  <NavLink to="/main/admin/proctoring" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/proctoring" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Video size={16} /> Live Proctoring
                   </NavLink>
-                  <NavLink to="/main/admin/tickets" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/tickets" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Ticket size={16} /> Tickets
                   </NavLink>
-                  <NavLink to="/main/admin/submissions" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/submissions" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Layers size={16} /> Submissions Tracker
                   </NavLink>
-                  <NavLink to="/main/admin/tests" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/tests" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <ClipboardList size={16} /> Tests Manager
                   </NavLink>
-                  <NavLink to="/main/admin/objections" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/objections" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Flag size={16} style={{ color: '#b45309' }} /> Examination Objections
                   </NavLink>
-                  <NavLink to="/main/admin/recyclebin" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/admin/recyclebin" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Trash2 size={16} style={{ color: '#ef4444' }} /> Recycle Bin (24h)
                   </NavLink>
                 </>
               ) : (
                 <>
                   {/* Candidate Side Navigation Menu items */}
-                  <NavLink to="/main/home" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
+                  <NavLink to="/home" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={closeMobileSidebar}>
                     <Bell size={16} /> Announcements
                   </NavLink>
 
@@ -131,13 +131,13 @@ export default function NavigationLayout() {
                   </button>
                   {dropdowns.student && (
                     <div className="dropdown-container">
-                      <NavLink to="/main/student/course-registration" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/student/course-registration" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Upload size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Course Registration
                       </NavLink>
-                      <NavLink to="/main/student/information" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/student/information" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Student Information
                       </NavLink>
-                      <NavLink to="/main/student/coc" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/student/coc" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Check size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Code of Conduct
                       </NavLink>
                     </div>
@@ -149,13 +149,13 @@ export default function NavigationLayout() {
                   </button>
                   {dropdowns.coursework && (
                     <div className="dropdown-container">
-                      <NavLink to="/main/coursework/lectures" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/coursework/lectures" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Video size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Video Lectures
                       </NavLink>
-                      <NavLink to="/main/coursework/materials" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/coursework/materials" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <BookOpen size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Course Materials
                       </NavLink>
-                      <NavLink to="/main/coursework/online-tests" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/coursework/online-tests" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <ClipboardList size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Online Tests
                       </NavLink>
                     </div>
@@ -167,13 +167,13 @@ export default function NavigationLayout() {
                   </button>
                   {dropdowns.submissions && (
                     <div className="dropdown-container">
-                      <NavLink to="/main/submissions/classroom" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/submissions/classroom" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Layers size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Classroom Submissions
                       </NavLink>
-                      <NavLink to="/main/submissions/verification" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/submissions/verification" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Answer Sheet Verification
                       </NavLink>
-                      <NavLink to="/main/submissions/objections" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/submissions/objections" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Scale size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Objections
                       </NavLink>
                     </div>
@@ -185,10 +185,10 @@ export default function NavigationLayout() {
                   </button>
                   {dropdowns.exam && (
                     <div className="dropdown-container">
-                      <NavLink to="/main/examination/schedule" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/examination/schedule" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Exam Schedule
                       </NavLink>
-                      <NavLink to="/main/examination/hall-ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/examination/hall-ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Printer size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall Ticket Generation
                       </NavLink>
                     </div>
@@ -200,13 +200,13 @@ export default function NavigationLayout() {
                   </button>
                   {dropdowns.feedback && (
                     <div className="dropdown-container">
-                      <NavLink to="/main/support/ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/support/ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <LifeBuoy size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Open Technical Ticket
                       </NavLink>
-                      <NavLink to="/main/support/feedback/general" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/support/feedback/general" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> General Feedback
                       </NavLink>
-                      <NavLink to="/main/support/feedback" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                      <NavLink to="/support/feedback" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <MessageSquare size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Midsem / Endsem Feedback
                       </NavLink>
                     </div>
