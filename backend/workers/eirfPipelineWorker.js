@@ -32,7 +32,7 @@ const {
 const {
     sendTestSubmittedEmail,
     sendEirfFilingNoticeEmail
-} = require('../services/brevoEmailService');
+} = require('../services/gmailEmailService');
 const { toBicsId } = require('../utils/bicsId');
 const eirfLlmService = require('../services/eirfLlmService');
 

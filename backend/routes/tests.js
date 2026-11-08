@@ -16,7 +16,7 @@ const { isBicsId, toMongoId, toBicsId, resolveToObjectId } = require('../utils/b
 const { compareFaceBiometrics, isPlaceholderPhoto } = require('../utils/biometricMatcher');
 const { evaluateEirfIncident } = require('../services/eirfEvaluator');
 const { runPipelineTick } = require('../workers/eirfPipelineWorker');
-const { sendTestSubmittedEmail } = require('../services/brevoEmailService');
+const { sendTestSubmittedEmail } = require('../services/gmailEmailService');
 const proctoringRouter = require('./proctoring');
 
 const activeSubmissionsProcessing = new Set();

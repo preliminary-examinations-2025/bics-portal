@@ -8,7 +8,7 @@ const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
 const { resolveToObjectId, isBicsId, isMongoId, toBicsId, toMongoId } = require('../utils/bicsId');
-const { dispatchOtrfBatchForClosedTest } = require('../services/brevoEmailService');
+const { dispatchOtrfBatchForClosedTest } = require('../services/gmailEmailService');
 
 const findTestConfig = async (id) => {
     if (!id) return null;
