@@ -1190,8 +1190,8 @@ const handleDraftSave = async (req, res) => {
                     delete cleanAns.isManuallyGraded;
                     delete cleanAns.isBonusAwarded;
                     delete cleanAns.isObjectionResolved;
-                    // Normalize MCC multi-choice arrays vs MCQ single index
-                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                    // Normalize MCC multi-choice arrays vs SCC / MCQ single index
+                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || (cleanAns.type !== 'scc' && cleanAns.type !== 'coding' && cleanAns.type !== 'web' && Array.isArray(cleanAns.selectedOptionIndex))) {
                         if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
                             cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
                         } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
@@ -1199,8 +1199,20 @@ const handleDraftSave = async (req, res) => {
                         } else {
                             cleanAns.selectedOptionIndices = [];
                         }
-                    } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
-                        cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                        if (cleanAns.selectedOptionIndex === undefined || cleanAns.selectedOptionIndex === null) {
+                            cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndices.length > 0 ? cleanAns.selectedOptionIndices[0] : null;
+                        }
+                    } else if (cleanAns.type === 'scc' || cleanAns.type === 'mcq') {
+                        if (Array.isArray(cleanAns.selectedOptionIndex)) {
+                            cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                        } else if (cleanAns.selectedOptionIndex !== undefined && cleanAns.selectedOptionIndex !== null) {
+                            cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndex);
+                        } else if (Array.isArray(cleanAns.selectedOptionIndices) && cleanAns.selectedOptionIndices.length > 0) {
+                            cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndices[0]);
+                        } else {
+                            cleanAns.selectedOptionIndex = null;
+                        }
+                        cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex !== null ? [cleanAns.selectedOptionIndex] : [];
                     }
                     if (Array.isArray(cleanAns.testCaseResults)) {
                         cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
@@ -1457,6 +1469,10 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                 }
 
                 try {
+                    if (typeof submission.markModified === 'function') {
+                        submission.markModified('answers');
+                        submission.markModified('evaluation');
+                    }
                     await submission.save();
                 } catch (saveErr) {
                     if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
@@ -1767,8 +1783,8 @@ router.post('/submit', async (req, res) => {
                             delete cleanAns.isManuallyGraded;
                             delete cleanAns.isBonusAwarded;
                             delete cleanAns.isObjectionResolved;
-                            // Normalize MCC multi-choice arrays vs MCQ single index
-                            if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                            // Normalize MCC multi-choice arrays vs SCC / MCQ single index
+                            if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || (cleanAns.type !== 'scc' && cleanAns.type !== 'coding' && cleanAns.type !== 'web' && Array.isArray(cleanAns.selectedOptionIndex))) {
                                 if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
                                     cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
                                 } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
@@ -1776,8 +1792,20 @@ router.post('/submit', async (req, res) => {
                                 } else {
                                     cleanAns.selectedOptionIndices = [];
                                 }
-                            } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
-                                cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                                if (cleanAns.selectedOptionIndex === undefined || cleanAns.selectedOptionIndex === null) {
+                                    cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndices.length > 0 ? cleanAns.selectedOptionIndices[0] : null;
+                                }
+                            } else if (cleanAns.type === 'scc' || cleanAns.type === 'mcq') {
+                                if (Array.isArray(cleanAns.selectedOptionIndex)) {
+                                    cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                                } else if (cleanAns.selectedOptionIndex !== undefined && cleanAns.selectedOptionIndex !== null) {
+                                    cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndex);
+                                } else if (Array.isArray(cleanAns.selectedOptionIndices) && cleanAns.selectedOptionIndices.length > 0) {
+                                    cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndices[0]);
+                                } else {
+                                    cleanAns.selectedOptionIndex = null;
+                                }
+                                cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex !== null ? [cleanAns.selectedOptionIndex] : [];
                             }
                             if (Array.isArray(cleanAns.testCaseResults)) {
                                 cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
@@ -1878,6 +1906,10 @@ router.post('/submit', async (req, res) => {
                     };
                     submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
 
+                    if (typeof submission.markModified === 'function') {
+                        submission.markModified('answers');
+                        submission.markModified('evaluation');
+                    }
                     await submission.save();
                     break;
                 } catch (saveErr) {
@@ -1921,8 +1953,8 @@ router.post('/submit', async (req, res) => {
                     delete cleanAns.isManuallyGraded;
                     delete cleanAns.isBonusAwarded;
                     delete cleanAns.isObjectionResolved;
-                    // Normalize MCC multi-choice arrays vs MCQ single index
-                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
+                    // Normalize MCC multi-choice arrays vs SCC / MCQ single index
+                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || (cleanAns.type !== 'scc' && cleanAns.type !== 'coding' && cleanAns.type !== 'web' && Array.isArray(cleanAns.selectedOptionIndex))) {
                         if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
                             cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
                         } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
@@ -1930,8 +1962,20 @@ router.post('/submit', async (req, res) => {
                         } else {
                             cleanAns.selectedOptionIndices = [];
                         }
-                    } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
-                        cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                        if (cleanAns.selectedOptionIndex === undefined || cleanAns.selectedOptionIndex === null) {
+                            cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndices.length > 0 ? cleanAns.selectedOptionIndices[0] : null;
+                        }
+                    } else if (cleanAns.type === 'scc' || cleanAns.type === 'mcq') {
+                        if (Array.isArray(cleanAns.selectedOptionIndex)) {
+                            cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                        } else if (cleanAns.selectedOptionIndex !== undefined && cleanAns.selectedOptionIndex !== null) {
+                            cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndex);
+                        } else if (Array.isArray(cleanAns.selectedOptionIndices) && cleanAns.selectedOptionIndices.length > 0) {
+                            cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndices[0]);
+                        } else {
+                            cleanAns.selectedOptionIndex = null;
+                        }
+                        cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex !== null ? [cleanAns.selectedOptionIndex] : [];
                     }
                     if (Array.isArray(cleanAns.testCaseResults)) {
                         cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({

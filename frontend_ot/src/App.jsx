@@ -2659,11 +2659,14 @@ function AppContent() {
     if (test.questions[selectedQuestionIndex]) {
       const activeAns = currentAnswers[selectedQuestionIndex];
       const activeQuest = test.questions[selectedQuestionIndex];
-      const isMulti = activeQuest.isMultiChoice || activeQuest.type === 'mcc' || activeQuest.category === 'Multiple Choice';
+      const isMulti = Boolean(activeQuest.type === 'mcc' || activeQuest.isMultiChoice === true || (Array.isArray(activeQuest.correctOptionIndices) && activeQuest.correctOptionIndices.length > 1));
       if (isMulti) {
         setDraftMCQ(Array.isArray(activeAns?.selectedOptionIndices) ? activeAns.selectedOptionIndices : (activeAns?.selectedOptionIndex !== undefined && activeAns?.selectedOptionIndex !== null ? [activeAns.selectedOptionIndex] : []));
       } else {
-        setDraftMCQ(activeAns?.selectedOptionIndex ?? null);
+        const singleVal = activeAns?.selectedOptionIndex !== undefined && activeAns?.selectedOptionIndex !== null
+          ? activeAns.selectedOptionIndex
+          : (Array.isArray(activeAns?.selectedOptionIndices) && activeAns.selectedOptionIndices.length > 0 ? activeAns.selectedOptionIndices[0] : null);
+        setDraftMCQ(singleVal);
       }
       setDraftCode(activeAns?.submittedCode ?? '');
       setDraftLanguage(activeAns?.selectedLanguage ?? 'cpp');
@@ -2732,7 +2735,7 @@ function AppContent() {
     const qObj = test.questions[qIndex];
     const qNum = qIndex + 1;
     const qId = String(qObj.id || qObj._id || `q_${qNum}`);
-    const isMulti = Boolean(qObj.isMultiChoice || qObj.type === 'mcc' || qObj.category === 'Multiple Choice');
+    const isMulti = Boolean(qObj.type === 'mcc' || qObj.isMultiChoice === true || (Array.isArray(qObj.correctOptionIndices) && qObj.correctOptionIndices.length > 1));
 
     const serialized = JSON.stringify(newSelection);
     if (!isExplicitReset && lastLoggedOptionRef.current[qId] === serialized) {
@@ -2778,14 +2781,17 @@ function AppContent() {
       const activeQ = test.questions[selectedQuestionIndex];
       const qNum = selectedQuestionIndex + 1;
       const qId = String(activeQ.id || activeQ._id || `q_${qNum}`);
-      const isMulti = Boolean(activeQ.isMultiChoice || activeQ.type === 'mcc' || activeQ.category === 'Multiple Choice');
+      const isMulti = Boolean(activeQ.type === 'mcc' || activeQ.isMultiChoice === true || (Array.isArray(activeQ.correctOptionIndices) && activeQ.correctOptionIndices.length > 1));
       const existing = currentList[selectedQuestionIndex] || { questionId: activeQ.id, type: activeQ.type };
+      const selOptIndex = isMulti
+        ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
+        : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
       const multiIndices = isMulti
         ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
-        : (existing.selectedOptionIndices || []);
+        : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
       currentList[selectedQuestionIndex] = {
         ...existing,
-        selectedOptionIndex: draftMCQ !== undefined ? draftMCQ : existing.selectedOptionIndex,
+        selectedOptionIndex: selOptIndex,
         selectedOptionIndices: multiIndices,
         submittedCode: draftCode !== undefined ? draftCode : existing.submittedCode,
         selectedLanguage: draftLanguage || existing.selectedLanguage || 'cpp',
@@ -2825,15 +2831,18 @@ function AppContent() {
   // Sync draft buffers into global answers list
   const handleSaveAndNext = () => {
     const activeQuestion = test?.questions?.[selectedQuestionIndex];
-    const isMulti = Boolean(activeQuestion && (activeQuestion.isMultiChoice || activeQuestion.type === 'mcc' || activeQuestion.category === 'Multiple Choice'));
+    const isMulti = Boolean(activeQuestion && (activeQuestion.type === 'mcc' || activeQuestion.isMultiChoice === true || (Array.isArray(activeQuestion.correctOptionIndices) && activeQuestion.correctOptionIndices.length > 1)));
+    const selOptIndex = isMulti
+      ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
+      : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
     const multiIndices = isMulti
       ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
-      : (examAnswers[selectedQuestionIndex]?.selectedOptionIndices || []);
+      : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
 
     const updated = [...examAnswers];
     updated[selectedQuestionIndex] = {
       ...updated[selectedQuestionIndex],
-      selectedOptionIndex: draftMCQ,
+      selectedOptionIndex: selOptIndex,
       selectedOptionIndices: multiIndices,
       submittedCode: draftCode,
       selectedLanguage: draftLanguage,
@@ -3423,7 +3432,7 @@ function AppContent() {
         studentId: candidate?.studentId || submission?.studentId || '',
         candidateName: candidate?.name || submission?.candidateName || 'Candidate',
         testTitle: submission?.testTitle || test?.title || 'BICS Examination',
-        answers: answersList,
+        answers: finalAnswers,
         proctoringLog: fullPLog,
         status: statusVal,
         submissionReason: reasonVal
@@ -3466,7 +3475,7 @@ function AppContent() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             submissionId: subId,
-            answers: answersList,
+            answers: finalAnswers,
             proctoringLog: fullPLog,
             status: statusVal,
             submissionReason: reasonVal

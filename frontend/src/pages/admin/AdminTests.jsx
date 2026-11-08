@@ -578,10 +578,17 @@ export default function AdminTests({
                                 <label className="cf-label">Question Type</label>
                                 <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
                                   {[
-                                    { value: 'mcq', label: 'MCQ' },
+                                    { value: 'scc', label: 'Single Choice (SCC)' },
+                                    { value: 'mcc', label: 'Multi Choice (MCC)' },
                                     { value: 'coding', label: 'C++ Coding' },
                                     { value: 'web', label: 'Web Coding' }
-                                  ].map((opt) => (
+                                  ].map((opt) => {
+                                    const currentQ = newExamQuestions[editingQuestionIdx];
+                                    const activeQType = (currentQ?.type === 'mcc' || (currentQ?.type === 'mcq' && (currentQ?.isMultiChoice || (Array.isArray(currentQ?.correctOptionIndices) && currentQ?.correctOptionIndices.length > 1))))
+                                      ? 'mcc'
+                                      : ((currentQ?.type === 'scc' || currentQ?.type === 'mcq') ? 'scc' : currentQ?.type);
+                                    const isSelected = activeQType === opt.value;
+                                    return (
                                     <button
                                       key={opt.value}
                                       type="button"
@@ -589,12 +596,26 @@ export default function AdminTests({
                                         const updated = [...newExamQuestions];
                                         const nextType = opt.value;
                                         updated[editingQuestionIdx].type = nextType;
-                                        if (nextType === 'mcq') {
+                                        if (nextType === 'scc') {
+                                          updated[editingQuestionIdx].isMultiChoice = false;
+                                          updated[editingQuestionIdx].category = 'Single Choice';
+                                          if (!updated[editingQuestionIdx].options || updated[editingQuestionIdx].options.length === 0) {
+                                            updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
+                                          }
+                                          const sccIdx = Number(updated[editingQuestionIdx].correctOptionIndex ?? (Array.isArray(updated[editingQuestionIdx].correctOptionIndices) ? updated[editingQuestionIdx].correctOptionIndices[0] : 0));
+                                          updated[editingQuestionIdx].correctOptionIndex = sccIdx;
+                                          updated[editingQuestionIdx].correctOptionIndices = [sccIdx];
+                                        } else if (nextType === 'mcc') {
+                                          updated[editingQuestionIdx].isMultiChoice = true;
                                           updated[editingQuestionIdx].category = 'Multiple Choice';
                                           if (!updated[editingQuestionIdx].options || updated[editingQuestionIdx].options.length === 0) {
                                             updated[editingQuestionIdx].options = ['Option A', 'Option B', 'Option C', 'Option D'];
-                                            updated[editingQuestionIdx].correctOptionIndex = 0;
                                           }
+                                          let mccIndices = Array.isArray(updated[editingQuestionIdx].correctOptionIndices) && updated[editingQuestionIdx].correctOptionIndices.length > 0
+                                            ? updated[editingQuestionIdx].correctOptionIndices.map(Number)
+                                            : [Number(updated[editingQuestionIdx].correctOptionIndex ?? 0)];
+                                          updated[editingQuestionIdx].correctOptionIndices = mccIndices;
+                                          updated[editingQuestionIdx].correctOptionIndex = mccIndices[0];
                                         } else if (nextType === 'coding') {
                                           updated[editingQuestionIdx].category = 'Programming';
                                           if (!updated[editingQuestionIdx].initialTemplate) {
@@ -619,8 +640,8 @@ export default function AdminTests({
                                           }
                                         }
                                         if (!updated[editingQuestionIdx].description) {
-                                          updated[editingQuestionIdx].description = nextType === 'mcq'
-                                            ? 'Choose the correct answer from the options below.'
+                                          updated[editingQuestionIdx].description = (nextType === 'scc' || nextType === 'mcc')
+                                            ? (nextType === 'scc' ? 'Choose the correct single option from below.' : 'Select all correct options from below.')
                                             : (nextType === 'coding' ? 'Write a C++ program to solve the problem.' : 'Create a web page meeting the requirements.');
                                           updated[editingQuestionIdx].questionText = updated[editingQuestionIdx].description;
                                         }
@@ -633,9 +654,9 @@ export default function AdminTests({
                                         fontWeight: 'bold',
                                         borderRadius: '4px',
                                         border: '1px solid',
-                                        borderColor: newExamQuestions[editingQuestionIdx]?.type === opt.value ? '#3b5998' : '#cbd5e1',
-                                        backgroundColor: newExamQuestions[editingQuestionIdx]?.type === opt.value ? '#eff6ff' : '#ffffff',
-                                        color: newExamQuestions[editingQuestionIdx]?.type === opt.value ? '#3b5998' : '#64748b',
+                                        borderColor: isSelected ? '#3b5998' : '#cbd5e1',
+                                        backgroundColor: isSelected ? '#eff6ff' : '#ffffff',
+                                        color: isSelected ? '#3b5998' : '#64748b',
                                         cursor: 'pointer',
                                         transition: 'all 0.15s ease',
                                         textAlign: 'center'
@@ -643,20 +664,22 @@ export default function AdminTests({
                                     >
                                       {opt.label}
                                     </button>
-                                  ))}
+                                  );
+                                })}
                                 </div>
                               </div>
                               <div className="cf-input-group">
                                 <label className="cf-label">Question Category</label>
                                 <select
                                   className="cf-input"
-                                  value={newExamQuestions[editingQuestionIdx]?.category || (newExamQuestions[editingQuestionIdx]?.type === 'coding' ? 'Programming' : (newExamQuestions[editingQuestionIdx]?.type === 'web' ? 'Web Development' : 'Multiple Choice'))}
+                                  value={newExamQuestions[editingQuestionIdx]?.category || (newExamQuestions[editingQuestionIdx]?.type === 'coding' ? 'Programming' : (newExamQuestions[editingQuestionIdx]?.type === 'web' ? 'Web Development' : (newExamQuestions[editingQuestionIdx]?.type === 'scc' ? 'Single Choice' : 'Multiple Choice')))}
                                   onChange={e => {
                                     const updated = [...newExamQuestions];
                                     updated[editingQuestionIdx].category = e.target.value;
                                     setNewExamQuestions(updated);
                                   }}
                                 >
+                                  <option value="Single Choice">Single Choice</option>
                                   <option value="Multiple Choice">Multiple Choice</option>
                                   <option value="Programming">Programming</option>
                                   <option value="Web Development">Web Development</option>
@@ -804,61 +827,130 @@ export default function AdminTests({
                               )}
                             </div>
 
-                            {/* MCQ Sub-Form */}
-                            {newExamQuestions[editingQuestionIdx]?.type === 'mcq' && (
-                              <div style={{ marginTop: '15px', padding: '15px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
-                                <label className="cf-label" style={{ fontWeight: 'bold' }}>MCQ Options &amp; Correct Answer Key:</label>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
-                                  {newExamQuestions[editingQuestionIdx]?.options.map((opt, oIdx) => (
-                                    <div key={oIdx} className="cf-input-group">
-                                      <label className="cf-label">Option {oIdx + 1}</label>
-                                      <input
-                                        type="text"
-                                        className="cf-input"
-                                        value={opt}
-                                        onChange={e => {
-                                          const updated = [...newExamQuestions];
-                                          updated[editingQuestionIdx].options[oIdx] = e.target.value;
-                                          setNewExamQuestions(updated);
-                                        }}
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="cf-input-group" style={{ marginTop: '15px' }}>
-                                  <label className="cf-label">Correct Option Index</label>
-                                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px', maxWidth: '400px' }}>
-                                    {[0, 1, 2, 3].map((num) => (
+                            {/* MCQ / SCC / MCC Sub-Form */}
+                            {(newExamQuestions[editingQuestionIdx]?.type === 'mcq' || newExamQuestions[editingQuestionIdx]?.type === 'scc' || newExamQuestions[editingQuestionIdx]?.type === 'mcc') && (() => {
+                              const curQ = newExamQuestions[editingQuestionIdx];
+                              const isMcc = curQ?.type === 'mcc' || (curQ?.type === 'mcq' && (curQ?.isMultiChoice || (Array.isArray(curQ?.correctOptionIndices) && curQ?.correctOptionIndices.length > 1)));
+                              const curIndices = Array.isArray(curQ?.correctOptionIndices) && curQ.correctOptionIndices.length > 0
+                                ? curQ.correctOptionIndices.map(Number)
+                                : [Number(curQ?.correctOptionIndex ?? 0)];
+
+                              return (
+                                <div style={{ marginTop: '15px', padding: '15px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                                    <label className="cf-label" style={{ fontWeight: 'bold', margin: 0 }}>
+                                      {isMcc ? 'Multiple Choice (MCC) Options & Answer Keys:' : 'Single Choice (SCC) Options & Correct Key:'}
+                                    </label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                       <button
-                                        key={num}
                                         type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '3px 10px', fontSize: '8pt', margin: 0, borderColor: isMcc ? '#86efac' : '#93c5fd', backgroundColor: isMcc ? '#f0fdf4' : '#eff6ff', color: isMcc ? '#166534' : '#1d4ed8', cursor: 'pointer', fontWeight: 'bold' }}
                                         onClick={() => {
                                           const updated = [...newExamQuestions];
-                                          updated[editingQuestionIdx].correctOptionIndex = num;
+                                          const nextIsMcc = !isMcc;
+                                          updated[editingQuestionIdx].type = nextIsMcc ? 'mcc' : 'scc';
+                                          updated[editingQuestionIdx].isMultiChoice = nextIsMcc;
+                                          updated[editingQuestionIdx].category = nextIsMcc ? 'Multiple Choice' : 'Single Choice';
+                                          if (nextIsMcc) {
+                                            let mccIndices = Array.isArray(updated[editingQuestionIdx].correctOptionIndices) && updated[editingQuestionIdx].correctOptionIndices.length > 0
+                                              ? updated[editingQuestionIdx].correctOptionIndices.map(Number)
+                                              : [Number(updated[editingQuestionIdx].correctOptionIndex ?? 0)];
+                                            updated[editingQuestionIdx].correctOptionIndices = mccIndices;
+                                            updated[editingQuestionIdx].correctOptionIndex = mccIndices[0];
+                                          } else {
+                                            const sccIdx = Number(updated[editingQuestionIdx].correctOptionIndex ?? (Array.isArray(updated[editingQuestionIdx].correctOptionIndices) ? updated[editingQuestionIdx].correctOptionIndices[0] : 0));
+                                            updated[editingQuestionIdx].correctOptionIndex = sccIdx;
+                                            updated[editingQuestionIdx].correctOptionIndices = [sccIdx];
+                                          }
                                           setNewExamQuestions(updated);
                                         }}
-                                        style={{
-                                          flex: 1,
-                                          padding: '6px 12px',
-                                          fontSize: '8.5pt',
-                                          fontWeight: 'bold',
-                                          borderRadius: '4px',
-                                          border: '1px solid',
-                                          borderColor: newExamQuestions[editingQuestionIdx]?.correctOptionIndex === num ? '#10b981' : '#cbd5e1',
-                                          backgroundColor: newExamQuestions[editingQuestionIdx]?.correctOptionIndex === num ? '#ecfdf5' : '#ffffff',
-                                          color: newExamQuestions[editingQuestionIdx]?.correctOptionIndex === num ? '#10b981' : '#64748b',
-                                          cursor: 'pointer',
-                                          transition: 'all 0.15s ease',
-                                          textAlign: 'center'
-                                        }}
                                       >
-                                        Option {num + 1}
+                                        {isMcc ? '⇄ Switch to Single Choice (SCC)' : '⇄ Convert to Multi Choice (MCC)'}
                                       </button>
+                                      <span style={{ fontSize: '8pt', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', backgroundColor: isMcc ? '#dcfce7' : '#e0f2fe', color: isMcc ? '#15803d' : '#0369a1' }}>
+                                        {isMcc ? 'Multi-Select (Choose 1 or more correct options)' : 'Single-Select (Choose 1 correct option)'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
+                                    {curQ?.options?.map((opt, oIdx) => (
+                                      <div key={oIdx} className="cf-input-group">
+                                        <label className="cf-label">Option {oIdx + 1}</label>
+                                        <input
+                                          type="text"
+                                          className="cf-input"
+                                          value={opt}
+                                          onChange={e => {
+                                            const updated = [...newExamQuestions];
+                                            updated[editingQuestionIdx].options[oIdx] = e.target.value;
+                                            setNewExamQuestions(updated);
+                                          }}
+                                        />
+                                      </div>
                                     ))}
                                   </div>
+
+                                  <div className="cf-input-group" style={{ marginTop: '15px' }}>
+                                    <label className="cf-label" style={{ fontWeight: 'bold' }}>
+                                      {isMcc ? 'Select All Correct Option Keys (Click to toggle multiple):' : 'Select Single Correct Answer Key:'}
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: '4px', maxWidth: '440px' }}>
+                                      {[0, 1, 2, 3].map((num) => {
+                                        const isSelectedKey = isMcc ? curIndices.includes(num) : Number(curQ?.correctOptionIndex) === num;
+                                        return (
+                                          <button
+                                            key={num}
+                                            type="button"
+                                            onClick={() => {
+                                              const updated = [...newExamQuestions];
+                                              if (isMcc) {
+                                                const newKeys = [...curIndices];
+                                                const kIdx = newKeys.indexOf(num);
+                                                if (kIdx > -1) {
+                                                  if (newKeys.length > 1) newKeys.splice(kIdx, 1);
+                                                } else {
+                                                  newKeys.push(num);
+                                                  newKeys.sort((a, b) => a - b);
+                                                }
+                                                updated[editingQuestionIdx].correctOptionIndices = newKeys;
+                                                updated[editingQuestionIdx].correctOptionIndex = newKeys[0];
+                                              } else {
+                                                updated[editingQuestionIdx].correctOptionIndex = num;
+                                                updated[editingQuestionIdx].correctOptionIndices = [num];
+                                              }
+                                              setNewExamQuestions(updated);
+                                            }}
+                                            style={{
+                                              flex: 1,
+                                              padding: '8px 12px',
+                                              fontSize: '8.5pt',
+                                              fontWeight: 'bold',
+                                              borderRadius: '4px',
+                                              border: '2px solid',
+                                              borderColor: isSelectedKey ? '#10b981' : '#cbd5e1',
+                                              backgroundColor: isSelectedKey ? '#ecfdf5' : '#ffffff',
+                                              color: isSelectedKey ? '#047857' : '#64748b',
+                                              cursor: 'pointer',
+                                              transition: 'all 0.15s ease',
+                                              textAlign: 'center',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              gap: '4px'
+                                            }}
+                                          >
+                                            {isSelectedKey && <span>✓</span>}
+                                            <span>Option {num + 1}</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              );
+                            })()}
 
                             {/* C++ Coding Sub-Form */}
                             {newExamQuestions[editingQuestionIdx]?.type === 'coding' && (
@@ -1112,9 +1204,18 @@ export default function AdminTests({
                                   <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px 15px', backgroundColor: '#ffffff' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <span style={{ fontSize: '8pt', backgroundColor: '#e0f2fe', color: '#0369a1', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px' }}>
-                                          {q.type.toUpperCase()}
-                                        </span>
+                                        {(() => {
+                                          const qType = q.type === 'mcc' || (q.type === 'mcq' && (q.isMultiChoice || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1)))
+                                            ? 'MCC'
+                                            : (q.type === 'scc' || q.type === 'mcq' ? 'SCC' : q.type?.toUpperCase());
+                                          const badgeBg = qType === 'SCC' ? '#e0f2fe' : (qType === 'MCC' ? '#ecfdf5' : '#ede9fe');
+                                          const badgeColor = qType === 'SCC' ? '#0369a1' : (qType === 'MCC' ? '#047857' : '#6d28d9');
+                                          return (
+                                            <span style={{ fontSize: '8pt', backgroundColor: badgeBg, color: badgeColor, fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px' }}>
+                                              {qType}
+                                            </span>
+                                          );
+                                        })()}
                                         <strong style={{ fontSize: '9.5pt', color: '#1e293b' }}>Q{idx + 1}: {q.title}</strong>
                                       </div>
                                       <span style={{ fontSize: '8.5pt', color: '#64748b' }}>
@@ -1123,7 +1224,50 @@ export default function AdminTests({
                                         {q.type === 'web' && ` | HTML/CSS/JS (Manual Grade)`}
                                       </span>
                                     </div>
-                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                      {(q.type === 'scc' || q.type === 'mcc' || q.type === 'mcq') && (() => {
+                                        const isMccNow = q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1);
+                                        return (
+                                          <button
+                                            type="button"
+                                            className="cf-btn-secondary"
+                                            style={{ padding: '4px 8px', fontSize: '8pt', margin: 0, borderColor: isMccNow ? '#86efac' : '#93c5fd', backgroundColor: isMccNow ? '#f0fdf4' : '#eff6ff', color: isMccNow ? '#166534' : '#1d4ed8', fontWeight: 'bold' }}
+                                            title={isMccNow ? 'Convert to Single Choice (SCC)' : 'Convert to Multiple Choice (MCC)'}
+                                            onClick={() => {
+                                              setNewExamQuestions(prev => {
+                                                const next = [...prev];
+                                                const cur = next[idx];
+                                                if (isMccNow) {
+                                                  const sccIdx = Number(cur.correctOptionIndex ?? (Array.isArray(cur.correctOptionIndices) ? cur.correctOptionIndices[0] : 0));
+                                                  next[idx] = {
+                                                    ...cur,
+                                                    type: 'scc',
+                                                    isMultiChoice: false,
+                                                    category: 'Single Choice',
+                                                    correctOptionIndex: sccIdx,
+                                                    correctOptionIndices: [sccIdx]
+                                                  };
+                                                } else {
+                                                  const mccIndices = Array.isArray(cur.correctOptionIndices) && cur.correctOptionIndices.length > 0
+                                                    ? cur.correctOptionIndices.map(Number)
+                                                    : [Number(cur.correctOptionIndex ?? 0)];
+                                                  next[idx] = {
+                                                    ...cur,
+                                                    type: 'mcc',
+                                                    isMultiChoice: true,
+                                                    category: 'Multiple Choice',
+                                                    correctOptionIndices: mccIndices,
+                                                    correctOptionIndex: mccIndices[0]
+                                                  };
+                                                }
+                                                return next;
+                                              });
+                                            }}
+                                          >
+                                            {isMccNow ? '⇄ Make SCC' : '⇄ Make MCC'}
+                                          </button>
+                                        );
+                                      })()}
                                       <button
                                         type="button"
                                         className="cf-btn-primary"
@@ -1157,20 +1301,46 @@ export default function AdminTests({
                                 onClick={() => {
                                   const newQ = {
                                     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-                                    type: 'mcq',
-                                    category: 'Multiple Choice',
-                                    title: 'Question ' + (newExamQuestions.length + 1),
-                                    description: 'Choose the correct answer for the question below.',
-                                    questionText: 'Choose the correct answer for the question below.',
+                                    type: 'scc',
+                                    isMultiChoice: false,
+                                    category: 'Single Choice',
+                                    title: 'Question ' + (newExamQuestions.length + 1) + ' - Single Choice',
+                                    description: 'Choose the correct single option from below.',
+                                    questionText: 'Choose the correct single option from below.',
                                     points: 10,
                                     options: ['Option A', 'Option B', 'Option C', 'Option D'],
-                                    correctOptionIndex: 0
+                                    correctOptionIndex: 0,
+                                    correctOptionIndices: [0]
                                   };
                                   setNewExamQuestions([...newExamQuestions, newQ]);
                                   setEditingQuestionIdx(newExamQuestions.length);
                                 }}
                               >
-                                <Plus size={14} /> MCQ Question
+                                <Plus size={14} /> Single Choice (SCC)
+                              </button>
+                              <button
+                                type="button"
+                                className="cf-btn-secondary"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', margin: 0 }}
+                                onClick={() => {
+                                  const newQ = {
+                                    id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                                    type: 'mcc',
+                                    isMultiChoice: true,
+                                    category: 'Multiple Choice',
+                                    title: 'Question ' + (newExamQuestions.length + 1) + ' - Multi Choice',
+                                    description: 'Select all correct options from below.',
+                                    questionText: 'Select all correct options from below.',
+                                    points: 10,
+                                    options: ['Option A', 'Option B', 'Option C', 'Option D'],
+                                    correctOptionIndex: 0,
+                                    correctOptionIndices: [0, 1]
+                                  };
+                                  setNewExamQuestions([...newExamQuestions, newQ]);
+                                  setEditingQuestionIdx(newExamQuestions.length);
+                                }}
+                              >
+                                <Plus size={14} /> Multi Choice (MCC)
                               </button>
                               <button
                                 type="button"
@@ -1362,16 +1532,38 @@ export default function AdminTests({
                             </td>
                             <td style={{ fontWeight: 'bold' }}>
                               {(() => {
-                                if (s.answers && Array.isArray(s.answers) && s.answers.length > 0) {
-                                  return s.answers.reduce((sum, a, idx) => {
+                                const hasResolvedObjections = (s.objections || []).some(o => 
+                                  (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+                                  o.resolvedMarks !== undefined && o.resolvedMarks !== null
+                                );
+                                if (hasResolvedObjections) {
+                                  return (s.answers || []).reduce((sum, a, idx) => {
                                     const resObj = (s.objections || []).find(o => 
                                       (o.status === 'resolved' || o.status === 'resolved_accepted') &&
                                       (o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId)))
                                     );
-                                    return sum + ((resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null) ? Number(resObj.resolvedMarks) : Number(a.score || 0));
+                                    const qScore = (resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null)
+                                      ? Number(resObj.resolvedMarks)
+                                      : (a.isManuallyGraded ? Number(a.score || 0) : (a.aiEvaluation?.score !== undefined ? Number(a.aiEvaluation.score) : Number(a.score || 0)));
+                                    return sum + qScore;
                                   }, 0);
                                 }
-                                return s.totalScore !== undefined && s.totalScore !== null ? Number(s.totalScore) : (s.evaluation?.totalScore !== undefined && s.evaluation?.totalScore !== null ? Number(s.evaluation.totalScore) : (s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`));
+                                if (s.evaluation?.totalScore !== undefined && s.evaluation?.totalScore !== null) {
+                                  return Number(s.evaluation.totalScore);
+                                }
+                                if (s.totalScore !== undefined && s.totalScore !== null) {
+                                  return Number(s.totalScore);
+                                }
+                                if (s.score !== undefined && s.score !== null) {
+                                  return Number(s.score);
+                                }
+                                if (s.answers && Array.isArray(s.answers) && s.answers.length > 0) {
+                                  return s.answers.reduce((sum, a) => {
+                                    const pts = (a.aiEvaluation?.score !== undefined) ? Number(a.aiEvaluation.score) : Number(a.score || 0);
+                                    return sum + pts;
+                                  }, 0);
+                                }
+                                return s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`;
                               })()}
                             </td>
                             <td>
@@ -1390,8 +1582,27 @@ export default function AdminTests({
                                       if (q) {
                                         if (q.grantBonusToAll || q.isBonus) {
                                           initialScores[ans.questionId] = Number(q.points || 0);
-                                        } else if (ans.type === 'mcq' && ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(q.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                                          initialScores[ans.questionId] = Number(q.points || 0);
+                                        } else if (ans.type === 'mcq' || ans.type === 'scc' || ans.type === 'mcc' || q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') {
+                                          const isMulti = q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1);
+                                          if (isMulti) {
+                                            const correctArr = Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 0
+                                              ? q.correctOptionIndices
+                                              : (q.correctOptionIndex !== undefined && q.correctOptionIndex !== null ? [q.correctOptionIndex] : []);
+                                            const selArr = Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
+                                              ? ans.selectedOptionIndices
+                                              : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [ans.selectedOptionIndex] : []);
+                                            const cSet = new Set(correctArr.map(Number));
+                                            const sSet = new Set(selArr.map(Number));
+                                            let match = cSet.size > 0 && cSet.size === sSet.size;
+                                            if (match) {
+                                              for (let k of cSet) { if (!sSet.has(k)) { match = false; break; } }
+                                            }
+                                            initialScores[ans.questionId] = match ? Number(q.points || 0) : 0;
+                                          } else {
+                                            const expected = Number(q.correctOptionIndex ?? (Array.isArray(q.correctOptionIndices) ? q.correctOptionIndices[0] : 0));
+                                            const candSelected = Number(ans.selectedOptionIndex ?? (Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices[0] : -1));
+                                            initialScores[ans.questionId] = expected === candSelected ? Number(q.points || 0) : 0;
+                                          }
                                         } else if (ans.type === 'web' && ans.aiEvaluation?.score !== undefined) {
                                           initialScores[ans.questionId] = Number(ans.aiEvaluation.score);
                                         } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
@@ -1485,11 +1696,26 @@ export default function AdminTests({
                           let calculatedAutoScore = 0;
                           if (isBonusQuestion) {
                             calculatedAutoScore = maxPts;
-                          } else if (ans.type === 'mcq' && questionConfig) {
-                            if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(questionConfig.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                              calculatedAutoScore = maxPts;
+                          } else if ((ans.type === 'mcq' || ans.type === 'scc' || ans.type === 'mcc' || questionConfig?.type === 'mcq' || questionConfig?.type === 'scc' || questionConfig?.type === 'mcc') && questionConfig) {
+                            const isMulti = questionConfig.type === 'mcc' || questionConfig.isMultiChoice === true || (Array.isArray(questionConfig.correctOptionIndices) && questionConfig.correctOptionIndices.length > 1);
+                            if (isMulti) {
+                              const correctArr = Array.isArray(questionConfig.correctOptionIndices) && questionConfig.correctOptionIndices.length > 0
+                                ? questionConfig.correctOptionIndices
+                                : (questionConfig.correctOptionIndex !== undefined && questionConfig.correctOptionIndex !== null ? [questionConfig.correctOptionIndex] : []);
+                              const selArr = Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
+                                ? ans.selectedOptionIndices
+                                : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [ans.selectedOptionIndex] : []);
+                              const cSet = new Set(correctArr.map(Number));
+                              const sSet = new Set(selArr.map(Number));
+                              let match = cSet.size > 0 && cSet.size === sSet.size;
+                              if (match) {
+                                for (let k of cSet) { if (!sSet.has(k)) { match = false; break; } }
+                              }
+                              calculatedAutoScore = match ? maxPts : 0;
                             } else {
-                              calculatedAutoScore = 0;
+                              const expected = Number(questionConfig.correctOptionIndex ?? (Array.isArray(questionConfig.correctOptionIndices) ? questionConfig.correctOptionIndices[0] : 0));
+                              const candSelected = Number(ans.selectedOptionIndex ?? (Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices[0] : -1));
+                              calculatedAutoScore = expected === candSelected ? maxPts : 0;
                             }
                           } else if (ans.type === 'coding' && questionConfig) {
                             if (ans.testCaseResults && ans.testCaseResults.length > 0) {
@@ -1511,7 +1737,7 @@ export default function AdminTests({
                             <div key={idx} style={{ padding: '16px', border: '1px solid #cbd5e1', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
                                 <h5 style={{ fontSize: '10pt', fontWeight: 'bold', color: '#002147', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span>Question {idx + 1}: {ans.type?.toUpperCase()}</span>
+                                  <span>Question {idx + 1}: {(questionConfig?.type === 'mcc' || (questionConfig?.type === 'mcq' && (questionConfig?.isMultiChoice || (Array.isArray(questionConfig?.correctOptionIndices) && questionConfig?.correctOptionIndices.length > 1)))) ? 'MCC' : ((questionConfig?.type === 'scc' || questionConfig?.type === 'mcq') ? 'SCC' : (questionConfig?.type || ans.type)?.toUpperCase())}</span>
                                   {isBonusQuestion && (
                                     <span style={{ fontSize: '7.5pt', backgroundColor: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
                                       BONUS QUESTION (+{maxPts} pts)
@@ -1552,29 +1778,37 @@ export default function AdminTests({
                                 </div>
                               )}
 
-                              {/* MCQ Answers Display */}
-                              {ans.type === 'mcq' && questionConfig && (
+                              {/* MCQ / SCC / MCC Answers Display */}
+                              {(ans.type === 'mcq' || ans.type === 'scc' || ans.type === 'mcc' || questionConfig?.type === 'mcq' || questionConfig?.type === 'scc' || questionConfig?.type === 'mcc') && questionConfig && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
                                   {questionConfig.options?.map((opt, optIdx) => {
-                                    const isCandidateSelect = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === optIdx;
-                                    const isCorrectKey = questionConfig.correctOptionIndex !== null && questionConfig.correctOptionIndex !== undefined && Number(questionConfig.correctOptionIndex) === optIdx;
+                                    const isMulti = questionConfig.type === 'mcc' || questionConfig.isMultiChoice === true || (Array.isArray(questionConfig.correctOptionIndices) && questionConfig.correctOptionIndices.length > 1);
+                                    const correctArr = Array.isArray(questionConfig.correctOptionIndices) && questionConfig.correctOptionIndices.length > 0
+                                      ? questionConfig.correctOptionIndices.map(Number)
+                                      : (questionConfig.correctOptionIndex !== null && questionConfig.correctOptionIndex !== undefined ? [Number(questionConfig.correctOptionIndex)] : []);
+                                    const selectedArr = Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
+                                      ? ans.selectedOptionIndices.map(Number)
+                                      : (ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined ? [Number(ans.selectedOptionIndex)] : []);
+
+                                    const isCandidateSelect = selectedArr.includes(optIdx);
+                                    const isCorrectKey = correctArr.includes(optIdx);
                                     
                                     let borderStyle = '1px solid #cbd5e1';
                                     let bgStyle = '#fff';
                                     let badgeText = '';
 
-                                    if (isCorrectKey) {
+                                    if (isCorrectKey && isCandidateSelect) {
                                       borderStyle = '2px solid #10b981';
                                       bgStyle = '#ecfdf5';
-                                      badgeText = 'Correct Answer';
-                                    } else if (isCandidateSelect) {
+                                      badgeText = 'Candidate Choice (Correct)';
+                                    } else if (isCorrectKey && !isCandidateSelect) {
+                                      borderStyle = '2px solid #10b981';
+                                      bgStyle = '#ecfdf5';
+                                      badgeText = isMulti ? 'Correct Key (Missed by Candidate)' : 'Correct Answer Key';
+                                    } else if (isCandidateSelect && !isCorrectKey) {
                                       borderStyle = '2px solid #ef4444';
                                       bgStyle = '#fef2f2';
                                       badgeText = 'Candidate Choice (Incorrect)';
-                                    }
-
-                                    if (isCorrectKey && isCandidateSelect) {
-                                      badgeText = 'Candidate Choice (Correct)';
                                     }
 
                                     return (

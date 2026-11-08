@@ -216,7 +216,7 @@ export const CodeEditor = ({
       setIsResetRotating(false);
     }, 600);
 
-    const isMulti = currentQuestion?.isMultiChoice || currentQuestion?.type === 'mcc' || currentQuestion?.category === 'Multiple Choice';
+    const isMulti = Boolean(currentQuestion?.type === 'mcc' || currentQuestion?.isMultiChoice === true || (Array.isArray(currentQuestion?.correctOptionIndices) && currentQuestion.correctOptionIndices.length > 1));
     const emptyVal = isMulti ? [] : null;
     setDraftMCQ(emptyVal);
     if (examAnswers && setExamAnswers) {
@@ -417,7 +417,7 @@ export const CodeEditor = ({
       {/* 1. MCQ WORKSPACE                                               */}
       {/* ============================================================== */}
       {(currentQuestion.type === 'mcq' || currentQuestion.type === 'scc' || currentQuestion.type === 'mcc') ? (() => {
-        const isMultiChoice = currentQuestion.isMultiChoice || currentQuestion.type === 'mcc' || currentQuestion.category === 'Multiple Choice';
+        const isMultiChoice = Boolean(currentQuestion.type === 'mcc' || currentQuestion.isMultiChoice === true || (Array.isArray(currentQuestion.correctOptionIndices) && currentQuestion.correctOptionIndices.length > 1));
         const isResetDisabled = isMultiChoice
           ? (!Array.isArray(draftMCQ) || draftMCQ.length === 0)
           : (draftMCQ === null || draftMCQ === undefined);
@@ -433,8 +433,36 @@ export const CodeEditor = ({
               current.sort((a, b) => a - b);
             }
             setDraftMCQ(current);
+            if (examAnswers && setExamAnswers) {
+              const updated = [...examAnswers];
+              updated[selectedQuestionIndex] = {
+                ...updated[selectedQuestionIndex],
+                questionId: currentQuestion.id,
+                type: 'mcc',
+                selectedOptionIndices: current,
+                selectedOptionIndex: current.length > 0 ? current[0] : null,
+                isSavedByUser: current.length > 0
+              };
+              if (examAnswersRef) examAnswersRef.current = updated;
+              setExamAnswers(updated);
+              if (typeof saveServerDraft === 'function') saveServerDraft(updated);
+            }
           } else {
             setDraftMCQ(oIdx);
+            if (examAnswers && setExamAnswers) {
+              const updated = [...examAnswers];
+              updated[selectedQuestionIndex] = {
+                ...updated[selectedQuestionIndex],
+                questionId: currentQuestion.id,
+                type: 'scc',
+                selectedOptionIndex: oIdx,
+                selectedOptionIndices: [oIdx],
+                isSavedByUser: true
+              };
+              if (examAnswersRef) examAnswersRef.current = updated;
+              setExamAnswers(updated);
+              if (typeof saveServerDraft === 'function') saveServerDraft(updated);
+            }
           }
         };
 

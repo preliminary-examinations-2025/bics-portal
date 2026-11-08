@@ -43,19 +43,18 @@ function calculateSubmissionScore(submission, test) {
         // 2. MCQ Automated Scoring (Single Choice SCC & Multi Choice MCC)
         else if (quest && (quest.type === 'mcq' || quest.type === 'scc' || quest.type === 'mcc')) {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                const isMulti = quest.isMultiChoice || quest.type === 'mcc' || quest.category === 'Multiple Choice' || Array.isArray(quest.correctOptionIndices);
+                const isMulti = quest.type === 'mcc' || quest.isMultiChoice === true || (Array.isArray(quest.correctOptionIndices) && quest.correctOptionIndices.length > 1);
 
                 if (isMulti) {
-                    const correctSet = new Set(
-                        Array.isArray(quest.correctOptionIndices)
-                            ? quest.correctOptionIndices.map(Number)
-                            : (quest.correctOptionIndex !== undefined && quest.correctOptionIndex !== null ? [Number(quest.correctOptionIndex)] : [])
-                    );
-                    const selectedSet = new Set(
-                        Array.isArray(ans.selectedOptionIndices)
-                            ? ans.selectedOptionIndices.map(Number)
-                            : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [Number(ans.selectedOptionIndex)] : [])
-                    );
+                    const correctArr = Array.isArray(quest.correctOptionIndices) && quest.correctOptionIndices.length > 0
+                        ? quest.correctOptionIndices
+                        : (quest.correctOptionIndex !== undefined && quest.correctOptionIndex !== null ? [quest.correctOptionIndex] : []);
+                    const selectedArr = Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
+                        ? ans.selectedOptionIndices
+                        : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [ans.selectedOptionIndex] : []);
+
+                    const correctSet = new Set(correctArr.map(Number));
+                    const selectedSet = new Set(selectedArr.map(Number));
 
                     // Strict all-or-nothing: marks are ONLY awarded when all correct options are selected and no incorrect options
                     let isExactMatch = correctSet.size > 0 && correctSet.size === selectedSet.size;
@@ -70,12 +69,15 @@ function calculateSubmissionScore(submission, test) {
                     ans.score = isExactMatch ? qPoints : 0;
                 } else {
                     // Single Choice Correct (SCC)
-                    if (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null) {
-                        if (Number(quest.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
-                            ans.score = qPoints;
-                        } else {
-                            ans.score = 0;
-                        }
+                    const expectedIndex = quest.correctOptionIndex !== undefined && quest.correctOptionIndex !== null
+                        ? Number(quest.correctOptionIndex)
+                        : (Array.isArray(quest.correctOptionIndices) && quest.correctOptionIndices.length > 0 ? Number(quest.correctOptionIndices[0]) : null);
+                    const selectedCandidateIndex = ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null
+                        ? Number(ans.selectedOptionIndex)
+                        : (Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0 ? Number(ans.selectedOptionIndices[0]) : null);
+
+                    if (expectedIndex !== null && selectedCandidateIndex !== null && expectedIndex === selectedCandidateIndex) {
+                        ans.score = qPoints;
                     } else {
                         ans.score = 0;
                     }
@@ -100,7 +102,7 @@ function calculateSubmissionScore(submission, test) {
         // 4. Web Coding Automated Scoring (deferred for LLMs / manual evaluation)
         else if (quest && quest.type === 'web') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                if (ans.aiEvaluation && (ans.aiEvaluation.isEvaluated || ans.aiEvaluation.status === 'completed') && ans.aiEvaluation.score !== undefined) {
+                if (ans.aiEvaluation && ans.aiEvaluation.score !== undefined && ans.aiEvaluation.score !== null) {
                     ans.score = Number(ans.aiEvaluation.score) || 0;
                     ans.pendingEvaluation = false;
                 } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
@@ -150,6 +152,7 @@ function calculateCodingScoreFast(submission, test) {
     if (!test || !submission) return;
     submission.answers = submission.answers || [];
     let totalCodingPoints = 0;
+    let totalWebPoints = 0;
 
     const questionMap = new Map();
     (test.questions || []).forEach((q, idx) => {
@@ -182,7 +185,7 @@ function calculateCodingScoreFast(submission, test) {
             totalCodingPoints += Number(ans.score || 0);
         } else if (quest && quest.type === 'web') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                if (ans.aiEvaluation && (ans.aiEvaluation.isEvaluated || ans.aiEvaluation.status === 'completed') && ans.aiEvaluation.score !== undefined) {
+                if (ans.aiEvaluation && ans.aiEvaluation.score !== undefined && ans.aiEvaluation.score !== null) {
                     ans.score = Number(ans.aiEvaluation.score) || 0;
                     ans.pendingEvaluation = false;
                 } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
@@ -192,12 +195,23 @@ function calculateCodingScoreFast(submission, test) {
                     ans.score = 0;
                 }
             }
-            totalCodingPoints += Number(ans.score || 0);
+            totalWebPoints += Number(ans.score || 0);
         }
     });
 
+    const mcqScore = Number(submission.evaluation?.mcqScore || 0);
+    const rawTotal = mcqScore + totalCodingPoints + totalWebPoints;
+    const testMaxMarks = Number(test.marks || 100);
+    const finalTotal = Math.min(rawTotal, testMaxMarks);
+
+    submission.score = finalTotal;
+    submission.totalScore = finalTotal;
+
     submission.evaluation = submission.evaluation || {};
-    submission.evaluation.codingScore = totalCodingPoints;
+    submission.evaluation.codingScore = totalCodingPoints + totalWebPoints;
+    submission.evaluation.webScore = totalWebPoints;
+    submission.evaluation.totalScore = finalTotal;
+    submission.evaluation.score = finalTotal;
     submission.evaluation.evaluatedAt = new Date();
 }
 

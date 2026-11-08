@@ -143,13 +143,13 @@ export const ActiveExamView = ({
         }
       );
 
-      const isMulti = currentQ.isMultiChoice || currentQ.type === 'mcc' || currentQ.category === 'Multiple Choice';
+      const isMulti = Boolean(currentQ.type === 'mcc' || currentQ.isMultiChoice === true || (Array.isArray(currentQ.correctOptionIndices) && currentQ.correctOptionIndices.length > 1));
       const selOptIndex = isMulti
-        ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null)
-        : (typeof draftMCQ === 'number' ? draftMCQ : null);
+        ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
+        : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
       const selOptIndices = isMulti
-        ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [draftMCQ] : []))
-        : (draftMCQ !== null && draftMCQ !== undefined ? [draftMCQ] : []);
+        ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
+        : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
 
       updated[selectedQuestionIndex] = {
         ...updated[selectedQuestionIndex],

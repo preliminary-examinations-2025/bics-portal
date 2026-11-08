@@ -46,7 +46,7 @@ export function VerificationReviewView({
     }
     
     if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') {
-      const isMulti = q.isMultiChoice || q.type === 'mcc' || q.category === 'Multiple Choice';
+      const isMulti = Boolean(q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1));
       if (isMulti) {
         const correctSet = new Set(Array.isArray(q.correctOptionIndices) ? q.correctOptionIndices.map(Number) : (q.correctOptionIndex !== undefined && q.correctOptionIndex !== null ? [Number(q.correctOptionIndex)] : []));
         const selectedSet = new Set(Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices.map(Number) : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [Number(ans.selectedOptionIndex)] : []));
@@ -58,7 +58,9 @@ export function VerificationReviewView({
         }
         return isExactMatch ? Number(q.points || 0) : 0;
       }
-      return (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(ans.selectedOptionIndex) === Number(q.correctOptionIndex)) ? Number(q.points || 0) : 0;
+      const expected = Number(q.correctOptionIndex ?? (Array.isArray(q.correctOptionIndices) ? q.correctOptionIndices[0] : 0));
+      const candSel = Number(ans.selectedOptionIndex ?? (Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices[0] : -1));
+      return (candSel !== -1 && candSel === expected) ? Number(q.points || 0) : 0;
     }
     
     return 0;
@@ -489,11 +491,19 @@ export function VerificationReviewView({
                     Question {idx + 1}
                   </span>
                   <span style={{ fontSize: '9pt', color: '#64748b', fontWeight: 'bold' }}>
-                    Section: {q.section || q.category || (q.type === 'coding' ? 'Programming' : (q.type === 'web' ? 'Web Development' : 'Multiple Choice'))}
+                    Section: {q.section || q.category || (q.type === 'coding' ? 'Programming' : (q.type === 'web' ? 'Web Development' : (q.type === 'mcc' ? 'Multiple Choice (MCC)' : 'Single Choice (SCC)')))}
                   </span>
-                  <span style={{ fontSize: '8pt', textTransform: 'uppercase', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#475569', fontWeight: 'bold' }}>
-                    {q.category || (q.type === 'coding' ? 'Programming' : (q.type === 'web' ? 'Web Development' : 'Multiple Choice'))}
-                  </span>
+                  {(() => {
+                    const isMulti = q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1);
+                    const qTypeTag = q.type === 'coding' ? 'Programming' : (q.type === 'web' ? 'Web Development' : (isMulti ? 'Multiple Choice (MCC)' : 'Single Choice (SCC)'));
+                    const tagBg = isMulti ? '#ecfdf5' : (q.type === 'scc' || (!isMulti && q.type === 'mcq') ? '#e0f2fe' : '#e2e8f0');
+                    const tagColor = isMulti ? '#047857' : (q.type === 'scc' || (!isMulti && q.type === 'mcq') ? '#0369a1' : '#475569');
+                    return (
+                      <span style={{ fontSize: '8pt', textTransform: 'uppercase', padding: '2px 8px', borderRadius: '4px', backgroundColor: tagBg, color: tagColor, fontWeight: 'bold' }}>
+                        {qTypeTag}
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 {/* Score Pill */}
@@ -601,7 +611,7 @@ export function VerificationReviewView({
 
               {/* Submitted Content Display: MCQ vs Coding vs Web */}
               {(q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') && (() => {
-                const isMulti = q.isMultiChoice || q.type === 'mcc' || q.category === 'Multiple Choice';
+                const isMulti = Boolean(q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1));
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#475569', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -636,7 +646,7 @@ export function VerificationReviewView({
                     } else if (isOfficialCorrect) {
                       borderColor = '#22c55e';
                       bgColor = '#f0fdf4';
-                      badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key</span>;
+                      badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key{isMulti ? ' (Missed)' : ''}</span>;
                     }
 
                     return (

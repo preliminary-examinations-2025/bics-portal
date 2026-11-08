@@ -187,19 +187,43 @@ router.post('/', async (req, res) => {
             const title = (qObj.title || '').trim() || `Question ${qIdx + 1}`;
             const description = (qObj.description || qObj.questionText || qObj.question || qObj.statement || '').trim();
             const qId = qObj.id || qObj._id || `q_${Date.now()}_${qIdx + 1}`;
-            const isMulti = qObj.isMultiChoice || qObj.type === 'mcc' || qObj.category === 'Multiple Choice' || (Array.isArray(qObj.correctOptionIndices) && qObj.correctOptionIndices.length > 0);
-            const category = (qObj.category || '').trim() || (qObj.type === 'coding' ? 'Programming' : (qObj.type === 'web' ? 'Web Development' : (isMulti ? 'Multiple Choice' : 'Single Choice')));
+            
+            let isMulti = false;
+            let finalType = 'scc';
+            if (qObj.type === 'coding' || qObj.type === 'web') {
+                finalType = qObj.type;
+                isMulti = false;
+            } else if (qObj.type === 'mcc') {
+                finalType = 'mcc';
+                isMulti = true;
+            } else if (qObj.type === 'scc') {
+                finalType = 'scc';
+                isMulti = false;
+            } else {
+                // Legacy fallback for old 'mcq'
+                isMulti = Boolean(qObj.isMultiChoice === true || (Array.isArray(qObj.correctOptionIndices) && qObj.correctOptionIndices.length > 1));
+                finalType = isMulti ? 'mcc' : 'scc';
+            }
+            
+            const category = (qObj.category && qObj.category !== 'Multiple Choice') ? qObj.category.trim() : (finalType === 'coding' ? 'Programming' : (finalType === 'web' ? 'Web Development' : (isMulti ? 'Multiple Choice' : 'Single Choice')));
             const timeLimitMs = Math.max(200, Math.min(Number(qObj.timeLimitMs) || 2000, 10000));
             const memoryLimitMb = Math.max(16, Math.min(Number(qObj.memoryLimitMb) || 128, 512));
-            const correctOptionIndices = Array.isArray(qObj.correctOptionIndices)
-                ? qObj.correctOptionIndices.map(Number)
-                : (qObj.correctOptionIndex !== undefined && qObj.correctOptionIndex !== null ? [Number(qObj.correctOptionIndex)] : []);
+            const correctOptionIndices = isMulti
+                ? (Array.isArray(qObj.correctOptionIndices) && qObj.correctOptionIndices.length > 0
+                    ? qObj.correctOptionIndices.map(Number)
+                    : (qObj.correctOptionIndex !== undefined && qObj.correctOptionIndex !== null ? [Number(qObj.correctOptionIndex)] : [0]))
+                : (qObj.correctOptionIndex !== undefined && qObj.correctOptionIndex !== null
+                    ? [Number(qObj.correctOptionIndex)]
+                    : (Array.isArray(qObj.correctOptionIndices) && qObj.correctOptionIndices.length > 0 ? [Number(qObj.correctOptionIndices[0])] : [0]));
+            const correctOptionIndex = correctOptionIndices.length > 0 ? correctOptionIndices[0] : 0;
             return {
                 ...qObj,
                 id: qId,
+                type: finalType,
                 title,
                 category,
                 isMultiChoice: !!isMulti,
+                correctOptionIndex,
                 correctOptionIndices,
                 timeLimitMs,
                 memoryLimitMb,
@@ -526,6 +550,11 @@ router.get('/submissions/:testId', async (req, res) => {
                     const matchingTest = allTests.find(t => String(t._id || t.id) === String(sub.testId));
                     if (matchingTest) {
                         calculateSubmissionScore(sub, matchingTest);
+                        if (typeof sub.markModified === 'function') {
+                            sub.markModified('answers');
+                            sub.markModified('evaluation');
+                            await sub.save().catch(e => console.warn("[Submission Auto-sync] notice:", e.message));
+                        }
                     }
                 } catch (err) {
                     console.error("Score recalculation warning:", err);
@@ -557,6 +586,10 @@ router.get('/submissions/:testId', async (req, res) => {
             reconcileDiskSnapshotsForSubmission(sub);
             const obj = sub.toObject ? sub.toObject() : { ...sub };
             obj.bicsId = toBicsId(sub._id || sub.id);
+            if (sub.totalScore !== undefined) obj.totalScore = sub.totalScore;
+            if (sub.score !== undefined) obj.score = sub.score;
+            if (sub.evaluation) obj.evaluation = sub.evaluation;
+            if (sub.answers) obj.answers = sub.answers;
             return obj;
         });
 

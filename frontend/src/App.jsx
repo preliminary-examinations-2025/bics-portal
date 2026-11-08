@@ -2528,7 +2528,25 @@ int main() {
     
     setNewExamStart(formatToInputLocal(test.startDate));
     setNewExamEnd(formatToInputLocal(test.endDate));
-    setNewExamQuestions(test.questions || []);
+    const normalizedQuestions = (test.questions || []).map(q => {
+      const isMulti = q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1);
+      const qType = q.type === 'coding' ? 'coding' : (q.type === 'web' ? 'web' : (isMulti ? 'mcc' : 'scc'));
+      const correctOptionIndices = Array.isArray(q.correctOptionIndices)
+        ? q.correctOptionIndices.map(Number)
+        : (q.correctOptionIndex !== undefined && q.correctOptionIndex !== null ? [Number(q.correctOptionIndex)] : [0]);
+      const correctOptionIndex = q.correctOptionIndex !== undefined && q.correctOptionIndex !== null
+        ? Number(q.correctOptionIndex)
+        : (correctOptionIndices.length > 0 ? correctOptionIndices[0] : 0);
+      return {
+        ...q,
+        type: qType,
+        isMultiChoice: isMulti,
+        category: (q.category && q.category !== 'Multiple Choice') ? q.category : (qType === 'coding' ? 'Programming' : (qType === 'web' ? 'Web Development' : (isMulti ? 'Multiple Choice' : 'Single Choice'))),
+        correctOptionIndex,
+        correctOptionIndices
+      };
+    });
+    setNewExamQuestions(normalizedQuestions);
     setNewExamEnableAiEvaluation(Boolean(test.enableAiEvaluation));
     setCreatorStep(1);
     setEditingQuestionIdx(null);

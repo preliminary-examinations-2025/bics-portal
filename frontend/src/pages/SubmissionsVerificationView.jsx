@@ -43,23 +43,32 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
             const isReleased = (vStatus === 'released' || vStatus === 'closed');
             const totalMax = Number(st.marks || 0);
             let totalScored = 0;
-            if (sub.answers && Array.isArray(sub.answers) && sub.answers.length > 0) {
-              totalScored = sub.answers.reduce((sum, a, idx) => {
+            const hasResolvedObjections = (sub.objections || []).some(o => 
+              (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+              o.resolvedMarks !== undefined && o.resolvedMarks !== null
+            );
+            if (hasResolvedObjections) {
+              totalScored = (sub.answers || []).reduce((sum, a, idx) => {
                 const resObj = (sub.objections || []).find(o => 
                   (o.status === 'resolved' || o.status === 'resolved_accepted') &&
                   (o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId)))
                 );
                 const aScore = (resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null) 
                   ? Number(resObj.resolvedMarks) 
-                  : Number(a.score || 0);
+                  : (a.isManuallyGraded ? Number(a.score || 0) : (a.aiEvaluation?.score !== undefined ? Number(a.aiEvaluation.score) : Number(a.score || 0)));
                 return sum + aScore;
               }, 0);
-            } else if (sub.totalScore !== undefined && sub.totalScore !== null) {
-              totalScored = Number(sub.totalScore);
             } else if (sub.evaluation?.totalScore !== undefined && sub.evaluation?.totalScore !== null) {
               totalScored = Number(sub.evaluation.totalScore);
+            } else if (sub.totalScore !== undefined && sub.totalScore !== null) {
+              totalScored = Number(sub.totalScore);
             } else if (sub.score !== undefined && sub.score !== null) {
               totalScored = Number(sub.score);
+            } else if (sub.answers && Array.isArray(sub.answers) && sub.answers.length > 0) {
+              totalScored = sub.answers.reduce((sum, a) => {
+                const pts = (a.aiEvaluation?.score !== undefined) ? Number(a.aiEvaluation.score) : Number(a.score || 0);
+                return sum + pts;
+              }, 0);
             } else {
               totalScored = Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0);
             }
