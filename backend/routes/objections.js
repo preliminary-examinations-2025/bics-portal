@@ -15,9 +15,8 @@ const ensureObjectionIdsSaved = async (submissionsList) => {
                 let hasChanges = false;
                 if (Array.isArray(sub.objections)) {
                     sub.objections.forEach(obj => {
-                        if (!obj.objectionId) {
-                            const yr = new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear();
-                            obj.objectionId = `OBJ-${yr}-${Number(obj.questionIndex || 0) + 1}`;
+                        if (!obj.objectionId || !/^OBJ-\d{4}-[A-Z0-9]+$/i.test(String(obj.objectionId))) {
+                            obj.objectionId = generateObjectionId();
                             hasChanges = true;
                         }
                     });
@@ -37,9 +36,8 @@ const ensureObjectionIdsSaved = async (submissionsList) => {
             db.testSubmissions.forEach(sub => {
                 if (Array.isArray(sub.objections)) {
                     sub.objections.forEach(obj => {
-                        if (!obj.objectionId) {
-                            const yr = new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear();
-                            obj.objectionId = `OBJ-${yr}-${Number(obj.questionIndex || 0) + 1}`;
+                        if (!obj.objectionId || !/^OBJ-\d{4}-[A-Z0-9]+$/i.test(String(obj.objectionId))) {
+                            obj.objectionId = generateObjectionId();
                             dbModified = true;
                         }
                     });
@@ -405,7 +403,7 @@ router.get('/admin/objections', requireAdmin, async (req, res) => {
                 }
 
                 allObjections.push({
-                    objectionId: obj.objectionId || `OBJ-${new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear()}-${String(obj.questionIndex + 1)}`,
+                    objectionId: obj.objectionId || generateObjectionId(),
                     submissionId: sub._id || sub.id,
                     candidateId: sub.candidateId,
                     candidateName: sub.candidateName,
@@ -508,7 +506,7 @@ router.get('/tests/objections/student', requireAuth, async (req, res) => {
                 }
 
                 studentObjections.push({
-                    objectionId: obj.objectionId || `OBJ-${new Date(obj.raisedAt || sub.submittedAt || Date.now()).getFullYear()}-${String(obj.questionIndex + 1)}`,
+                    objectionId: obj.objectionId || generateObjectionId(),
                     submissionId: sub._id || sub.id,
                     testId: sub.testId,
                     testTitle: sub.testTitle,

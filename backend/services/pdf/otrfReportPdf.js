@@ -288,8 +288,10 @@ async function generateOtrfReportPdfBuffer({
             const objRows = [];
             if (objectionsList.length > 0) {
                 objectionsList.forEach((obj, oIdx) => {
-                    const rawId = String(obj._id || obj.id || `OBJ-${oIdx + 1}`);
-                    const objId = rawId.length === 24 ? rawId.slice(-8).toUpperCase() : rawId.toUpperCase();
+                    const rawId = String(obj.objectionId || obj._id || obj.id || '');
+                    const objId = (rawId && /^OBJ-\d{4}-[A-Z0-9]+$/i.test(rawId))
+                        ? rawId.toUpperCase()
+                        : (obj.objectionId ? String(obj.objectionId).toUpperCase() : `OBJ-2026-${String(rawId.length === 24 ? rawId.slice(-5) : (rawId || (oIdx + 1))).toUpperCase().padStart(5, '0')}`);
                     const targetQIdx = rawQuestions.findIndex(q => String(q._id || q.id) === String(obj.questionId));
                     const qLabel = targetQIdx >= 0 ? `Q. ${targetQIdx + 1}` : (obj.questionNumber ? `Q. ${obj.questionNumber}` : 'General');
                     const reason = obj.reason || obj.statement || obj.candidateStatement || 'Candidate submitted evaluation challenge';
