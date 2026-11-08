@@ -53,6 +53,8 @@ export default function AdminTests({
   setNewExamEnd,
   newExamQuestions,
   setNewExamQuestions,
+  newExamEnableAiEvaluation,
+  setNewExamEnableAiEvaluation,
   imageUploadingIdx,
   handleUploadQuestionImage,
   adminExamSubmissions = [],
@@ -302,6 +304,39 @@ export default function AdminTests({
                                 >
                                   Re-evaluate All
                                 </button>
+                                {t.questions?.some(q => q.type === 'web') && (
+                                  <button
+                                    className="cf-btn-secondary"
+                                    style={{ padding: '3px 8px', fontSize: '8pt', color: '#7c3aed', borderColor: '#ddd6fe', backgroundColor: '#f5f3ff', cursor: 'pointer' }}
+                                    title="Run autonomous AI evaluation for web coding questions in this test"
+                                    onClick={() => {
+                                      triggerConfirm(
+                                        "AI Web Evaluator",
+                                        `Run autonomous AI evaluation on all pending Web Coding questions for "${t.title}"?`,
+                                        async () => {
+                                          try {
+                                            const res = await fetch(`${API_BASE}/admin/tests/evaluate-web-ai/${t.id || t._id}`, {
+                                              method: 'POST',
+                                              headers: { 'Content-Type': 'application/json' }
+                                            });
+                                            const data = await res.json();
+                                            if (data.success) {
+                                              triggerAlert("AI Evaluation Complete", data.message || `Evaluated ${data.evaluatedCount} web coding submissions.`);
+                                              fetchAdminTests();
+                                              if (fetchExamSubmissions) fetchExamSubmissions(t.id || t._id);
+                                            } else {
+                                              triggerAlert("AI Evaluation Failed", data.error || "Failed to run AI evaluation.");
+                                            }
+                                          } catch (e) {
+                                            triggerAlert("Network Error", "Failed to connect to server.");
+                                          }
+                                        }
+                                      );
+                                    }}
+                                  >
+                                    AI Web Grade
+                                  </button>
+                                )}
                                 <button
                                   className="cf-btn-secondary"
                                   style={{ color: '#dc2626', borderColor: '#fca5a5', padding: '3px 8px', fontSize: '8pt', border: '1px solid #fca5a5' }}
@@ -453,6 +488,22 @@ export default function AdminTests({
                             onChange={e => setNewExamInstructions(e.target.value)}
                             placeholder="Write pre-test guidelines and code rules here..."
                           />
+                        </div>
+
+                        <div style={{ marginTop: '10px', padding: '10px 14px', backgroundColor: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <input
+                            type="checkbox"
+                            id="enableAiEvaluationToggle"
+                            checked={Boolean(newExamEnableAiEvaluation)}
+                            onChange={e => setNewExamEnableAiEvaluation && setNewExamEnableAiEvaluation(e.target.checked)}
+                            style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#7c3aed' }}
+                          />
+                          <label htmlFor="enableAiEvaluationToggle" style={{ fontSize: '9pt', color: '#4c1d95', cursor: 'pointer', margin: 0 }}>
+                            <strong>Enable Autonomous AI Evaluation for Web Coding Questions</strong>
+                            <div style={{ fontSize: '8pt', color: '#6d28d9', marginTop: '2px' }}>
+                              When enabled, finalized submissions containing web coding questions (HTML/CSS/JS) are autonomously evaluated by KataAi using strict Zero-PII sanitization and comprehensive marking feedback.
+                            </div>
+                          </label>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '15px' }}>
@@ -1341,6 +1392,8 @@ export default function AdminTests({
                                           initialScores[ans.questionId] = Number(q.points || 0);
                                         } else if (ans.type === 'mcq' && ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null && Number(q.correctOptionIndex) === Number(ans.selectedOptionIndex)) {
                                           initialScores[ans.questionId] = Number(q.points || 0);
+                                        } else if (ans.type === 'web' && ans.aiEvaluation?.score !== undefined) {
+                                          initialScores[ans.questionId] = Number(ans.aiEvaluation.score);
                                         } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
                                           initialScores[ans.questionId] = Number(ans.score);
                                         } else {
@@ -1447,6 +1500,8 @@ export default function AdminTests({
                             } else {
                               calculatedAutoScore = Number(ans.score || 0);
                             }
+                          } else if (ans.type === 'web' && ans.aiEvaluation?.score !== undefined) {
+                            calculatedAutoScore = Number(ans.aiEvaluation.score || 0);
                           } else {
                             calculatedAutoScore = Number(ans.score || 0);
                           }
@@ -1840,13 +1895,48 @@ export default function AdminTests({
                                     </div>
                                   )}
 
+                                  {/* AI Evaluation Breakdown Card */}
+                                  {ans.aiEvaluation && (ans.aiEvaluation.isEvaluated || ans.aiEvaluation.status === 'completed') ? (
+                                    <div style={{ backgroundColor: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '6px', padding: '12px 14px', marginTop: '4px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                          <span style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#6d28d9', backgroundColor: '#ede9fe', padding: '3px 8px', borderRadius: '4px', border: '1px solid #c4b5fd' }}>
+                                            AI Evaluated: {ans.aiEvaluation.score} / {maxPts} pts ({ans.aiEvaluation.percentage}%)
+                                          </span>
+                                          {ans.aiEvaluation.modelUsed && (
+                                            <span style={{ fontSize: '7.5pt', color: '#7c3aed', backgroundColor: '#ffffff', padding: '2px 6px', borderRadius: '3px', border: '1px solid #ddd6fe' }}>
+                                              {ans.aiEvaluation.modelUsed}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {ans.aiEvaluation.evaluatedAt && (
+                                          <span style={{ fontSize: '7.5pt', color: '#6b7280' }}>
+                                            {new Date(ans.aiEvaluation.evaluatedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                                          </span>
+                                        )}
+                                      </div>
+                                      {ans.aiEvaluation.feedback && (
+                                        <div style={{ fontSize: '8.5pt', color: '#334155', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '10px', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                                          <strong style={{ color: '#4c1d95', display: 'block', marginBottom: '4px', fontSize: '8pt', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                            Marking Breakdown &amp; Feedback Rationale:
+                                          </strong>
+                                          {ans.aiEvaluation.feedback}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : ans.aiEvaluation?.status === 'pending' ? (
+                                    <div style={{ fontSize: '8pt', color: '#6d28d9', backgroundColor: '#f5f3ff', padding: '6px 10px', borderRadius: '4px', border: '1px solid #ddd6fe', fontStyle: 'italic' }}>
+                                      AI evaluation is queued and will process automatically.
+                                    </div>
+                                  ) : null}
+
                                   {/* Itemized Score Input for Web */}
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
                                     <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Award Question Score:</span>
                                     <input
                                       type="number"
                                       className="cf-input"
-                                      style={{ width: '80px', padding: '4px 8px' }}
+                                      style={{ width: '80px', padding: '4px 8px', fontWeight: 'bold', color: '#002147' }}
                                       min={0}
                                       max={maxPts}
                                       value={adminGradingAnswers[ans.questionId] ?? 0}
@@ -1856,6 +1946,34 @@ export default function AdminTests({
                                       }}
                                     />
                                     <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {maxPts} points</span>
+                                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+                                      {ans.aiEvaluation?.score !== undefined && (
+                                        <button
+                                          type="button"
+                                          className="cf-btn-secondary"
+                                          style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#7c3aed', backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' }}
+                                          onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: Number(ans.aiEvaluation.score) }))}
+                                        >
+                                          Apply AI Score ({ans.aiEvaluation.score} pts)
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#b45309', backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}
+                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }))}
+                                      >
+                                        Full Points ({maxPts} pts)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="cf-btn-secondary"
+                                        style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0 }}
+                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: 0 }))}
+                                      >
+                                        Zero (0 pts)
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               )}

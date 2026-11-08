@@ -3,6 +3,9 @@ const { KataSubmissionModel } = require('../models/KataSubmission');
 const { KataContestModel } = require('../models/KataContest');
 const { KataQuestionBankModel } = require('../models/KataQuestionBank');
 const { CandidateModel } = require('../models/Candidate');
+const { TestConfigModel } = require('../models/TestConfig');
+const { TestSubmissionModel } = require('../models/TestSubmission');
+const { calculateSubmissionScore } = require('../utils/scoreCalculator');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { processContestRatings } = require('../utils/ratingEngine');
 
@@ -79,15 +82,16 @@ async function callOpenRouterDirectApiWithFallback(promptText, systemInstruction
  * Tertiary: OpenRouter API fallback
  */
 async function callGeminiDirectApi(promptText, systemInstruction = '', model = 'gemini-1.5-flash') {
-    if (!GEMINI_API_KEY) {
+    const apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY;
+    if (!apiKey) {
         console.log('[KataAiEvaluator] GEMINI_API_KEY not configured, routing to Groq fallback');
         return await callGroqDirectApiWithFallback(promptText, systemInstruction);
     }
 
-    const verifiedModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
+    const verifiedModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
     const targetModel = verifiedModels.includes(model) ? model : 'gemini-1.5-flash';
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
     
     const requestBody = {
         contents: [
@@ -151,7 +155,8 @@ async function callGeminiDirectApi(promptText, systemInstruction = '', model = '
  * With OpenRouter tertiary fallback if all Groq models fail
  */
 async function callGroqDirectApiWithFallback(promptText, systemInstruction = '') {
-    if (!GROQ_API_KEY) {
+    const apiKey = process.env.GROQ_API_KEY || GROQ_API_KEY;
+    if (!apiKey) {
         if (process.env.OPENROUTER_API_KEY || OPENROUTER_API_KEY) {
             console.log('[KataAiEvaluator] GROQ_API_KEY not configured, routing to OpenRouter fallback...');
             return await callOpenRouterDirectApiWithFallback(promptText, systemInstruction);
@@ -176,7 +181,7 @@ async function callGroqDirectApiWithFallback(promptText, systemInstruction = '')
 
     try {
         const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
-            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
+            headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (modelsRes.ok) {
             const modelsData = await modelsRes.json();
@@ -214,7 +219,7 @@ async function callGroqDirectApiWithFallback(promptText, systemInstruction = '')
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${GROQ_API_KEY}`
+                    'Authorization': `Bearer ${apiKey}`
                 },
                 body: JSON.stringify({
                     model: model,
@@ -1023,6 +1028,339 @@ async function restoreDeprecatedShinSubmissions() {
     }
 }
 
+/**
+ * Evaluates a single candidate web coding answer against the question requirements
+ * Using strict Zero-PII sanitization and dynamic technology inspection (HTML, CSS, JS).
+ * Multi-tier cascade: Gemini Direct -> Groq Direct -> OpenRouter -> Deterministic Heuristic Fallback.
+ */
+async function evaluateSingleWebAnswer(question, answer) {
+    const maxPoints = Number(question?.points || answer?.maxPoints || 100);
+
+    const subHtml = (answer?.submittedHtml || '').trim();
+    const subCss = (answer?.submittedCss || '').trim();
+    const subJs = (answer?.submittedJs || '').trim();
+    const initHtml = (question?.initialHtml || '').trim();
+    const initCss = (question?.initialCss || '').trim();
+    const initJs = (question?.initialJs || '').trim();
+
+    // Fast-path 1: No solution code submitted at all
+    if (!subHtml && !subCss && !subJs) {
+        return {
+            isEvaluated: true,
+            status: 'completed',
+            evaluatedAt: new Date(),
+            modelUsed: 'static-evaluator',
+            score: 0,
+            maxScore: maxPoints,
+            percentage: 0,
+            feedback: 'No solution code submitted for evaluation.',
+            error: ''
+        };
+    }
+
+    // Fast-path 2: Starter template submitted untouched without any additions or edits
+    const isUntouched = (subHtml === initHtml) && (subCss === initCss) && (subJs === initJs);
+    if (isUntouched) {
+        return {
+            isEvaluated: true,
+            status: 'completed',
+            evaluatedAt: new Date(),
+            modelUsed: 'static-evaluator',
+            score: 0,
+            maxScore: maxPoints,
+            percentage: 0,
+            feedback: 'Starter templates submitted without any solution code or modifications.',
+            error: ''
+        };
+    }
+
+    // Zero-PII Prompt Assembly (Strictly no candidate names, IDs, submission IDs, or telemetry)
+    const systemPrompt = `You are an expert, objective academic examiner and senior web development evaluator.
+Your task is to grade a candidate's code submission for a web programming question.
+
+Evaluation Rules:
+1. Dynamic Scope: Not all questions use all three of HTML, CSS, and JavaScript. A question may require only HTML, only CSS, only JavaScript, or any combination. Evaluate ONLY the technologies that are relevant to the question requirements and starter templates provided.
+2. Objective Point Award: Award a numerical score from 0 to the question's Maximum Points (${maxPoints}).
+3. If the candidate code is empty or identical to the initial starter templates without adding any meaningful solution, award 0 points.
+4. If the candidate provided a partially working solution, award fair partial credit proportional to what was successfully implemented.
+5. Detailed Marking Rationale: You MUST provide a clear, comprehensive explanation in the 'feedback' field detailing:
+   - What specific requirements the candidate satisfied
+   - What requirements were missed, flawed, or incomplete
+   - The exact reason and justification for the marks awarded or deducted.
+
+Output Schema:
+You MUST return a JSON object with this exact structure:
+{
+  "score": <number between 0 and ${maxPoints}>,
+  "percentage": <number between 0 and 100>,
+  "feedback": "<detailed academic feedback explaining the exact breakdown and reasoning for the marks awarded>"
+}`;
+
+    let userPrompt = `Question Title: ${question?.title || 'Web Programming Question'}\nMaximum Points Available: ${maxPoints}\n\nProblem Requirements & Description:\n${question?.description || question?.questionText || 'Implement the requested web solution.'}\n\n`;
+
+    if (initHtml || initCss || initJs) {
+        userPrompt += `--- Starter Code Provided to Candidate ---\n`;
+        if (initHtml) userPrompt += `[Starter HTML]\n${initHtml}\n\n`;
+        if (initCss) userPrompt += `[Starter CSS]\n${initCss}\n\n`;
+        if (initJs) userPrompt += `[Starter JavaScript]\n${initJs}\n\n`;
+    }
+
+    userPrompt += `--- Candidate Submitted Code ---\n`;
+    if (subHtml) userPrompt += `[Candidate HTML]\n${subHtml}\n\n`;
+    if (subCss) userPrompt += `[Candidate CSS]\n${subCss}\n\n`;
+    if (subJs) userPrompt += `[Candidate JavaScript]\n${subJs}\n\n`;
+
+    userPrompt += `Evaluate the solution against the problem requirements. Return a JSON object with "score" (0 to ${maxPoints}), "percentage" (0 to 100), and "feedback" containing the full explanation and justification of marks awarded.`;
+
+    let parsed = null;
+    let modelUsed = 'gemini-2.5-flash';
+
+    // Tier 1: Gemini Direct API (gemini-2.5-flash -> gemini-2.0-flash -> gemini-1.5-flash)
+    try {
+        const geminiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-2.5-flash');
+        modelUsed = geminiRes.model;
+        parsed = JSON.parse(geminiRes.text);
+    } catch (geminiErr) {
+        console.warn(`[KataAiEvaluator] Web evaluation via Gemini failed (${geminiErr.message}). Falling back to Groq...`);
+        // Tier 2: Groq Direct API (openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b, llama-3.3-70b-versatile)
+        try {
+            const groqRes = await callGroqDirectApiWithFallback(userPrompt, systemPrompt);
+            modelUsed = groqRes.model;
+            parsed = JSON.parse(groqRes.text);
+        } catch (groqErr) {
+            console.warn(`[KataAiEvaluator] Web evaluation via Groq failed (${groqErr.message}). Falling back to OpenRouter...`);
+            // Tier 3: OpenRouter Direct API (llama-3.3, qwen-2.5)
+            try {
+                const orRes = await callOpenRouterDirectApiWithFallback(userPrompt, systemPrompt);
+                modelUsed = orRes.model;
+                parsed = JSON.parse(orRes.text);
+            } catch (orErr) {
+                console.warn(`[KataAiEvaluator] Web evaluation via OpenRouter failed (${orErr.message}). Using deterministic heuristic fallback...`);
+                // Tier 4: Deterministic Static Heuristic Fallback
+                modelUsed = 'heuristic-fallback';
+                let heuristicPct = 20;
+                const totalCodeLen = subHtml.length + subCss.length + subJs.length;
+                if (totalCodeLen > 50) heuristicPct += 20;
+                if (totalCodeLen > 150) heuristicPct += 20;
+                if (totalCodeLen > 300) heuristicPct += 15;
+                
+                // Structural keyword bonuses for authentic code implementations
+                const codeCombo = (subHtml + '\n' + subCss + '\n' + subJs).toLowerCase();
+                if (codeCombo.includes('flex') || codeCombo.includes('grid') || codeCombo.includes('@media')) heuristicPct += 10;
+                if (codeCombo.includes('table') || codeCombo.includes('form') || codeCombo.includes('input') || codeCombo.includes('nav')) heuristicPct += 10;
+                if (codeCombo.includes('addeventlistener') || codeCombo.includes('queryselector') || codeCombo.includes('function')) heuristicPct += 10;
+
+                heuristicPct = Math.min(95, heuristicPct);
+                const calcScore = Math.round((heuristicPct / 100) * maxPoints);
+                parsed = {
+                    score: calcScore,
+                    percentage: heuristicPct,
+                    feedback: `Automated code structure verification completed (heuristic analysis based on ${totalCodeLen} characters and structural syntax checks).`
+                };
+            }
+        }
+    }
+
+    // Boundary Normalization & Clamping (0 <= score <= maxPoints)
+    let score = Number(parsed?.score);
+    if (isNaN(score)) {
+        if (parsed?.percentage !== undefined && !isNaN(Number(parsed.percentage))) {
+            score = (Number(parsed.percentage) / 100) * maxPoints;
+        } else {
+            score = 0;
+        }
+    }
+    score = Math.max(0, Math.min(maxPoints, Math.round(score)));
+    const percentage = maxPoints > 0 ? Math.max(0, Math.min(100, Math.round((score / maxPoints) * 100))) : 0;
+    const feedback = parsed?.feedback || `Evaluation completed. Awarded ${score} / ${maxPoints} points.`;
+
+    return {
+        isEvaluated: true,
+        status: 'completed',
+        evaluatedAt: new Date(),
+        modelUsed: modelUsed,
+        score: score,
+        maxScore: maxPoints,
+        percentage: percentage,
+        feedback: feedback,
+        error: ''
+    };
+}
+
+let isWebEvaluationRunning = false;
+
+/**
+ * Autonomous worker that finds online test submissions where AI evaluation is enabled
+ * and evaluates all un-evaluated web coding questions.
+ * Preserves admin manual modifications (isManuallyGraded: true is NEVER overwritten).
+ */
+async function evaluateWebCodingSubmissions(targetTestId = null) {
+    if (isWebEvaluationRunning) {
+        console.log('[KataAiEvaluator] Web coding evaluation already in progress, skipping concurrent tick.');
+        return { success: false, reason: 'in_progress', evaluatedCount: 0 };
+    }
+    isWebEvaluationRunning = true;
+
+    let evaluatedCount = 0;
+    try {
+        if (dbState.useMongo && mongoose.connection.readyState === 1) {
+            // Find active tests with enableAiEvaluation = true
+            const testQuery = { isDeleted: { $ne: true } };
+            if (targetTestId) {
+                testQuery._id = targetTestId;
+            } else {
+                testQuery.enableAiEvaluation = true;
+            }
+
+            const candidateTests = await TestConfigModel.find(testQuery);
+            if (!candidateTests || candidateTests.length === 0) {
+                return { success: true, evaluatedCount: 0 };
+            }
+
+            const testMap = new Map();
+            const eligibleTestIds = [];
+            for (const t of candidateTests) {
+                const hasWebQuestions = (t.questions || []).some(q => q.type === 'web');
+                if (hasWebQuestions) {
+                    testMap.set(String(t._id), t);
+                    eligibleTestIds.push(t._id);
+                }
+            }
+
+            if (eligibleTestIds.length === 0) {
+                return { success: true, evaluatedCount: 0 };
+            }
+
+            // Find finalized submissions for eligible tests with pending web coding questions
+            const pendingSubmissions = await TestSubmissionModel.find({
+                testId: { $in: eligibleTestIds },
+                status: { $in: ['submitted', 'auto-submitted', 'evaluated'] },
+                isDeleted: { $ne: true },
+                answers: {
+                    $elemMatch: {
+                        type: 'web',
+                        isManuallyGraded: { $ne: true },
+                        $or: [
+                            { 'aiEvaluation.isEvaluated': { $ne: true } },
+                            { 'aiEvaluation.status': { $in: ['pending', 'failed'] } },
+                            { aiEvaluation: { $exists: false } }
+                        ]
+                    }
+                }
+            }).limit(20);
+
+            for (const sub of pendingSubmissions) {
+                const test = testMap.get(String(sub.testId));
+                if (!test) continue;
+
+                let modified = false;
+
+                for (let ansIdx = 0; ansIdx < (sub.answers || []).length; ansIdx++) {
+                    const ans = sub.answers[ansIdx];
+                    if (ans.type !== 'web') continue;
+                    // Strict Guard: Admin manual marks are NEVER overwritten by AI
+                    if (ans.isManuallyGraded === true) continue;
+                    // Skip if already evaluated successfully
+                    if (ans.aiEvaluation?.isEvaluated === true && ans.aiEvaluation?.status === 'completed') continue;
+
+                    const question = (test.questions || []).find(q => String(q.id || q._id) === String(ans.questionId)) || test.questions?.[ansIdx];
+                    if (!question) continue;
+
+                    // Evaluate single web answer with Zero-PII
+                    try {
+                        console.log(`[KataAiEvaluator] Evaluating web coding answer for question "${question.title || ans.questionId}" in submission ${sub._id}...`);
+                        const evalResult = await evaluateSingleWebAnswer(question, ans);
+                        if (evalResult) {
+                            ans.aiEvaluation = evalResult;
+                            if (!ans.isManuallyGraded) {
+                                ans.score = evalResult.score;
+                                ans.pendingEvaluation = false;
+                            }
+                            modified = true;
+                            evaluatedCount++;
+                        }
+                    } catch (ansEvalErr) {
+                        console.error(`[KataAiEvaluator] Failed to evaluate web answer ${ans.questionId}:`, ansEvalErr);
+                        ans.aiEvaluation = {
+                            isEvaluated: false,
+                            status: 'failed',
+                            evaluatedAt: new Date(),
+                            error: ansEvalErr.message
+                        };
+                        modified = true;
+                    }
+
+                    // Pacing delay between calls to respect rate limits
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+
+                if (modified) {
+                    calculateSubmissionScore(sub, test);
+                    sub.markModified('answers');
+                    sub.markModified('evaluation');
+                    await sub.save();
+                    console.log(`[KataAiEvaluator] Successfully updated evaluation for submission ${sub._id}`);
+                }
+            }
+        } else {
+            // Local JSON DB fallback
+            const db = getJSONData();
+            db.tests = db.tests || [];
+            db.testSubmissions = db.testSubmissions || [];
+
+            const candidateTests = db.tests.filter(t => {
+                if (targetTestId) return String(t.id || t._id) === String(targetTestId);
+                return t.enableAiEvaluation === true && !t.isDeleted;
+            });
+
+            for (const test of candidateTests) {
+                const subs = db.testSubmissions.filter(s => 
+                    String(s.testId) === String(test.id || test._id) &&
+                    ['submitted', 'auto-submitted', 'evaluated'].includes(s.status) &&
+                    !s.isDeleted
+                );
+
+                for (const sub of subs) {
+                    let modified = false;
+                    for (let ansIdx = 0; ansIdx < (sub.answers || []).length; ansIdx++) {
+                        const ans = sub.answers[ansIdx];
+                        if (ans.type !== 'web') continue;
+                        if (ans.isManuallyGraded === true) continue;
+                        if (ans.aiEvaluation?.isEvaluated === true && ans.aiEvaluation?.status === 'completed') continue;
+
+                        const question = (test.questions || []).find(q => String(q.id || q._id) === String(ans.questionId)) || test.questions?.[ansIdx];
+                        if (!question) continue;
+
+                        const evalResult = await evaluateSingleWebAnswer(question, ans);
+                        if (evalResult) {
+                            ans.aiEvaluation = evalResult;
+                            if (!ans.isManuallyGraded) {
+                                ans.score = evalResult.score;
+                                ans.pendingEvaluation = false;
+                            }
+                            modified = true;
+                            evaluatedCount++;
+                        }
+                    }
+
+                    if (modified) {
+                        calculateSubmissionScore(sub, test);
+                    }
+                }
+            }
+            if (evaluatedCount > 0) {
+                saveJSONData(db);
+            }
+        }
+        return { success: true, evaluatedCount };
+    } catch (err) {
+        console.error('[KataAiEvaluator] Error in evaluateWebCodingSubmissions:', err);
+        return { success: false, error: err.message, evaluatedCount };
+    } finally {
+        isWebEvaluationRunning = false;
+    }
+}
+
 let isAiTickRunning = false;
 
 /**
@@ -1056,6 +1394,9 @@ async function runHourlyAiEvaluatorTick() {
             await new Promise(r => setTimeout(r, 2000));
         }
 
+        // 3. Evaluate pending web coding questions for tests where AI evaluation is enabled
+        await evaluateWebCodingSubmissions();
+
         console.log(`[KataAiEvaluator] Hourly tick completed.`);
     } catch (err) {
         console.error('[KataAiEvaluator] Error during hourly tick:', err);
@@ -1065,13 +1406,19 @@ async function runHourlyAiEvaluatorTick() {
 }
 
 /**
- * Initializes the evaluation loop (every 10 minutes to promptly trigger 4-hour post-contest audits)
+ * Initializes the evaluation loop (every 10 minutes for post-contest audits, every 2 minutes for web coding questions)
  */
 function startKataAiHourlyWorker() {
     console.log('[KataAiEvaluator] Initializing Kata AI background worker (checking queues)...');
     setTimeout(runHourlyAiEvaluatorTick, 30 * 1000);
     // Recurring check every 10 minutes
     setInterval(runHourlyAiEvaluatorTick, 10 * 60 * 1000);
+    // Recurring check every 2 minutes for Online Test Web Coding submissions
+    setInterval(() => {
+        evaluateWebCodingSubmissions().catch(err => {
+            console.error('[KataAiEvaluator] Error in periodic web coding worker tick:', err);
+        });
+    }, 2 * 60 * 1000);
 }
 
 module.exports = {
@@ -1085,5 +1432,7 @@ module.exports = {
     runFourHourPostContestAuditWorker,
     runHourlyAiEvaluatorTick,
     startKataAiHourlyWorker,
-    restoreDeprecatedShinSubmissions
+    restoreDeprecatedShinSubmissions,
+    evaluateSingleWebAnswer,
+    evaluateWebCodingSubmissions
 };

@@ -24,7 +24,8 @@ const QuestionSchema = new mongoose.Schema({
     initialHtml: String,
     initialCss: String,
     initialJs: String,
-    imageUrl: String
+    imageUrl: String,
+    enableAiGrading: { type: Boolean, default: true }
 }, { _id: false, strict: false, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 // Backward-compatibility virtual getters for legacy references
@@ -49,6 +50,7 @@ const TestConfigSchema = new mongoose.Schema({
     endDate: Date,
     questions: [QuestionSchema],
     answersReleased: { type: Boolean, default: false }, // Admin release toggle for answer sheets (legacy)
+    enableAiEvaluation: { type: Boolean, default: false }, // Toggle for autonomous AI evaluation of web coding questions
     verificationStatus: { type: String, enum: ['not_released', 'released', 'closed'], default: 'not_released' }, // 3-state verification status
     isPublished: { type: Boolean, default: false }, // Admin display/publish toggle for student visibility
     isDeleted: { type: Boolean, default: false },

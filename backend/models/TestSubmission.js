@@ -28,7 +28,22 @@ const AnswerSchema = new mongoose.Schema({
     }],
     compileError: String,
     consoleTab: String,
-    rawResults: mongoose.Schema.Types.Mixed
+    rawResults: mongoose.Schema.Types.Mixed,
+    aiEvaluation: {
+        isEvaluated: { type: Boolean, default: false },
+        status: { 
+            type: String, 
+            enum: ['pending', 'evaluating', 'completed', 'failed', 'skipped'], 
+            default: 'pending' 
+        },
+        evaluatedAt: { type: Date },
+        modelUsed: { type: String, default: '' },
+        score: { type: Number, default: 0 },
+        maxScore: { type: Number, default: 0 },
+        percentage: { type: Number, default: 0 },
+        feedback: { type: String, default: '' },
+        error: { type: String, default: '' }
+    }
 }, { _id: false });
 
 const TestSubmissionSchema = new mongoose.Schema({

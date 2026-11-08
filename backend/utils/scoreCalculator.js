@@ -100,8 +100,15 @@ function calculateSubmissionScore(submission, test) {
         // 4. Web Coding Automated Scoring (deferred for LLMs / manual evaluation)
         else if (quest && quest.type === 'web') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                ans.pendingEvaluation = true;
-                ans.score = 0;
+                if (ans.aiEvaluation && (ans.aiEvaluation.isEvaluated || ans.aiEvaluation.status === 'completed') && ans.aiEvaluation.score !== undefined) {
+                    ans.score = Number(ans.aiEvaluation.score) || 0;
+                    ans.pendingEvaluation = false;
+                } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
+                    ans.pendingEvaluation = false;
+                } else {
+                    ans.pendingEvaluation = true;
+                    ans.score = 0;
+                }
             }
         }
 
@@ -175,9 +182,17 @@ function calculateCodingScoreFast(submission, test) {
             totalCodingPoints += Number(ans.score || 0);
         } else if (quest && quest.type === 'web') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                ans.pendingEvaluation = true;
-                ans.score = 0;
+                if (ans.aiEvaluation && (ans.aiEvaluation.isEvaluated || ans.aiEvaluation.status === 'completed') && ans.aiEvaluation.score !== undefined) {
+                    ans.score = Number(ans.aiEvaluation.score) || 0;
+                    ans.pendingEvaluation = false;
+                } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
+                    ans.pendingEvaluation = false;
+                } else {
+                    ans.pendingEvaluation = true;
+                    ans.score = 0;
+                }
             }
+            totalCodingPoints += Number(ans.score || 0);
         }
     });
 

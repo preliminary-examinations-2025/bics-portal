@@ -1623,6 +1623,7 @@ export default function App() {
   const [newExamStart, setNewExamStart] = useState('');
   const [newExamEnd, setNewExamEnd] = useState('');
   const [newExamQuestions, setNewExamQuestions] = useState([]); // Questions array builder
+  const [newExamEnableAiEvaluation, setNewExamEnableAiEvaluation] = useState(false); // Autonomous Web AI evaluation toggle
   const [imageUploadingIdx, setImageUploadingIdx] = useState(-1); // Question image upload loader tracker
   const [adminExamSubmissions, setAdminExamSubmissions] = useState([]);
   const [adminActiveWebTabs, setAdminActiveWebTabs] = useState({});
@@ -2476,7 +2477,8 @@ int main() {
           duration: Number(newExamDuration || 60),
           startDate: parseLocalDatetime(newExamStart).toISOString(),
           endDate: parseLocalDatetime(newExamEnd).toISOString(),
-          questions: newExamQuestions
+          questions: newExamQuestions,
+          enableAiEvaluation: Boolean(newExamEnableAiEvaluation)
         })
       });
       const data = await res.json();
@@ -2491,6 +2493,7 @@ int main() {
         setNewExamStart('');
         setNewExamEnd('');
         setNewExamQuestions([]);
+        setNewExamEnableAiEvaluation(false);
         setCreatorStep(1);
         setEditingQuestionIdx(null);
         setEditingTestConfigId(null);
@@ -2526,6 +2529,7 @@ int main() {
     setNewExamStart(formatToInputLocal(test.startDate));
     setNewExamEnd(formatToInputLocal(test.endDate));
     setNewExamQuestions(test.questions || []);
+    setNewExamEnableAiEvaluation(Boolean(test.enableAiEvaluation));
     setCreatorStep(1);
     setEditingQuestionIdx(null);
     setShowTestCreator(true);
@@ -4420,6 +4424,8 @@ int main() {
                   setNewExamEnd={setNewExamEnd}
                   newExamQuestions={newExamQuestions}
                   setNewExamQuestions={setNewExamQuestions}
+                  newExamEnableAiEvaluation={newExamEnableAiEvaluation}
+                  setNewExamEnableAiEvaluation={setNewExamEnableAiEvaluation}
                   imageUploadingIdx={imageUploadingIdx}
                   handleUploadQuestionImage={handleUploadQuestionImage}
                   adminExamSubmissions={adminExamSubmissions}

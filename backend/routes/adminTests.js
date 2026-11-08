@@ -159,7 +159,7 @@ router.post('/toggle-publish/:id', async (req, res) => {
 
 // 5. Create/configure a test (Admin only)
 router.post('/', async (req, res) => {
-    const { _id, id, title, course, courseCode, marks, instructions, duration, startDate, endDate, questions, isPublished } = req.body;
+    const { _id, id, title, course, courseCode, marks, instructions, duration, startDate, endDate, questions, isPublished, enableAiEvaluation } = req.body;
     if (!title || !duration || !startDate || !endDate) {
         return res.status(400).json({ error: "Title, Duration, Start Date, and End Date are required" });
     }
@@ -208,6 +208,7 @@ router.post('/', async (req, res) => {
                 savedTest.endDate = new Date(endDate);
                 savedTest.questions = normalizedQuestions;
                 if (isPublished !== undefined) savedTest.isPublished = isPublished;
+                if (enableAiEvaluation !== undefined) savedTest.enableAiEvaluation = Boolean(enableAiEvaluation);
                 await savedTest.save();
             } else {
                 savedTest = new TestConfigModel({ 
@@ -220,7 +221,8 @@ router.post('/', async (req, res) => {
                     startDate, 
                     endDate, 
                     questions: normalizedQuestions, 
-                    isPublished: isPublished || false 
+                    isPublished: isPublished || false,
+                    enableAiEvaluation: Boolean(enableAiEvaluation || false)
                 });
                 await savedTest.save();
             }
@@ -243,6 +245,7 @@ router.post('/', async (req, res) => {
                         questions: normalizedQuestions
                     };
                     if (isPublished !== undefined) db.tests[idx].isPublished = isPublished;
+                    if (enableAiEvaluation !== undefined) db.tests[idx].enableAiEvaluation = Boolean(enableAiEvaluation);
                     savedTest = db.tests[idx];
                 }
             }
@@ -260,7 +263,8 @@ router.post('/', async (req, res) => {
                     endDate,
                     questions: normalizedQuestions,
                     answersReleased: false,
-                    isPublished: isPublished || false
+                    isPublished: isPublished || false,
+                    enableAiEvaluation: Boolean(enableAiEvaluation || false)
                 };
                 db.tests.push(savedTest);
             }
@@ -738,6 +742,24 @@ router.post('/reevaluate-all/:testId', async (req, res) => {
         return res.json({ success: true, count: updatedCount, message: `Bulk re-evaluated ${updatedCount} candidate submissions successfully.` });
     } catch (err) {
         console.error("Failed to bulk re-evaluate submissions:", err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 10. Autonomous AI Evaluation for Web Coding Questions (Admin triggered on-demand)
+router.post('/evaluate-web-ai/:testId', async (req, res) => {
+    const { testId } = req.params;
+    try {
+        const { evaluateWebCodingSubmissions } = require('../services/kataAiEvaluator');
+        const result = await evaluateWebCodingSubmissions(testId);
+        await logSystemAction('admin', 'WEB_AI_EVALUATION', `Triggered AI Web Coding evaluation for test ID ${testId} (Evaluated: ${result.evaluatedCount || 0})`, 'info');
+        return res.json({
+            success: true,
+            evaluatedCount: result.evaluatedCount || 0,
+            message: `Autonomous AI evaluation completed for ${result.evaluatedCount || 0} web coding answer(s).`
+        });
+    } catch (err) {
+        console.error("Failed to run Web AI evaluation:", err);
         return res.status(500).json({ success: false, error: err.message });
     }
 });
