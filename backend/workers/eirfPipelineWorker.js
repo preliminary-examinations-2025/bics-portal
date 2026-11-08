@@ -232,18 +232,16 @@ async function runPipelineTick() {
             // C. Process Clean Submissions (Send verified Brevo confirmation email)
             const cleanSubs = await TestSubmissionModel.find({
                 pipelineStatus: 'CLEARED',
-                $or: [
-                    { 'emailsSent.testSubmitted': { $ne: true } },
-                    { 'securityMetadata.cleanEmailSent': { $ne: true } }
-                ],
+                'emailsSent.testSubmitted': { $ne: true },
                 isDeleted: false
             }).limit(5);
 
             for (const sub of cleanSubs) {
                 try {
                     await sendTestSubmittedEmail(sub._id);
-                    if (!sub.securityMetadata) sub.securityMetadata = {};
-                    sub.securityMetadata.cleanEmailSent = true;
+                    if (!sub.emailsSent) sub.emailsSent = {};
+                    sub.emailsSent.testSubmitted = true;
+                    sub.emailsSent.testSubmittedAt = new Date();
                     await recordPipelineStep(sub, 'SEND_CLEAN_CONFIRMATION', 'COMPLETED', 0, { submissionId: sub._id });
                     await sub.save();
                 } catch (cleanErr) {

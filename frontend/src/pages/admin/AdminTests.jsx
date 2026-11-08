@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ClipboardList, ShieldAlert, FileEdit, Plus, Loader2, Lock, Check, Upload, HelpCircle, GraduationCap, AlertTriangle, X, RefreshCw } from 'lucide-react';
 import RichText from '../../components/RichText';
 import Editor from '@monaco-editor/react';
@@ -94,6 +95,23 @@ export default function AdminTests({
       setIsRefreshingSubmissions(false);
     }
   };
+
+  useEffect(() => {
+    if (!selectedExamSubmission) return;
+    const origOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setSelectedExamSubmission(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = origOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedExamSubmission, setSelectedExamSubmission]);
 
   const triggerAlert = (title, msg) => {
     if (showModalAlert) showModalAlert(title, msg);
@@ -1640,12 +1658,59 @@ export default function AdminTests({
                 const maxTestMarks = testConfig?.marks || selectedExamSubmission.totalScore || selectedExamSubmission.evaluation?.totalScore || 100;
                 const currentTotalScore = Math.min(rawTotalScore, maxTestMarks);
 
-                return (
-                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000, padding: '20px' }}>
-                    <div className="cf-card" style={{ width: '90%', maxWidth: '950px', maxHeight: '92vh', overflowY: 'auto', padding: '24px', border: '1px solid #b9c9fe', backgroundColor: '#fff', borderRadius: '8px' }}>
-                      
+                const modalContent = (
+                  <div
+                    style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      backgroundColor: 'rgba(15, 23, 42, 0.75)',
+                      backdropFilter: 'blur(3px)',
+                      WebkitBackdropFilter: 'blur(3px)',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      zIndex: 999999,
+                      padding: '20px 16px',
+                      boxSizing: 'border-box'
+                    }}
+                    onClick={(e) => {
+                      if (e.target === e.currentTarget) setSelectedExamSubmission(null);
+                    }}
+                  >
+                    <div
+                      className="cf-card"
+                      style={{
+                        width: '100%',
+                        maxWidth: '960px',
+                        maxHeight: '92vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        backgroundColor: '#ffffff',
+                        borderRadius: '8px',
+                        border: '1px solid #b9c9fe',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.08)',
+                        overflow: 'hidden',
+                        margin: 'auto 0',
+                        padding: 0,
+                        boxSizing: 'border-box'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {/* Modal Header */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #e2e8f0', paddingBottom: '14px', marginBottom: '20px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          borderBottom: '2px solid #e2e8f0',
+                          padding: '16px 24px',
+                          backgroundColor: '#f8fafc',
+                          flexShrink: 0
+                        }}
+                      >
                         <div>
                           <h3 style={{ fontSize: '13pt', color: '#002147', margin: 0, fontWeight: 'bold' }}>
                             Candidate Evaluation &amp; Grade Sheet
@@ -1665,11 +1730,19 @@ export default function AdminTests({
                               </span>
                             )}
                           </div>
-                          <button className="cf-btn-secondary" style={{ padding: '4px 12px', fontSize: '9pt', cursor: 'pointer' }} onClick={() => setSelectedExamSubmission(null)}>
-                            Close
+                          <button
+                            type="button"
+                            className="cf-btn-secondary"
+                            style={{ padding: '6px 14px', fontSize: '9pt', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+                            onClick={() => setSelectedExamSubmission(null)}
+                          >
+                            <X size={15} /> Close
                           </button>
                         </div>
                       </div>
+
+                      {/* Modal Scrollable Body */}
+                      <div style={{ overflowY: 'auto', padding: '24px', flex: 1 }}>
 
                       {/* Proctoring & Test Info Banner */}
                       <div className="cf-alert cf-alert-info" style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px', alignItems: 'center', backgroundColor: '#f8fafc', borderColor: '#cbd5e1' }}>
@@ -2325,9 +2398,12 @@ export default function AdminTests({
                         </button>
                       </div>
                     </form>
+                      </div>
+                    </div>
                   </div>
-                </div>
                 );
+
+                return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
               })()}
 
             </div>
