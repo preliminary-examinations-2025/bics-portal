@@ -1,5 +1,5 @@
 import React from 'react';
-import { ClipboardList, Calendar, CheckCircle, Clock, AlertTriangle, Loader2, ExternalLink } from 'lucide-react';
+import { ClipboardList, Calendar, CheckCircle, Clock, AlertTriangle, Loader2 } from 'lucide-react';
 import { API_BASE } from '../config';
 
 export default function OnlineTestsView({
@@ -66,65 +66,19 @@ export default function OnlineTestsView({
                           <CheckCircle size={10} /> Completed
                         </span>
                         {test.eirfStatus === 'approved' ? (
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                            <span 
-                              style={{ fontSize: '8pt', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                              title="Emergency Incident Report Form (EIRF) reviewed and approved by committee."
-                            >
-                              <CheckCircle size={10} style={{ color: '#10b981' }} /> EIRF Approved
-                            </span>
-                            <a
-                              href={`${API_BASE}/test/eirf/verdict-pdf/${test.eirfReportId || test.submissionId || test.id || test._id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                fontSize: '7.5pt',
-                                color: '#047857',
-                                textDecoration: 'none',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                fontWeight: 'bold',
-                                backgroundColor: '#d1fae5',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                border: '1px solid #a7f3d0'
-                              }}
-                              title="Download Official Signed BICS Verdict Certificate"
-                            >
-                              <ExternalLink size={10} /> Verdict PDF
-                            </a>
-                          </div>
+                          <span 
+                            style={{ fontSize: '8pt', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            title="Emergency Incident Report Form (EIRF) reviewed and approved by committee. The official verdict PDF has been sent to your registered email."
+                          >
+                            <CheckCircle size={10} style={{ color: '#10b981' }} /> EIRF Approved
+                          </span>
                         ) : test.eirfStatus === 'rejected' ? (
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                            <span 
-                              style={{ fontSize: '8pt', backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                              title="Emergency Incident Report Form (EIRF) reviewed and rejected by committee. Score annulled."
-                            >
-                              <AlertTriangle size={10} style={{ color: '#dc2626' }} /> EIRF Rejected
-                            </span>
-                            <a
-                              href={`${API_BASE}/test/eirf/verdict-pdf/${test.eirfReportId || test.submissionId || test.id || test._id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                fontSize: '7.5pt',
-                                color: '#b91c1c',
-                                textDecoration: 'none',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                fontWeight: 'bold',
-                                backgroundColor: '#fee2e2',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                border: '1px solid #fecaca'
-                              }}
-                              title="Download Official Signed BICS Decision Notice"
-                            >
-                              <ExternalLink size={10} /> Decision Notice
-                            </a>
-                          </div>
+                          <span 
+                            style={{ fontSize: '8pt', backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            title="Emergency Incident Report Form (EIRF) reviewed and rejected by committee. The official decision notice has been sent to your registered email."
+                          >
+                            <AlertTriangle size={10} style={{ color: '#dc2626' }} /> EIRF Rejected
+                          </span>
                         ) : (test.hasEirfFlag || (test.eirfStatus && test.eirfStatus !== 'none')) ? (
                           <span 
                             style={{ 
