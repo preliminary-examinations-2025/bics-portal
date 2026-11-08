@@ -173,6 +173,11 @@ if (process.env.NODE_ENV !== 'test' && (process.env.NODE_ENV !== 'production' ||
         startKataScheduler();
         // Start Kata AI hourly evaluation worker
         startKataAiHourlyWorker();
+        // Backfill 12-digit submissionRefIds and lock initial scores
+        setTimeout(() => {
+            const { ensureSubmissionRefIds } = require('./utils/submissionMigrator');
+            ensureSubmissionRefIds().catch(() => {});
+        }, 3000);
     });
 
     // Ensure idle keep-alive connections don't abruptly close or cause connection timeouts

@@ -236,11 +236,31 @@ function deobfuscateBicsIds(val, depth = 0) {
     return val;
 }
 
+/**
+ * Generate a unique cryptographically random 12-digit numeric submission reference ID
+ * E.g. '482910481920'
+ */
+function generateSubmissionRefId() {
+    const high = crypto.randomInt(100000, 999999);
+    const low = crypto.randomInt(100000, 999999);
+    return `${high}${low}`;
+}
+
+/**
+ * Checks if a string matches the 12-digit numeric reference ID format
+ */
+function isSubmissionRefId(str) {
+    if (!str) return false;
+    return /^\d{12}$/.test(String(str).trim());
+}
+
 module.exports = {
     toBicsId,
     toMongoId,
     isBicsId,
     isMongoId,
+    generateSubmissionRefId,
+    isSubmissionRefId,
     resolveToObjectId,
     obfuscateObjectIds,
     deobfuscateBicsIds

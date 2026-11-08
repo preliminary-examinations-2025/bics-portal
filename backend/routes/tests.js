@@ -2403,6 +2403,71 @@ router.post('/run', async (req, res) => {
     }
 });
 
+// Official Online Test Report Form (OTRF) PDF Generator Endpoint
+router.get('/otrf-report/:idParam', async (req, res) => {
+    try {
+        const { idParam } = req.params;
+        const { findSubmissionByAnyId } = require('../utils/submissionMigrator');
+        const { generateOtrfReportPdfBuffer } = require('../services/pdf/otrfReportPdf');
+        const { EIRFReportModel } = require('../models');
+
+        const submission = await findSubmissionByAnyId(idParam);
+        if (!submission) {
+            return res.status(404).json({ error: 'Test submission record not found.' });
+        }
+
+        let test = null;
+        let candidate = null;
+        let eirfReport = null;
+
+        if (dbState.useMongo) {
+            if (submission.testId) {
+                test = await TestConfigModel.findById(submission.testId);
+            }
+            if (submission.candidateId) {
+                candidate = await CandidateModel.findById(submission.candidateId);
+            } else if (submission.studentId) {
+                candidate = await CandidateModel.findOne({ studentId: submission.studentId });
+            }
+            if (submission.eirfReportId) {
+                eirfReport = await EIRFReportModel.findOne({ reportId: submission.eirfReportId });
+            }
+        } else {
+            const db = getJSONData();
+            if (submission.testId) {
+                test = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
+            }
+            if (submission.candidateId) {
+                candidate = (db.candidates || []).find(c => String(c.id || c._id) === String(submission.candidateId));
+            } else if (submission.studentId) {
+                candidate = (db.candidates || []).find(c => String(c.studentId) === String(submission.studentId));
+            }
+            if (submission.eirfReportId) {
+                eirfReport = (db.eirfReports || []).find(r => r.reportId === submission.eirfReportId);
+            }
+        }
+
+        const pdfBuffer = await generateOtrfReportPdfBuffer({
+            submission,
+            test,
+            candidate,
+            eirfReport,
+            verificationClosureDate: submission.verificationClosedAt || test?.verificationClosedAt || submission.submittedAt
+        });
+
+        const filename = `otrf-report-${submission.submissionRefId || submission._id || 'record'}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return res.end(pdfBuffer);
+    } catch (err) {
+        console.error('[OTRF_REPORT_ROUTE] Error generating OTRF PDF:', err);
+        return res.status(500).json({ error: `Failed to generate OTRF document: ${err.message}` });
+    }
+});
+
 router.sanitizeQuestionForCandidate = sanitizeQuestionForCandidate;
 router.reconcileProctoringLog = reconcileProctoringLog;
 router.recalculateMCQScore = recalculateMCQScore;

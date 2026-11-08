@@ -11,7 +11,10 @@ const AnswerSchema = new mongoose.Schema({
     submittedCss: String, // for Web Coding (CSS)
     submittedJs: String, // for Web Coding (JS)
     isSavedByUser: { type: Boolean, default: false },
-    score: { type: Number, default: 0 }, // Scored marks for this question
+    score: { type: Number, default: 0 }, // Active / latest score updated by admin
+    initialScore: { type: Number, default: null }, // First assigned marks (locked)
+    isObjected: { type: Boolean, default: false }, // Whether an objection was raised
+    scoreAfterObjection: { type: Number, default: null }, // Marks after objection resolution
     isObjectionResolved: { type: Boolean, default: false },
     isManuallyGraded: { type: Boolean, default: false },
     testCaseResults: [{
@@ -52,6 +55,7 @@ const TestSubmissionSchema = new mongoose.Schema({
     candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate' },
     candidateName: String,
     studentId: String,
+    submissionRefId: { type: String, unique: true, sparse: true, index: true }, // Unique 12-digit numeric reference ID
     testId: { type: mongoose.Schema.Types.ObjectId, ref: 'TestConfigV2' },
     testTitle: String,
     startedAt: { type: Date, default: Date.now },
@@ -176,6 +180,9 @@ const TestSubmissionSchema = new mongoose.Schema({
         reason: String,
         details: String,
         attachments: [String],
+        marksBefore: { type: Number, default: null }, // First assigned or pre-objection marks
+        marksAfter: { type: Number, default: null }, // Marks after objection resolution
+        marksDiff: { type: Number, default: 0 }, // marksAfter - marksBefore
         status: { type: String, default: 'pending' },
         raisedAt: { type: Date, default: Date.now },
         createdAt: { type: Date, default: Date.now },
