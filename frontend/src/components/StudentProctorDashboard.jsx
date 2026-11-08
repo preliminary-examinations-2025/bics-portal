@@ -1149,18 +1149,39 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                         </div>
 
                         {eirfData.generatedQuestions.map((q, qIdx) => {
-                          const qAns = eirfData.existingReport?.formAnswers?.[q.id] ?? 
-                                       eirfData.existingReport?.formAnswers?.[`question_${qIdx + 1}`] ??
-                                       eirfData.existingReport?.additionalAnswers?.[q.id];
+                          const qId = q.questionId || q.id || `Q${qIdx + 1}`;
+                          const qType = String(q.questionType || q.type || 'TEXT').toLowerCase();
+
+                          // Robust answer lookup: checks by qId (e.g. "Q1", "Q2"), variations, and additionalAnswers
+                          const formAnswers = eirfData.existingReport?.formAnswers || {};
+                          const addAnswers = eirfData.existingReport?.additionalAnswers || {};
+                          const dynAnswers = addAnswers.dynamicAnswers || {};
+
+                          const rawAns = formAnswers[qId] ??
+                                         formAnswers[qId.toUpperCase()] ??
+                                         formAnswers[qId.toLowerCase()] ??
+                                         formAnswers[`Q${qIdx + 1}`] ??
+                                         formAnswers[`question_${qIdx + 1}`] ??
+                                         formAnswers[qIdx + 1] ??
+                                         dynAnswers[qId] ??
+                                         dynAnswers[`Q${qIdx + 1}`] ??
+                                         addAnswers[qId] ??
+                                         null;
+
+                          // Only Q1 (Root Cause) falls back to detailedExplanation if rawAns is not explicitly present
+                          const isFirstOrRoot = qIdx === 0 || (q.category && String(q.category).toUpperCase().includes('ROOT'));
+                          const qAns = (rawAns !== null && rawAns !== undefined && rawAns !== '')
+                            ? rawAns
+                            : (isFirstOrRoot ? (eirfData.existingReport?.detailedExplanation || null) : null);
 
                           return (
-                            <div key={q.id || qIdx} style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
+                            <div key={qId} style={{ backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                                 <span style={{ fontSize: '7.5pt', fontWeight: 'bold', color: '#002147' }}>
                                   Q{qIdx + 1} • <span style={{ color: '#0284c7' }}>{q.category || 'Incident Inquiry'}</span>
                                 </span>
-                                <span style={{ fontSize: '7pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '1px 5px', borderRadius: '3px' }}>
-                                  {q.type}
+                                <span style={{ fontSize: '7pt', backgroundColor: '#e2e8f0', color: '#475569', padding: '1px 5px', borderRadius: '3px', textTransform: 'uppercase', fontWeight: '600' }}>
+                                  {qType}
                                 </span>
                               </div>
 
@@ -1169,7 +1190,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                               </div>
 
                               <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px 10px', color: '#334155' }}>
-                                {q.type === 'file_upload' ? (
+                                {(qType === 'file_upload' || qType === 'fileupload') ? (
                                   qAns?.fileUrl ? (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                       <ImageIcon size={14} style={{ color: '#0284c7' }} />
@@ -1188,7 +1209,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                                   ) : (
                                     <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>No supporting file attached by candidate</span>
                                   )
-                                ) : q.type === 'checkbox' ? (
+                                ) : qType === 'checkbox' ? (
                                   Array.isArray(qAns) && qAns.length > 0 ? (
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                       {qAns.map((item, itemIdx) => (
@@ -1198,16 +1219,16 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                                       ))}
                                     </div>
                                   ) : (
-                                    <span style={{ color: '#64748b' }}>{typeof qAns === 'string' ? qAns : 'None specified'}</span>
+                                    <span style={{ color: '#64748b' }}>{typeof qAns === 'string' && qAns ? qAns : 'None specified'}</span>
                                   )
-                                ) : q.type === 'radio' ? (
+                                ) : qType === 'radio' ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                     <CheckCircle2 size={13} style={{ color: '#10b981' }} />
                                     <strong>{String(qAns || 'None selected')}</strong>
                                   </div>
                                 ) : (
                                   <p style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
-                                    {String(qAns || eirfData.existingReport?.detailedExplanation || 'No response provided')}
+                                    {String(qAns || 'No response provided')}
                                   </p>
                                 )}
                               </div>

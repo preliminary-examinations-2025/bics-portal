@@ -438,12 +438,13 @@ async function generateEirfVerdictPdfBuffer({
             curY += 17;
 
             const formAnswers = report?.formAnswers || report?.additionalAnswers || {};
-            const s1Ack = formAnswers.section1?.ackUnderstand || 'Yes, candidate acknowledged recorded proctoring trigger.';
-            const s1Warn = formAnswers.section1?.warningCount || `${fsExits + tabSwitches} warning(s) remembered`;
-            const s2Tab = formAnswers.section2?.tabReason || techContext.openedApp || 'No unauthorized external application declared.';
-            const s2Fs = formAnswers.section2?.fullscreenReason || 'Window focus transition explained in defense statement.';
-            const s3Per = formAnswers.section3?.peripherals || 'No external peripherals connected.';
-            const s4Narrative = report?.detailedExplanation || formAnswers.section4?.explanation || 'Candidate submitted explanation via emergency report form.';
+            const legacy = formAnswers.legacySections || {};
+            const s1Ack = formAnswers.section1?.ackUnderstand || legacy.section1?.ackUnderstand || 'Yes, candidate acknowledged recorded proctoring trigger.';
+            const s1Warn = formAnswers.section1?.warningCount || legacy.section1?.warningCount || `${fsExits + tabSwitches} warning(s) remembered`;
+            const s2Tab = formAnswers.section2?.tabReason || legacy.section2?.tabReason || formAnswers.Q2 || formAnswers.Q4 || techContext.openedApp || 'No unauthorized external application declared.';
+            const s2Fs = formAnswers.section2?.fullscreenReason || legacy.section2?.fullscreenReason || formAnswers.Q3 || 'Window focus transition explained in defense statement.';
+            const s3Per = formAnswers.section3?.peripherals || legacy.section3?.peripherals || formAnswers.Q5 || 'No external peripherals connected.';
+            const s4Narrative = report?.detailedExplanation || formAnswers.Q1 || formAnswers.section4?.explanation || legacy.section4?.explanation || 'Candidate submitted explanation via emergency report form.';
             const evidenceFiles = report?.evidenceFiles || report?.proofFiles || [];
             const evidenceStatus = evidenceFiles.length > 0 ? `${evidenceFiles.length} file(s) attached and cryptographically sealed` : 'No technical files uploaded';
 

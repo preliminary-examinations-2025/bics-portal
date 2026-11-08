@@ -352,6 +352,19 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
             }
         }
 
+        const formattedQuestions = activeQuestions.map((q, idx) => {
+            const qObj = q.toObject ? q.toObject() : { ...q };
+            const qId = qObj.questionId || qObj.id || `Q${idx + 1}`;
+            const qType = String(qObj.questionType || qObj.type || 'TEXT').toUpperCase();
+            return {
+                ...qObj,
+                id: qId,
+                questionId: qId,
+                type: qType.toLowerCase(),
+                questionType: qType
+            };
+        });
+
         return res.json({
             submissionId: toBicsId(submission._id || submission.id) || submissionId,
             bicsId: toBicsId(submission._id || submission.id) || submissionId,
@@ -367,7 +380,7 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
             existingReport: sanitizedExistingReport,
             hasEirfFlag,
             eirfNoticeEmailSent: Boolean(submission.eirfNoticeEmailSent),
-            generatedQuestions: activeQuestions,
+            generatedQuestions: formattedQuestions,
             pipelineStatus: submission.pipelineStatus || (hasEirfFlag ? 'AWAITING_EIRF' : 'CLEARED'),
             proctoringTelemetry: {
                 fullscreenExits: submission.proctoringLog?.fullscreenExits || 0,
