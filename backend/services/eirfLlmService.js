@@ -249,7 +249,7 @@ async function callGeminiApi(promptObj) {
         throw new Error('GEMINI_API_KEY is not configured in backend environment');
     }
 
-    const candidateModels = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite'];
+    const candidateModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
     for (const model of candidateModels) {
         const controller = new AbortController();
@@ -358,7 +358,6 @@ async function callOpenRouterApi(promptObj) {
     }
 
     const openRouterModels = [
-        'google/gemini-2.0-flash-001',
         'meta-llama/llama-3.3-70b-instruct',
         'qwen/qwen-2.5-72b-instruct'
     ];
