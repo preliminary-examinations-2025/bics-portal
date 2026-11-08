@@ -5,7 +5,9 @@ const TimetableSubSchema = new mongoose.Schema({
     course: String,
     date: String,
     time: String,
-    marks: Number
+    marks: Number,
+    mode: { type: String, default: 'Online Proctored' },
+    reportTime: { type: String, default: '09:30 AM' }
 }, { _id: false, id: false });
 
 const ClassTestSubSchema = new mongoose.Schema({

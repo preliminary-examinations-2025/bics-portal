@@ -60,40 +60,39 @@ async function generateHallTicketPdfBuffer({
             const pageWidth = 535;
             const startX = 30;
 
-            // --- Top Metadata & QR Code Header ---
-            const headerHeight = 75;
+            // --- Top Metadata & QR Code Header (No outer border box, BICS logo on top-left) ---
             const qrWidth = 65;
             const qrHeight = 65;
             const qrX = startX + pageWidth - qrWidth;
             const qrY = 26;
 
-            // Header Outer Border
-            doc.rect(startX, 26, pageWidth, headerHeight).strokeColor('#000000').lineWidth(1.2).stroke();
-
-            // Logos if local files exist
-            const logoPath = path.join(__dirname, '..', '..', 'public', 'logo.png');
-            let textStartX = startX + 12;
-            if (fs.existsSync(logoPath)) {
+            // BICS Logo on Top-Left
+            const bicsLogoPath = path.join(__dirname, '..', '..', 'public', 'bics_logo.png');
+            let textStartX = startX;
+            if (fs.existsSync(bicsLogoPath)) {
                 try {
-                    doc.image(logoPath, startX + 8, 30, { width: 44 });
-                    textStartX = startX + 58;
+                    doc.image(bicsLogoPath, startX, 26, { width: 46 });
+                    textStartX = startX + 54;
                 } catch (e) {}
             }
 
             const headerTextWidth = qrX - textStartX - 8;
 
             doc.fillColor('#000000').font('Helvetica-Bold').fontSize(12)
-               .text('BICS PRELIMINARY EXAMINATIONS 2026', textStartX, 32, { width: headerTextWidth });
+               .text('BICS PRELIMINARY EXAMINATIONS 2026', textStartX, 28, { width: headerTextWidth });
 
             doc.fillColor('#000000').font('Helvetica').fontSize(8)
-               .text('BASIC INTRODUCTORY COMPUTER SCIENCE (BICS) DEPARTMENT OF EXAMINATION', textStartX, 46, { width: headerTextWidth });
+               .text('BASIC INTRODUCTORY COMPUTER SCIENCE (BICS) DEPARTMENT OF EXAMINATION', textStartX, 42, { width: headerTextWidth });
 
             const typeLabel = isMid ? 'MID-SEMESTER EXAMINATION 2026' : 'END-SEMESTER EXAMINATION 2026';
             doc.fillColor('#000000').font('Helvetica-Bold').fontSize(9.5)
-               .text(`EXAMINATION ADMISSION PASS / HALL TICKET — ${typeLabel}`, textStartX, 58, { width: headerTextWidth });
+               .text(`EXAMINATION ADMISSION PASS / HALL TICKET — ${typeLabel}`, textStartX, 54, { width: headerTextWidth });
 
             doc.fillColor('#000000').font('Courier-Bold').fontSize(7.5)
-               .text(`Hall Ticket No: ${tNumber}   |   Eligibility: ${isEligible ? 'CONFIRMED' : 'PROVISIONAL'}`, textStartX, 72, { width: headerTextWidth });
+               .text(`Hall Ticket No: ${tNumber}   |   Eligibility: ${isEligible ? 'CONFIRMED' : 'PROVISIONAL'}`, textStartX, 68, { width: headerTextWidth });
+
+            // Thin underline divider
+            doc.moveTo(startX, 84).lineTo(startX + pageWidth, 84).strokeColor('#000000').lineWidth(0.8).stroke();
 
             // Top-Right QR Code
             if (qrPngBuffer) {
@@ -213,7 +212,19 @@ async function generateHallTicketPdfBuffer({
                 }
             ];
 
-            const activeSchedules = (Array.isArray(scheduleList) && scheduleList.length > 0) ? scheduleList : defaultSchedules;
+            const rawSchedules = (Array.isArray(scheduleList) && scheduleList.length > 0)
+                ? scheduleList
+                : (Array.isArray(systemConfig?.timetable) && systemConfig.timetable.length > 0 ? systemConfig.timetable : defaultSchedules);
+
+            const activeSchedules = rawSchedules.map(sch => ({
+                code: sch.code || 'R526CS01T',
+                name: sch.course || sch.name || sch.title || 'Course Unit',
+                date: sch.date || 'To be announced',
+                time: sch.time || '10:00 AM - 12:00 PM',
+                mode: sch.mode || (String(sch.code).includes('L') || String(sch.code).includes('P') ? 'Computer Lab' : 'Online Proctored'),
+                report: sch.reportTime || sch.reportingTime || sch.report || (String(sch.code).includes('L') || String(sch.code).includes('P') ? '01:30 PM' : '02:45 PM')
+            }));
+
             activeSchedules.forEach((sch) => {
                 doc.rect(startX, curY, pageWidth, 16).strokeColor('#000000').lineWidth(0.8).stroke();
                 doc.fillColor('#000000').fontSize(7).font('Helvetica');

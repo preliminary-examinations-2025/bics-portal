@@ -109,13 +109,14 @@ async function fetchImageBuffer(url) {
 }
 
 /**
- * Draws the official Page 1 Black & White header with QR on top-right
+ * Draws the official Page 1 Black & White header with top-left BICS logo and top-right QR code (no outer border box)
  */
 function drawBwHeader(doc, {
     title = 'BICS DEPARTMENT OF EXAMINATION',
     subtitle = 'BICS Online Testing System — Academic Integrity & Assessment Authority',
     docType = 'EXAMINATION RECORD',
     refId = 'No details available',
+    submissionId = null,
     bicsId = 'No details available',
     qrPayload = 'BICS_VERIFY',
     startX = 30,
@@ -125,40 +126,51 @@ function drawBwHeader(doc, {
     const qrWidth = 65;
     const qrHeight = 65;
     const qrX = startX + pageWidth - qrWidth;
-    const qrY = 28;
+    const qrY = 26;
 
-    // Header border box
-    doc.rect(startX, 28, pageWidth, headerHeight).strokeColor('#000000').lineWidth(1.2).stroke();
+    // Top-Left Logo (No outer border box)
+    const bicsLogoPath = path.join(__dirname, '..', '..', 'public', 'bics_logo.png');
+    let textStartX = startX;
+    if (fs.existsSync(bicsLogoPath)) {
+        try {
+            doc.image(bicsLogoPath, startX, 26, { width: 46 });
+            textStartX = startX + 54;
+        } catch (e) {}
+    }
 
-    // Text block (left of QR)
-    const textWidth = pageWidth - qrWidth - 16;
+    // Text block (between logo and QR)
+    const textWidth = qrX - textStartX - 8;
     doc.fillColor('#000000').fontSize(12).font('Helvetica-Bold')
-       .text(title, startX + 10, 34, { width: textWidth, align: 'left' });
+       .text(title, textStartX, 28, { width: textWidth, align: 'left' });
 
     doc.fillColor('#000000').fontSize(8).font('Helvetica')
-       .text(subtitle, startX + 10, 48, { width: textWidth, align: 'left' });
+       .text(subtitle, textStartX, 42, { width: textWidth, align: 'left' });
 
     doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold')
-       .text(docType, startX + 10, 60, { width: textWidth, align: 'left' });
+       .text(docType, textStartX, 54, { width: textWidth, align: 'left' });
 
-    // Reference meta line
-    const metaLine = `Submission Ref ID: ${refId}  |  BICS Object ID: ${bicsId}`;
+    // Reference meta line: strictly "Submission ID" and "Reference ID" (no "BICS Object ID")
+    const resolvedSubId = submissionId || bicsId;
+    const metaLine = `Reference ID: ${safeText(refId)}  |  Submission ID: ${safeText(resolvedSubId)}`;
     doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
-       .text(metaLine, startX + 10, 74, { width: textWidth, align: 'left', lineBreak: false });
+       .text(metaLine, textStartX, 68, { width: textWidth, align: 'left', lineBreak: false });
+
+    // Thin underline separator
+    doc.moveTo(startX, 84).lineTo(startX + pageWidth, 84).strokeColor('#000000').lineWidth(0.8).stroke();
 
     // QR Code on the top right
     const qrBuffer = generateQrBuffer(qrPayload);
     if (qrBuffer) {
         try {
-            doc.image(qrBuffer, qrX, qrY + 2, { width: qrWidth, height: qrHeight - 8 });
+            doc.image(qrBuffer, qrX, qrY + 1, { width: qrWidth, height: qrHeight - 8 });
             doc.fillColor('#000000').fontSize(5.5).font('Helvetica')
-               .text('Scan for Verification', qrX, qrY + qrHeight - 5, { width: qrWidth, align: 'center' });
+               .text('Scan for Verification', qrX, qrY + qrHeight - 6, { width: qrWidth, align: 'center' });
         } catch (e) {
             console.error('[PDF_COMMON] Error drawing header QR:', e);
         }
     }
 
-    return 28 + headerHeight + 10; // returns next Y
+    return 94; // returns next Y
 }
 
 /**

@@ -1,5 +1,7 @@
 const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
 const {
     safeText,
     formatISTDate,
@@ -252,37 +254,46 @@ async function generateEirfVerdictPdfBuffer({
             // PAGE 1: HEADER (WITH TOP-RIGHT QR), METADATA, DUAL-PHOTO AUDIT & DEFENSE
             // =========================================================================
 
-            // --- Header Bar with Top-Right QR Code ---
-            const headerHeight = 72;
+            // --- Header Bar with Top-Left Logo & Top-Right QR Code (No outer border box) ---
             const qrWidth = 65;
             const qrHeight = 65;
             const qrX = startX + pageWidth - qrWidth;
-            const qrY = 28;
+            const qrY = 26;
 
-            doc.rect(startX, 28, pageWidth, headerHeight).strokeColor('#000000').lineWidth(1.2).stroke();
-            const textWidth = pageWidth - qrWidth - 16;
+            const bicsLogoPath = path.join(__dirname, '..', '..', 'public', 'bics_logo.png');
+            let textStartX = startX;
+            if (fs.existsSync(bicsLogoPath)) {
+                try {
+                    doc.image(bicsLogoPath, startX, 26, { width: 46 });
+                    textStartX = startX + 54;
+                } catch (e) {}
+            }
+            const textWidth = qrX - textStartX - 8;
 
             doc.fillColor('#000000').fontSize(12).font('Helvetica-Bold')
-               .text('BICS DEPARTMENT OF EXAMINATION', startX + 10, 34, { width: textWidth, align: 'left' });
+               .text('BICS DEPARTMENT OF EXAMINATION', textStartX, 28, { width: textWidth, align: 'left' });
             doc.fillColor('#000000').fontSize(8).font('Helvetica')
-               .text('BICS Online Testing System — Academic Integrity & Incident Adjudication Unit', startX + 10, 48, { width: textWidth, align: 'left' });
+               .text('BICS Online Testing System — Academic Integrity & Incident Adjudication Unit', textStartX, 42, { width: textWidth, align: 'left' });
             doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold')
-               .text(`EIRF FORENSIC AUDIT REPORT (Ref: ${reportId})`, startX + 10, 60, { width: textWidth, align: 'left' });
+               .text(`EIRF FORENSIC AUDIT REPORT (Ref: ${reportId})`, textStartX, 54, { width: textWidth, align: 'left' });
 
-            const metaLine = `12-Digit Ref ID: ${safeText(submissionRefId)}  |  BICS Object ID: ${safeText(bicsObjectId)}`;
+            const metaLine = `Reference ID: ${safeText(submissionRefId)}  |  Submission ID: ${safeText(bicsObjectId)}`;
             doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
-               .text(metaLine, startX + 10, 74, { width: textWidth, align: 'left', lineBreak: false });
+               .text(metaLine, textStartX, 68, { width: textWidth, align: 'left', lineBreak: false });
+
+            // Thin underline divider
+            doc.moveTo(startX, 84).lineTo(startX + pageWidth, 84).strokeColor('#000000').lineWidth(0.8).stroke();
 
             // QR Code on Page 1 Top-Right
             if (qrPngBuffer) {
                 try {
-                    doc.image(qrPngBuffer, qrX, qrY + 2, { width: qrWidth, height: qrHeight - 8 });
+                    doc.image(qrPngBuffer, qrX, qrY + 1, { width: qrWidth, height: qrHeight - 8 });
                     doc.fillColor('#000000').fontSize(5.5).font('Helvetica')
-                       .text('Scan for Verification', qrX, qrY + qrHeight - 5, { width: qrWidth, align: 'center' });
+                       .text('Scan for Verification', qrX, qrY + qrHeight - 6, { width: qrWidth, align: 'center' });
                 } catch (e) {}
             }
 
-            let curY = 108;
+            let curY = 96;
 
             // --- 1. DOCUMENT METADATA & SYSTEM CONTEXT ---
             drawBwSectionBand(doc, startX, curY, pageWidth, 17, '1. DOCUMENT METADATA & SYSTEM CONTEXT');
@@ -468,13 +479,20 @@ async function generateEirfVerdictPdfBuffer({
             // =========================================================================
             doc.addPage();
 
-            // Page 2 Header
-            doc.rect(startX, 28, pageWidth, 30).strokeColor('#000000').lineWidth(1.2).stroke();
+            // Page 2 Header (No outer border box, BICS logo on top-left)
+            let p2TextStart = startX;
+            if (fs.existsSync(bicsLogoPath)) {
+                try {
+                    doc.image(bicsLogoPath, startX, 26, { width: 30 });
+                    p2TextStart = startX + 38;
+                } catch (e) {}
+            }
             doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold')
-               .text('BICS DEPARTMENT OF EXAMINATION — EIRF FORENSIC AUDIT REPORT', startX, 33, { width: pageWidth, align: 'center' });
+               .text('BICS DEPARTMENT OF EXAMINATION — EIRF FORENSIC AUDIT REPORT', p2TextStart, 28, { width: pageWidth - (p2TextStart - startX), align: 'left' });
             doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
-               .text(`Incident Ref: ${reportId}   |   Submission Ref: ${safeText(submissionRefId)}   |   Candidate ID: ${studentId}`, startX, 45, { width: pageWidth, align: 'center' });
+               .text(`Incident Ref: ${reportId}   |   Submission ID: ${safeText(bicsObjectId)}   |   Candidate ID: ${studentId}`, p2TextStart, 42, { width: pageWidth - (p2TextStart - startX), align: 'left' });
 
+            doc.moveTo(startX, 56).lineTo(startX + pageWidth, 56).strokeColor('#000000').lineWidth(0.8).stroke();
             curY = 66;
 
             // --- 5. REVIEWER'S ANALYSIS & CREDIBILITY FINDINGS ---
