@@ -599,13 +599,18 @@ function validateAndNormalizeQuestions(rawText, sanitizedPayload) {
             else if (rawType.includes('CHECKBOX') || rawType === 'MULTI_CHOICE') safeType = 'CHECKBOX';
             else if (rawType.includes('FILE') || rawType.includes('UPLOAD') || rawType.includes('PROOF')) safeType = 'FILE_UPLOAD';
 
-            // Extract options from various potential LLM keys (options, choices, items, selections)
+            // Extract options from various potential LLM keys (options, choices, items, selections, or key-value objects)
             const rawOpts = Array.isArray(q.options) ? q.options :
                            (Array.isArray(q.choices) ? q.choices :
                            (Array.isArray(q.items) ? q.items :
-                           (Array.isArray(q.selections) ? q.selections : [])));
+                           (Array.isArray(q.selections) ? q.selections :
+                           (q.options && typeof q.options === 'object' ? Object.values(q.options) : []))));
 
-            let opts = rawOpts.filter(o => typeof o === 'string' && o.trim().length > 0);
+            let opts = rawOpts.map(o => {
+                if (typeof o === 'string') return o.trim();
+                if (typeof o === 'object' && o !== null) return (o.text || o.label || o.value || o.option || '').trim();
+                return String(o || '').trim();
+            }).filter(o => o.length > 0);
 
             // Guard: If choice question has no options, backfill immediately from deterministic template
             if ((safeType === 'RADIO' || safeType === 'CHECKBOX') && opts.length === 0) {

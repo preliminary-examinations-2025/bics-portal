@@ -656,7 +656,7 @@ pre code, pre code *,
 }
 
 .bics-view-transition {
-    animation: bicsViewFadeIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: bicsViewFadeIn 0.95s cubic-bezier(0.2, 0.8, 0.2, 1) both;
     will-change: opacity, transform;
     width: 100%;
 }

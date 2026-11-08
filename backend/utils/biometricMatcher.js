@@ -12,6 +12,8 @@
  */
 
 const { Jimp } = require('jimp');
+const path = require('path');
+const fs = require('fs');
 
 const SIMILARITY_THRESHOLDS = {
   HIGH_AUTO_PASS: 0.72,
@@ -19,7 +21,51 @@ const SIMILARITY_THRESHOLDS = {
 };
 
 /**
- * Clean and convert image input (base64 data URL, buffer, or file path) into a Buffer
+ * Clean and convert image input (base64 data URL, buffer, remote URL, or file path) into a Buffer
+ */
+async function resolveImageBuffer(input) {
+  if (!input) return null;
+  if (Buffer.isBuffer(input)) return input;
+  if (typeof input === 'string') {
+    if (input.startsWith('data:image')) {
+      const commaIdx = input.indexOf(',');
+      if (commaIdx !== -1) {
+        return Buffer.from(input.slice(commaIdx + 1), 'base64');
+      }
+    }
+    let target = input;
+    if (target.startsWith('/media/')) {
+      target = `https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/${target.replace(/^\/media\//, '')}`;
+    } else if (target.includes('.netlify.app/media/')) {
+      const subPath = target.substring(target.indexOf('/media/') + 7);
+      target = `https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/${subPath}`;
+    }
+    if (target.includes('/public/uploads/')) {
+      const fileName = target.substring(target.indexOf('/public/uploads/') + 16);
+      const localPath = path.join(__dirname, '..', 'public', 'uploads', fileName);
+      if (fs.existsSync(localPath)) {
+        try { return fs.readFileSync(localPath); } catch (_) {}
+      }
+    }
+    if (/^https?:\/\//i.test(target)) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(target, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          return Buffer.from(await res.arrayBuffer());
+        }
+      } catch (err) {
+        console.warn('[BIOMETRIC_MATCHER] Remote image fetch warning:', err.message);
+      }
+    }
+  }
+  return input;
+}
+
+/**
+ * Legacy sync helper for backwards compatibility
  */
 function toImageBuffer(input) {
   if (!input) return null;
@@ -84,8 +130,10 @@ async function compareFaceBiometrics(liveFrame, referencePhoto) {
   }
 
   try {
-    const liveBuf = toImageBuffer(liveFrame);
-    const refBuf = toImageBuffer(referencePhoto);
+    const [liveBuf, refBuf] = await Promise.all([
+      resolveImageBuffer(liveFrame),
+      resolveImageBuffer(referencePhoto)
+    ]);
 
     // Read both images
     const [liveImg, refImg] = await Promise.all([

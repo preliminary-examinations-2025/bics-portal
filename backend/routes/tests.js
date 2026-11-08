@@ -547,17 +547,25 @@ const activeBiometricChallenges = new Map();
 // 2.6 Server-Issued Active Biometric Challenge (Phase 2)
 router.get('/biometrics/challenge', requireAuth, (req, res) => {
     const CHALLENGE_ACTIONS = [
-        { action: 'TURN_LEFT', instruction: 'Slowly turn your head slightly to the left' },
-        { action: 'TURN_RIGHT', instruction: 'Slowly turn your head slightly to the right' },
-        { action: 'TILT_HEAD', instruction: 'Tilt your head slightly to one side' }
+        { action: 'TURN_LEFT', instruction: 'Slowly turn your head slightly to the left', targetDurationMs: 1200 },
+        { action: 'TURN_RIGHT', instruction: 'Slowly turn your head slightly to the right', targetDurationMs: 1200 },
+        { action: 'TILT_HEAD', instruction: 'Tilt your head slightly to one side', targetDurationMs: 1200 }
     ];
-    const selected = CHALLENGE_ACTIONS[Math.floor(Math.random() * CHALLENGE_ACTIONS.length)];
+    // Select 2 distinct sequential challenges
+    const shuffled = [...CHALLENGE_ACTIONS].sort(() => 0.5 - Math.random());
+    const challenges = [
+        { step: 1, action: shuffled[0].action, instruction: shuffled[0].instruction },
+        { step: 2, action: shuffled[1].action, instruction: shuffled[1].instruction }
+    ];
+    const selected = challenges[0];
     const challengeId = `chal_${crypto.randomBytes(8).toString('hex')}`;
     const nonce = crypto.randomBytes(8).toString('hex');
     const expiresAt = Date.now() + (2 * 60 * 1000); // 2 minutes
 
     activeBiometricChallenges.set(challengeId, {
-        ...selected,
+        challenges,
+        action: selected.action,
+        instruction: selected.instruction,
         nonce,
         expiresAt,
         candidateId: req.user?.id || req.user?.studentId || null
@@ -573,6 +581,8 @@ router.get('/biometrics/challenge', requireAuth, (req, res) => {
     return res.json({
         success: true,
         challengeId,
+        challenges,
+        totalSteps: challenges.length,
         action: selected.action,
         instruction: selected.instruction,
         nonce,
@@ -602,17 +612,22 @@ router.post('/biometrics/verify', requireAuth, async (req, res) => {
             candidate = db.candidates.find(c => c.id === candidateId || c._id === candidateId || c.studentId === candidateId);
         }
 
-        const referencePhotoUrl = candidate?.referencePhotoUrl || candidate?.registrationData?.photoUrl || '';
+        const referencePhotoUrl = req.body.registeredPhotoUrl ||
+                                  candidate?.referencePhotoUrl ||
+                                  candidate?.registrationData?.photoUrl ||
+                                  candidate?.photoUrl ||
+                                  '';
 
         // Validate active challenge if provided
         let livenessPassed = false;
         if (challengeId && activeBiometricChallenges.has(challengeId)) {
             const challenge = activeBiometricChallenges.get(challengeId);
-            if (Date.now() <= challenge.expiresAt && challengeTelemetry?.actionCompleted) {
+            const isCompleted = challengeTelemetry?.allCompleted || challengeTelemetry?.actionCompleted;
+            if (Date.now() <= challenge.expiresAt && isCompleted) {
                 livenessPassed = true;
             }
             activeBiometricChallenges.delete(challengeId);
-        } else if (challengeTelemetry?.actionCompleted) {
+        } else if (challengeTelemetry?.allCompleted || challengeTelemetry?.actionCompleted) {
             livenessPassed = true;
         }
 

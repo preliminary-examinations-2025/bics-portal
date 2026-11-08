@@ -4074,7 +4074,7 @@ int main() {
               systemConfig={systemConfig}
             />
           ) : (
-            <>
+            <div key={view} className="portal-view-transition">
               {view === 'login' && !user && (
                 <Login
                   loginError={loginError}
@@ -4616,7 +4616,7 @@ int main() {
                   token={localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || ''}
                 />
               )}
-            </>
+            </div>
 
           )}
         </main>

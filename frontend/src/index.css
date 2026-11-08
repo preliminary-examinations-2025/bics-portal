@@ -209,6 +209,24 @@ body {
     overflow-x: hidden;
 }
 
+/* Slow, calm, smooth transitions between main portal views */
+@keyframes portalViewFadeIn {
+    0% {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.portal-view-transition {
+    animation: portalViewFadeIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: opacity, transform;
+    width: 100%;
+}
+
 /* Minimal boxy tables mimicking Codeforces */
 .cf-table-container {
     border: 1px solid var(--cf-border);

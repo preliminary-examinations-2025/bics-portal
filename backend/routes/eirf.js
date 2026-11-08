@@ -21,6 +21,82 @@ const proofUpload = multer({
     limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
+function healGeneratedQuestions(questions) {
+    if (!Array.isArray(questions) || questions.length === 0) return { healed: [], modified: false };
+    let modified = false;
+
+    const healed = questions.map((q, idx) => {
+        const qObj = q.toObject ? q.toObject() : { ...q };
+        const qType = String(qObj.questionType || '').toUpperCase();
+        const cat = String(qObj.category || '').toUpperCase();
+        const text = String(qObj.questionText || '').toLowerCase();
+        let opts = Array.isArray(qObj.options) ? qObj.options.filter(o => typeof o === 'string' && o.trim().length > 0) : [];
+
+        if ((qType === 'RADIO' || qType === 'CHECKBOX') && opts.length === 0) {
+            modified = true;
+            if (cat.includes('ENV') || text.includes('physical') || text.includes('surroundings') || qObj.questionId === 'Q5') {
+                opts = [
+                    'Private closed room with no other individuals present',
+                    'Shared residential room / family environment with occasional movement',
+                    'College or university computer laboratory / library',
+                    'Public venue / café / coworking facility',
+                    'Mobile / transit setting'
+                ];
+            } else if (cat.includes('REMEDIATION') || text.includes('troubleshoot') || text.includes('remediation') || text.includes('step') || qObj.questionId === 'Q6') {
+                opts = [
+                    'Toggled Wi-Fi off and on / reconnected to wireless access point',
+                    'Switched connection to mobile hotspot or USB tethering',
+                    'Rebooted home router or modem',
+                    'Closed background tasks via Task Manager / Activity Monitor',
+                    'Re-entered fullscreen immediately via on-screen button or key',
+                    'Refreshed the browser window to restore server sync',
+                    'Waited without altering system state until stability resumed'
+                ];
+            } else if (cat.includes('PROCESS') || cat.includes('BACKGROUND') || text.includes('software') || text.includes('popup') || qObj.questionId === 'Q4') {
+                opts = [
+                    'Antivirus / Security Suite scan or alert (e.g. Windows Defender, McAfee)',
+                    'Communication software (e.g. Discord, Slack, Teams, WhatsApp, Zoom)',
+                    'Browser extensions / popups (e.g. Grammarly, password manager, ad-blocker)',
+                    'System update dialog (Windows Update, macOS Software Update)',
+                    'Display or GPU utilities (e.g. NVIDIA GeForce Experience, dual monitor tools)',
+                    'None of the above / Machine had only the test window open'
+                ];
+            } else {
+                opts = [
+                    'Local ISP / Home broadband disconnection or packet drop',
+                    'Operating system notification / popup or antivirus interruption',
+                    'Accidental keyboard shortcut / trackpad gesture / peripheral disconnect',
+                    'Device power / hardware restart or low battery event',
+                    'Browser freeze / crash requiring tab reload',
+                    'Other unforeseen environmental disruption'
+                ];
+            }
+            qObj.options = opts;
+        }
+
+        // Detect UTC timestamps (e.g. 08:03:20 without IST) and convert/append IST clarification
+        if (typeof qObj.placeholder === 'string' && /At\s+(\d{2}:\d{2}:\d{2})(?!\s*IST)/.test(qObj.placeholder)) {
+            qObj.placeholder = qObj.placeholder.replace(/At\s+(\d{2}:\d{2}:\d{2})(?!\s*IST)/g, (match, timeStr) => {
+                try {
+                    const parts = timeStr.split(':').map(Number);
+                    let h = parts[0] + 5;
+                    let m = parts[1] + 30;
+                    if (m >= 60) { h += 1; m -= 60; }
+                    const istStr = `${String(h % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(parts[2]).padStart(2, '0')} IST`;
+                    modified = true;
+                    return `At ${istStr}`;
+                } catch (_) {
+                    return match;
+                }
+            });
+        }
+
+        return qObj;
+    });
+
+    return { healed, modified };
+}
+
 // 1. Get EIRF Incident Details & Breakdown by Submission ID
 router.get('/test/eirf/details/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
@@ -257,6 +333,25 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
             sanitizedExistingReport = safeReport;
         }
 
+        // Auto-heal empty choice options or legacy UTC timestamps and persist to database
+        const { healed: activeQuestions, modified } = healGeneratedQuestions(submission.generatedQuestions || []);
+        if (modified) {
+            submission.generatedQuestions = activeQuestions;
+            if (dbState.useMongo) {
+                TestSubmissionModel.updateOne(
+                    { _id: submission._id || targetSubId },
+                    { $set: { generatedQuestions: activeQuestions } }
+                ).catch(err => console.warn('[EIRF] Auto-healing update failed:', err.message));
+            } else {
+                const db = getJSONData();
+                const s = (db.testSubmissions || []).find(sub => String(sub._id || sub.id) === String(submission._id || submission.id));
+                if (s) {
+                    s.generatedQuestions = activeQuestions;
+                    saveJSONData(db);
+                }
+            }
+        }
+
         return res.json({
             submissionId: toBicsId(submission._id || submission.id) || submissionId,
             bicsId: toBicsId(submission._id || submission.id) || submissionId,
@@ -272,7 +367,7 @@ router.get('/test/eirf/details/:submissionId', async (req, res) => {
             existingReport: sanitizedExistingReport,
             hasEirfFlag,
             eirfNoticeEmailSent: Boolean(submission.eirfNoticeEmailSent),
-            generatedQuestions: submission.generatedQuestions || [],
+            generatedQuestions: activeQuestions,
             pipelineStatus: submission.pipelineStatus || (hasEirfFlag ? 'AWAITING_EIRF' : 'CLEARED'),
             proctoringTelemetry: {
                 fullscreenExits: submission.proctoringLog?.fullscreenExits || 0,

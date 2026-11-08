@@ -24,8 +24,8 @@ const indexCss = fs.readFileSync(indexCssPath, 'utf8');
 
 assert(indexCss.includes('@keyframes bicsViewFadeIn'), 'index.css must define @keyframes bicsViewFadeIn');
 assert(indexCss.includes('.bics-view-transition'), 'index.css must define .bics-view-transition class');
-assert(indexCss.includes('animation: bicsViewFadeIn 0.65s cubic-bezier(0.16, 1, 0.3, 1)'), 'index.css must use smooth 0.65s easing for bics-view-transition');
-console.log('     ✅ CSS transitions correctly configured with 0.65s easing.');
+assert(indexCss.includes('animation: bicsViewFadeIn 0.95s cubic-bezier(0.2, 0.8, 0.2, 1)'), 'index.css must use smooth 0.95s easing for bics-view-transition');
+console.log('     ✅ CSS transitions correctly configured with 0.95s calm easing.');
 
 // 2. Verify App.jsx view transitions and state wiring
 console.log('  2. Verifying App.jsx view transitions and idempotency guards...');

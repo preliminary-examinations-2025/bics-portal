@@ -624,7 +624,7 @@ export function SystemChecksView({
           <div style={{ backgroundColor: '#ecfdf5', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', color: '#15803d', fontSize: '8.5pt', marginBottom: '16px' }}>
             <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
             <div>
-              <strong>System Compatibility Confirmed:</strong> Your browser, hardware devices, and display environment satisfy all examination prerequisites. Start ticket cryptographically issued.
+              <strong>System Compatibility Confirmed:</strong> Your browser, hardware devices, and display environment satisfy all examination prerequisites. Environment successfully verified.
             </div>
           </div>
         )}
