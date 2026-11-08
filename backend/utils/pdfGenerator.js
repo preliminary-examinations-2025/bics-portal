@@ -68,79 +68,89 @@ CASE PARTICULARS:
 Provide ONLY the final synthesis paragraph.`;
 
     const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    const openrouterKey = process.env.OPENROUTER_API_KEY;
     const groqKey = process.env.GROQ_API_KEY;
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
 
-    // 1. Try Gemini API directly if key is available
+    // 1. Try Gemini API directly (Tier 1)
     if (geminiKey) {
-        try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { maxOutputTokens: 250, temperature: 0.2 }
-                })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-                if (text) return text;
+        const geminiModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+        for (const model of geminiModels) {
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { maxOutputTokens: 250, temperature: 0.2 }
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                    if (text) return text;
+                }
+            } catch (e) {
+                console.warn(`[FORENSIC_SYNTHESIS]: Gemini ${model} failed, trying next:`, e.message);
             }
-        } catch (e) {
-            console.warn("[FORENSIC_SYNTHESIS]: Gemini API failed, trying fallback:", e.message);
         }
     }
 
-    // 2. Try OpenRouter API fallback
-    if (openrouterKey) {
-        try {
-            const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${openrouterKey}`
-                },
-                body: JSON.stringify({
-                    model: 'google/gemini-flash-1.5',
-                    messages: [{ role: 'user', content: prompt }],
-                    max_tokens: 250,
-                    temperature: 0.2
-                })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                const text = data.choices?.[0]?.message?.content?.trim();
-                if (text) return text;
-            }
-        } catch (e) {
-            console.warn("[FORENSIC_SYNTHESIS]: OpenRouter API failed, trying Groq fallback:", e.message);
-        }
-    }
-
-    // 3. Try Groq API fallback
+    // 2. Try Groq API fallback (Tier 2)
     if (groqKey) {
-        try {
-            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${groqKey}`
-                },
-                body: JSON.stringify({
-                    model: 'llama-3.1-8b-instant',
-                    messages: [{ role: 'user', content: prompt }],
-                    max_tokens: 250,
-                    temperature: 0.2
-                })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                const text = data.choices?.[0]?.message?.content?.trim();
-                if (text) return text;
+        const groqModels = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
+        for (const model of groqModels) {
+            try {
+                const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${groqKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [{ role: 'user', content: prompt }],
+                        max_tokens: 250,
+                        temperature: 0.2
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = data.choices?.[0]?.message?.content?.trim();
+                    if (text) return text;
+                }
+            } catch (e) {
+                console.warn(`[FORENSIC_SYNTHESIS]: Groq ${model} failed, trying next:`, e.message);
             }
-        } catch (e) {
-            console.warn("[FORENSIC_SYNTHESIS]: Groq API failed, using rule-based synthesis:", e.message);
+        }
+    }
+
+    // 3. Try OpenRouter API fallback (Tier 3)
+    if (openrouterKey) {
+        const openrouterModels = ['meta-llama/llama-3.3-70b-instruct', 'qwen/qwen-2.5-72b-instruct'];
+        for (const model of openrouterModels) {
+            try {
+                const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${openrouterKey}`,
+                        'HTTP-Referer': 'https://bicsportal.netlify.app'
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [{ role: 'user', content: prompt }],
+                        max_tokens: 250,
+                        temperature: 0.2
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = data.choices?.[0]?.message?.content?.trim();
+                    if (text) return text;
+                }
+            } catch (e) {
+                console.warn(`[FORENSIC_SYNTHESIS]: OpenRouter ${model} failed, trying next:`, e.message);
+            }
         }
     }
 
