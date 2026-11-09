@@ -17,9 +17,10 @@ import { ActiveExamView } from './views/ActiveExamView';
 import { EirfFormView } from './views/EirfFormView';
 import { VerificationReviewView } from './views/VerificationReviewView';
 import { FinishedView } from './views/FinishedView';
+import { CustomAlertModal } from './components/common/CustomAlertModal';
 import { extractComprehensiveClientSecurity } from './utils/clientSecurity';
 import { getBlazeFaceModel, preloadBlazeFaceIdle } from './utils/blazefaceLoader';
-import { encryptEirfEnvelope, encryptPendingStorage, decryptPendingStorage, fetchServerPublicKey } from './utils/eirfCrypto';
+import { encryptPendingStorage, decryptPendingStorage } from './utils/eirfCrypto';
 import { 
   saveOfflineSubmission, 
   getOfflineSubmission, 
@@ -34,27 +35,7 @@ import {
   getOfflineDraft,
   deleteOfflineDraft
 } from './utils/offlineDb';
-
-const API_BASE = (() => {
-  const envBase = import.meta.env.VITE_API_BASE;
-  if (envBase && !envBase.includes('onrender.com')) {
-    return envBase;
-  }
-  const isLocal = typeof window !== 'undefined' && (
-    window.location.hostname === 'localhost' || 
-    window.location.hostname === '127.0.0.1' || 
-    window.location.hostname.startsWith('192.168.') || 
-    window.location.hostname.startsWith('10.') || 
-    window.location.hostname.startsWith('172.')
-  );
-  return isLocal 
-    ? `http://127.0.0.1:5000/api` 
-    : (typeof window !== 'undefined' 
-        ? `${window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')}/api` 
-        : '/api');
-})();
-
-const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
+import { API_BASE, safeReadJson } from './api/client';
 
 const getReturnUrl = (targetPath = '/coursework/online-tests') => {
   const isLocal = window.location.hostname === 'localhost' || 
@@ -365,12 +346,25 @@ function CandidateWatermark({ email }) {
   );
 }
 
+function clearScopedOtStorage(storage) {
+  if (!storage) return;
+  try {
+    for (let i = storage.length - 1; i >= 0; i--) {
+      const key = storage.key(i);
+      if (
+        key &&
+        (key.startsWith('bics_') || key.startsWith('kata_') || key === 'token')
+      ) {
+        storage.removeItem(key);
+      }
+    }
+  } catch (e) {}
+}
+
 function LogoutHandler() {
   useEffect(() => {
-    try {
-      localStorage.clear();
-      sessionStorage.clear();
-    } catch (e) {}
+    clearScopedOtStorage(typeof localStorage !== 'undefined' ? localStorage : null);
+    clearScopedOtStorage(typeof sessionStorage !== 'undefined' ? sessionStorage : null);
 
     const isFramed = typeof window !== 'undefined' && window.self !== window.top;
     if (isFramed) {
@@ -436,11 +430,13 @@ function AppContent() {
 
   const getActiveAuthToken = () => {
     if (typeof window === 'undefined') return '';
-    const storedAuth = localStorage.getItem('bics_auth_token') || 
-                       sessionStorage.getItem('bics_auth_token') || 
-                       localStorage.getItem('token') || 
-                       sessionStorage.getItem('token') || 
-                       (typeof window !== 'undefined' ? window.__BICS_AUTH_TOKEN__ : '') || 
+    const storedAuth = window.__BICS_OT_AUTH_TOKEN__ ||
+                       sessionStorage.getItem('bics_ot_auth_token') ||
+                       window.__BICS_AUTH_TOKEN__ ||
+                       sessionStorage.getItem('bics_auth_token') ||
+                       localStorage.getItem('bics_auth_token') ||
+                       localStorage.getItem('token') ||
+                       sessionStorage.getItem('token') ||
                        '';
     if (storedAuth && typeof storedAuth === 'string' && storedAuth.startsWith('eyJ')) {
       return storedAuth.trim();
@@ -454,13 +450,15 @@ function AppContent() {
   const getActiveExamToken = () => {
     if (token && typeof token === 'string') return token.trim();
     if (typeof window === 'undefined') return '';
-    return sessionStorage.getItem('bics_exam_token') || 
-           (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') || 
+    return window.__BICS_EXAM_TOKEN__ ||
+           sessionStorage.getItem('bics_exam_token') ||
            '';
   };
 
   const [loading, setLoading] = useState(true);
   const [verifyError, setVerifyError] = useState('');
+  const [verifyErrorKind, setVerifyErrorKind] = useState('forbidden');
+  const lastVerifyActionRef = useRef(null);
 
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
 
@@ -535,8 +533,6 @@ function AppContent() {
   const [eirfPeripherals, setEirfPeripherals] = useState('No, no peripherals were connected');
   const [eirfExplanation, setEirfExplanation] = useState('');
   const [eirfDeclarationChecked, setEirfDeclarationChecked] = useState(false);
-  const [eirfFileContent, setEirfFileContent] = useState('');
-  const [eirfFileName, setEirfFileName] = useState('');
   const [submittingEirf, setSubmittingEirf] = useState(false);
   const [eirfSuccessMessage, setEirfSuccessMessage] = useState('');
   const [eirfErrorMessage, setEirfErrorMessage] = useState('');
@@ -552,6 +548,10 @@ function AppContent() {
   const [webcamStream, setWebcamStream] = useState(null);
   const [micGranted, setMicGranted] = useState(false);
   const [micStream, setMicStream] = useState(null);
+  const [isAuthorizingMedia, setIsAuthorizingMedia] = useState(false);
+  const isAuthorizingMediaRef = useRef(false);
+  const [mediaPermissionError, setMediaPermissionError] = useState('');
+  const activeWebcamStreamRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isFocused, setIsFocused] = useState(true);
   const [consentChecked, setConsentChecked] = useState(false);
@@ -689,6 +689,7 @@ function AppContent() {
   // Auto-commit draft tracking refs (Item 3)
   const prevSelectedQuestionIndexRef = useRef(0);
   const examAnswersRef = useRef(examAnswers);
+  const draftQIdxRef = useRef(draftQIdx);
   const draftMCQRef = useRef(draftMCQ);
   const draftCodeRef = useRef(draftCode);
   const draftLanguageRef = useRef(draftLanguage);
@@ -697,12 +698,49 @@ function AppContent() {
   const draftJsRef = useRef(draftJs);
 
   useEffect(() => { examAnswersRef.current = examAnswers; }, [examAnswers]);
+  useEffect(() => { draftQIdxRef.current = draftQIdx; }, [draftQIdx]);
   useEffect(() => { draftMCQRef.current = draftMCQ; }, [draftMCQ]);
   useEffect(() => { draftCodeRef.current = draftCode; }, [draftCode]);
   useEffect(() => { draftLanguageRef.current = draftLanguage; }, [draftLanguage]);
   useEffect(() => { draftHtmlRef.current = draftHtml; }, [draftHtml]);
   useEffect(() => { draftCssRef.current = draftCss; }, [draftCss]);
   useEffect(() => { draftJsRef.current = draftJs; }, [draftJs]);
+
+  const setDraftMCQSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftMCQRef.current) : val;
+    draftMCQRef.current = next;
+    setDraftMCQ(next);
+  };
+  const setDraftCodeSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftCodeRef.current) : val;
+    draftCodeRef.current = next;
+    setDraftCode(next);
+  };
+  const setDraftLanguageSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftLanguageRef.current) : val;
+    draftLanguageRef.current = next;
+    setDraftLanguage(next);
+  };
+  const setDraftHtmlSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftHtmlRef.current) : val;
+    draftHtmlRef.current = next;
+    setDraftHtml(next);
+  };
+  const setDraftCssSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftCssRef.current) : val;
+    draftCssRef.current = next;
+    setDraftCss(next);
+  };
+  const setDraftJsSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftJsRef.current) : val;
+    draftJsRef.current = next;
+    setDraftJs(next);
+  };
+  const setDraftQIdxSafely = (val) => {
+    const next = typeof val === 'function' ? val(draftQIdxRef.current) : val;
+    draftQIdxRef.current = next;
+    setDraftQIdx(next);
+  };
 
   // Custom Modal dialog system (replaces browser alert/confirm to prevent fullscreen loss)
   const [customModal, setCustomModal] = useState({
@@ -712,7 +750,8 @@ function AppContent() {
     confirmText: 'OK',
     cancelText: 'Cancel',
     onConfirm: null,
-    isAlert: false
+    isAlert: false,
+    code: null
   });
 
   // Finished flow step (1: Test Submitted (5s), 2: Redirecting to candidate dashboard (2s))
@@ -772,28 +811,33 @@ function AppContent() {
   const handleObjectionFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setObjectionModal(prev => ({ ...prev, uploadingAttachment: true }));
+    setObjectionModal(prev => ({ ...prev, uploadingAttachment: true, error: '' }));
     const formData = new FormData();
     formData.append('imageFile', file);
     try {
-      const res = await fetch(`${API_BASE}/admin/upload-image`, {
+      const authToken = getActiveAuthToken();
+      const examToken = getActiveExamToken();
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      if (examToken) headers['x-exam-token'] = examToken;
+      const res = await fetch(`${API_BASE}/tests/upload-proof`, {
         method: 'POST',
+        headers,
         body: formData
       });
       const data = await res.json();
-      if (data.url) {
+      if (res.ok && data.url) {
         setObjectionModal(prev => ({
           ...prev,
           uploadingAttachment: false,
           attachments: [...(prev.attachments || []), data.url]
         }));
       } else {
-        alert(data.error || "Failed to upload supporting document.");
-        setObjectionModal(prev => ({ ...prev, uploadingAttachment: false }));
+        setObjectionModal(prev => ({ ...prev, uploadingAttachment: false, error: data.error || 'Failed to upload supporting document.' }));
       }
     } catch (err) {
       console.error(err);
-      setObjectionModal(prev => ({ ...prev, uploadingAttachment: false }));
+      setObjectionModal(prev => ({ ...prev, uploadingAttachment: false, error: 'Network error while uploading supporting document.' }));
     }
   };
 
@@ -934,7 +978,7 @@ function AppContent() {
   }, [webcamStream]);
 
   // Helper trigger methods for custom modal system
-  const triggerCustomAlert = (title, message) => {
+  const triggerCustomAlert = (title, message, code = null) => {
     setCustomModal({
       isOpen: true,
       title,
@@ -942,8 +986,18 @@ function AppContent() {
       confirmText: 'Close',
       cancelText: '',
       onConfirm: null,
-      isAlert: true
+      isAlert: true,
+      code
     });
+  };
+
+  const clearMediaPermissionModal = () => {
+    setMediaPermissionError('');
+    setCustomModal(prev => (
+      prev?.isOpen && prev?.code === 'MEDIA_PERMISSION'
+        ? { ...prev, isOpen: false, code: null }
+        : prev
+    ));
   };
 
   const triggerCustomConfirm = (title, message, onConfirmCallback) => {
@@ -954,18 +1008,29 @@ function AppContent() {
       confirmText: 'Confirm',
       cancelText: 'Cancel',
       onConfirm: onConfirmCallback,
-      isAlert: false
+      isAlert: false,
+      code: null
     });
   };
 
   // Fetch evaluated answer sheet for /assessment/evaluation/:id
   const loadSubmissionVerification = async (subId) => {
+    lastVerifyActionRef.current = () => loadSubmissionVerification(subId);
     setLoading(true);
+    setVerifyError('');
+    setVerifyErrorKind('forbidden');
     try {
       const res = await fetch(`${API_BASE}/tests/evaluation/${subId}`);
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setVerifyError(data?.error || "Unable to access evaluated answer sheet verification.");
+      const data = await safeReadJson(res);
+      if (!res.ok || !data || !data.success) {
+        const isTransient = res.status >= 500 || !data;
+        setVerifyErrorKind(isTransient ? 'transient' : 'forbidden');
+        setVerifyError(
+          (data && data.error) ||
+          (isTransient
+            ? "Temporary server connection issue while loading your evaluated answer sheet. Please retry."
+            : "Unable to access evaluated answer sheet verification.")
+        );
         setLoading(false);
         return;
       }
@@ -984,13 +1049,17 @@ function AppContent() {
       }
     } catch (err) {
       console.error("Verification fetch failed:", err);
+      setVerifyErrorKind('transient');
       setVerifyError("Network Error: Unable to establish secure link to verify evaluated paper.");
       setLoading(false);
     }
   };
 
   const loadEirfDetails = async (subId, tokenFromUrl) => {
+    lastVerifyActionRef.current = () => loadEirfDetails(subId, tokenFromUrl);
     setLoading(true);
+    setVerifyError('');
+    setVerifyErrorKind('forbidden');
     try {
       const urlToken = tokenFromUrl || new URLSearchParams(window.location.search).get('token') || '';
       const queryParam = urlToken ? `?token=${encodeURIComponent(urlToken)}` : '';
@@ -999,10 +1068,17 @@ function AppContent() {
         headers['x-eirf-token'] = urlToken;
       }
       const res = await fetch(`${API_BASE}/test/eirf/details/${subId}${queryParam}`, { headers });
-      const data = await res.json();
-      if (!res.ok || data.error || data.isExpired) {
-        setVerifyError(data.error || "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.");
-        document.title = "EIRF - Link Closed / Unavailable | BICS Portal";
+      const data = await safeReadJson(res);
+      if (!res.ok || !data || data.error || (data.isExpired && !data.existingReport)) {
+        const isTransient = res.status >= 500 || !data;
+        setVerifyErrorKind(isTransient ? 'transient' : 'forbidden');
+        setVerifyError(
+          (data && data.error) ||
+          (isTransient
+            ? "Temporary connection issue while loading the Emergency Incident Report Form (EIRF). Please retry."
+            : "The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.")
+        );
+        document.title = isTransient ? "Connection Interrupted | BICS Portal" : "EIRF - Link Closed / Unavailable | BICS Portal";
         setLoading(false);
         return;
       }
@@ -1012,8 +1088,9 @@ function AppContent() {
       document.title = `Emergency Incident Report Form (EIRF) - ${eTitle} | BICS Portal`;
     } catch (err) {
       console.error("Error loading EIRF details:", err);
-      setVerifyError("The Emergency Incident Report Form (EIRF) is closed, moved, or unavailable at this link.");
-      document.title = "EIRF - Link Closed / Unavailable | BICS Portal";
+      setVerifyErrorKind('transient');
+      setVerifyError("Network Error: Unable to reach the server for the Emergency Incident Report Form (EIRF). Please retry.");
+      document.title = "Connection Interrupted | BICS Portal";
     } finally {
       setLoading(false);
     }
@@ -1046,9 +1123,15 @@ function AppContent() {
       const parsedToken = searchParams.get('token');
       const urlAuthToken = searchParams.get('authToken') || searchParams.get('jwt');
       if (urlAuthToken) {
-        localStorage.setItem('bics_auth_token', urlAuthToken);
-        sessionStorage.setItem('bics_auth_token', urlAuthToken);
-        if (typeof window !== 'undefined') window.__BICS_AUTH_TOKEN__ = urlAuthToken;
+        sessionStorage.setItem('bics_ot_auth_token', urlAuthToken);
+        if (typeof window !== 'undefined') window.__BICS_OT_AUTH_TOKEN__ = urlAuthToken;
+        if (window.history && window.history.replaceState) {
+          const cleanParams = new URLSearchParams(window.location.search);
+          cleanParams.delete('authToken');
+          cleanParams.delete('jwt');
+          const cleanQuery = cleanParams.toString();
+          window.history.replaceState({}, document.title, `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash || ''}`);
+        }
       }
       if (parsedToken) {
         sessionStorage.setItem('bics_exam_token', parsedToken);
@@ -1060,7 +1143,6 @@ function AppContent() {
         return;
       }
       setToken(parsedToken);
-      fetchServerPublicKey(API_BASE).catch(() => {});
       verifyExamToken(parsedToken);
       return;
     }
@@ -1168,22 +1250,37 @@ function AppContent() {
       questionId: qId,
       reason: 'Testcase evaluation discrepancy',
       details: '',
+      attachments: [],
+      uploadingAttachment: false,
       submitting: false,
       error: '',
-      success: ''
+      success: '',
+      submittedObjectionId: null,
+      copiedId: false
     });
   };
 
   const verifyExamToken = async (tokenStr) => {
+    lastVerifyActionRef.current = () => verifyExamToken(tokenStr);
+    setLoading(true);
+    setVerifyError('');
+    setVerifyErrorKind('forbidden');
     try {
       const res = await fetch(`${API_BASE}/tests/verify-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: tokenStr })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setVerifyError(data.error || "Failed to verify exam security token.");
+      const data = await safeReadJson(res);
+      if (!res.ok || !data || !data.success) {
+        const isTransient = res.status >= 500 || !data;
+        setVerifyErrorKind(isTransient ? 'transient' : 'forbidden');
+        setVerifyError(
+          (data && data.error) ||
+          (isTransient
+            ? "Examination server is waking up or temporarily unreachable. Please retry."
+            : "Failed to verify exam security token.")
+        );
         setLoading(false);
         return;
       }
@@ -1197,10 +1294,8 @@ function AppContent() {
 
       if (data.authToken || data.token) {
         const tokenVal = data.authToken || data.token;
-        localStorage.setItem('bics_auth_token', tokenVal);
-        sessionStorage.setItem('bics_auth_token', tokenVal);
-        localStorage.setItem('token', tokenVal);
-        if (typeof window !== 'undefined') window.__BICS_AUTH_TOKEN__ = tokenVal;
+        sessionStorage.setItem('bics_ot_auth_token', tokenVal);
+        if (typeof window !== 'undefined') window.__BICS_OT_AUTH_TOKEN__ = tokenVal;
       }
       
       // Load pre-existing state or localStorage/IndexedDB cache tied strictly to unique submission attempt
@@ -1230,13 +1325,13 @@ function AppContent() {
         return {
           questionId: q.id || q._id,
           type: q.type,
-          selectedOptionIndex: cachedAns ? cachedAns.selectedOptionIndex : null,
+          selectedOptionIndex: cachedAns?.selectedOptionIndex ?? null,
           selectedOptionIndices: cachedAns?.selectedOptionIndices || (cachedAns?.selectedOptionIndex !== undefined && cachedAns?.selectedOptionIndex !== null ? [cachedAns.selectedOptionIndex] : []),
-          submittedCode: cachedAns ? cachedAns.submittedCode : (q.initialTemplate || DEFAULT_TEMPLATES.cpp),
-          selectedLanguage: cachedAns ? (cachedAns.selectedLanguage || 'cpp') : 'cpp',
-          submittedHtml: cachedAns ? cachedAns.submittedHtml : (q.initialHtml || q.initialCode?.html || ''),
-          submittedCss: cachedAns ? cachedAns.submittedCss : (q.initialCss || q.initialCode?.css || ''),
-          submittedJs: cachedAns ? cachedAns.submittedJs : (q.initialJs || q.initialCode?.js || ''),
+          submittedCode: cachedAns?.submittedCode ?? (q.initialTemplate || DEFAULT_TEMPLATES.cpp),
+          selectedLanguage: cachedAns?.selectedLanguage || 'cpp',
+          submittedHtml: (cachedAns?.submittedHtml !== undefined && cachedAns?.submittedHtml !== null && cachedAns?.submittedHtml !== '') ? cachedAns.submittedHtml : (q.initialHtml || q.initialCode?.html || ''),
+          submittedCss: (cachedAns?.submittedCss !== undefined && cachedAns?.submittedCss !== null && cachedAns?.submittedCss !== '') ? cachedAns.submittedCss : (q.initialCss || q.initialCode?.css || ''),
+          submittedJs: (cachedAns?.submittedJs !== undefined && cachedAns?.submittedJs !== null && cachedAns?.submittedJs !== '') ? cachedAns.submittedJs : (q.initialJs || q.initialCode?.js || ''),
           testCaseResults: cachedAns?.testCaseResults || [],
           rawResults: cachedAns?.rawResults || (Array.isArray(cachedAns?.testCaseResults) && cachedAns.testCaseResults.length > 0 ? cachedAns.testCaseResults : null),
           compileError: cachedAns?.compileError || null,
@@ -1251,6 +1346,7 @@ function AppContent() {
       setLoading(false);
     } catch (err) {
       console.error(err);
+      setVerifyErrorKind('transient');
       setVerifyError("Network Error: Unable to establish secure link to database.");
       setLoading(false);
     }
@@ -1282,6 +1378,134 @@ function AppContent() {
     }, 400);
   };
 
+  const getActiveFullscreenElement = () => (
+    typeof document !== 'undefined'
+      ? (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement || null)
+      : null
+  );
+
+  const exitFullscreenSafely = async () => {
+    try {
+      if (typeof document === 'undefined' || !getActiveFullscreenElement()) return;
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+      else if (document.mozCancelFullScreen) await document.mozCancelFullScreen();
+      else if (document.msExitFullscreen) await document.msExitFullscreen();
+    } catch (e) {
+      console.warn("Fullscreen exit notice:", e);
+    } finally {
+      setIsFullscreen(Boolean(getActiveFullscreenElement()));
+    }
+  };
+
+  const queryMediaPermissionState = async (name) => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.permissions || typeof navigator.permissions.query !== 'function') {
+        return 'unknown';
+      }
+      const status = await navigator.permissions.query({ name });
+      return status?.state || 'unknown';
+    } catch (_) {
+      return 'unknown';
+    }
+  };
+
+  const hasLiveMediaTracks = (stream) => {
+    if (!stream || typeof stream.getVideoTracks !== 'function' || typeof stream.getAudioTracks !== 'function') {
+      return false;
+    }
+    const videoLive = stream.getVideoTracks().some(t => t.readyState === 'live');
+    const audioLive = stream.getAudioTracks().some(t => t.readyState === 'live');
+    return videoLive && audioLive;
+  };
+
+  const stopActiveMediaStreams = () => {
+    const activeStream = activeWebcamStreamRef.current || webcamStream;
+    activeWebcamStreamRef.current = null;
+    if (activeStream && typeof activeStream.getTracks === 'function') {
+      activeStream.getTracks().forEach(t => {
+        try { t.stop(); } catch (_) {}
+      });
+    }
+    if (micStream && typeof micStream.getTracks === 'function') {
+      micStream.getTracks().forEach(t => {
+        try { t.stop(); } catch (_) {}
+      });
+    }
+    setWebcamStream(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      const activeStream = activeWebcamStreamRef.current;
+      activeWebcamStreamRef.current = null;
+      if (activeStream && typeof activeStream.getTracks === 'function') {
+        activeStream.getTracks().forEach(t => {
+          try { t.stop(); } catch (_) {}
+        });
+      }
+    };
+  }, []);
+
+  const attachStreamLifecycleListeners = (stream) => {
+    const previous = activeWebcamStreamRef.current;
+    if (previous && previous !== stream && typeof previous.getTracks === 'function') {
+      activeWebcamStreamRef.current = null;
+      previous.getTracks().forEach(t => {
+        try { t.stop(); } catch (_) {}
+      });
+    }
+    activeWebcamStreamRef.current = stream;
+
+    if (stream && typeof stream.getTracks === 'function') {
+      stream.getTracks().forEach(track => {
+        track.addEventListener('ended', () => {
+          if (activeWebcamStreamRef.current !== stream) return;
+          const vLive = stream.getVideoTracks().some(t => t.readyState === 'live');
+          const aLive = stream.getAudioTracks().some(t => t.readyState === 'live');
+          if (!vLive) {
+            setWebcamGranted(false);
+            setWebcamStream(null);
+          }
+          if (!aLive) {
+            setMicGranted(false);
+          }
+        });
+      });
+    }
+  };
+
+  const acquireCameraAndMicStream = async () => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: true });
+    } catch (err) {
+      if (err?.name === 'OverconstrainedError' || err?.name === 'ConstraintNotSatisfiedError' || err?.name === 'TypeError') {
+        return await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      }
+      throw err;
+    }
+  };
+
+  const applyAuthorizedStream = (stream) => {
+    attachStreamLifecycleListeners(stream);
+    setWebcamStream(stream);
+    setWebcamGranted(true);
+    setMicGranted(true); // Grant microphone concurrently as well
+    clearMediaPermissionModal();
+    const nowIso = new Date().toISOString();
+    proctoringAllowedTimeRef.current = nowIso;
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('bics_proctoring_allowed_at', nowIso);
+    }
+    // Schedule background idle preload now that candidate granted camera permission
+    preloadBlazeFaceIdle();
+    setTimeout(() => {
+      if (calibVideoRef.current) {
+        calibVideoRef.current.srcObject = stream;
+      }
+    }, 100);
+  };
+
   const handleLockFullscreen = async () => {
     try {
       const elem = document.documentElement;
@@ -1289,14 +1513,15 @@ function AppContent() {
       else if (elem.webkitRequestFullscreen) await elem.webkitRequestFullscreen();
       else if (elem.mozRequestFullScreen) await elem.mozRequestFullScreen();
       else if (elem.msRequestFullscreen) await elem.msRequestFullscreen();
-      setIsFullscreen(true);
+      setIsFullscreen(Boolean(getActiveFullscreenElement()));
     } catch (e) {
       console.warn("Fullscreen request notice:", e);
+      setIsFullscreen(Boolean(getActiveFullscreenElement()));
     }
   };
 
   const handleCompleteBiometricGate = (data) => {
-    const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+    const isCurrentlyFullscreen = !!getActiveFullscreenElement();
     if (!isCurrentlyFullscreen) {
       setIsFullscreen(false);
       return;
@@ -1311,26 +1536,91 @@ function AppContent() {
 
   // 3. Proctoring Permissions Setup (Requests camera and microphone concurrently)
   const handleAuthorizeCamera = async () => {
+    if (isAuthorizingMediaRef.current) return;
+
+    // Reuse existing live stream cleanly without re-prompting (critical for Incognito ephemeral grants)
+    if (hasLiveMediaTracks(webcamStream)) {
+      applyAuthorizedStream(webcamStream);
+      return;
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      const msg = "Camera and microphone APIs are unavailable in this browser or context. Open the examination over HTTPS or localhost using Chrome/Edge.";
+      setMediaPermissionError(msg);
+      triggerCustomAlert("Browser Not Supported", msg, 'MEDIA_PERMISSION');
+      return;
+    }
+
+    isAuthorizingMediaRef.current = true;
+    setIsAuthorizingMedia(true);
+    clearMediaPermissionModal();
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true });
-      setWebcamStream(stream);
-      setWebcamGranted(true);
-      setMicGranted(true); // Grant microphone concurrently as well
-      const nowIso = new Date().toISOString();
-      proctoringAllowedTimeRef.current = nowIso;
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('bics_proctoring_allowed_at', nowIso);
+      const [camState, micState] = await Promise.all([
+        queryMediaPermissionState('camera'),
+        queryMediaPermissionState('microphone')
+      ]);
+
+      // In Chrome Incognito, permissions start as 'prompt' (or may be 'denied').
+      // Requesting getUserMedia() while DOM fullscreen hides the omnibox causes Chromium
+      // to auto-dismiss the permission prompt with NotAllowedError: Permission dismissed.
+      const needsPromptOrUnblock = camState !== 'granted' || micState !== 'granted';
+      if (getActiveFullscreenElement() && needsPromptOrUnblock) {
+        await exitFullscreenSafely();
+        await new Promise(r => setTimeout(r, 180));
       }
-      // Schedule background idle preload now that candidate granted camera permission
-      preloadBlazeFaceIdle();
-      setTimeout(() => {
-        if (calibVideoRef.current) {
-          calibVideoRef.current.srcObject = stream;
-        }
-      }, 100);
+
+      const stream = await acquireCameraAndMicStream();
+      applyAuthorizedStream(stream);
     } catch (err) {
-      console.error(err);
-      triggerCustomAlert("Access Denied", "Proctoring checks require webcam camera and microphone audio access to verify candidate identity.");
+      console.error("[Proctoring Media Authorization Error]:", err);
+
+      const errName = err?.name || '';
+      const errMsg = String(err?.message || '').toLowerCase();
+
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errMsg.includes('dismissed')) {
+        const [postCamState, postMicState] = await Promise.all([
+          queryMediaPermissionState('camera'),
+          queryMediaPermissionState('microphone')
+        ]);
+
+        // Recovery check if user granted both permissions in the address bar during a dismissed/raced call
+        if (postCamState === 'granted' && postMicState === 'granted') {
+          try {
+            const recoveredStream = await acquireCameraAndMicStream();
+            applyAuthorizedStream(recoveredStream);
+            return;
+          } catch (retryErr) {
+            console.warn("[Proctoring Media Recovery Retry Notice]:", retryErr);
+          }
+        }
+
+        const isDismissed = errMsg.includes('dismissed') || postCamState === 'prompt' || postMicState === 'prompt';
+        if (isDismissed) {
+          const msg = "The browser dismissed the Camera & Microphone permission prompt before access was granted.\n\nIf you are testing in Incognito or Private mode, ensure fullscreen is off while granting access, click \"Authorize Camera & Mic\" again, and choose \"Allow\" in the top-left browser prompt.";
+          setMediaPermissionError(msg);
+          triggerCustomAlert("Permission Prompt Dismissed", msg, 'MEDIA_PERMISSION');
+        } else {
+          const msg = "Camera or microphone permission is currently blocked in your browser.\n\nClick the camera/site-settings icon in your browser's address bar, set both Camera and Microphone to \"Allow\", and click \"Authorize Camera & Mic\" again.";
+          setMediaPermissionError(msg);
+          triggerCustomAlert("Camera & Microphone Blocked", msg, 'MEDIA_PERMISSION');
+        }
+      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        const msg = "No functional webcam camera or microphone was detected on this system. Please connect both a physical camera and microphone and retry.";
+        setMediaPermissionError(msg);
+        triggerCustomAlert("Hardware Not Found", msg, 'MEDIA_PERMISSION');
+      } else if (errName === 'NotReadableError' || errName === 'TrackStartError' || errName === 'AbortError') {
+        const msg = "Your camera or microphone is currently in use by another application or browser tab. Close other video/meeting apps and click \"Authorize Camera & Mic\" again.";
+        setMediaPermissionError(msg);
+        triggerCustomAlert("Device In Use", msg, 'MEDIA_PERMISSION');
+      } else {
+        const msg = "Proctoring checks require active webcam camera and microphone audio access to verify candidate identity.";
+        setMediaPermissionError(msg);
+        triggerCustomAlert("Access Denied", msg, 'MEDIA_PERMISSION');
+      }
+    } finally {
+      isAuthorizingMediaRef.current = false;
+      setIsAuthorizingMedia(false);
     }
   };
 
@@ -1434,7 +1724,7 @@ function AppContent() {
   // Check Fullscreen state with duration tracking & Deduplication (Item 3.1)
   useEffect(() => {
     const onFSChange = () => {
-      const fs = !!document.fullscreenElement;
+      const fs = !!getActiveFullscreenElement();
       setIsFullscreen(fs);
       
       if (flow === 'active_exam') {
@@ -1474,7 +1764,11 @@ function AppContent() {
     };
 
     document.addEventListener('fullscreenchange', onFSChange);
-    return () => document.removeEventListener('fullscreenchange', onFSChange);
+    document.addEventListener('webkitfullscreenchange', onFSChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFSChange);
+      document.removeEventListener('webkitfullscreenchange', onFSChange);
+    };
   }, [flow, proctoringWarnings]);
 
   // Check Window Focus and Tab Visibility state with duration tracking & Deduplication (Item 3.1)
@@ -1565,7 +1859,7 @@ function AppContent() {
   const handleStartExam = async () => {
     if (isStartingExamRef.current) return;
 
-    const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+    const isCurrentlyFullscreen = !!getActiveFullscreenElement();
     if (!consentRulesChecked || !consentProctoringChecked || !isCurrentlyFullscreen) {
       if (!isCurrentlyFullscreen) setIsFullscreen(false);
       return;
@@ -1575,13 +1869,37 @@ function AppContent() {
     setIsStartingExam(true);
     
     try {
-      const activeToken = localStorage.getItem('bics_auth_token') || 
-                          sessionStorage.getItem('bics_auth_token') || 
-                          localStorage.getItem('token') || 
-                          token || '';
-      const examSecurityToken = sessionStorage.getItem('bics_exam_token') || 
-                                token || 
-                                searchParams.get('token') || '';
+      let verifiedStream = activeWebcamStreamRef.current || webcamStream;
+      if (!hasLiveMediaTracks(verifiedStream)) {
+        const [camState, micState] = await Promise.all([
+          queryMediaPermissionState('camera'),
+          queryMediaPermissionState('microphone')
+        ]);
+        if (camState === 'granted' && micState === 'granted' && navigator.mediaDevices?.getUserMedia) {
+          try {
+            const refreshedStream = await acquireCameraAndMicStream();
+            applyAuthorizedStream(refreshedStream);
+            verifiedStream = refreshedStream;
+          } catch (mediaErr) {
+            console.warn("[Pre-Start Media Refresh Failed]:", mediaErr);
+          }
+        }
+        if (!hasLiveMediaTracks(verifiedStream)) {
+          setWebcamGranted(false);
+          setMicGranted(false);
+          const msg = "Webcam camera and microphone access is inactive or was revoked. Please re-authorize Camera & Mic on System Checks before starting the test.";
+          setMediaPermissionError(msg);
+          isStartingExamRef.current = false;
+          setIsStartingExam(false);
+          setFlow('system_checks');
+          triggerCustomAlert("Proctoring Permission Required", msg, 'MEDIA_PERMISSION');
+          return;
+        }
+      }
+
+      const activeToken = getActiveAuthToken();
+      const examSecurityToken = getActiveExamToken() ||
+                                (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('token') || '' : '');
       const activeStartTicket = startTicket || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_start_ticket') || '' : '');
 
       const reqHeaders = { 'Content-Type': 'application/json' };
@@ -1618,6 +1936,7 @@ function AppContent() {
       isAutoSubmittedRef.current = false;
       lastLoggedWarnings.current = { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 };
       setProctoringWarnings({ fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0 });
+      clearMediaPermissionModal();
 
       // Retrieve authentic historical user click timestamps
       const consentTime = consentAcceptedTimeRef.current || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_consent_accepted_at') : null) || new Date().toISOString();
@@ -1632,21 +1951,28 @@ function AppContent() {
       // Upload baseline photograph to server / Cloudinary
       if (baselinePhoto && data.submission) {
         const subId = data.submission.id || data.submission._id;
+        const userAuth = getActiveAuthToken();
+        const examToken = getActiveExamToken();
         fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+            ...(examToken ? { 'x-exam-token': examToken } : {})
+          },
           body: JSON.stringify({
             image: baselinePhoto,
             eventType: 'BASELINE_REFERENCE',
-            details: 'Initial biometric reference portrait captured during onboarding.'
+            details: 'Initial biometric reference portrait captured during onboarding.',
+            studentId: candidate?.studentId || data.submission?.studentId || ''
           })
         }).catch(err => console.warn("Baseline photo background upload notice:", err));
       }
 
       setFlow('active_exam');
       setTimeout(() => {
-        if (examVideoRef.current && webcamStream) {
-          examVideoRef.current.srcObject = webcamStream;
+        if (examVideoRef.current && (verifiedStream || webcamStream)) {
+          examVideoRef.current.srcObject = verifiedStream || webcamStream;
         }
       }, 100);
     } catch (err) {
@@ -2199,11 +2525,13 @@ function AppContent() {
   // Web Audio API ambient voice proctoring loop during active exam
   useEffect(() => {
     if (flow !== 'active_exam' || !submission || !webcamStream) return;
+    if (typeof webcamStream.getAudioTracks === 'function' && webcamStream.getAudioTracks().length === 0) return;
 
     let active = true;
     let audioCtx = null;
     let intervalId = null;
     let sustainedVoiceCount = 0;
+    let resumeAudio = null;
 
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -2213,7 +2541,7 @@ function AppContent() {
           audioCtx.resume().catch(() => {});
         }
 
-        const resumeAudio = () => {
+        resumeAudio = () => {
           if (audioCtx && audioCtx.state === 'suspended') {
             audioCtx.resume().catch(() => {});
           }
@@ -2316,6 +2644,10 @@ function AppContent() {
 
     return () => {
       active = false;
+      if (resumeAudio) {
+        window.removeEventListener('click', resumeAudio);
+        window.removeEventListener('keydown', resumeAudio);
+      }
       if (intervalId) clearInterval(intervalId);
       if (audioCtx && audioCtx.state !== 'closed') {
         audioCtx.close().catch(() => {});
@@ -2619,26 +2951,68 @@ function AppContent() {
 
     const prevIndex = prevSelectedQuestionIndexRef.current;
     let currentAnswers = examAnswersRef.current;
+    let committedPrevAnswers = null;
 
-    // If switching away from a valid previous question index, auto-commit the active drafts
+    // If switching away from a valid previous question index whose drafts match prevIndex, auto-commit them
     if (
       prevIndex !== undefined &&
       prevIndex !== null &&
       prevIndex !== selectedQuestionIndex &&
+      draftQIdxRef.current === prevIndex &&
       test.questions[prevIndex]
     ) {
       const updated = [...currentAnswers];
       if (updated[prevIndex]) {
-        updated[prevIndex] = {
-          ...updated[prevIndex],
-          selectedOptionIndex: draftMCQRef.current,
-          submittedCode: draftCodeRef.current,
-          selectedLanguage: draftLanguageRef.current,
-          submittedHtml: draftHtmlRef.current,
-          submittedCss: draftCssRef.current,
-          submittedJs: draftJsRef.current
-        };
+        const prevQuest = test.questions[prevIndex];
+        if (prevQuest.type === 'web') {
+          const starterHtml = prevQuest.initialHtml || prevQuest.initialCode?.html || '';
+          const starterCss = prevQuest.initialCss || prevQuest.initialCode?.css || '';
+          const starterJs = prevQuest.initialJs || prevQuest.initialCode?.js || '';
+
+          const rawHtml = draftHtmlRef.current;
+          const rawCss = draftCssRef.current;
+          const rawJs = draftJsRef.current;
+
+          const finalHtml = (rawHtml !== undefined && rawHtml !== null && rawHtml !== '')
+            ? rawHtml
+            : (updated[prevIndex]?.submittedHtml || starterHtml);
+          const finalCss = (rawCss !== undefined && rawCss !== null && rawCss !== '')
+            ? rawCss
+            : (updated[prevIndex]?.submittedCss || starterCss);
+          const finalJs = (rawJs !== undefined && rawJs !== null && rawJs !== '')
+            ? rawJs
+            : (updated[prevIndex]?.submittedJs || starterJs);
+
+          updated[prevIndex] = {
+            ...updated[prevIndex],
+            submittedHtml: finalHtml,
+            submittedCss: finalCss,
+            submittedJs: finalJs
+          };
+        } else if (prevQuest.type === 'coding') {
+          updated[prevIndex] = {
+            ...updated[prevIndex],
+            submittedCode: draftCodeRef.current,
+            selectedLanguage: draftLanguageRef.current
+          };
+        } else {
+          const isPrevMulti = Boolean(prevQuest.type === 'mcc' || prevQuest.isMultiChoice === true || (Array.isArray(prevQuest.correctOptionIndices) && prevQuest.correctOptionIndices.length > 1));
+          const prevDraftVal = draftMCQRef.current;
+          const prevSelIdx = isPrevMulti
+            ? (Array.isArray(prevDraftVal) && prevDraftVal.length > 0 ? prevDraftVal[0] : (typeof prevDraftVal === 'number' ? prevDraftVal : null))
+            : (typeof prevDraftVal === 'number' ? prevDraftVal : (Array.isArray(prevDraftVal) && prevDraftVal.length > 0 ? prevDraftVal[0] : null));
+          const prevMultiIdx = isPrevMulti
+            ? (Array.isArray(prevDraftVal) ? prevDraftVal : (prevDraftVal !== null && prevDraftVal !== undefined ? [Number(prevDraftVal)] : []))
+            : (prevSelIdx !== null && prevSelIdx !== undefined ? [Number(prevSelIdx)] : []);
+
+          updated[prevIndex] = {
+            ...updated[prevIndex],
+            selectedOptionIndex: prevSelIdx,
+            selectedOptionIndices: prevMultiIdx
+          };
+        }
         currentAnswers = updated;
+        committedPrevAnswers = updated;
         examAnswersRef.current = updated;
         setExamAnswers(updated);
 
@@ -2646,34 +3020,45 @@ function AppContent() {
         const subId = submission?.id || submission?._id || 'new_attempt';
         const storageKey = `bics_draft_${test.id}_${candidate?.id}_${subId}`;
         safePersistDraft(storageKey, updated);
-
-        // Auto-save to server draft
-        saveServerDraft(updated);
       }
     }
 
     // Now update prevIndex to current selectedQuestionIndex
     prevSelectedQuestionIndexRef.current = selectedQuestionIndex;
 
-    // Load active question drafts from the latest answers state
+    // Load active question drafts synchronously into refs & state before any draft sync runs
     if (test.questions[selectedQuestionIndex]) {
       const activeAns = currentAnswers[selectedQuestionIndex];
       const activeQuest = test.questions[selectedQuestionIndex];
       const isMulti = Boolean(activeQuest.type === 'mcc' || activeQuest.isMultiChoice === true || (Array.isArray(activeQuest.correctOptionIndices) && activeQuest.correctOptionIndices.length > 1));
       if (isMulti) {
-        setDraftMCQ(Array.isArray(activeAns?.selectedOptionIndices) ? activeAns.selectedOptionIndices : (activeAns?.selectedOptionIndex !== undefined && activeAns?.selectedOptionIndex !== null ? [activeAns.selectedOptionIndex] : []));
+        setDraftMCQSafely(Array.isArray(activeAns?.selectedOptionIndices) ? activeAns.selectedOptionIndices : (activeAns?.selectedOptionIndex !== undefined && activeAns?.selectedOptionIndex !== null ? [activeAns.selectedOptionIndex] : []));
       } else {
         const singleVal = activeAns?.selectedOptionIndex !== undefined && activeAns?.selectedOptionIndex !== null
           ? activeAns.selectedOptionIndex
           : (Array.isArray(activeAns?.selectedOptionIndices) && activeAns.selectedOptionIndices.length > 0 ? activeAns.selectedOptionIndices[0] : null);
-        setDraftMCQ(singleVal);
+        setDraftMCQSafely(singleVal);
       }
-      setDraftCode(activeAns?.submittedCode ?? '');
-      setDraftLanguage(activeAns?.selectedLanguage ?? 'cpp');
-      setDraftHtml(activeAns?.submittedHtml ?? (activeQuest.initialHtml || activeQuest.initialCode?.html || ''));
-      setDraftCss(activeAns?.submittedCss ?? (activeQuest.initialCss || activeQuest.initialCode?.css || ''));
-      setDraftJs(activeAns?.submittedJs ?? (activeQuest.initialJs || activeQuest.initialCode?.js || ''));
-      setDraftQIdx(selectedQuestionIndex);
+      setDraftCodeSafely(activeAns?.submittedCode ?? (activeQuest.initialTemplate || DEFAULT_TEMPLATES.cpp));
+      setDraftLanguageSafely(activeAns?.selectedLanguage ?? 'cpp');
+      const starterHtml = activeQuest.initialHtml || activeQuest.initialCode?.html || '';
+      const starterCss = activeQuest.initialCss || activeQuest.initialCode?.css || '';
+      const starterJs = activeQuest.initialJs || activeQuest.initialCode?.js || '';
+
+      const resolvedHtml = (activeAns?.submittedHtml !== undefined && activeAns?.submittedHtml !== null && activeAns?.submittedHtml !== '')
+        ? activeAns.submittedHtml
+        : starterHtml;
+      const resolvedCss = (activeAns?.submittedCss !== undefined && activeAns?.submittedCss !== null && activeAns?.submittedCss !== '')
+        ? activeAns.submittedCss
+        : starterCss;
+      const resolvedJs = (activeAns?.submittedJs !== undefined && activeAns?.submittedJs !== null && activeAns?.submittedJs !== '')
+        ? activeAns.submittedJs
+        : starterJs;
+
+      setDraftHtmlSafely(resolvedHtml);
+      setDraftCssSafely(resolvedCss);
+      setDraftJsSafely(resolvedJs);
+      setDraftQIdxSafely(selectedQuestionIndex);
       setWebActiveTab('html');
       setWebConsoleLogs([]);
 
@@ -2695,6 +3080,11 @@ function AppContent() {
         setCompileError(null);
         setConsoleTab('testcase');
       }
+    }
+
+    if (committedPrevAnswers) {
+      // Auto-save to server draft only after active drafts reflect selectedQuestionIndex
+      saveServerDraft(committedPrevAnswers);
     }
   }, [selectedQuestionIndex, test]);
 
@@ -2759,7 +3149,8 @@ function AppContent() {
 
   // Wrapper for draft MCQ state changes that records telemetry immediately on user action
   const handleDraftMCQChange = (newVal) => {
-    setDraftMCQ(newVal);
+    setDraftQIdxSafely(selectedQuestionIndex);
+    setDraftMCQSafely(newVal);
     recordOptionMarked(selectedQuestionIndex, newVal);
   };
 
@@ -2767,7 +3158,7 @@ function AppContent() {
   const handleCodeReset = (qIndex, qType) => {
     const qNum = qIndex + 1;
     if (qType === 'coding') {
-      const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+      const langName = (draftLanguageRef.current || draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguageRef.current || draftLanguage || 'C++');
       logProctoringEvent(submission, 'CODE_RESET', `Reset ${langName} code for Q${qNum} to starter template.`);
     } else if (qType === 'web') {
       logProctoringEvent(submission, 'WEB_RESET', `Reset Web Dev files for Q${qNum} to initial starter templates.`);
@@ -2777,50 +3168,67 @@ function AppContent() {
   // Synchronously commit active draft buffers into examAnswersRef.current and return latest answers
   const commitActiveDraftToAnswers = () => {
     const currentList = Array.isArray(examAnswersRef.current) ? [...examAnswersRef.current] : [...examAnswers];
-    if (test?.questions && test.questions[selectedQuestionIndex]) {
+    if (test?.questions && test.questions[selectedQuestionIndex] && draftQIdxRef.current === selectedQuestionIndex) {
       const activeQ = test.questions[selectedQuestionIndex];
       const qNum = selectedQuestionIndex + 1;
       const qId = String(activeQ.id || activeQ._id || `q_${qNum}`);
-      const isMulti = Boolean(activeQ.type === 'mcc' || activeQ.isMultiChoice === true || (Array.isArray(activeQ.correctOptionIndices) && activeQ.correctOptionIndices.length > 1));
       const existing = currentList[selectedQuestionIndex] || { questionId: activeQ.id, type: activeQ.type };
-      const selOptIndex = isMulti
-        ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
-        : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
-      const multiIndices = isMulti
-        ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
-        : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
-      currentList[selectedQuestionIndex] = {
-        ...existing,
-        selectedOptionIndex: selOptIndex,
-        selectedOptionIndices: multiIndices,
-        submittedCode: draftCode !== undefined ? draftCode : existing.submittedCode,
-        selectedLanguage: draftLanguage || existing.selectedLanguage || 'cpp',
-        submittedHtml: draftHtml !== undefined ? draftHtml : existing.submittedHtml,
-        submittedCss: draftCss !== undefined ? draftCss : existing.submittedCss,
-        submittedJs: draftJs !== undefined ? draftJs : existing.submittedJs
-      };
+      const curMCQ = draftMCQRef.current;
+      const curCode = draftCodeRef.current;
+      const curLang = draftLanguageRef.current;
+      const curHtml = draftHtmlRef.current;
+      const curCss = draftCssRef.current;
+      const curJs = draftJsRef.current;
+
+      if (activeQ.type === 'web') {
+        currentList[selectedQuestionIndex] = {
+          ...existing,
+          submittedHtml: curHtml !== undefined ? curHtml : existing.submittedHtml,
+          submittedCss: curCss !== undefined ? curCss : existing.submittedCss,
+          submittedJs: curJs !== undefined ? curJs : existing.submittedJs
+        };
+      } else if (activeQ.type === 'coding') {
+        currentList[selectedQuestionIndex] = {
+          ...existing,
+          submittedCode: curCode !== undefined ? curCode : existing.submittedCode,
+          selectedLanguage: curLang || existing.selectedLanguage || 'cpp'
+        };
+      } else {
+        const isMulti = Boolean(activeQ.type === 'mcc' || activeQ.isMultiChoice === true || (Array.isArray(activeQ.correctOptionIndices) && activeQ.correctOptionIndices.length > 1));
+        const selOptIndex = isMulti
+          ? (Array.isArray(curMCQ) && curMCQ.length > 0 ? curMCQ[0] : (typeof curMCQ === 'number' ? curMCQ : null))
+          : (typeof curMCQ === 'number' ? curMCQ : (Array.isArray(curMCQ) && curMCQ.length > 0 ? curMCQ[0] : null));
+        const multiIndices = isMulti
+          ? (Array.isArray(curMCQ) ? curMCQ : (curMCQ !== null && curMCQ !== undefined ? [Number(curMCQ)] : []))
+          : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
+        currentList[selectedQuestionIndex] = {
+          ...existing,
+          selectedOptionIndex: selOptIndex,
+          selectedOptionIndices: multiIndices
+        };
+      }
       examAnswersRef.current = currentList;
       setExamAnswers(currentList);
 
       // Telemetry sync on question switch:
       if (activeQ.type === 'mcq' || activeQ.type === 'scc' || activeQ.type === 'mcc') {
-        recordOptionMarked(selectedQuestionIndex, draftMCQ);
+        recordOptionMarked(selectedQuestionIndex, curMCQ);
       } else if (activeQ.type === 'coding') {
-        if (draftCode && (draftCode || '').trim().length > 0 && lastLoggedCodeRef.current[qId] !== draftCode) {
-          lastLoggedCodeRef.current[qId] = draftCode;
-          const lines = (draftCode || '').split('\n').length;
-          const chars = (draftCode || '').length;
-          const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+        if (curCode && (curCode || '').trim().length > 0 && lastLoggedCodeRef.current[qId] !== curCode) {
+          lastLoggedCodeRef.current[qId] = curCode;
+          const lines = (curCode || '').split('\n').length;
+          const chars = (curCode || '').length;
+          const langName = (curLang || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (curLang || 'C++');
           logProctoringEvent(submission, 'CODE_SAVED', `Saved ${langName} code for Q${qNum} (${lines} lines, ${chars} chars).`);
         }
       } else if (activeQ.type === 'web') {
-        const combinedWeb = `${draftHtml || ''}__${draftCss || ''}__${draftJs || ''}`;
-        const hasContent = (draftHtml || '').trim().length > 0 || (draftCss || '').trim().length > 0 || (draftJs || '').trim().length > 0;
+        const combinedWeb = `${curHtml || ''}__${curCss || ''}__${curJs || ''}`;
+        const hasContent = (curHtml || '').trim().length > 0 || (curCss || '').trim().length > 0 || (curJs || '').trim().length > 0;
         if (hasContent && lastLoggedWebRef.current[qId] !== combinedWeb) {
           lastLoggedWebRef.current[qId] = combinedWeb;
-          const hLen = (draftHtml || '').length;
-          const cLen = (draftCss || '').length;
-          const jLen = (draftJs || '').length;
+          const hLen = (curHtml || '').length;
+          const cLen = (curCss || '').length;
+          const jLen = (curJs || '').length;
           logProctoringEvent(submission, 'WEB_SAVED', `Saved Web Dev solution for Q${qNum} (HTML: ${hLen} chars, CSS: ${cLen} chars, JS: ${jLen} chars).`);
         }
       }
@@ -2831,26 +3239,57 @@ function AppContent() {
   // Sync draft buffers into global answers list
   const handleSaveAndNext = () => {
     const activeQuestion = test?.questions?.[selectedQuestionIndex];
-    const isMulti = Boolean(activeQuestion && (activeQuestion.type === 'mcc' || activeQuestion.isMultiChoice === true || (Array.isArray(activeQuestion.correctOptionIndices) && activeQuestion.correctOptionIndices.length > 1)));
-    const selOptIndex = isMulti
-      ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
-      : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
-    const multiIndices = isMulti
-      ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
-      : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
+    const updated = [...(examAnswersRef.current || examAnswers)];
+    const existing = updated[selectedQuestionIndex] || { questionId: activeQuestion?.id, type: activeQuestion?.type };
+    const draftMatchesActive = draftQIdxRef.current === selectedQuestionIndex;
+    const curMCQ = draftMatchesActive ? draftMCQRef.current : (existing.selectedOptionIndices?.length ? existing.selectedOptionIndices : existing.selectedOptionIndex);
+    const curCode = draftMatchesActive ? draftCodeRef.current : (existing.submittedCode ?? (activeQuestion?.initialTemplate || DEFAULT_TEMPLATES.cpp));
+    const curLang = draftMatchesActive ? draftLanguageRef.current : (existing.selectedLanguage || 'cpp');
+    const starterHtml = activeQuestion?.initialHtml || activeQuestion?.initialCode?.html || '';
+    const starterCss = activeQuestion?.initialCss || activeQuestion?.initialCode?.css || '';
+    const starterJs = activeQuestion?.initialJs || activeQuestion?.initialCode?.js || '';
 
-    const updated = [...examAnswers];
-    updated[selectedQuestionIndex] = {
-      ...updated[selectedQuestionIndex],
-      selectedOptionIndex: selOptIndex,
-      selectedOptionIndices: multiIndices,
-      submittedCode: draftCode,
-      selectedLanguage: draftLanguage,
-      submittedHtml: draftHtml,
-      submittedCss: draftCss,
-      submittedJs: draftJs,
-      isSavedByUser: true
-    };
+    const curHtml = draftMatchesActive
+      ? ((draftHtmlRef.current !== undefined && draftHtmlRef.current !== null && draftHtmlRef.current !== '') ? draftHtmlRef.current : (existing.submittedHtml || starterHtml))
+      : (existing.submittedHtml || starterHtml);
+    const curCss = draftMatchesActive
+      ? ((draftCssRef.current !== undefined && draftCssRef.current !== null && draftCssRef.current !== '') ? draftCssRef.current : (existing.submittedCss || starterCss))
+      : (existing.submittedCss || starterCss);
+    const curJs = draftMatchesActive
+      ? ((draftJsRef.current !== undefined && draftJsRef.current !== null && draftJsRef.current !== '') ? draftJsRef.current : (existing.submittedJs || starterJs))
+      : (existing.submittedJs || starterJs);
+
+    if (activeQuestion?.type === 'web') {
+      updated[selectedQuestionIndex] = {
+        ...existing,
+        submittedHtml: curHtml,
+        submittedCss: curCss,
+        submittedJs: curJs,
+        isSavedByUser: true
+      };
+    } else if (activeQuestion?.type === 'coding') {
+      updated[selectedQuestionIndex] = {
+        ...existing,
+        submittedCode: curCode,
+        selectedLanguage: curLang,
+        isSavedByUser: true
+      };
+    } else {
+      const isMulti = Boolean(activeQuestion && (activeQuestion.type === 'mcc' || activeQuestion.isMultiChoice === true || (Array.isArray(activeQuestion.correctOptionIndices) && activeQuestion.correctOptionIndices.length > 1)));
+      const selOptIndex = isMulti
+        ? (Array.isArray(curMCQ) && curMCQ.length > 0 ? curMCQ[0] : (typeof curMCQ === 'number' ? curMCQ : null))
+        : (typeof curMCQ === 'number' ? curMCQ : (Array.isArray(curMCQ) && curMCQ.length > 0 ? curMCQ[0] : null));
+      const multiIndices = isMulti
+        ? (Array.isArray(curMCQ) ? curMCQ : (curMCQ !== null && curMCQ !== undefined ? [Number(curMCQ)] : []))
+        : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
+
+      updated[selectedQuestionIndex] = {
+        ...existing,
+        selectedOptionIndex: selOptIndex,
+        selectedOptionIndices: multiIndices,
+        isSavedByUser: true
+      };
+    }
     examAnswersRef.current = updated;
     setExamAnswers(updated);
 
@@ -2858,18 +3297,18 @@ function AppContent() {
       const qNum = selectedQuestionIndex + 1;
       const qId = String(activeQuestion.id || activeQuestion._id || `q_${qNum}`);
       if (activeQuestion.type === 'mcq' || activeQuestion.type === 'scc' || activeQuestion.type === 'mcc') {
-        recordOptionMarked(selectedQuestionIndex, draftMCQ);
+        recordOptionMarked(selectedQuestionIndex, curMCQ);
       } else if (activeQuestion.type === 'coding') {
-        lastLoggedCodeRef.current[qId] = draftCode;
-        const lines = (draftCode || '').split('\n').length;
-        const chars = (draftCode || '').length;
-        const langName = (draftLanguage || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (draftLanguage || 'C++');
+        lastLoggedCodeRef.current[qId] = curCode;
+        const lines = (curCode || '').split('\n').length;
+        const chars = (curCode || '').length;
+        const langName = (curLang || 'cpp').toUpperCase() === 'CPP' ? 'C++' : (curLang || 'C++');
         logProctoringEvent(submission, 'CODE_SAVED', `Saved ${langName} code for Q${qNum} (${lines} lines, ${chars} chars).`);
       } else if (activeQuestion.type === 'web') {
-        lastLoggedWebRef.current[qId] = `${draftHtml || ''}__${draftCss || ''}__${draftJs || ''}`;
-        const hLen = (draftHtml || '').length;
-        const cLen = (draftCss || '').length;
-        const jLen = (draftJs || '').length;
+        lastLoggedWebRef.current[qId] = `${curHtml || ''}__${curCss || ''}__${curJs || ''}`;
+        const hLen = (curHtml || '').length;
+        const cLen = (curCss || '').length;
+        const jLen = (curJs || '').length;
         logProctoringEvent(submission, 'WEB_SAVED', `Saved Web Dev solution for Q${qNum} (HTML: ${hLen} chars, CSS: ${cLen} chars, JS: ${jLen} chars).`);
       }
     }
@@ -2892,17 +3331,39 @@ function AppContent() {
     if (!test || !candidate || examAnswers.length === 0) return;
 
     const interval = setInterval(() => {
-      const updated = [...examAnswers];
+      if (draftQIdxRef.current !== selectedQuestionIndex) return;
+      const updated = [...(examAnswersRef.current || examAnswers)];
       if (updated[selectedQuestionIndex]) {
-        updated[selectedQuestionIndex] = {
-          ...updated[selectedQuestionIndex],
-          selectedOptionIndex: draftMCQ,
-          submittedCode: draftCode,
-          selectedLanguage: draftLanguage,
-          submittedHtml: draftHtml,
-          submittedCss: draftCss,
-          submittedJs: draftJs
-        };
+        const curQ = test?.questions?.[selectedQuestionIndex];
+        if (curQ?.type === 'web') {
+          updated[selectedQuestionIndex] = {
+            ...updated[selectedQuestionIndex],
+            submittedHtml: draftHtmlRef.current,
+            submittedCss: draftCssRef.current,
+            submittedJs: draftJsRef.current
+          };
+        } else if (curQ?.type === 'coding') {
+          updated[selectedQuestionIndex] = {
+            ...updated[selectedQuestionIndex],
+            submittedCode: draftCodeRef.current,
+            selectedLanguage: draftLanguageRef.current
+          };
+        } else {
+          const curMCQ = draftMCQRef.current;
+          const isCurMulti = Boolean(curQ && (curQ.type === 'mcc' || curQ.isMultiChoice === true || (Array.isArray(curQ.correctOptionIndices) && curQ.correctOptionIndices.length > 1)));
+          const selOptIndex = isCurMulti
+            ? (Array.isArray(curMCQ) && curMCQ.length > 0 ? curMCQ[0] : (typeof curMCQ === 'number' ? curMCQ : null))
+            : (typeof curMCQ === 'number' ? curMCQ : (Array.isArray(curMCQ) && curMCQ.length > 0 ? curMCQ[0] : null));
+          const multiIndices = isCurMulti
+            ? (Array.isArray(curMCQ) ? curMCQ : (curMCQ !== null && curMCQ !== undefined ? [Number(curMCQ)] : []))
+            : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
+
+          updated[selectedQuestionIndex] = {
+            ...updated[selectedQuestionIndex],
+            selectedOptionIndex: selOptIndex,
+            selectedOptionIndices: multiIndices
+          };
+        }
         examAnswersRef.current = updated;
         const subId = submission?.id || submission?._id || 'new_attempt';
         const storageKey = `bics_draft_${test.id}_${candidate.id}_${subId}`;
@@ -2975,11 +3436,13 @@ function AppContent() {
       try {
         if (navigator.sendBeacon) {
           const userAuth = getActiveAuthToken();
+          const examTokenVal = getActiveExamToken();
           const payload = JSON.stringify({
             submissionId: subId,
             status: 'auto-submitted',
             reason: 'PAGEHIDE_DISCONNECT',
             authToken: userAuth,
+            examToken: examTokenVal,
             answers: typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : examAnswersRef.current,
             proctoringLog: getProctoringLogPayload(proctoringWarnings)
           });
@@ -3049,12 +3512,13 @@ function AppContent() {
 
   // Switch editor language and auto-populate default templates if editor is blank/default
   const handleLanguageChange = (newLang) => {
-    setDraftLanguage(newLang);
+    setDraftQIdxSafely(selectedQuestionIndex);
+    setDraftLanguageSafely(newLang);
     
     // Normalize code text values for comparison
     const norm = (str) => (str || '').replace(/\r\n/g, '\n').trim();
     
-    const currentNorm = norm(draftCode);
+    const currentNorm = norm(draftCodeRef.current ?? draftCode);
     const cppDefaultNorm = norm(DEFAULT_TEMPLATES.cpp);
     const initialTemplateNorm = norm(test?.questions?.[selectedQuestionIndex]?.initialTemplate);
     
@@ -3066,7 +3530,7 @@ function AppContent() {
       Object.values(DEFAULT_TEMPLATES).some(tpl => norm(tpl) === currentNorm);
       
     if (isCurrentlyDefault) {
-      setDraftCode(DEFAULT_TEMPLATES[newLang]);
+      setDraftCodeSafely(DEFAULT_TEMPLATES[newLang]);
     }
   };
 
@@ -3307,94 +3771,6 @@ function AppContent() {
     finalizeExamSubmission(examAnswers, warningsObj, 'auto-submitted', reason);
   };
 
-  const encryptEirfPayloadClient = async (payloadObj, studentId, submissionId) => {
-    try {
-      return await encryptEirfEnvelope(payloadObj, API_BASE);
-    } catch (err) {
-      console.error("Client-side asymmetric EIRF payload encryption error:", err);
-      return JSON.stringify(payloadObj);
-    }
-  };
-
-  /**
-   * @deprecated [DEPRECATED] Physical EIRF payload file download is obsolete.
-   * Disconnected submissions are now saved securely to client IndexedDB & AES-encrypted
-   * localStorage, and automatically synchronized to the server upon network reconnection
-   * (or via FinishedView) without triggering browser popups or manual file uploads.
-   */
-  const downloadEirfBackupFile = async (subObj, candObj, answersArr, pWarnings) => {
-    try {
-      const subId = subObj?._id || subObj?.id || 'submission';
-      const studentId = candObj?.studentId || subObj?.studentId || 'Candidate';
-      const pLogPayload = getProctoringLogPayload(pWarnings);
-
-      let encryptedPayloadStr = null;
-
-      // 1. Try server-side generation & encryption first if online
-      try {
-        const res = await fetch(`${API_BASE}/test/eirf/generate-payload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            submissionId: subId,
-            studentId,
-            answers: answersArr || [],
-            proctoringLog: pLogPayload
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.encryptedPayload) {
-            encryptedPayloadStr = typeof data.encryptedPayload === 'string'
-              ? data.encryptedPayload
-              : JSON.stringify(data.encryptedPayload);
-          }
-        }
-      } catch (apiErr) {
-        console.warn("Server EIRF payload generation request failed, using client-side WebCrypto encryption fallback:", apiErr);
-      }
-
-      // 2. Fallback to client-side WebCrypto AES-256-GCM encryption if offline / server failed
-      if (!encryptedPayloadStr) {
-        const payloadData = {
-          submissionId: subId,
-          studentId,
-          candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
-          testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
-          answers: answersArr || [],
-          proctoringLog: pLogPayload,
-          generatedAt: new Date().toISOString()
-        };
-        encryptedPayloadStr = await encryptEirfPayloadClient(payloadData, studentId, subId);
-      }
-
-      const blob = new Blob([encryptedPayloadStr], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `EIRF_PAYLOAD_${subId}.eirf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      // Guarantee EIRF flag is marked true on payload download (Item 7 & 8)
-      setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
-      saveOfflineSubmission({
-        submissionId: subId,
-        studentId,
-        candidateName: candObj?.name || subObj?.candidateName || 'Candidate',
-        testTitle: subObj?.testTitle || test?.title || 'BICS Online Examination',
-        answers: answersArr || [],
-        proctoringLog: pLogPayload,
-        hasEirfFlag: true,
-        eirfStatus: 'pending'
-      }).catch(() => {});
-    } catch (err) {
-      console.error("Failed to generate .eirf backup payload file:", err);
-    }
-  };
-
   const isFinalizingRef = useRef(false);
   const finalizeExamSubmission = async (answersList, warningsObj, statusVal, reasonVal = 'manual') => {
     if (isFinalizingRef.current) return;
@@ -3450,8 +3826,7 @@ function AppContent() {
       }
       setHasPendingSubmit(true);
       
-      if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
-      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      stopActiveMediaStreams();
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
       deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});
@@ -3539,8 +3914,7 @@ function AppContent() {
         }
       }).catch(() => {});
 
-      if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
-      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      stopActiveMediaStreams();
 
       // Deterministically purge any lingering offline pending submit items
       for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -3582,8 +3956,7 @@ function AppContent() {
     setHasPendingSubmit(true);
     setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
 
-    if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
-    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    stopActiveMediaStreams();
     localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
     localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
     deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});
@@ -3844,7 +4217,45 @@ function AppContent() {
 
   // VIEW: Server Error / Unauthorized access template copied directly from FORBIDDEN_HTML_PAGE in backend/server.js
   if (verifyError) {
-    document.title = "Server Error";
+    document.title = verifyErrorKind === 'transient' ? "Connection Interrupted | BICS Portal" : "Server Error";
+
+    if (verifyErrorKind === 'transient') {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'Arial, "Segoe UI", sans-serif' }}>
+          <div style={{ maxWidth: '520px', width: '100%', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '28px', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#b45309', marginBottom: '12px' }}>
+              <AlertTriangle size={26} />
+              <h1 style={{ fontSize: '15px', fontWeight: 'bold', margin: 0, color: '#002147' }}>
+                Connection Interrupted — Examination Server Unreachable
+              </h1>
+            </div>
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.55', margin: '0 0 20px 0' }}>
+              {verifyError}
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              {typeof lastVerifyActionRef.current === 'function' && (
+                <button
+                  type="button"
+                  onClick={() => lastVerifyActionRef.current && lastVerifyActionRef.current()}
+                  style={{ backgroundColor: '#002147', color: '#ffffff', border: 'none', borderRadius: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  Retry Connection
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = getReturnUrl('/home');
+                }}
+                style={{ backgroundColor: '#f1f5f9', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                Return to BICS Portal
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div style={{ margin: 0, padding: 0, width: '100%', minHeight: '100vh', backgroundColor: '#e6e6e6', fontFamily: 'Arial, "Segoe UI", sans-serif', boxSizing: 'border-box' }}>
@@ -3865,286 +4276,292 @@ function AppContent() {
     );
   }
 
-  // VIEW: Login Page
-  if (flow === 'verify_login') {
-    return (
-      <VerifyLoginView
-        candidate={candidate}
-        handleLoginToTest={handleLoginToTest}
-      />
-    );
-  }
-
-  // VIEW: Lobby Loading Effect
-  if (flow === 'lobby_loading') {
-    return (
-      <LobbyLoadingView
-        lobbyMessage={lobbyMessage}
-      />
-    );
-  }
-
-  // VIEW: Step 2 - Terms and Conditions & Undertaking
-  if (flow === 'terms_conditions') {
-    return (
-      <div key={flow} className="bics-view-transition">
-        <TermsConditionsView
-          test={test}
+  const renderFlowView = () => {
+    // VIEW: Login Page
+    if (flow === 'verify_login') {
+      return (
+        <VerifyLoginView
           candidate={candidate}
-          consentRulesChecked={consentRulesChecked}
-          setConsentRulesChecked={setConsentRulesChecked}
-          consentProctoringChecked={consentProctoringChecked}
-          setConsentProctoringChecked={setConsentProctoringChecked}
-          onProceedToSystemChecks={() => {
-            const nowIso = new Date().toISOString();
-            consentAcceptedTimeRef.current = nowIso;
-            if (typeof window !== 'undefined') {
-              sessionStorage.setItem('bics_consent_accepted_at', nowIso);
-            }
-            setFlow('system_checks');
-          }}
+          handleLoginToTest={handleLoginToTest}
         />
-      </div>
-    );
-  }
+      );
+    }
 
-  // VIEW: Step 3 - System & Hardware Compatibility Checks
-  if (flow === 'system_checks') {
-    return (
-      <div key={flow} className="bics-view-transition">
-        <SystemChecksView
-          test={test}
-          candidate={candidate}
-          securityMetadata={securityMetadata}
-          multiDisplayDetected={multiDisplayDetected}
-          isFullscreen={isFullscreen}
-          isFocused={isFocused}
-          webcamGranted={webcamGranted}
-          micGranted={micGranted}
-          systemChecksCompleted={systemChecksCompleted}
-          onCompleteSystemChecks={() => setSystemChecksCompleted(true)}
-          onStartTicketReceived={(ticket) => setStartTicket(ticket)}
-          handleAuthorizeCamera={handleAuthorizeCamera}
-          handleLockFullscreen={handleLockFullscreen}
-          onBackToTerms={() => setFlow('terms_conditions')}
-          onProceedToBiometrics={() => {
-            setSystemChecksCompleted(true);
-            setFlow('biometric_check');
-          }}
+    // VIEW: Lobby Loading Effect
+    if (flow === 'lobby_loading') {
+      return (
+        <LobbyLoadingView
+          lobbyMessage={lobbyMessage}
         />
-      </div>
-    );
-  }
+      );
+    }
 
-  // VIEW: Step 4 - Biometric & Hardware Verification Gate
-  if (flow === 'biometric_check') {
-    return (
-      <div key={flow} className="bics-view-transition">
-        <BiometricCheckView
-          candidate={candidate}
-          test={test}
-          webcamStream={webcamStream}
-          webcamGranted={webcamGranted}
-          micGranted={micGranted}
-          isFullscreen={isFullscreen}
-          isFocused={isFocused}
-          savedBiometrics={biometricsCache}
-          onSaveBiometricsCache={(update) => setBiometricsCache(prev => ({ ...prev, ...update }))}
-          blazefaceModelRef={blazefaceModelRef}
-          handleAuthorizeCamera={handleAuthorizeCamera}
-          handleLockFullscreen={handleLockFullscreen}
-          onBackToSystemChecks={() => setFlow('system_checks')}
-          onCompleteBiometricGate={handleCompleteBiometricGate}
-        />
-      </div>
-    );
-  }
+    // VIEW: Step 2 - Terms and Conditions & Undertaking
+    if (flow === 'terms_conditions') {
+      return (
+        <div key={flow} className="bics-view-transition">
+          <TermsConditionsView
+            test={test}
+            candidate={candidate}
+            consentRulesChecked={consentRulesChecked}
+            setConsentRulesChecked={setConsentRulesChecked}
+            consentProctoringChecked={consentProctoringChecked}
+            setConsentProctoringChecked={setConsentProctoringChecked}
+            onProceedToSystemChecks={() => {
+              const nowIso = new Date().toISOString();
+              consentAcceptedTimeRef.current = nowIso;
+              if (typeof window !== 'undefined') {
+                sessionStorage.setItem('bics_consent_accepted_at', nowIso);
+              }
+              setFlow('system_checks');
+            }}
+          />
+        </div>
+      );
+    }
 
-  // VIEW: Step 5 - Guidelines & Proctoring Setup (With 1.00 min holding countdown)
-  if (flow === 'guidelines_setup') {
-    return (
-      <div key={flow} className="bics-view-transition">
-        <GuidelinesSetupView
-          test={test}
-          candidate={candidate}
-          isFullscreen={isFullscreen}
-          handleLockFullscreen={handleLockFullscreen}
-          onBackToBiometrics={() => setFlow('biometric_check')}
-          handleStartExam={handleStartExam}
-          isStartingExam={isStartingExam}
-          devModeActive={devModeActive}
-        />
-      </div>
-    );
-  }
+    // VIEW: Step 3 - System & Hardware Compatibility Checks
+    if (flow === 'system_checks') {
+      return (
+        <div key={flow} className="bics-view-transition">
+          <SystemChecksView
+            test={test}
+            candidate={candidate}
+            securityMetadata={securityMetadata}
+            multiDisplayDetected={multiDisplayDetected}
+            isFullscreen={isFullscreen}
+            isFocused={isFocused}
+            webcamGranted={webcamGranted}
+            micGranted={micGranted}
+            isAuthorizingMedia={isAuthorizingMedia}
+            mediaPermissionError={mediaPermissionError}
+            systemChecksCompleted={systemChecksCompleted}
+            onCompleteSystemChecks={() => setSystemChecksCompleted(true)}
+            onStartTicketReceived={(ticket) => setStartTicket(ticket)}
+            handleAuthorizeCamera={handleAuthorizeCamera}
+            handleLockFullscreen={handleLockFullscreen}
+            onBackToTerms={() => setFlow('terms_conditions')}
+            onProceedToBiometrics={() => {
+              setSystemChecksCompleted(true);
+              setFlow('biometric_check');
+            }}
+          />
+        </div>
+      );
+    }
 
-  // VIEW: Active Proctoring Examination Workspace (Image 3 style)
-  if (flow === 'active_exam') {
-    return (
-      <div style={{ height: '100vh', width: '100vw', overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-        <ActiveExamView
-          devModeActive={devModeActive}
-          test={test}
-          candidate={candidate}
-          examTimeLeft={examTimeLeft}
-          isOnline={isOnline}
-          disconnectCountdown={disconnectCountdown}
-          submittingExam={submittingExam}
-          handleManualSubmitExam={handleManualSubmitExam}
-          webcamProctorWarning={webcamProctorWarning}
-          onDismissProctorWarning={() => setWebcamProctorWarning('')}
-          activeProctorToasts={activeProctorToasts}
-          onDismissProctorToast={(id) => removeProctorToast(id)}
-          examVideoRef={examVideoRef}
-          webcamStream={webcamStream}
-          isSidebarOpen={isSidebarOpen}
-          setIsSidebarOpen={setIsSidebarOpen}
-          showQuestionPalette={showQuestionPalette}
-          setShowQuestionPalette={setShowQuestionPalette}
-          selectedQuestionIndex={selectedQuestionIndex}
-          setSelectedQuestionIndex={setSelectedQuestionIndex}
-          examAnswers={examAnswers}
-          examAnswersRef={examAnswersRef}
-          setExamAnswers={setExamAnswers}
-          draftMCQ={draftMCQ}
-          setDraftMCQ={handleDraftMCQChange}
-          handleCodeReset={handleCodeReset}
-          draftCode={draftCode}
-          setDraftCode={setDraftCode}
-          draftLanguage={draftLanguage}
-          draftQIdx={draftQIdx}
-          setDraftQIdx={setDraftQIdx}
-          handleLanguageChange={handleLanguageChange}
-          webActiveTab={webActiveTab}
-          setWebActiveTab={setWebActiveTab}
-          draftHtml={draftHtml}
-          setDraftHtml={setDraftHtml}
-          draftCss={draftCss}
-          setDraftCss={setDraftCss}
-          draftJs={draftJs}
-          setDraftJs={setDraftJs}
-          consoleTab={consoleTab}
-          setConsoleTab={setConsoleTab}
-          isRunningCode={isRunningCode}
-          handleRunCode={handleRunCode}
-          runResults={runResults}
-          compileError={compileError}
-          handleSaveAndNext={handleSaveAndNext}
-          triggerCustomConfirm={triggerCustomConfirm}
-          showQuestionInfoModal={showQuestionInfoModal}
-          setShowQuestionInfoModal={setShowQuestionInfoModal}
-          showWarningModal={showWarningModal}
-          setShowWarningModal={setShowWarningModal}
-          proctoringWarnings={proctoringWarnings}
-          customModal={customModal}
-          setCustomModal={setCustomModal}
-          isFullWebStudioOpen={isFullWebStudioOpen}
-          setIsFullWebStudioOpen={setIsFullWebStudioOpen}
-          webStudioViewportMode={webStudioViewportMode}
-          setWebStudioViewportMode={setWebStudioViewportMode}
-          webStudioConsoleOpen={webStudioConsoleOpen}
-          setWebStudioConsoleOpen={setWebStudioConsoleOpen}
-          webConsoleLogs={webConsoleLogs}
-          setWebConsoleLogs={setWebConsoleLogs}
-          saveServerDraft={saveServerDraft}
-          activeQuestionBtnRef={activeQuestionBtnRef}
-          navTrackRef={navTrackRef}
-          setTest={setTest}
-          onClipboardAttempt={handleClipboardAttempt}
-        />
-      </div>
-    );
-  }
+    // VIEW: Step 4 - Biometric & Hardware Verification Gate
+    if (flow === 'biometric_check') {
+      return (
+        <div key={flow} className="bics-view-transition">
+          <BiometricCheckView
+            candidate={candidate}
+            test={test}
+            webcamStream={webcamStream}
+            webcamGranted={webcamGranted}
+            micGranted={micGranted}
+            isAuthorizingMedia={isAuthorizingMedia}
+            mediaPermissionError={mediaPermissionError}
+            isFullscreen={isFullscreen}
+            isFocused={isFocused}
+            savedBiometrics={biometricsCache}
+            onSaveBiometricsCache={(update) => setBiometricsCache(prev => ({ ...prev, ...update }))}
+            blazefaceModelRef={blazefaceModelRef}
+            handleAuthorizeCamera={handleAuthorizeCamera}
+            handleLockFullscreen={handleLockFullscreen}
+            onBackToSystemChecks={() => setFlow('system_checks')}
+            onCompleteBiometricGate={handleCompleteBiometricGate}
+          />
+        </div>
+      );
+    }
 
+    // VIEW: Step 5 - Guidelines & Proctoring Setup (With 1.00 min holding countdown)
+    if (flow === 'guidelines_setup') {
+      return (
+        <div key={flow} className="bics-view-transition">
+          <GuidelinesSetupView
+            test={test}
+            candidate={candidate}
+            isFullscreen={isFullscreen}
+            handleLockFullscreen={handleLockFullscreen}
+            onBackToBiometrics={() => setFlow('biometric_check')}
+            handleStartExam={handleStartExam}
+            isStartingExam={isStartingExam}
+            devModeActive={devModeActive}
+          />
+        </div>
+      );
+    }
 
+    // VIEW: Active Proctoring Examination Workspace (Image 3 style)
+    if (flow === 'active_exam') {
+      return (
+        <div style={{ height: '100vh', width: '100vw', overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+          <ActiveExamView
+            devModeActive={devModeActive}
+            test={test}
+            candidate={candidate}
+            examTimeLeft={examTimeLeft}
+            isOnline={isOnline}
+            disconnectCountdown={disconnectCountdown}
+            submittingExam={submittingExam}
+            handleManualSubmitExam={handleManualSubmitExam}
+            webcamProctorWarning={webcamProctorWarning}
+            onDismissProctorWarning={() => setWebcamProctorWarning('')}
+            activeProctorToasts={activeProctorToasts}
+            onDismissProctorToast={(id) => removeProctorToast(id)}
+            examVideoRef={examVideoRef}
+            webcamStream={webcamStream}
+            isSidebarOpen={isSidebarOpen}
+            setIsSidebarOpen={setIsSidebarOpen}
+            showQuestionPalette={showQuestionPalette}
+            setShowQuestionPalette={setShowQuestionPalette}
+            selectedQuestionIndex={selectedQuestionIndex}
+            setSelectedQuestionIndex={setSelectedQuestionIndex}
+            examAnswers={examAnswers}
+            examAnswersRef={examAnswersRef}
+            setExamAnswers={setExamAnswers}
+            draftMCQ={draftMCQ}
+            setDraftMCQ={handleDraftMCQChange}
+            handleCodeReset={handleCodeReset}
+            draftCode={draftCode}
+            setDraftCode={setDraftCodeSafely}
+            draftLanguage={draftLanguage}
+            draftQIdx={draftQIdx}
+            setDraftQIdx={setDraftQIdxSafely}
+            handleLanguageChange={handleLanguageChange}
+            webActiveTab={webActiveTab}
+            setWebActiveTab={setWebActiveTab}
+            draftHtml={draftHtml}
+            setDraftHtml={setDraftHtmlSafely}
+            draftCss={draftCss}
+            setDraftCss={setDraftCssSafely}
+            draftJs={draftJs}
+            setDraftJs={setDraftJsSafely}
+            consoleTab={consoleTab}
+            setConsoleTab={setConsoleTab}
+            isRunningCode={isRunningCode}
+            handleRunCode={handleRunCode}
+            runResults={runResults}
+            compileError={compileError}
+            handleSaveAndNext={handleSaveAndNext}
+            triggerCustomConfirm={triggerCustomConfirm}
+            showQuestionInfoModal={showQuestionInfoModal}
+            setShowQuestionInfoModal={setShowQuestionInfoModal}
+            showWarningModal={showWarningModal}
+            setShowWarningModal={setShowWarningModal}
+            proctoringWarnings={proctoringWarnings}
+            customModal={customModal}
+            setCustomModal={setCustomModal}
+            suppressCustomModal={true}
+            isFullWebStudioOpen={isFullWebStudioOpen}
+            setIsFullWebStudioOpen={setIsFullWebStudioOpen}
+            webStudioViewportMode={webStudioViewportMode}
+            setWebStudioViewportMode={setWebStudioViewportMode}
+            webStudioConsoleOpen={webStudioConsoleOpen}
+            setWebStudioConsoleOpen={setWebStudioConsoleOpen}
+            webConsoleLogs={webConsoleLogs}
+            setWebConsoleLogs={setWebConsoleLogs}
+            saveServerDraft={saveServerDraft}
+            activeQuestionBtnRef={activeQuestionBtnRef}
+            navTrackRef={navTrackRef}
+            setTest={setTest}
+            onClipboardAttempt={handleClipboardAttempt}
+          />
+        </div>
+      );
+    }
 
-  // VIEW: Emergency Incident Report Form (EIRF) Filing Terminal
-  if (flow === 'eirf_form') {
-    return (
-      <div style={{ minHeight: '100vh', width: '100%', position: 'relative', backgroundColor: '#f8fafc' }}>
-        <EirfFormView
-          eirfDetails={eirfDetails}
-          eirfFileName={eirfFileName}
-          setEirfFileName={setEirfFileName}
-          eirfFileContent={eirfFileContent}
-          setEirfFileContent={setEirfFileContent}
-          eirfDeclarationChecked={eirfDeclarationChecked}
-          setEirfDeclarationChecked={setEirfDeclarationChecked}
-          eirfExplanation={eirfExplanation}
-          setEirfExplanation={setEirfExplanation}
-          eirfPrimaryCause={eirfPrimaryCause}
-          eirfAckUnderstand={eirfAckUnderstand}
-          setEirfAckUnderstand={setEirfAckUnderstand}
-          eirfWarningCount={eirfWarningCount}
-          setEirfWarningCount={setEirfWarningCount}
-          eirfTabReason={eirfTabReason}
-          setEirfTabReason={setEirfTabReason}
-          eirfFullscreenReason={eirfFullscreenReason}
-          setEirfFullscreenReason={setEirfFullscreenReason}
-          eirfInterruptions={eirfInterruptions}
-          setEirfInterruptions={setEirfInterruptions}
-          eirfPeripherals={eirfPeripherals}
-          setEirfPeripherals={setEirfPeripherals}
-          submittingEirf={submittingEirf}
-          setSubmittingEirf={setSubmittingEirf}
-          eirfErrorMessage={eirfErrorMessage}
-          setEirfErrorMessage={setEirfErrorMessage}
-          eirfSuccessMessage={eirfSuccessMessage}
-          setEirfSuccessMessage={setEirfSuccessMessage}
-          isSubmitBtnHovered={isSubmitBtnHovered}
-          setIsSubmitBtnHovered={setIsSubmitBtnHovered}
-          loadEirfDetails={loadEirfDetails}
-        />
-      </div>
-    );
-  }
+    // VIEW: Emergency Incident Report Form (EIRF) Filing Terminal
+    if (flow === 'eirf_form') {
+      return (
+        <div style={{ minHeight: '100vh', width: '100%', position: 'relative', backgroundColor: '#f8fafc' }}>
+          <EirfFormView
+            eirfDetails={eirfDetails}
+            eirfDeclarationChecked={eirfDeclarationChecked}
+            setEirfDeclarationChecked={setEirfDeclarationChecked}
+            eirfExplanation={eirfExplanation}
+            setEirfExplanation={setEirfExplanation}
+            eirfPrimaryCause={eirfPrimaryCause}
+            eirfAckUnderstand={eirfAckUnderstand}
+            setEirfAckUnderstand={setEirfAckUnderstand}
+            eirfWarningCount={eirfWarningCount}
+            setEirfWarningCount={setEirfWarningCount}
+            eirfTabReason={eirfTabReason}
+            setEirfTabReason={setEirfTabReason}
+            eirfFullscreenReason={eirfFullscreenReason}
+            setEirfFullscreenReason={setEirfFullscreenReason}
+            eirfInterruptions={eirfInterruptions}
+            setEirfInterruptions={setEirfInterruptions}
+            eirfPeripherals={eirfPeripherals}
+            setEirfPeripherals={setEirfPeripherals}
+            submittingEirf={submittingEirf}
+            setSubmittingEirf={setSubmittingEirf}
+            eirfErrorMessage={eirfErrorMessage}
+            setEirfErrorMessage={setEirfErrorMessage}
+            eirfSuccessMessage={eirfSuccessMessage}
+            setEirfSuccessMessage={setEirfSuccessMessage}
+            isSubmitBtnHovered={isSubmitBtnHovered}
+            setIsSubmitBtnHovered={setIsSubmitBtnHovered}
+            loadEirfDetails={loadEirfDetails}
+          />
+        </div>
+      );
+    }
 
+    // VIEW: Evaluated Answer Sheet Verification Review (Long vertically scrollable paper)
+    if (flow === 'verification_review') {
+      return (
+        <div style={{ height: '100vh', width: '100vw', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
+          <VerificationReviewView
+            candidate={candidate}
+            test={test}
+            submission={submission}
+            webDevPreviewTabs={webDevPreviewTabs}
+            setWebDevPreviewTabs={setWebDevPreviewTabs}
+            verificationInstructionsModalOpen={verificationInstructionsModalOpen}
+            setVerificationInstructionsModalOpen={setVerificationInstructionsModalOpen}
+            verificationConsentChecked={verificationConsentChecked}
+            setVerificationConsentChecked={setVerificationConsentChecked}
+            handleOpenObjectionModal={handleOpenObjectionModal}
+            objectionModal={objectionModal}
+            setObjectionModal={setObjectionModal}
+            handleCloseObjectionModal={handleCloseObjectionModal}
+            handleCopyObjectionId={handleCopyObjectionId}
+            handleObjectionFileUpload={handleObjectionFileUpload}
+            handleSubmitObjection={handleSubmitObjection}
+          />
+        </div>
+      );
+    }
 
-
-  // VIEW: Evaluated Answer Sheet Verification Review (Long vertically scrollable paper)
-  if (flow === 'verification_review') {
-    return (
-      <div style={{ height: '100vh', width: '100vw', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
-        <VerificationReviewView
-          candidate={candidate}
-          test={test}
+    // VIEW: Submission Complete screen
+    if (flow === 'finished') {
+      return (
+        <FinishedView
+          finishedStep={finishedStep}
+          setFinishedStep={setFinishedStep}
           submission={submission}
-          webDevPreviewTabs={webDevPreviewTabs}
-          setWebDevPreviewTabs={setWebDevPreviewTabs}
-          verificationInstructionsModalOpen={verificationInstructionsModalOpen}
-          setVerificationInstructionsModalOpen={setVerificationInstructionsModalOpen}
-          verificationConsentChecked={verificationConsentChecked}
-          setVerificationConsentChecked={setVerificationConsentChecked}
-          handleOpenObjectionModal={handleOpenObjectionModal}
-          objectionModal={objectionModal}
-          setObjectionModal={setObjectionModal}
-          handleCloseObjectionModal={handleCloseObjectionModal}
-          handleCopyObjectionId={handleCopyObjectionId}
-          handleObjectionFileUpload={handleObjectionFileUpload}
-          handleSubmitObjection={handleSubmitObjection}
+          hasPendingSubmit={hasPendingSubmit}
+          setHasPendingSubmit={setHasPendingSubmit}
+          isOnline={isOnline}
+          syncStatus={syncStatus}
+          setSyncStatus={setSyncStatus}
+          triggerCustomAlert={triggerCustomAlert}
         />
-      </div>
-    );
-  }
+      );
+    }
 
-  // VIEW: Submission Complete screen
-  if (flow === 'finished') {
-    return (
-      <FinishedView
-        finishedStep={finishedStep}
-        setFinishedStep={setFinishedStep}
-        submission={submission}
-        hasPendingSubmit={hasPendingSubmit}
-        setHasPendingSubmit={setHasPendingSubmit}
-        isOnline={isOnline}
-        syncStatus={syncStatus}
-        setSyncStatus={setSyncStatus}
-        triggerCustomAlert={triggerCustomAlert}
-      />
-    );
-  }
+    return null;
+  };
 
-  return null;
+  return (
+    <>
+      {renderFlowView()}
+      <CustomAlertModal customModal={customModal} setCustomModal={setCustomModal} />
+    </>
+  );
 }
 
 export default function App() {

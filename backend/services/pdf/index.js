@@ -1,6 +1,11 @@
 const { generateHallTicketPdfBuffer, streamHallTicketPdf } = require('./hallTicketPdf');
 const { generateEirfVerdictPdfBuffer, generateDigitalVerdictHash, generateForensicSynthesis } = require('./eirfVerdictPdf');
-const { generateOtrfReportPdfBuffer, generateOtrfVerificationHash } = require('./otrfReportPdf');
+const {
+    generateOtrfReportPdfBuffer,
+    generateOtrfVerificationHash,
+    resolveOtrfArtifactMeta,
+    persistOtrfPdfArtifact
+} = require('./otrfReportPdf');
 const pdfCommon = require('./pdfCommon');
 
 module.exports = {
@@ -11,5 +16,7 @@ module.exports = {
     generateForensicSynthesis,
     generateOtrfReportPdfBuffer,
     generateOtrfVerificationHash,
+    resolveOtrfArtifactMeta,
+    persistOtrfPdfArtifact,
     pdfCommon
 };

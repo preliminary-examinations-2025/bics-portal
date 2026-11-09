@@ -14,6 +14,8 @@ export function BiometricCheckView({
   webcamStream,
   webcamGranted,
   micGranted,
+  isAuthorizingMedia = false,
+  mediaPermissionError = '',
   isFullscreen,
   isFocused,
   savedBiometrics = null,
@@ -48,6 +50,10 @@ export function BiometricCheckView({
   const analyserRef = useRef(null);
   const audioAnimFrameRef = useRef(null);
   const speechRecognitionRef = useRef(null);
+  const voiceFallbackTimerRef = useRef(null);
+  const voiceFallbackActiveRef = useRef(false);
+  const latestDecibelsRef = useRef(30);
+  const voiceCalibratedRef = useRef(Boolean(savedBiometrics?.voiceCalibrated));
   const faceHistoryRef = useRef([]);
   // Differential Active Challenge State Machine Refs
   const neutralSamplesRef = useRef([]);
@@ -159,8 +165,14 @@ export function BiometricCheckView({
     let mounted = true;
     const fetchChallenge = async () => {
       try {
-        const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-        const examToken = sessionStorage.getItem('bics_exam_token') || '';
+        const activeToken = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') ||
+                            sessionStorage.getItem('bics_ot_auth_token') ||
+                            sessionStorage.getItem('bics_auth_token') ||
+                            localStorage.getItem('bics_auth_token') ||
+                            '';
+        const examToken = (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') ||
+                          sessionStorage.getItem('bics_exam_token') ||
+                          '';
         const headers = {};
         if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
         if (examToken) headers['x-exam-token'] = examToken;
@@ -303,7 +315,7 @@ export function BiometricCheckView({
               const centerX = (x1 + x2) / 2;
               const centerY = (y1 + y2) / 2;
               const isCentered = centerX > canvas.width * 0.20 && centerX < canvas.width * 0.80 &&
-                                centerY > canvas.height * 0.15 && centerY < canvas.height * 0.85;
+                                centerY > canvas.height * 0.15 && centerY < canvas.height * 0.88;
               const isGoodSize = boxW > canvas.width * 0.16 && boxW < canvas.width * 0.85;
               const isUpright = eyeTilt < 0.35;
               const isHighConfidence = prob >= 0.80;
@@ -313,10 +325,13 @@ export function BiometricCheckView({
               setFaceLandmarks(lm);
 
               if (isCentered && isGoodSize && isUpright && isHighConfidence) {
-                // Multi-Phase Differential Active Liveness State Machine
+                // Differential Active Liveness State Machine
                 const eyeCenterX = (leftEye[0] + rightEye[0]) / 2;
+                const avgEyeY = (leftEye[1] + rightEye[1]) / 2;
                 const yawRatio = eyeDist > 0 ? (nose[0] - eyeCenterX) / eyeDist : 0;
                 const signedTilt = eyeDist > 0 ? (leftEye[1] - rightEye[1]) / eyeDist : 0;
+                const pitchRatio = eyeDist > 0 ? (nose[1] - avgEyeY) / eyeDist : 0;
+                const normCenterY = canvas.height > 0 ? centerY / canvas.height : 0;
 
                 unalignedFramesCountRef.current = 0;
 
@@ -327,7 +342,7 @@ export function BiometricCheckView({
                 } else {
                   // Step 1: Calibrate personal neutral baseline pose over 5 stable centered frames
                   if (!baselinePoseRef.current) {
-                    neutralSamplesRef.current.push({ yaw: yawRatio, tilt: signedTilt });
+                    neutralSamplesRef.current.push({ yaw: yawRatio, tilt: signedTilt, pitch: pitchRatio, centerY: normCenterY });
                     if (neutralSamplesRef.current.length < 5) {
                       setFaceCheckStatus('aligned');
                       setFaceStatusMessage('Calibrating neutral baseline... Look directly at the camera.');
@@ -337,7 +352,9 @@ export function BiometricCheckView({
                     } else {
                       const avgYaw = neutralSamplesRef.current.reduce((sum, s) => sum + s.yaw, 0) / neutralSamplesRef.current.length;
                       const avgTilt = neutralSamplesRef.current.reduce((sum, s) => sum + s.tilt, 0) / neutralSamplesRef.current.length;
-                      baselinePoseRef.current = { yaw: avgYaw, tilt: avgTilt };
+                      const avgPitch = neutralSamplesRef.current.reduce((sum, s) => sum + s.pitch, 0) / neutralSamplesRef.current.length;
+                      const avgCenterY = neutralSamplesRef.current.reduce((sum, s) => sum + s.centerY, 0) / neutralSamplesRef.current.length;
+                      baselinePoseRef.current = { yaw: avgYaw, tilt: avgTilt, pitch: avgPitch, centerY: avgCenterY };
                       const challengesList = (Array.isArray(serverChallenge?.challenges) && serverChallenge.challenges.length > 0)
                         ? serverChallenge.challenges
                         : [{ step: 1, action: serverChallenge?.action || 'TURN_LEFT', instruction: serverChallenge?.instruction || 'Slowly turn your head slightly to the left' }];
@@ -346,9 +363,9 @@ export function BiometricCheckView({
                       const activeInstruction = currentStepObj?.instruction || 'Slowly turn your head slightly';
 
                       setFaceCheckStatus('aligned');
-                      setFaceStatusMessage(`Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
+                      setFaceStatusMessage(challengesList.length === 1 ? `Active Challenge: ${activeInstruction}` : `Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
                       setChallengeProgress(0);
-                      drawFaceReticles(ctx, p, '#38bdf8', `Challenge ${activeIdx + 1}/${challengesList.length}: ${activeInstruction}`);
+                      drawFaceReticles(ctx, p, '#38bdf8', challengesList.length === 1 ? activeInstruction : `Challenge ${activeIdx + 1}/${challengesList.length}: ${activeInstruction}`);
                       drawLandmarks(ctx, lm, '#38bdf8');
                     }
                   } else {
@@ -363,6 +380,8 @@ export function BiometricCheckView({
 
                     const deltaYaw = yawRatio - baselinePoseRef.current.yaw;
                     const deltaTilt = Math.abs(signedTilt - baselinePoseRef.current.tilt);
+                    const deltaPitch = pitchRatio - baselinePoseRef.current.pitch;
+                    const deltaCenterY = normCenterY - baselinePoseRef.current.centerY;
 
                     let progress = 0;
                     let challengeMet = false;
@@ -381,11 +400,11 @@ export function BiometricCheckView({
                       } else if (deltaYaw < -0.040) {
                         setChallengeProgress(0);
                         actionHeldCountRef.current = 0;
-                        setFaceStatusMessage(`Challenge ${activeIdx + 1} of ${challengesList.length}: Please turn to your LEFT (detected right turn)`);
+                        setFaceStatusMessage(challengesList.length === 1 ? 'Please turn to your LEFT (detected right turn)' : `Challenge ${activeIdx + 1} of ${challengesList.length}: Please turn to your LEFT (detected right turn)`);
                       } else {
                         setChallengeProgress(0);
                         actionHeldCountRef.current = 0;
-                        setFaceStatusMessage(`Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
+                        setFaceStatusMessage(challengesList.length === 1 ? `Active Challenge: ${activeInstruction}` : `Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
                       }
                     } else if (action === 'TURN_RIGHT') {
                       // Candidate turns to their right (mirrored display: nose shifts towards candidate's right eye, decreasing deltaYaw)
@@ -401,11 +420,11 @@ export function BiometricCheckView({
                       } else if (deltaYaw > 0.040) {
                         setChallengeProgress(0);
                         actionHeldCountRef.current = 0;
-                        setFaceStatusMessage(`Challenge ${activeIdx + 1} of ${challengesList.length}: Please turn to your RIGHT (detected left turn)`);
+                        setFaceStatusMessage(challengesList.length === 1 ? 'Please turn to your RIGHT (detected left turn)' : `Challenge ${activeIdx + 1} of ${challengesList.length}: Please turn to your RIGHT (detected left turn)`);
                       } else {
                         setChallengeProgress(0);
                         actionHeldCountRef.current = 0;
-                        setFaceStatusMessage(`Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
+                        setFaceStatusMessage(challengesList.length === 1 ? `Active Challenge: ${activeInstruction}` : `Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
                       }
                     } else if (action === 'TILT_HEAD') {
                       if (deltaTilt > 0.025) {
@@ -420,7 +439,34 @@ export function BiometricCheckView({
                       } else {
                         setChallengeProgress(0);
                         actionHeldCountRef.current = 0;
-                        setFaceStatusMessage(`Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
+                        setFaceStatusMessage(challengesList.length === 1 ? `Active Challenge: ${activeInstruction}` : `Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
+                      }
+                    } else if (action === 'MOVE_HEAD_DOWN') {
+                      // Supports both nodding chin downward (positive deltaPitch) and lowering head vertically downward (positive deltaCenterY)
+                      const pitchProg = deltaPitch > 0.025
+                        ? Math.min(100, Math.round(((deltaPitch - 0.025) / (0.075 - 0.025)) * 100))
+                        : 0;
+                      const verticalProg = deltaCenterY > 0.030
+                        ? Math.min(100, Math.round(((deltaCenterY - 0.030) / (0.085 - 0.030)) * 100))
+                        : 0;
+                      progress = Math.max(pitchProg, verticalProg);
+
+                      if (progress > 0) {
+                        setChallengeProgress(progress);
+                        if (progress >= 100) {
+                          actionHeldCountRef.current += 1;
+                          if (actionHeldCountRef.current >= 2) challengeMet = true;
+                        } else {
+                          actionHeldCountRef.current = 0;
+                        }
+                      } else if (deltaPitch < -0.040 && deltaCenterY < -0.040) {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage(challengesList.length === 1 ? 'Please move or nod your head DOWNWARDS' : `Challenge ${activeIdx + 1} of ${challengesList.length}: Please move head DOWNWARDS`);
+                      } else {
+                        setChallengeProgress(0);
+                        actionHeldCountRef.current = 0;
+                        setFaceStatusMessage(challengesList.length === 1 ? `Active Challenge: ${activeInstruction}` : `Challenge ${activeIdx + 1} of ${challengesList.length}: ${activeInstruction}`);
                       }
                     }
 
@@ -449,12 +495,12 @@ export function BiometricCheckView({
                         setChallengeProgress(100);
                         setLivenessProgress(100);
                         setFaceCheckStatus('verified');
-                        setFaceStatusMessage('All liveness challenges passed! Identity confirmed. Please capture baseline photo.');
-                        drawFaceReticles(ctx, p, '#22c55e', 'All Challenges Passed (100%)');
+                        setFaceStatusMessage('Liveness challenge passed! Identity confirmed. Please capture baseline photo.');
+                        drawFaceReticles(ctx, p, '#22c55e', 'Liveness Verified (100%)');
                         drawLandmarks(ctx, lm, '#22c55e');
                       }
                     } else if (!isAdvancingChallengeRef.current) {
-                      drawFaceReticles(ctx, p, '#38bdf8', `Step ${activeIdx + 1}/${challengesList.length} - ${action}: ${progress}%`);
+                      drawFaceReticles(ctx, p, '#38bdf8', challengesList.length === 1 ? `${action}: ${progress}%` : `Step ${activeIdx + 1}/${challengesList.length} - ${action}: ${progress}%`);
                       drawLandmarks(ctx, lm, '#38bdf8');
                     }
                   }
@@ -605,8 +651,14 @@ export function BiometricCheckView({
       // Execute Server-Side Identity Verification Match (ArcFace/Jimp Cosine Similarity)
       setIsVerifyingBiometrics(true);
       try {
-        const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-        const examToken = sessionStorage.getItem('bics_exam_token') || '';
+        const activeToken = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') ||
+                            sessionStorage.getItem('bics_ot_auth_token') ||
+                            sessionStorage.getItem('bics_auth_token') ||
+                            localStorage.getItem('bics_auth_token') ||
+                            '';
+        const examToken = (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') ||
+                          sessionStorage.getItem('bics_exam_token') ||
+                          '';
         const headers = { 'Content-Type': 'application/json' };
         if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
         if (examToken) headers['x-exam-token'] = examToken;
@@ -623,8 +675,10 @@ export function BiometricCheckView({
             challengeTelemetry: {
               actionCompleted: challengeFulfilled || livenessProgress >= 100,
               allCompleted: challengeFulfilled || livenessProgress >= 100,
-              completedChallenges: Array.isArray(serverChallenge?.challenges) ? serverChallenge.challenges.map(c => c.action) : [serverChallenge?.action || 'TURN_LEFT'],
-              action: serverChallenge?.action
+              completedChallenges: Array.isArray(serverChallenge?.challenges) && serverChallenge.challenges.length > 0
+                ? serverChallenge.challenges.map(c => c.action)
+                : [serverChallenge?.action || 'TURN_LEFT'],
+              action: serverChallenge?.action || serverChallenge?.challenges?.[0]?.action || 'TURN_LEFT'
             }
           })
         });
@@ -716,10 +770,14 @@ export function BiometricCheckView({
   // 6. Web Audio API Decibel Meter & Live Waveform
   useEffect(() => {
     if (!webcamStream || !micGranted) return;
+    if (typeof webcamStream.getAudioTracks === 'function' && webcamStream.getAudioTracks().length === 0) return;
 
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioCtx();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
       audioContextRef.current = audioCtx;
 
       const analyser = audioCtx.createAnalyser();
@@ -748,6 +806,7 @@ export function BiometricCheckView({
         }
         const avg = sum / bufferLength;
         const currentDb = Math.min(100, Math.round(20 + (avg / 255) * 60));
+        latestDecibelsRef.current = currentDb;
         setCurrentDecibels(currentDb);
 
         // Render sleek subtle waveform
@@ -822,10 +881,11 @@ export function BiometricCheckView({
     // 2. Score >= 70%
     // 3. Audio volume exceeded threshold (> 35 dB) confirming vocal speech
     if (hasConfirm && hasIdentity && hasExam && score >= 70) {
+      voiceCalibratedRef.current = true;
       setSpeechRecognized(true);
       setVoiceCalibrated(true);
       setIsCalibratingVoice(false);
-      const floor = Math.max(25, currentDecibels);
+      const floor = Math.max(25, latestDecibelsRef.current || currentDecibels);
       setAmbientFloorDb(floor);
       if (speechRecognitionRef.current) {
         try { speechRecognitionRef.current.stop(); } catch {}
@@ -842,7 +902,60 @@ export function BiometricCheckView({
     }
   };
 
+  useEffect(() => {
+    return () => {
+      if (voiceFallbackTimerRef.current) {
+        clearTimeout(voiceFallbackTimerRef.current);
+        voiceFallbackTimerRef.current = null;
+      }
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.stop(); } catch {}
+        speechRecognitionRef.current = null;
+      }
+    };
+  }, []);
+
+  const triggerVoiceFallback = (reasonMessage) => {
+    if (voiceFallbackActiveRef.current || voiceCalibratedRef.current) return;
+    voiceFallbackActiveRef.current = true;
+
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch {}
+      speechRecognitionRef.current = null;
+    }
+    if (voiceFallbackTimerRef.current) {
+      clearTimeout(voiceFallbackTimerRef.current);
+    }
+
+    setSpeechErrorMessage(reasonMessage || 'Speech recognition engine restricted in this browser session. Verifying microphone hardware input levels...');
+    voiceFallbackTimerRef.current = setTimeout(() => {
+      voiceFallbackTimerRef.current = null;
+      voiceFallbackActiveRef.current = false;
+      voiceCalibratedRef.current = true;
+      setIsCalibratingVoice(false);
+      setVoiceCalibrated(true);
+      const floor = Math.max(25, latestDecibelsRef.current || currentDecibels);
+      setAmbientFloorDb(floor);
+      setSpokenTranscript('[Voice engine unavailable - Hardware volume verified]');
+      if (onSaveBiometricsCache) {
+        onSaveBiometricsCache({
+          voiceCalibrated: true,
+          voiceVerificationStatus: 'needs_review',
+          spokenTranscript: '[Voice engine unavailable - Hardware volume verified]',
+          phraseMatchScore: 50,
+          matchedWordsMap: {},
+          ambientFloorDb: floor
+        });
+      }
+    }, 2000);
+  };
+
   const handleStartVoiceCalibration = () => {
+    if (voiceFallbackTimerRef.current) {
+      clearTimeout(voiceFallbackTimerRef.current);
+      voiceFallbackTimerRef.current = null;
+    }
+    voiceFallbackActiveRef.current = false;
     setIsCalibratingVoice(true);
     setSpokenTranscript('');
     setSpeechRecognized(false);
@@ -852,25 +965,7 @@ export function BiometricCheckView({
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      // Diagnostic fallback when Web Speech API engine is unavailable in browser
-      setSpeechErrorMessage('Web Speech API engine not detected in this browser. Measuring microphone input levels.');
-      setTimeout(() => {
-        setIsCalibratingVoice(false);
-        setVoiceCalibrated(true);
-        const floor = Math.max(25, currentDecibels);
-        setAmbientFloorDb(floor);
-        setSpokenTranscript('[Voice engine unavailable - Hardware volume verified]');
-        if (onSaveBiometricsCache) {
-          onSaveBiometricsCache({
-            voiceCalibrated: true,
-            voiceVerificationStatus: 'needs_review',
-            spokenTranscript: '[Voice engine unavailable - Hardware volume verified]',
-            phraseMatchScore: 50,
-            matchedWordsMap: {},
-            ambientFloorDb: floor
-          });
-        }
-      }, 2000);
+      triggerVoiceFallback('Web Speech API engine not detected in this browser. Measuring microphone input levels.');
       return;
     }
 
@@ -892,23 +987,27 @@ export function BiometricCheckView({
       };
 
       recognition.onerror = (e) => {
-        if (e.error !== 'no-speech') {
-          console.warn("[PROCTOR_VOICE]: Speech recognition event notice:", e.error);
+        const errCode = e?.error || 'unknown';
+        if (errCode !== 'no-speech') {
+          console.warn("[PROCTOR_VOICE]: Speech recognition event notice:", errCode);
+        }
+        // Chrome Incognito / locked-down browsers frequently block Web Speech cloud service
+        if (['not-allowed', 'service-not-allowed', 'network', 'audio-capture', 'language-not-supported', 'aborted'].includes(errCode)) {
+          triggerVoiceFallback(`Browser speech transcription is restricted (${errCode}). Verifying live microphone audio floor instead.`);
         }
       };
 
       recognition.onend = () => {
-        // Recognition completed
-        if (!voiceCalibrated) {
+        if (!voiceCalibratedRef.current && !voiceFallbackActiveRef.current) {
           setIsCalibratingVoice(false);
         }
       };
 
-      recognition.start();
       speechRecognitionRef.current = recognition;
+      recognition.start();
     } catch (err) {
       console.warn("Speech recognition initialization fallback:", err);
-      setIsCalibratingVoice(false);
+      triggerVoiceFallback('Speech recognition service unavailable in this session. Measuring microphone input levels.');
     }
   };
 
@@ -1204,10 +1303,12 @@ export function BiometricCheckView({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ fontWeight: 'bold', color: challengeFulfilled ? '#16a34a' : '#0284c7' }}>
                           {challengeFulfilled 
-                            ? 'All Challenges Verified' 
-                            : !baselinePoseRef.current 
-                              ? `Challenge ${currentChallengeIndex + 1} of ${challengesList.length}: Calibrating`
-                              : `Challenge ${currentChallengeIndex + 1} of ${challengesList.length}`}
+                            ? 'Liveness Challenge Verified' 
+                            : challengesList.length === 1
+                              ? (!baselinePoseRef.current ? 'Liveness Challenge: Calibrating' : 'Active Liveness Challenge')
+                              : (!baselinePoseRef.current 
+                                  ? `Challenge ${currentChallengeIndex + 1} of ${challengesList.length}: Calibrating`
+                                  : `Challenge ${currentChallengeIndex + 1} of ${challengesList.length}`)}
                         </span>
                         <div style={{ display: 'flex', gap: '4px' }}>
                           {challengesList.map((ch, chIdx) => {
@@ -1289,15 +1390,54 @@ export function BiometricCheckView({
                 </div>
               )}
 
+              {mediaPermissionError && (!webcamGranted || !micGranted || !webcamStream) && (
+                <div style={{
+                  backgroundColor: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: '4px',
+                  padding: '8px 10px',
+                  fontSize: '8pt',
+                  color: '#991b1b',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px',
+                  lineHeight: '1.45',
+                  whiteSpace: 'pre-line'
+                }}>
+                  <AlertTriangle size={14} style={{ color: '#dc2626', flexShrink: 0, marginTop: '2px' }} />
+                  <span>{mediaPermissionError}</span>
+                </div>
+              )}
+
               {/* Camera Actions */}
               <div style={{ display: 'flex', gap: '8px' }}>
-                {!webcamGranted ? (
-                  <button 
-                    className="cf-btn-primary" 
+                {(!webcamGranted || !micGranted || !webcamStream) ? (
+                  <button
+                    type="button"
+                    className="cf-btn-primary"
+                    disabled={isAuthorizingMedia}
                     onClick={handleAuthorizeCamera}
-                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt', fontWeight: 'bold' }}
+                    style={{
+                      flex: 1,
+                      padding: '7px 12px',
+                      fontSize: '8.5pt',
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      opacity: isAuthorizingMedia ? 0.75 : 1,
+                      cursor: isAuthorizingMedia ? 'wait' : 'pointer'
+                    }}
                   >
-                    Authorize Camera &amp; Microphone
+                    {isAuthorizingMedia ? (
+                      <>
+                        <Loader2 size={13} className="spinner" />
+                        <span>Waiting for Permission...</span>
+                      </>
+                    ) : (
+                      <span>Authorize Camera &amp; Microphone</span>
+                    )}
                   </button>
                 ) : !baselinePhoto ? (
                   <button 

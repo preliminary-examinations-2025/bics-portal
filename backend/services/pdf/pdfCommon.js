@@ -3,25 +3,91 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
+const FONTS_ROOT = path.join(__dirname, '..', '..', 'public', 'fonts');
+
+const FONT_FILES = {
+    'PJS-Regular': path.join(FONTS_ROOT, 'plus-jakarta-sans', 'PlusJakartaSans-Regular.ttf'),
+    'PJS-Medium': path.join(FONTS_ROOT, 'plus-jakarta-sans', 'PlusJakartaSans-Medium.ttf'),
+    'PJS-SemiBold': path.join(FONTS_ROOT, 'plus-jakarta-sans', 'PlusJakartaSans-SemiBold.ttf'),
+    'PJS-Bold': path.join(FONTS_ROOT, 'plus-jakarta-sans', 'PlusJakartaSans-Bold.ttf'),
+    'Inter-Regular': path.join(FONTS_ROOT, 'inter', 'Inter-Regular.ttf'),
+    'Inter-Medium': path.join(FONTS_ROOT, 'inter', 'Inter-Medium.ttf'),
+    'Inter-SemiBold': path.join(FONTS_ROOT, 'inter', 'Inter-SemiBold.ttf'),
+    'Inter-Bold': path.join(FONTS_ROOT, 'inter', 'Inter-Bold.ttf')
+};
+
+/**
+ * Registers Plus Jakarta Sans & Inter TTFs onto a PDFKit document and returns resolved font names
+ */
+function registerPdfFonts(doc) {
+    const registered = {};
+    for (const [alias, filePath] of Object.entries(FONT_FILES)) {
+        if (fs.existsSync(filePath)) {
+            try {
+                doc.registerFont(alias, filePath);
+                registered[alias] = alias;
+                continue;
+            } catch (err) {
+                console.warn(`[PDF_COMMON] Failed registering font ${alias}:`, err.message);
+            }
+        }
+        const isBold = alias.endsWith('Bold');
+        registered[alias] = isBold ? 'Helvetica-Bold' : 'Helvetica';
+    }
+    return {
+        titleRegular: registered['PJS-Regular'],
+        titleMedium: registered['PJS-Medium'],
+        titleSemiBold: registered['PJS-SemiBold'],
+        titleBold: registered['PJS-Bold'],
+        bodyRegular: registered['Inter-Regular'],
+        bodyMedium: registered['Inter-Medium'],
+        bodySemiBold: registered['Inter-SemiBold'],
+        bodyBold: registered['Inter-Bold']
+    };
+}
+
+/**
+ * Resolves system examType config value to standardized display label
+ */
+function resolveExamTypeLabel(examTypeOrConfig) {
+    const raw = (examTypeOrConfig && typeof examTypeOrConfig === 'object')
+        ? (examTypeOrConfig.examType || examTypeOrConfig.type)
+        : examTypeOrConfig;
+    const norm = String(raw || '').trim().toLowerCase();
+    if (!norm) return 'Details not available';
+    if (norm === 'midsem' || norm === 'mid' || norm.includes('mid-sem') || norm.includes('mid sem')) {
+        return 'Mid-Sem Test 2026';
+    }
+    if (norm === 'endsem' || norm === 'end' || norm.includes('end-sem') || norm.includes('end sem')) {
+        return 'End-Sem Exam 2026';
+    }
+    return String(raw).trim();
+}
+
 /**
  * Universal safe fallback for missing/null/empty values
  */
-function safeText(val, fallback = 'No details available') {
+function safeText(val, fallback = 'Details not available') {
     if (val === null || val === undefined) return fallback;
     const s = String(val).trim();
-    if (s.length === 0 || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') {
+    if (
+        s.length === 0 ||
+        s.toLowerCase() === 'undefined' ||
+        s.toLowerCase() === 'null' ||
+        s.toLowerCase() === 'no details available'
+    ) {
         return fallback;
     }
-    return String(val);
+    return String(val).trim();
 }
 
 /**
  * Formats a Date object to Indian Standard Time (IST) string
  */
 function formatISTDate(dateInput) {
-    if (!dateInput) return 'No details available';
+    if (!dateInput) return 'Details not available';
     const d = new Date(dateInput);
-    if (isNaN(d.getTime())) return 'No details available';
+    if (isNaN(d.getTime())) return 'Details not available';
     return d.toLocaleString('en-IN', {
         timeZone: 'Asia/Kolkata',
         day: '2-digit',
@@ -61,7 +127,6 @@ async function fetchImageBuffer(url) {
     if (!url) return null;
     if (typeof url !== 'string') return null;
 
-    // Data URL
     if (url.startsWith('data:image/')) {
         try {
             const base64Data = url.split(',')[1];
@@ -72,7 +137,6 @@ async function fetchImageBuffer(url) {
         }
     }
 
-    // Local file path
     if (fs.existsSync(url)) {
         try {
             return fs.readFileSync(url);
@@ -109,129 +173,247 @@ async function fetchImageBuffer(url) {
 }
 
 /**
- * Draws the official Page 1 Black & White header with top-left BICS logo and top-right QR code (no outer border box)
+ * Draws the Page 1 Institutional Header with Top-Left Logo, Center Metadata Block,
+ * Top-Right Framed QR Code, and a Clean Full-Width Divider strictly BELOW both.
+ * Submission ID (BICSID) is displayed ONLY here on Page 1.
  */
 function drawBwHeader(doc, {
     title = 'BICS DEPARTMENT OF EXAMINATION',
-    subtitle = 'BICS Online Testing System — Academic Integrity & Assessment Authority',
+    subtitle = 'Academic Year 2026-27 • Semester I',
     docType = 'EXAMINATION RECORD',
-    refId = 'No details available',
+    refId = 'Details not available',
     submissionId = null,
-    bicsId = 'No details available',
+    bicsId = 'Details not available',
     qrPayload = 'BICS_VERIFY',
+    fonts = null,
     startX = 30,
     pageWidth = 535
 }) {
-    const headerHeight = 72;
-    const qrWidth = 65;
-    const qrHeight = 65;
-    const qrX = startX + pageWidth - qrWidth;
-    const qrY = 26;
+    const f = fonts || registerPdfFonts(doc);
+    const qrSize = 58;
+    const qrFrameW = 68;
+    const qrFrameX = startX + pageWidth - qrFrameW;
+    const topY = 26;
 
-    // Top-Left Logo (No outer border box)
+    // Top-Left Institutional Logo
     const bicsLogoPath = path.join(__dirname, '..', '..', 'public', 'bics_logo.png');
     let textStartX = startX;
     if (fs.existsSync(bicsLogoPath)) {
         try {
-            doc.image(bicsLogoPath, startX, 26, { width: 46 });
-            textStartX = startX + 54;
+            doc.image(bicsLogoPath, startX, topY + 2, { width: 48 });
+            textStartX = startX + 58;
         } catch (e) {}
     }
 
-    // Text block (between logo and QR)
-    const textWidth = qrX - textStartX - 8;
-    doc.fillColor('#000000').fontSize(12).font('Helvetica-Bold')
-       .text(title, textStartX, 28, { width: textWidth, align: 'left' });
+    const textWidth = qrFrameX - textStartX - 16;
+    let ty = topY;
 
-    doc.fillColor('#000000').fontSize(8).font('Helvetica')
-       .text(subtitle, textStartX, 42, { width: textWidth, align: 'left' });
+    doc.fillColor('#0f172a').fontSize(12.5).font(f.titleBold)
+       .text(title, textStartX, ty, { width: textWidth, align: 'left', lineGap: 1.5 });
+    ty = doc.y + 2;
 
-    doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold')
-       .text(docType, textStartX, 54, { width: textWidth, align: 'left' });
+    doc.fillColor('#334155').fontSize(8.2).font(f.bodyMedium)
+       .text(subtitle, textStartX, ty, { width: textWidth, align: 'left', lineGap: 1.5 });
+    ty = doc.y + 3;
 
-    // Reference meta line: strictly "Submission ID" and "Reference ID" (no "BICS Object ID")
-    const resolvedSubId = submissionId || bicsId;
-    const metaLine = `Reference ID: ${safeText(refId)}  |  Submission ID: ${safeText(resolvedSubId)}`;
-    doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
-       .text(metaLine, textStartX, 68, { width: textWidth, align: 'left', lineBreak: false });
+    doc.fillColor('#000000').fontSize(9.8).font(f.titleBold)
+       .text(docType, textStartX, ty, { width: textWidth, align: 'left', lineGap: 1.5 });
+    ty = doc.y + 4;
 
-    // Thin underline separator
-    doc.moveTo(startX, 84).lineTo(startX + pageWidth, 84).strokeColor('#000000').lineWidth(0.8).stroke();
+    const resolvedSubId = safeText(submissionId || bicsId);
+    const resolvedRefId = safeText(refId);
+    const metaLine = `Submission ID: ${resolvedSubId}   •   Reference ID: ${resolvedRefId}`;
+    doc.fillColor('#1e293b').fontSize(7.8).font(f.bodySemiBold)
+       .text(metaLine, textStartX, ty, { width: textWidth, align: 'left', lineGap: 1.5 });
+    const textBottomY = doc.y;
 
-    // QR Code on the top right
+    // Top-Right QR Code (cleanly aligned, divider stays strictly below caption)
+    let qrBottomY = topY + 68;
     const qrBuffer = generateQrBuffer(qrPayload);
     if (qrBuffer) {
         try {
-            doc.image(qrBuffer, qrX, qrY + 1, { width: qrWidth, height: qrHeight - 8 });
-            doc.fillColor('#000000').fontSize(5.5).font('Helvetica')
-               .text('Scan for Verification', qrX, qrY + qrHeight - 6, { width: qrWidth, align: 'center' });
+            const qrImgX = qrFrameX + (qrFrameW - qrSize) / 2;
+            doc.image(qrBuffer, qrImgX, topY, { width: qrSize, height: qrSize });
+            doc.fillColor('#334155').fontSize(6.2).font(f.bodyMedium)
+               .text('Scan to Verify', qrFrameX, topY + qrSize + 3, { width: qrFrameW, align: 'center' });
+            qrBottomY = doc.y;
         } catch (e) {
             console.error('[PDF_COMMON] Error drawing header QR:', e);
         }
     }
 
-    return 94; // returns next Y
+    const dividerY = Math.max(textBottomY, qrBottomY, topY + 68) + 8;
+    doc.moveTo(startX, dividerY).lineTo(startX + pageWidth, dividerY)
+       .strokeColor('#0f172a').lineWidth(1.0).stroke();
+
+    return dividerY + 12;
 }
 
 /**
- * Draws filled section band header
+ * Draws Continuation Header on Pages 2+ showing ONLY Reference ID (never BICSID / Submission ID)
  */
-function drawBwSectionBand(doc, x, y, width, height, title) {
-    doc.rect(x, y, width, height).fillAndStroke('#e5e7eb', '#000000');
-    doc.fillColor('#000000').fontSize(8.5).font('Helvetica-Bold')
-       .text(title, x + 6, y + 4, { width: width - 12, lineBreak: false });
-    return y + height;
-}
-
-/**
- * Draws a 2-column key-value grid row with crisp borders, dynamic row height based on text wrapping, and clean internal padding
- */
-function drawBwGridRow(doc, x, y, width, minHeight = 24, label1, val1, label2, val2, colSplit = 0.5) {
-    const midX = x + width * colSplit;
-    const w1 = (label2 !== undefined ? midX - x : width) - 12;
-    const w2 = label2 !== undefined ? (x + width - midX - 12) : 0;
-
-    // Measure label heights
-    doc.fontSize(7).font('Helvetica-Bold');
-    const label1H = doc.heightOfString(label1 || '', { width: w1 });
-    const label2H = label2 !== undefined ? doc.heightOfString(label2 || '', { width: w2 }) : 0;
-
-    // Measure value heights
-    doc.fontSize(7.5).font('Helvetica');
-    const textVal1 = safeText(val1);
-    const textVal2 = label2 !== undefined ? safeText(val2) : '';
-    const val1H = doc.heightOfString(textVal1, { width: w1, lineGap: 1 });
-    const val2H = label2 !== undefined ? doc.heightOfString(textVal2, { width: w2, lineGap: 1 }) : 0;
-
-    // Calculate dynamic row height ensuring no text is ever clipped or overlapped
-    const col1Total = label1H + val1H + 7;
-    const col2Total = label2 !== undefined ? (label2H + val2H + 7) : 0;
-    const rowHeight = Math.max(minHeight, Math.ceil(Math.max(col1Total, col2Total)));
-
-    doc.rect(x, y, width, rowHeight).strokeColor('#000000').lineWidth(0.8).stroke();
-    if (label2 !== undefined) {
-        doc.moveTo(midX, y).lineTo(midX, y + rowHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+function drawBwContinuationHeader(doc, {
+    title = 'BICS DEPARTMENT OF EXAMINATION',
+    refId = 'Details not available',
+    subLabel = '',
+    examTypeLabel = '',
+    fonts = null,
+    startX = 30,
+    pageWidth = 535
+}) {
+    const f = fonts || registerPdfFonts(doc);
+    const bicsLogoPath = path.join(__dirname, '..', '..', 'public', 'bics_logo.png');
+    let textStartX = startX;
+    if (fs.existsSync(bicsLogoPath)) {
+        try {
+            doc.image(bicsLogoPath, startX, 24, { width: 28 });
+            textStartX = startX + 38;
+        } catch (e) {}
     }
 
-    // Col 1 text
-    doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold')
-       .text(label1, x + 6, y + 3, { width: w1 });
-    doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
-       .text(textVal1, x + 6, y + 3 + label1H + 1.5, { width: w1, lineGap: 1 });
+    const availW = pageWidth - (textStartX - startX);
+    doc.fillColor('#0f172a').fontSize(10).font(f.titleBold)
+       .text(title, textStartX, 25, { width: availW, align: 'left' });
+    const titleBottom = doc.y;
 
-    // Col 2 text
-    if (label2 !== undefined) {
-        doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold')
-           .text(label2, midX + 6, y + 3, { width: w2 });
-        doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
-           .text(textVal2, midX + 6, y + 3 + label2H + 1.5, { width: w2, lineGap: 1 });
-    }
+    const parts = [`Academic Year 2026-27 • Semester I`];
+    if (examTypeLabel && examTypeLabel !== 'Details not available') parts.push(examTypeLabel);
+    parts.push(`Reference ID: ${safeText(refId)}`);
+    if (subLabel) parts.push(subLabel);
 
-    return y + rowHeight;
+    doc.fillColor('#475569').fontSize(7.6).font(f.bodyMedium)
+       .text(parts.join('   |   '), textStartX, Math.max(titleBottom + 2, 39), { width: availW, align: 'left' });
+    const lineY = Math.max(doc.y, 52) + 7;
+
+    doc.moveTo(startX, lineY).lineTo(startX + pageWidth, lineY)
+       .strokeColor('#334155').lineWidth(0.75).stroke();
+
+    return lineY + 12;
 }
 
 /**
- * Draws a multi-column table with borders, auto-pagination, and header repeating
+ * Draws section banner using Plus Jakarta Sans Bold
+ */
+function drawBwSectionBand(doc, x, y, width, height, title, fonts = null) {
+    const f = fonts || registerPdfFonts(doc);
+    const bandH = Math.max(height || 20, 20);
+    doc.rect(x, y, width, bandH).fillAndStroke('#e2e8f0', '#0f172a');
+    doc.fillColor('#0f172a').fontSize(8.5).font(f.titleBold)
+       .text(title, x + 8, y + 4.5, { width: width - 16, lineBreak: false });
+    return y + bandH;
+}
+
+/**
+ * Draws a horizontal key-value row with discrete Key and Value columns:
+ * - 4 columns when `pairs.length === 2` (`| Key 1 (Bold) | Value 1 (Regular) | Key 2 (Bold) | Value 2 (Regular) |`)
+ * - 2 columns when `pairs.length === 1` (`| Key (Bold) | Value (Regular, full width) |`)
+ * Automatically paginates when `onNewPage` is provided and row would collide with footer.
+ */
+function drawBwSplitRow(doc, {
+    x = 30,
+    y,
+    width = 535,
+    pairs = [],
+    colRatios = null,
+    minHeight = 23,
+    fonts = null,
+    keyBg = '#f8fafc',
+    keyFontSize = 7.4,
+    valFontSize = 7.9,
+    lineGap = 2.4,
+    padX = 7,
+    padY = 5.5,
+    onNewPage = null
+}) {
+    const f = fonts || registerPdfFonts(doc);
+    const isFourCol = pairs.length >= 2;
+    const ratios = colRatios || (isFourCol ? [0.21, 0.29, 0.21, 0.29] : [0.21, 0.79]);
+
+    const colWidths = ratios.map(r => width * r);
+    const cells = isFourCol
+        ? [
+            { text: String(pairs[0]?.label || ''), isKey: true, w: colWidths[0] },
+            { text: safeText(pairs[0]?.value), isKey: false, w: colWidths[1] },
+            { text: String(pairs[1]?.label || ''), isKey: true, w: colWidths[2] },
+            { text: safeText(pairs[1]?.value), isKey: false, w: colWidths[3] }
+        ]
+        : [
+            { text: String(pairs[0]?.label || ''), isKey: true, w: colWidths[0] },
+            { text: safeText(pairs[0]?.value), isKey: false, w: colWidths[1] }
+        ];
+
+    let maxContentH = 0;
+    const measured = cells.map((cell) => {
+        const innerW = Math.max(12, cell.w - padX * 2);
+        const fontName = cell.isKey ? f.bodySemiBold : f.bodyRegular;
+        const fontSize = cell.isKey ? keyFontSize : valFontSize;
+        doc.font(fontName).fontSize(fontSize);
+        const h = doc.heightOfString(cell.text || '', { width: innerW, lineGap });
+        if (h > maxContentH) maxContentH = h;
+        return { ...cell, innerW, fontName, fontSize, textH: h };
+    });
+
+    const rowHeight = Math.max(minHeight, Math.ceil(maxContentH + padY * 2));
+    let curY = y;
+
+    if (typeof onNewPage === 'function' && curY + rowHeight > 780) {
+        doc.addPage();
+        curY = onNewPage(doc);
+    }
+
+    // Paint key column background fills first
+    let fillX = x;
+    measured.forEach((cell) => {
+        if (cell.isKey && keyBg) {
+            doc.rect(fillX, curY, cell.w, rowHeight).fillColor(keyBg).fill();
+        }
+        fillX += cell.w;
+    });
+
+    // Outer row border & vertical column dividers
+    doc.rect(x, curY, width, rowHeight).strokeColor('#334155').lineWidth(0.7).stroke();
+    let divX = x;
+    for (let i = 0; i < measured.length - 1; i++) {
+        divX += measured[i].w;
+        const isPairBoundary = isFourCol && i === 1;
+        doc.moveTo(divX, curY).lineTo(divX, curY + rowHeight)
+           .strokeColor(isPairBoundary ? '#0f172a' : '#64748b')
+           .lineWidth(isPairBoundary ? 0.85 : 0.6).stroke();
+    }
+
+    // Draw cell text aligned cleanly
+    let textX = x;
+    measured.forEach((cell) => {
+        const textY = curY + padY;
+        doc.fillColor(cell.isKey ? '#0f172a' : '#000000')
+           .font(cell.fontName)
+           .fontSize(cell.fontSize)
+           .text(cell.text, textX + padX, textY, { width: cell.innerW, lineGap });
+        textX += cell.w;
+    });
+
+    return curY + rowHeight;
+}
+
+/**
+ * Legacy helper preserved for backward compatibility (delegates to horizontal split style)
+ */
+function drawBwGridRow(doc, x, y, width, minHeight = 23, label1, val1, label2, val2, colSplit = 0.5, fonts = null) {
+    const pairs = label2 !== undefined
+        ? [{ label: label1, value: val1 }, { label: label2, value: val2 }]
+        : [{ label: label1, value: val1 }];
+    let ratios = null;
+    if (label2 !== undefined && typeof colSplit === 'number' && colSplit > 0.25 && colSplit < 0.75) {
+        const leftW = colSplit;
+        const rightW = 1 - colSplit;
+        ratios = [leftW * 0.40, leftW * 0.60, rightW * 0.40, rightW * 0.60];
+    }
+    return drawBwSplitRow(doc, { x, y, width, pairs, colRatios: ratios, minHeight, fonts });
+}
+
+/**
+ * Draws a multi-column table with Plus Jakarta Sans headers, Inter body cells,
+ * wrapped text, generous padding, full-height borders, and auto-pagination
  */
 function drawBwTable(doc, {
     startX = 30,
@@ -240,34 +422,67 @@ function drawBwTable(doc, {
     headers = [],
     rows = [],
     colWidths = [],
-    headerHeight = 18,
-    rowHeight = 16,
+    headerHeight = 22,
+    rowHeight = 22,
+    lineGap = 2.4,
+    padX = 6,
+    padY = 5.5,
+    fonts = null,
     onNewPage = null
 }) {
+    const f = fonts || registerPdfFonts(doc);
     let curY = startY;
 
     function renderHeader(y) {
-        doc.rect(startX, y, width, headerHeight).fillAndStroke('#e5e7eb', '#000000');
-        let colX = startX;
-        headers.forEach((h, idx) => {
+        doc.fontSize(7.4).font(f.titleBold);
+        let maxHeaderTextH = 0;
+        const headerItems = headers.map((h, idx) => {
             const w = colWidths[idx] || (width / headers.length);
             const align = h.align || 'left';
             const label = typeof h === 'string' ? h : h.label;
-            doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold')
-               .text(label, colX + 4, y + 5, { width: w - 8, align: align, lineBreak: false });
-            colX += w;
-            if (idx < headers.length - 1) {
-                doc.moveTo(colX, y).lineTo(colX, y + headerHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+            const innerW = Math.max(8, w - padX * 2);
+            const textH = doc.heightOfString(label || '', { width: innerW, lineGap: 1.5 });
+            if (textH > maxHeaderTextH) maxHeaderTextH = textH;
+            return { w, align, label, innerW, textH };
+        });
+        const actualHeaderH = Math.max(headerHeight, Math.ceil(maxHeaderTextH + padY * 2));
+
+        doc.rect(startX, y, width, actualHeaderH).fillAndStroke('#e2e8f0', '#0f172a');
+        let colX = startX;
+        headerItems.forEach((item, idx) => {
+            const topPad = Math.max(padY, (actualHeaderH - item.textH) / 2);
+            doc.fillColor('#0f172a').fontSize(7.4).font(f.titleBold)
+               .text(item.label, colX + padX, y + topPad, { width: item.innerW, align: item.align, lineGap: 1.5 });
+            colX += item.w;
+            if (idx < headerItems.length - 1) {
+                doc.moveTo(colX, y).lineTo(colX, y + actualHeaderH).strokeColor('#334155').lineWidth(0.7).stroke();
             }
         });
-        return y + headerHeight;
+        return y + actualHeaderH;
     }
 
     curY = renderHeader(curY);
 
-    rows.forEach((row, rIdx) => {
-        // Page break check (leave room for row + footer)
-        if (curY + rowHeight > 790) {
+    rows.forEach((row) => {
+        const isHighlight = row.isHighlight || false;
+        const cells = Array.isArray(row) ? row : (row.cells || []);
+        const font = (isHighlight || row.bold) ? f.bodyBold : f.bodyRegular;
+        const fontSize = isHighlight ? 7.9 : 7.7;
+
+        doc.fontSize(fontSize).font(font);
+        let maxCellH = 0;
+        const measuredCells = cells.map((cellVal, cIdx) => {
+            const w = colWidths[cIdx] || (width / cells.length);
+            const align = headers[cIdx]?.align || 'left';
+            const innerW = Math.max(8, w - padX * 2);
+            const cellText = safeText(cellVal);
+            const h = doc.heightOfString(cellText, { width: innerW, lineGap });
+            if (h > maxCellH) maxCellH = h;
+            return { w, align, innerW, cellText };
+        });
+        const actualRowH = Math.max(rowHeight, Math.ceil(maxCellH + padY * 2));
+
+        if (curY + actualRowH > 780) {
             doc.addPage();
             if (typeof onNewPage === 'function') {
                 curY = onNewPage(doc);
@@ -277,54 +492,58 @@ function drawBwTable(doc, {
             curY = renderHeader(curY);
         }
 
-        const isHighlight = row.isHighlight || false;
         if (isHighlight) {
-            doc.rect(startX, curY, width, rowHeight).fillAndStroke('#f3f4f6', '#000000');
+            doc.rect(startX, curY, width, actualRowH).fillAndStroke('#f1f5f9', '#0f172a');
         } else {
-            doc.rect(startX, curY, width, rowHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+            doc.rect(startX, curY, width, actualRowH).strokeColor('#334155').lineWidth(0.7).stroke();
         }
 
         let colX = startX;
-        const cells = Array.isArray(row) ? row : (row.cells || []);
-        cells.forEach((cellVal, cIdx) => {
-            const w = colWidths[cIdx] || (width / cells.length);
-            const align = headers[cIdx]?.align || 'left';
-            const font = (isHighlight || row.bold) ? 'Helvetica-Bold' : 'Helvetica';
-            doc.fillColor('#000000').fontSize(7).font(font)
-               .text(safeText(cellVal), colX + 4, curY + 4, { width: w - 8, align: align, lineBreak: false });
-            colX += w;
-            if (cIdx < cells.length - 1) {
-                doc.moveTo(colX, curY).lineTo(colX, curY + rowHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+        measuredCells.forEach((cell, cIdx) => {
+            doc.fillColor('#000000').fontSize(fontSize).font(font)
+               .text(cell.cellText, colX + padX, curY + padY, { width: cell.innerW, align: cell.align, lineGap });
+            colX += cell.w;
+            if (cIdx < measuredCells.length - 1) {
+                doc.moveTo(colX, curY).lineTo(colX, curY + actualRowH).strokeColor('#475569').lineWidth(0.65).stroke();
             }
         });
-        curY += rowHeight;
+        curY += actualRowH;
     });
 
     return curY;
 }
 
 /**
- * Draws page footer with page numbering and institutional disclaimer
+ * Draws page footer with Ref ID, page numbering, and institutional label using Inter
  */
-function drawBwFooter(doc, currentPage, totalPages, docLabel = 'Official Examination Record') {
+function drawBwFooter(doc, currentPage, totalPages, docLabel = 'Official Examination Record', refId = null, fonts = null) {
+    const f = fonts || registerPdfFonts(doc);
     const startX = 30;
     const pageWidth = 535;
-    const y = 805;
+    const y = 802;
 
-    doc.moveTo(startX, y).lineTo(startX + pageWidth, y).strokeColor('#000000').lineWidth(0.8).stroke();
-    doc.fillColor('#000000').fontSize(7).font('Helvetica')
-       .text(`BICS Department of Examination • ${docLabel} • Confidential & Digitally Signed`, startX, y + 5, { width: 380 });
-    doc.text(`Page ${currentPage} of ${totalPages}`, startX + pageWidth - 80, y + 5, { width: 80, align: 'right' });
+    doc.moveTo(startX, y).lineTo(startX + pageWidth, y).strokeColor('#334155').lineWidth(0.7).stroke();
+    const sep = (f.bodyRegular === 'Helvetica') ? '  |  ' : '  •  ';
+    const refPart = (refId && safeText(refId) !== 'Details not available') ? `${sep}Reference ID: ${safeText(refId)}` : '';
+    doc.fillColor('#334155').fontSize(7.4).font(f.bodyRegular)
+       .text(`BICS Department of Examination${sep}${docLabel}${refPart}`, startX, y + 6, { width: 430 });
+    doc.fillColor('#0f172a').fontSize(7.5).font(f.bodySemiBold)
+       .text(`Page ${currentPage} of ${totalPages}`, startX + pageWidth - 95, y + 6, { width: 95, align: 'right' });
 }
 
 module.exports = {
+    FONT_FILES,
+    registerPdfFonts,
+    resolveExamTypeLabel,
     safeText,
     formatISTDate,
     generateQrBuffer,
     generateHmacSignature,
     fetchImageBuffer,
     drawBwHeader,
+    drawBwContinuationHeader,
     drawBwSectionBand,
+    drawBwSplitRow,
     drawBwGridRow,
     drawBwTable,
     drawBwFooter

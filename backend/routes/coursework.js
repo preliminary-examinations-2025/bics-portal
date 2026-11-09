@@ -1265,24 +1265,18 @@ router.delete('/admin/course-materials/:id', requireAdmin, async (req, res) => {
 
 // 3. Google Classroom Digital Submissions
 router.post('/webhooks/google-classroom/submission', async (req, res) => {
-    const providedSecret = req.headers['x-api-secret'] || 
-                           req.headers['x-api-key'] || 
-                           req.headers['api-secret'] ||
-                           req.headers['apisecret'] ||
+    const providedSecret = req.headers['x-api-key'] || 
                            req.headers['x-webhook-key'] || 
                            req.headers['x-classroom-key'] || 
-                           req.query.apiSecret ||
                            req.query.key || 
                            req.query.apiKey || 
                            req.query.api_key || 
-                           req.body?.apiSecret ||
                            req.body?.key || 
                            req.body?.apiKey;
 
     const validSecrets = [
         GOOGLE_CLASSROOM_WEBHOOK_KEY,
         process.env.GOOGLE_CLASSROOM_WEBHOOK_KEY,
-        process.env.API_ACCESS_SECRET,
         "bics_classroom_secret_key_2026"
     ].filter(Boolean);
 

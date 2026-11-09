@@ -5,9 +5,40 @@ const fs = require('fs');
 const { TestSubmissionModel, TestSignalModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
-const { formatCloudinaryMediaUrl, uploadToCloudinary, useCloudinary } = require('../config/cloudinary');
-const { isBicsId, isMongoId, toBicsId, toMongoId } = require('../utils/bicsId');
+const { formatCloudinaryMediaUrl, uploadToCloudinary, isCloudinaryConfigured } = require('../config/cloudinary');
+const { isBicsId, isMongoId, toBicsId, toMongoId, resolveToObjectId } = require('../utils/bicsId');
 const { requireAuth } = require('../middleware/auth');
+const { evaluateEirfIncident } = require('../services/eirfEvaluator');
+
+function isSubmissionOwnerForUser(user, submission) {
+    if (!user || !submission) return false;
+    if (user.role === 'admin' || user.role === 'superadmin' || user.isAdmin) return true;
+
+    const userIds = new Set();
+    [user.id, user.studentId, user.username].forEach(val => {
+        if (!val) return;
+        const s = String(val).trim();
+        if (!s) return;
+        userIds.add(s);
+        const resolved = resolveToObjectId(s);
+        if (resolved) {
+            userIds.add(String(resolved));
+            const bics = toBicsId(String(resolved));
+            if (bics) userIds.add(bics);
+        }
+    });
+
+    const subRefs = [submission.candidateId, submission.studentId];
+    for (const ref of subRefs) {
+        if (!ref) continue;
+        const s = String(ref).trim();
+        if (!s) continue;
+        if (userIds.has(s)) return true;
+        const resolved = resolveToObjectId(s);
+        if (resolved && userIds.has(String(resolved))) return true;
+    }
+    return false;
+}
 
 // Helper to resolve mongo ObjectId and BICS Object ID from input submissionId
 function resolveSubmissionIdentifiers(submissionId, submissionDoc = null) {
@@ -47,10 +78,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             let retries = 5;
             while (retries > 0) {
                 try {
-                    submission = await TestSubmissionModel.findById(mongoSubId);
+                    submission = await TestSubmissionModel.findOne({ _id: mongoSubId, isDeleted: { $ne: true } });
                     if (!submission) return res.status(404).json({ error: "Submission not found." });
 
-                    if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+                    if (req.user && !isSubmissionOwnerForUser(req.user, submission)) {
                         return res.status(403).json({ error: "Access denied: You cannot submit proctoring telemetry for another candidate." });
                     }
                     if (submission.status !== 'started' && type !== 'TEST_SUBMITTED' && type !== 'TEST_AUTO_SUBMITTED') {
@@ -118,12 +149,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                         submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
                     }
 
-                    const dur = Number(durationSeconds || 0);
-                    const isMajorExit = type === 'FULLSCREEN_EXIT' || type === 'FULLSCREEN_RETURNED' || 
-                                        type === 'TAB_SWITCH' || type === 'TAB_RETURNED' ||
-                                        (type && (type.includes('FULLSCREEN') || type.includes('TAB')));
-                    if ((isMajorExit && dur > 5) || (type === 'NETWORK_OFFLINE' && dur > 5) || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
+                    const eirfEval = evaluateEirfIncident(submission);
+                    if (eirfEval.hasEirfFlag) {
                         submission.hasEirfFlag = true;
+                        submission.flaggedReasons = eirfEval.flaggedReasons;
                         if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                             submission.eirfStatus = 'pending';
                         }
@@ -144,10 +173,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
+            submission = db.testSubmissions.find(s => !s.isDeleted && (String(s.id || s._id) === String(mongoSubId) || String(s.id || s._id) === String(submissionId) || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId)));
             if (!submission) return res.status(404).json({ error: "Submission not found." });
 
-            if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+            if (req.user && !isSubmissionOwnerForUser(req.user, submission)) {
                 return res.status(403).json({ error: "Access denied: You cannot submit proctoring telemetry for another candidate." });
             }
             if (submission.status !== 'started' && type !== 'TEST_SUBMITTED' && type !== 'TEST_AUTO_SUBMITTED') {
@@ -215,12 +244,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                 submission.proctoringLog.webcamStatus = type === 'WEBCAM_LOST' ? 'inactive' : 'active';
             }
 
-            const dur = Number(durationSeconds || 0);
-            const isMajorExit = type === 'FULLSCREEN_EXIT' || type === 'FULLSCREEN_RETURNED' || 
-                                type === 'TAB_SWITCH' || type === 'TAB_RETURNED' ||
-                                (type && (type.includes('FULLSCREEN') || type.includes('TAB')));
-            if ((isMajorExit && dur > 5) || (type === 'NETWORK_OFFLINE' && dur > 5) || type === 'EMERGENCY_SUBMISSION' || type === 'MINOR_WARNINGS_EXCEEDED') {
+            const eirfEval = evaluateEirfIncident(submission);
+            if (eirfEval.hasEirfFlag) {
                 submission.hasEirfFlag = true;
+                submission.flaggedReasons = eirfEval.flaggedReasons;
                 if (!submission.eirfStatus || submission.eirfStatus === 'none') {
                     submission.eirfStatus = 'pending';
                 }
@@ -246,29 +273,21 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
 });
 
 // 2. WebRTC Signal Exchange Broker: send signal (Issue B2: Ownership check)
-router.post('/signal/:submissionId', async (req, res) => {
+router.post('/signal/:submissionId', requireAuth, async (req, res) => {
     const { submissionId } = req.params;
     const { sender, type, data } = req.body;
     if (!sender || !type || !data) return res.status(400).json({ error: "Sender, type, and data are required." });
 
-    const { mongoSubId, bicsSubId } = resolveSubmissionIdentifiers(submissionId);
-
-    const rawAuth = req.headers.authorization || (req.query.token ? `Bearer ${req.query.token}` : null);
-    let authUser = null;
-    if (rawAuth) {
-        try {
-            authUser = jwt.verify(rawAuth.replace(/^Bearer\s+/i, ''), JWT_SECRET);
-        } catch (_) {}
-    }
+    const { mongoSubId } = resolveSubmissionIdentifiers(submissionId);
 
     try {
-        if (authUser && authUser.role !== 'admin') {
-            const checkSub = dbState.useMongo 
-                ? await TestSubmissionModel.findById(mongoSubId)
-                : (getJSONData().testSubmissions || []).find(s => s.id === mongoSubId || s._id === mongoSubId);
-            if (checkSub && String(checkSub.studentId) !== String(authUser.studentId) && String(checkSub.candidateId) !== String(authUser.id)) {
-                return res.status(403).json({ error: "Access denied: Unauthorized to transmit WebRTC signals for another candidate." });
-            }
+        const checkSub = dbState.useMongo
+            ? await TestSubmissionModel.findOne({ _id: mongoSubId, isDeleted: { $ne: true } }).select('candidateId studentId')
+            : (getJSONData().testSubmissions || []).find(s => !s.isDeleted && (String(s.id || s._id) === String(mongoSubId) || String(s.id || s._id) === String(submissionId) || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId)));
+        if (!checkSub) return res.status(404).json({ error: "Submission not found." });
+
+        if (!isSubmissionOwnerForUser(req.user, checkSub)) {
+            return res.status(403).json({ error: "Access denied: Unauthorized to transmit WebRTC signals for another candidate." });
         }
 
         if (dbState.useMongo) {
@@ -296,29 +315,21 @@ router.post('/signal/:submissionId', async (req, res) => {
 });
 
 // 3. WebRTC Signal Exchange Broker: poll signals (Issue B2: Prevent SDP/ICE leak to unauthorized callers)
-router.get('/signal/:submissionId', async (req, res) => {
+router.get('/signal/:submissionId', requireAuth, async (req, res) => {
     const { submissionId } = req.params;
     const { sender } = req.query;
     if (!sender) return res.status(400).json({ error: "Query target sender is required." });
 
     const { mongoSubId, bicsSubId } = resolveSubmissionIdentifiers(submissionId);
 
-    const rawAuth = req.headers.authorization || (req.query.token ? `Bearer ${req.query.token}` : null);
-    let authUser = null;
-    if (rawAuth) {
-        try {
-            authUser = jwt.verify(rawAuth.replace(/^Bearer\s+/i, ''), JWT_SECRET);
-        } catch (_) {}
-    }
-
     try {
-        if (authUser && authUser.role !== 'admin') {
-            const checkSub = dbState.useMongo 
-                ? await TestSubmissionModel.findById(mongoSubId)
-                : (getJSONData().testSubmissions || []).find(s => s.id === mongoSubId || s._id === mongoSubId);
-            if (checkSub && String(checkSub.studentId) !== String(authUser.studentId) && String(checkSub.candidateId) !== String(authUser.id)) {
-                return res.status(403).json({ error: "Access denied: Unauthorized to view WebRTC stream telemetry for another candidate." });
-            }
+        const checkSub = dbState.useMongo
+            ? await TestSubmissionModel.findOne({ _id: mongoSubId, isDeleted: { $ne: true } }).select('candidateId studentId')
+            : (getJSONData().testSubmissions || []).find(s => !s.isDeleted && (String(s.id || s._id) === String(mongoSubId) || String(s.id || s._id) === String(submissionId) || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId)));
+        if (!checkSub) return res.status(404).json({ error: "Submission not found." });
+
+        if (!isSubmissionOwnerForUser(req.user, checkSub)) {
+            return res.status(403).json({ error: "Access denied: Unauthorized to view WebRTC stream telemetry for another candidate." });
         }
 
         let signals = [];
@@ -338,6 +349,11 @@ router.get('/signal/:submissionId', async (req, res) => {
                 (s.submissionId === submissionId || s.submissionId === mongoSubId || s.submissionId === bicsSubId) && 
                 s.sender === sender
             );
+            if (signals.length > 0) {
+                const consumedIds = new Set(signals.map(s => s.id || s._id));
+                db.testSignals = db.testSignals.filter(s => !consumedIds.has(s.id || s._id));
+                saveJSONData(db);
+            }
         }
         return res.json({ success: true, signals });
     } catch (e) {
@@ -361,16 +377,16 @@ router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
     try {
         let submission = null;
         if (dbState.useMongo) {
-            submission = await TestSubmissionModel.findById(mongoSubId);
+            submission = await TestSubmissionModel.findOne({ _id: mongoSubId, isDeleted: { $ne: true } });
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === mongoSubId || s._id === mongoSubId || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId));
+            submission = db.testSubmissions.find(s => !s.isDeleted && (String(s.id || s._id) === String(mongoSubId) || String(s.id || s._id) === String(submissionId) || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId)));
         }
 
         if (!submission) return res.status(404).json({ error: "Submission not found." });
 
-        if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
             return res.status(403).json({ error: "Access denied: Unauthorized to upload snapshot for another candidate." });
         }
         if (submission.status !== 'started' && !['submitted', 'auto-submitted'].includes(submission.status)) {
@@ -381,8 +397,11 @@ router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
         const finalBicsSubId = isBicsId(submissionId) ? submissionId : (toBicsId(submission._id || submission.id || mongoSubId) || initialBicsId);
 
         // Convert base64 data to Buffer
-        const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+        const base64Data = String(image).replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
         const imageBuffer = Buffer.from(base64Data, 'base64');
+        if (!imageBuffer || imageBuffer.length === 0) {
+            return res.status(400).json({ error: "Invalid empty image payload." });
+        }
 
         // Item 5: Save snapshots name as a string of numbers 'time+studentid'
         const rawStudentId = req.body.studentId || submission.studentId || '';
@@ -391,7 +410,7 @@ router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
 
         let finalImageUrl = '';
 
-        if (useCloudinary) {
+        if (isCloudinaryConfigured()) {
             // Upload directly to Cloudinary BICS_2026/proctoring/:bicsSubId
             finalImageUrl = await uploadToCloudinary(
                 imageBuffer,
@@ -454,10 +473,10 @@ router.post('/snapshot/:submissionId', requireAuth, async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === mongoSubId || s._id === mongoSubId || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId));
+            submission = db.testSubmissions.find(s => !s.isDeleted && (String(s.id || s._id) === String(mongoSubId) || String(s.id || s._id) === String(submissionId) || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId)));
             if (!submission) return res.status(404).json({ error: "Submission not found." });
 
-            if (req.user && req.user.role !== 'admin' && String(submission.studentId) !== String(req.user.studentId) && String(submission.candidateId) !== String(req.user.id)) {
+            if (!isSubmissionOwnerForUser(req.user, submission)) {
                 return res.status(403).json({ error: "Access denied: Unauthorized to upload snapshot for another candidate." });
             }
             if (submission.status !== 'started' && !['submitted', 'auto-submitted'].includes(submission.status)) {

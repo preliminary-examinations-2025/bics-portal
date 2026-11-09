@@ -12,8 +12,9 @@
  *    - Step 2 ('QUESTIONS_GENERATED'): Issues secure 45m magic link & token, dispatches
  *      EIRF notice email -> advances to 'AWAITING_EIRF'.
  *    - Step 3 ('AWAITING_EIRF'): Monitors 45-minute countdown timer -> marks 'EXPIRED' if deadline passed.
- *    - Step 4 ('EIRF_SUBMITTED'): Candidate filed explanation -> dispatches confirmation email
- *      -> advances to 'UNDER_REVIEW' for administrator malpractice evaluation.
+ *    - Step 4 ('EIRF_SUBMITTED'): Candidate filed explanation -> dispatches deferred
+ *      test submission confirmation email -> advances to 'UNDER_REVIEW' for administrator
+ *      malpractice evaluation.
  * 
  * Features:
  * - Atomic MongoDB Locking with 60s Dead-Man Lock Break (recovers crashed workers).
@@ -22,16 +23,14 @@
  */
 
 const crypto = require('crypto');
-const { TestSubmissionModel, CandidateModel, TestConfigModel } = require('../models');
+const mongoose = require('mongoose');
+const { TestSubmissionModel, EIRFReportModel, CandidateModel, TestConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
-const { 
-    sendEirfNoticeEmail, 
-    sendCleanSubmissionEmail, 
-    sendEirfConfirmationEmail 
-} = require('../utils/email');
 const {
     sendTestSubmittedEmail,
-    sendEirfFilingNoticeEmail
+    sendEirfFilingNoticeEmail,
+    resolvePortalBaseUrl,
+    extractValidCandidateEmail
 } = require('../services/gmailEmailService');
 const { toBicsId } = require('../utils/bicsId');
 const eirfLlmService = require('../services/eirfLlmService');
@@ -81,9 +80,12 @@ function generateTailoredQuestions(submission) {
         questions.push({
             questionId: 'Q_FULLSCREEN_' + crypto.randomBytes(4).toString('hex'),
             category: 'FULLSCREEN',
+            questionType: 'TEXT',
             questionText: `Our security monitor recorded ${fsExits} fullscreen exit(s)${maxFsSec > 0 ? ` with a maximum duration of ${maxFsSec} seconds` : ''}. What specific application or system event caused the browser to exit fullscreen?`,
             context: `Fullscreen exit count: ${fsExits}, max duration: ${maxFsSec}s`,
             placeholder: 'Provide a clear explanation of what occurred when fullscreen was exited...',
+            options: [],
+            isRequired: true,
             required: true
         });
     }
@@ -93,9 +95,12 @@ function generateTailoredQuestions(submission) {
         questions.push({
             questionId: 'Q_TAB_SWITCH_' + crypto.randomBytes(4).toString('hex'),
             category: 'TAB_SWITCH',
+            questionType: 'TEXT',
             questionText: `The system detected ${tabSwitches} window blur or tab switch event(s)${maxTabSec > 0 ? ` lasting up to ${maxTabSec} seconds` : ''}. Please specify what application, shortcut, or notification caused the window focus loss.`,
             context: `Tab switch count: ${tabSwitches}, max duration: ${maxTabSec}s`,
             placeholder: 'Describe the browser tab switch or external app interaction...',
+            options: [],
+            isRequired: true,
             required: true
         });
     }
@@ -105,9 +110,12 @@ function generateTailoredQuestions(submission) {
         questions.push({
             questionId: 'Q_NETWORK_' + crypto.randomBytes(4).toString('hex'),
             category: 'NETWORK',
+            questionType: 'TEXT',
             questionText: `A network disconnection of approximately ${maxOfflineSec} seconds was logged during your active session. What internet source were you using (e.g. Wi-Fi, mobile hotspot, ethernet), and how was connectivity restored?`,
             context: `Detected offline duration: ${maxOfflineSec}s`,
             placeholder: 'Detail your network setup and how reconnection occurred...',
+            options: [],
+            isRequired: true,
             required: true
         });
     }
@@ -117,9 +125,12 @@ function generateTailoredQuestions(submission) {
         questions.push({
             questionId: 'Q_AUTOSUBMIT_' + crypto.randomBytes(4).toString('hex'),
             category: 'GENERAL',
+            questionType: 'TEXT',
             questionText: `Your exam attempt was automatically finalized by the system (${submission.submissionReason || 'system_auto'}). Please explain your current surroundings and status at the time this occurred.`,
             context: `Submission reason: ${submission.submissionReason || 'system_auto'}`,
             placeholder: 'Explain the circumstances surrounding the session finalization...',
+            options: [],
+            isRequired: true,
             required: true
         });
     }
@@ -129,9 +140,12 @@ function generateTailoredQuestions(submission) {
         questions.push({
             questionId: 'Q_INCIDENT_GENERAL_' + crypto.randomBytes(4).toString('hex'),
             category: 'GENERAL',
+            questionType: 'TEXT',
             questionText: `Your session was flagged for post-exam review based on the following reasons: ${flaggedReasons.join('; ') || 'Automated proctoring anomaly'}. Please provide a comprehensive account of your examination environment.`,
             context: `Flagged reasons: ${flaggedReasons.join('; ')}`,
             placeholder: 'Provide complete details regarding the flagged events...',
+            options: [],
+            isRequired: true,
             required: true
         });
     }
@@ -184,7 +198,7 @@ async function runPipelineTick() {
             const expiredSubs = await TestSubmissionModel.find({
                 pipelineStatus: 'AWAITING_EIRF',
                 eirfExpiresAt: { $lt: now },
-                isDeleted: false
+                isDeleted: { $ne: true }
             });
 
             for (const sub of expiredSubs) {
@@ -196,24 +210,26 @@ async function runPipelineTick() {
 
                 // Deferred test submission confirmation email dispatch on expiry (if not yet sent)
                 if (!sub.emailsSent?.testSubmitted) {
-                    sendTestSubmittedEmail(sub._id).catch(err => {
+                    try {
+                        await sendTestSubmittedEmail(sub._id, { triggerSource: 'eirf_pipeline_expired' });
+                    } catch (err) {
                         console.error(`[EIRF_PIPELINE] Error sending deferred submission email on expiry for ${sub._id}:`, err.message);
-                    });
+                    }
                 }
             }
 
             // B.2 Orphan Recovery: Scan for finalized submissions trapped in 'QUEUED'
             const orphanedSubs = await TestSubmissionModel.find({
-                status: { $in: ['submitted', 'auto-submitted'] },
+                status: { $in: ['submitted', 'auto-submitted', 'evaluated'] },
                 pipelineStatus: 'QUEUED',
                 'pipelineLock.isLocked': false,
-                isDeleted: false
+                isDeleted: { $ne: true }
             }).limit(5);
 
             for (const orphan of orphanedSubs) {
                 try {
                     let testDoc = null;
-                    if (orphan.testId) {
+                    if (orphan.testId && mongoose.Types.ObjectId.isValid(orphan.testId)) {
                         testDoc = await TestConfigModel.findById(orphan.testId);
                     }
                     const { evaluateEirfIncident } = require('../services/eirfEvaluator');
@@ -229,21 +245,41 @@ async function runPipelineTick() {
                 }
             }
 
-            // C. Process Clean Submissions (Send verified Brevo confirmation email)
-            const cleanSubs = await TestSubmissionModel.find({
+            // C. Process Clean Submissions
+            const cleanCandidates = await TestSubmissionModel.find({
                 pipelineStatus: 'CLEARED',
                 'emailsSent.testSubmitted': { $ne: true },
-                isDeleted: false
-            }).limit(5);
+                isDeleted: { $ne: true }
+            }).limit(25);
 
-            for (const sub of cleanSubs) {
+            let cleanDispatchedCount = 0;
+            for (const sub of cleanCandidates) {
+                if (cleanDispatchedCount >= 5) break;
+                const lastErr = String(sub.emailsSent?.lastError || '');
+                const lastAttemptMs = sub.emailsSent?.lastAttemptAt ? new Date(sub.emailsSent.lastAttemptAt).getTime() : 0;
+                if (sub.emailsSent?.lastAttemptType === 'test_submitted') {
+                    if (lastErr.includes('missing or invalid')) continue;
+                    if (lastAttemptMs && (now.getTime() - lastAttemptMs) < 5 * 60 * 1000) continue;
+                }
+                cleanDispatchedCount++;
                 try {
-                    await sendTestSubmittedEmail(sub._id);
-                    if (!sub.emailsSent) sub.emailsSent = {};
-                    sub.emailsSent.testSubmitted = true;
-                    sub.emailsSent.testSubmittedAt = new Date();
-                    await recordPipelineStep(sub, 'SEND_CLEAN_CONFIRMATION', 'COMPLETED', 0, { submissionId: sub._id });
-                    await sub.save();
+                    const cleanRes = await sendTestSubmittedEmail(sub._id, { triggerSource: 'eirf_pipeline_clean' });
+                    if (cleanRes?.skipped) continue;
+                    await TestSubmissionModel.updateOne(
+                        { _id: sub._id },
+                        {
+                            $push: {
+                                pipelineHistory: {
+                                    step: 'SEND_CLEAN_CONFIRMATION',
+                                    status: cleanRes?.success ? 'COMPLETED' : 'FAILED',
+                                    timestamp: new Date(),
+                                    durationMs: 0,
+                                    details: { submissionId: sub._id },
+                                    ...(cleanRes?.success ? {} : { error: String(cleanRes?.error || cleanRes?.reason || 'Dispatch failed') })
+                                }
+                            }
+                        }
+                    );
                 } catch (cleanErr) {
                     console.error(`[EIRF_PIPELINE] Error sending clean email for ${sub._id}:`, cleanErr.message);
                 }
@@ -251,9 +287,9 @@ async function runPipelineTick() {
 
             // D. Process Flagged Sequential Submissions (At most 3 per tick to control RAM)
             const pendingJobs = await TestSubmissionModel.find({
-                pipelineStatus: { $in: ['FLAGGED', 'QUESTIONS_GENERATED', 'EIRF_SUBMITTED'] },
+                pipelineStatus: { $in: ['FLAGGED', 'QUESTIONS_GENERATED', 'SENDING_INVITE_EMAIL', 'EIRF_SUBMITTED', 'SENDING_CONFIRMATION_EMAIL'] },
                 'pipelineLock.isLocked': false,
-                isDeleted: false
+                isDeleted: { $ne: true }
             }).limit(3);
 
             for (const sub of pendingJobs) {
@@ -284,11 +320,26 @@ async function runPipelineTick() {
                     }
                     await recordPipelineStep(lockedSub, 'PIPELINE_ERROR', 'FAILED', 0, null, jobErr.message);
                 } finally {
-                    // Always release lock
-                    lockedSub.pipelineLock.isLocked = false;
-                    lockedSub.pipelineLock.lockedAt = null;
-                    lockedSub.pipelineLock.workerId = null;
-                    await lockedSub.save();
+                    // Always release lock via targeted $set so concurrent emailsSent mutations are never overwritten
+                    await TestSubmissionModel.updateOne(
+                        { _id: subId },
+                        {
+                            $set: {
+                                pipelineStatus: lockedSub.pipelineStatus,
+                                'pipelineLock.isLocked': false,
+                                'pipelineLock.lockedAt': null,
+                                'pipelineLock.workerId': null,
+                                pipelineHistory: lockedSub.pipelineHistory || [],
+                                pipelineRetries: lockedSub.pipelineRetries || 0,
+                                lastPipelineError: lockedSub.lastPipelineError || null,
+                                generatedQuestions: lockedSub.generatedQuestions || [],
+                                eirfToken: lockedSub.eirfToken || null,
+                                eirfExpiresAt: lockedSub.eirfExpiresAt || null,
+                                eirfNoticeEmailSent: Boolean(lockedSub.eirfNoticeEmailSent),
+                                eirfStatus: lockedSub.eirfStatus
+                            }
+                        }
+                    );
                 }
             }
         } else {
@@ -297,20 +348,23 @@ async function runPipelineTick() {
             db.testSubmissions = db.testSubmissions || [];
             let changed = false;
 
-            // Check expirations
-            db.testSubmissions.forEach(sub => {
+            const toExpireEmails = [];
+            const cleanClearedIds = [];
+
+            // Check expirations & recover orphans
+            for (const sub of db.testSubmissions) {
+                if (sub.isDeleted) continue;
+
                 if (sub.pipelineStatus === 'AWAITING_EIRF' && sub.eirfExpiresAt && new Date(sub.eirfExpiresAt) < now) {
                     sub.pipelineStatus = 'EXPIRED';
                     sub.eirfStatus = 'expired';
                     changed = true;
                     if (!sub.emailsSent?.testSubmitted) {
-                        sendTestSubmittedEmail(sub.id || sub._id).catch(err => {
-                            console.error(`[EIRF_PIPELINE] (JSON) Error sending deferred submission email on expiry:`, err.message);
-                        });
+                        toExpireEmails.push(sub.id || sub._id);
                     }
                 }
                 // Recover stranded finalized submissions in 'QUEUED'
-                if (['submitted', 'auto-submitted'].includes(sub.status) && sub.pipelineStatus === 'QUEUED') {
+                if (['submitted', 'auto-submitted', 'evaluated'].includes(sub.status) && sub.pipelineStatus === 'QUEUED') {
                     const test = (db.tests || []).find(t => String(t.id || t._id) === String(sub.testId));
                     const { evaluateEirfIncident } = require('../services/eirfEvaluator');
                     const eirfEval = evaluateEirfIncident(sub, test);
@@ -321,11 +375,44 @@ async function runPipelineTick() {
                     changed = true;
                     console.log(`[EIRF_PIPELINE] (JSON) Recovered stranded submission ${sub.id || sub._id} -> '${sub.pipelineStatus}'.`);
                 }
-            });
 
-            // Find next job
-            const job = db.testSubmissions.find(s => 
-                ['FLAGGED', 'QUESTIONS_GENERATED', 'EIRF_SUBMITTED'].includes(s.pipelineStatus) &&
+                if (sub.pipelineStatus === 'CLEARED' && !sub.emailsSent?.testSubmitted) {
+                    const lastErr = String(sub.emailsSent?.lastError || '');
+                    const lastAttemptMs = sub.emailsSent?.lastAttemptAt ? new Date(sub.emailsSent.lastAttemptAt).getTime() : 0;
+                    const skipPerm = sub.emailsSent?.lastAttemptType === 'test_submitted' && lastErr.includes('missing or invalid');
+                    const skipCooldown = sub.emailsSent?.lastAttemptType === 'test_submitted' && lastAttemptMs && (now.getTime() - lastAttemptMs) < 5 * 60 * 1000;
+                    if (!skipPerm && !skipCooldown && cleanClearedIds.length < 5) {
+                        cleanClearedIds.push(sub.id || sub._id);
+                    }
+                }
+            }
+
+            if (changed) {
+                saveJSONData(db);
+            }
+
+            for (const expId of toExpireEmails) {
+                try {
+                    await sendTestSubmittedEmail(expId, { triggerSource: 'eirf_pipeline_expired' });
+                } catch (err) {
+                    console.error(`[EIRF_PIPELINE] (JSON) Error sending deferred submission email on expiry:`, err.message);
+                }
+            }
+
+            for (const cleanId of cleanClearedIds) {
+                try {
+                    await sendTestSubmittedEmail(cleanId, { triggerSource: 'eirf_pipeline_clean' });
+                } catch (cleanErr) {
+                    console.error(`[EIRF_PIPELINE] (JSON) Error sending clean email for ${cleanId}:`, cleanErr.message);
+                }
+            }
+
+            // Find next job (re-read snapshot after email dispatches)
+            const freshDb = getJSONData();
+            freshDb.testSubmissions = freshDb.testSubmissions || [];
+            const job = freshDb.testSubmissions.find(s =>
+                !s.isDeleted &&
+                ['FLAGGED', 'QUESTIONS_GENERATED', 'SENDING_INVITE_EMAIL', 'EIRF_SUBMITTED', 'SENDING_CONFIRMATION_EMAIL'].includes(s.pipelineStatus) &&
                 (!s.pipelineLock || !s.pipelineLock.isLocked || new Date(s.pipelineLock.lockedAt) < lockCutoff)
             );
 
@@ -333,7 +420,7 @@ async function runPipelineTick() {
                 if (!job.pipelineLock) job.pipelineLock = {};
                 job.pipelineLock.isLocked = true;
                 job.pipelineLock.lockedAt = now;
-                saveJSONData(db);
+                saveJSONData(freshDb);
 
                 try {
                     await processSequentialJob(job);
@@ -343,12 +430,33 @@ async function runPipelineTick() {
                     if (job.pipelineRetries >= MAX_STEP_RETRIES) {
                         job.pipelineStatus = 'FAILED';
                     }
+                    await recordPipelineStep(job, 'PIPELINE_ERROR', 'FAILED', 0, null, jobErr.message);
                 } finally {
                     job.pipelineLock.isLocked = false;
-                    saveJSONData(db);
+                    // Re-read latest JSON snapshot so long async LLM/email operations never clobber concurrent writes
+                    const latestDb = getJSONData();
+                    latestDb.testSubmissions = latestDb.testSubmissions || [];
+                    const jobTargetId = String(job._id || job.id || '');
+                    const targetIdx = latestDb.testSubmissions.findIndex(s => String(s._id || s.id || '') === jobTargetId);
+                    if (targetIdx !== -1) {
+                        const existingEmails = latestDb.testSubmissions[targetIdx].emailsSent || {};
+                        latestDb.testSubmissions[targetIdx] = {
+                            ...latestDb.testSubmissions[targetIdx],
+                            pipelineStatus: job.pipelineStatus,
+                            pipelineLock: job.pipelineLock,
+                            pipelineHistory: job.pipelineHistory,
+                            pipelineRetries: job.pipelineRetries,
+                            lastPipelineError: job.lastPipelineError,
+                            generatedQuestions: job.generatedQuestions,
+                            eirfToken: job.eirfToken,
+                            eirfExpiresAt: job.eirfExpiresAt,
+                            eirfNoticeEmailSent: job.eirfNoticeEmailSent,
+                            eirfStatus: job.eirfStatus,
+                            emailsSent: { ...(job.emailsSent || {}), ...existingEmails }
+                        };
+                        saveJSONData(latestDb);
+                    }
                 }
-            } else if (changed) {
-                saveJSONData(db);
             }
         }
     } catch (tickErr) {
@@ -400,35 +508,68 @@ async function processSequentialJob(sub) {
         if (!sub.eirfToken) {
             sub.eirfToken = crypto.randomBytes(24).toString('hex');
         }
-        sub.eirfExpiresAt = new Date(Date.now() + EIRF_EXPIRY_MS);
-
-        let recipientEmail = sub.candidateEmail;
-        if (!recipientEmail && sub.candidateId && dbState.useMongo) {
-            const cand = await CandidateModel.findById(sub.candidateId).select('personalEmail email');
-            recipientEmail = cand?.personalEmail || cand?.email;
+        if (!sub.eirfExpiresAt) {
+            sub.eirfExpiresAt = new Date(Date.now() + EIRF_EXPIRY_MS);
         }
-        if (!recipientEmail) recipientEmail = 'preliminaryexaminations@gmail.com';
 
-        const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-        const defaultPortalUrl = isProd ? 'https://bicsportal.netlify.app' : 'http://localhost:5174';
-        const basePortalUrl = (process.env.PORTAL_URL || process.env.DASHBOARD_URL || defaultPortalUrl).replace(/\/+$/, '');
+        let candDoc = null;
+        if (sub.candidateId) {
+            if (dbState.useMongo && mongoose.Types.ObjectId.isValid(sub.candidateId)) {
+                candDoc = await CandidateModel.findById(sub.candidateId)
+                    .select('registrationData.personalEmail registrationData.collegeEmail personalEmail email studentId username name fullName')
+                    .lean();
+            } else {
+                const jsonDb = getJSONData();
+                candDoc = (jsonDb.candidates || []).find(c => String(c._id || c.id) === String(sub.candidateId)) || null;
+            }
+        }
+        if (!candDoc && sub.studentId) {
+            if (dbState.useMongo) {
+                candDoc = await CandidateModel.findOne({ studentId: String(sub.studentId) })
+                    .select('registrationData.personalEmail registrationData.collegeEmail personalEmail email studentId username name fullName')
+                    .lean();
+                if (!candDoc) {
+                    candDoc = await CandidateModel.findOne({ username: String(sub.studentId) })
+                        .select('registrationData.personalEmail registrationData.collegeEmail personalEmail email studentId username name fullName')
+                        .lean();
+                }
+            } else {
+                const jsonDb = getJSONData();
+                candDoc = (jsonDb.candidates || []).find(c => String(c.studentId) === String(sub.studentId) || String(c.username) === String(sub.studentId)) || null;
+            }
+        }
+        const recipientEmail = extractValidCandidateEmail(candDoc, sub) || '';
+
+        const basePortalUrl = resolvePortalBaseUrl();
         const encryptedBicsId = toBicsId(sub._id || sub.id || subId);
         const magicLink = `${basePortalUrl}/assessment/evaluation/eirf/${encryptedBicsId}?token=${sub.eirfToken}`;
 
-        const summary = (sub.flaggedReasons && sub.flaggedReasons.length > 0)
-            ? `Identified Incidents:\n• ${sub.flaggedReasons.join('\n• ')}`
-            : `Proctoring alert flagged for post-exam incident review.`;
+        const incidentSummary = (sub.flaggedReasons && sub.flaggedReasons.length > 0)
+            ? sub.flaggedReasons.join('; ')
+            : 'Proctoring alert flagged for post-exam incident review.';
 
-        // Dispatch Brevo EIRF filing notice email with official template
-        try {
-            await sendEirfFilingNoticeEmail(sub._id || sub.id || subId, {
-                magicLink,
-                expiresAt: sub.eirfExpiresAt
-            });
-        } catch (bErr) {
-            console.error(`[EIRF_PIPELINE] Error dispatching Brevo EIRF filing notice:`, bErr.message);
+        // Dispatch EIRF filing notice email — propagate failure so retries happen cleanly
+        const mailRes = await sendEirfFilingNoticeEmail(sub, {
+            magicLink,
+            magicToken: sub.eirfToken,
+            expiresAt: sub.eirfExpiresAt,
+            incidentType: incidentSummary,
+            recipient: recipientEmail,
+            triggerSource: 'eirf_pipeline_step2'
+        });
+
+        if (!mailRes || !mailRes.success) {
+            const errMsg = mailRes?.error || mailRes?.reason || 'EIRF filing notice email dispatch failed';
+            sub.pipelineStatus = 'QUESTIONS_GENERATED';
+            await recordPipelineStep(sub, 'DISPATCH_INVITE_EMAIL', 'FAILED', Date.now() - startT, {
+                recipient: recipientEmail
+            }, errMsg);
+            throw new Error(errMsg);
         }
 
+        sub.emailsSent = sub.emailsSent || {};
+        sub.emailsSent.eirfFiling = true;
+        sub.emailsSent.eirfFilingAt = sub.emailsSent.eirfFilingAt || new Date();
         sub.eirfNoticeEmailSent = true;
         sub.pipelineStatus = 'AWAITING_EIRF';
         sub.eirfStatus = 'pending';
@@ -439,48 +580,83 @@ async function processSequentialJob(sub) {
             magicLink,
             expiresAt: sub.eirfExpiresAt
         });
-        console.log(`[EIRF_PIPELINE] [Step 2] Invite sent in ${durMs}ms. Status -> 'AWAITING_EIRF' (Expires: ${sub.eirfExpiresAt.toISOString()}).`);
+        console.log(`[EIRF_PIPELINE] [Step 2] Invite sent in ${durMs}ms. Status -> 'AWAITING_EIRF' (Expires: ${new Date(sub.eirfExpiresAt).toISOString()}).`);
     }
 
     // -------------------------------------------------------------
-    // STEP 3: Dispatch Deferred Test Submission Confirmation & EIRF Confirmation Email
+    // STEP 3: Dispatch Deferred Test Submission Confirmation Email (Option B)
     // -------------------------------------------------------------
     if (sub.pipelineStatus === 'EIRF_SUBMITTED' || sub.pipelineStatus === 'SENDING_CONFIRMATION_EMAIL') {
         const startT = Date.now();
         sub.pipelineStatus = 'SENDING_CONFIRMATION_EMAIL';
         console.log(`[EIRF_PIPELINE] [Step 3] Processing EIRF submission and dispatching deferred test submission email for ${subId}...`);
 
-        // Deferred test submission confirmation: candidate filed EIRF -> test submission confirmed!
-        if (!sub.emailsSent?.testSubmitted) {
-            try {
-                await sendTestSubmittedEmail(sub._id || sub.id || subId);
-                console.log(`[EIRF_PIPELINE] [Step 3] Dispatched deferred test submission confirmation email for ${subId}.`);
-            } catch (tsErr) {
-                console.error(`[EIRF_PIPELINE] Error sending deferred test submission email for ${subId}:`, tsErr.message);
+        let candDoc = null;
+        if (sub.candidateId) {
+            if (dbState.useMongo && mongoose.Types.ObjectId.isValid(sub.candidateId)) {
+                candDoc = await CandidateModel.findById(sub.candidateId)
+                    .select('registrationData.personalEmail registrationData.collegeEmail personalEmail email studentId username name fullName')
+                    .lean();
+            } else {
+                const jsonDb = getJSONData();
+                candDoc = (jsonDb.candidates || []).find(c => String(c._id || c.id) === String(sub.candidateId)) || null;
             }
         }
-
-        let recipientEmail = sub.candidateEmail;
-        if (!recipientEmail && sub.candidateId && dbState.useMongo) {
-            const cand = await CandidateModel.findById(sub.candidateId).select('personalEmail email');
-            recipientEmail = cand?.personalEmail || cand?.email;
+        if (!candDoc && sub.studentId) {
+            if (dbState.useMongo) {
+                candDoc = await CandidateModel.findOne({ studentId: String(sub.studentId) })
+                    .select('registrationData.personalEmail registrationData.collegeEmail personalEmail email studentId username name fullName')
+                    .lean();
+                if (!candDoc) {
+                    candDoc = await CandidateModel.findOne({ username: String(sub.studentId) })
+                        .select('registrationData.personalEmail registrationData.collegeEmail personalEmail email studentId username name fullName')
+                        .lean();
+                }
+            } else {
+                const jsonDb = getJSONData();
+                candDoc = (jsonDb.candidates || []).find(c => String(c.studentId) === String(sub.studentId) || String(c.username) === String(sub.studentId)) || null;
+            }
         }
-        if (!recipientEmail) recipientEmail = 'preliminaryexaminations@gmail.com';
+        const recipientEmail = extractValidCandidateEmail(candDoc, sub) || '';
 
-        await sendEirfConfirmationEmail(
-            recipientEmail,
-            sub.candidateName || 'Candidate',
-            sub.testTitle || 'BICS Examination',
-            sub.eirfReportId || String(subId)
-        );
+        // Deferred test submission confirmation: candidate filed EIRF -> send test_submitted (no eirf_confirmation)
+        if (!sub.emailsSent?.testSubmitted) {
+            const tsRes = await sendTestSubmittedEmail(sub, { triggerSource: 'eirf_pipeline_step3' });
+            if (!tsRes || !tsRes.success) {
+                const errMsg = tsRes?.error || tsRes?.reason || 'Deferred test submission confirmation email failed';
+                sub.pipelineStatus = 'EIRF_SUBMITTED';
+                await recordPipelineStep(sub, 'DISPATCH_CONFIRMATION_EMAIL', 'FAILED', Date.now() - startT, {
+                    recipient: recipientEmail
+                }, errMsg);
+                throw new Error(errMsg);
+            }
+            console.log(`[EIRF_PIPELINE] [Step 3] Dispatched deferred test submission confirmation email for ${subId}.`);
+        }
 
         sub.pipelineStatus = 'UNDER_REVIEW';
+
+        if (dbState.useMongo) {
+            await EIRFReportModel.updateMany(
+                { $or: [{ submissionId: String(subId) }, ...(sub.eirfReportId ? [{ reportId: sub.eirfReportId }] : [])] },
+                { $set: { pipelineStatus: 'UNDER_REVIEW' } }
+            ).catch(() => {});
+        } else {
+            const latestDb = getJSONData();
+            let repUpdated = false;
+            (latestDb.eirfReports || []).forEach(r => {
+                if (String(r.submissionId) === String(subId) || (sub.eirfReportId && r.reportId === sub.eirfReportId)) {
+                    r.pipelineStatus = 'UNDER_REVIEW';
+                    repUpdated = true;
+                }
+            });
+            if (repUpdated) saveJSONData(latestDb);
+        }
 
         const durMs = Date.now() - startT;
         await recordPipelineStep(sub, 'DISPATCH_CONFIRMATION_EMAIL', 'COMPLETED', durMs, {
             recipient: recipientEmail
         });
-        console.log(`[EIRF_PIPELINE] [Step 3] Confirmation email sent in ${durMs}ms. Status -> 'UNDER_REVIEW'.`);
+        console.log(`[EIRF_PIPELINE] [Step 3] Deferred confirmation email sent in ${durMs}ms. Status -> 'UNDER_REVIEW'.`);
     }
 }
 

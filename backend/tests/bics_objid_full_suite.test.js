@@ -1,17 +1,23 @@
 const http = require('http');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const { toBicsId, toMongoId, isBicsId, isMongoId, resolveToObjectId, obfuscateObjectIds, deobfuscateBicsIds } = require('../utils/bicsId');
+const { DB_FILE } = require('../config/db');
 
 const PORT = 5002;
+process.env.NODE_ENV = 'test';
 process.env.PORT = PORT;
 process.env.JWT_SECRET = 'test_bicsid_jwt_secret_9c915b721d2c4abaa5c49c279dd23f68';
 process.env.ADMIN_USER = 'admin';
 process.env.ADMIN_PASS = 'admin123';
 
+const pipePath = process.platform === 'win32'
+    ? `\\\\.\\pipe\\bics_objid_full_${process.pid}_${Date.now()}`
+    : `/tmp/bics_objid_full_${process.pid}_${Date.now()}.sock`;
+
 function request(method, path, body = null, headers = {}) {
     return new Promise((resolve, reject) => {
-        const parsedUrl = new URL(path, `http://127.0.0.1:${PORT}`);
-        const reqHeaders = { ...headers };
+        const reqHeaders = { Host: `127.0.0.1:${PORT}`, ...headers };
         let payload = null;
 
         if (body) {
@@ -20,7 +26,9 @@ function request(method, path, body = null, headers = {}) {
             reqHeaders['Content-Length'] = Buffer.byteLength(payload);
         }
 
-        const req = http.request(parsedUrl, {
+        const req = http.request({
+            socketPath: pipePath,
+            path,
             method,
             headers: reqHeaders
         }, (res) => {
@@ -100,11 +108,13 @@ async function runBicsIdAudit() {
     );
 
     // 2. Live HTTP API Integration Testing
+    const dbBackup = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8') : null;
     const app = require('../server');
     let server;
+    let runtimeError = null;
     await new Promise((resolve) => {
-        server = http.createServer(app).listen(PORT, '127.0.0.1', () => {
-            console.log(`\n[TEST HARNESS] BICS ObjId audit server listening on port ${PORT}\n`);
+        server = http.createServer(app).listen(pipePath, () => {
+            console.log(`\n[TEST HARNESS] BICS ObjId audit server listening on ${pipePath}\n`);
             resolve();
         });
     });
@@ -125,15 +135,15 @@ async function runBicsIdAudit() {
         assertTest('API-2: Admin tests returned as array', resTests.status === 200 && Array.isArray(resTests.body));
 
         if (Array.isArray(resTests.body) && resTests.body.length > 0) {
-            const firstTest = resTests.body[0];
-            const testBicsId = firstTest._id || firstTest.id;
+            const obfTest = resTests.body.find(t => isBicsId(t._id) || isBicsId(t.id)) || resTests.body[0];
+            const testBicsId = obfTest._id || obfTest.id;
             assertTest('API-3: Test _id in response is obfuscated as BICS ObjId (6-4-4-6)', isBicsId(testBicsId), `Received _id: ${testBicsId}`);
 
             // Fetch specific test using BICS ObjId in URL: GET /api/tests/:bicsId
             const resGetTest = await request('GET', `/api/tests/${testBicsId}`, null, {
                 'Authorization': `Bearer ${adminToken}`
             });
-            assertTest('API-4: GET /api/tests/:bicsId succeeds using BICS ObjId in URL', resGetTest.status === 200 && (resGetTest.body?.title === firstTest.title), `Status: ${resGetTest.status}`);
+            assertTest('API-4: GET /api/tests/:bicsId succeeds using BICS ObjId in URL', resGetTest.status === 200 && (resGetTest.body?.title === obfTest.title), `Status: ${resGetTest.status}`);
 
             // Backward compatibility: Fetch specific test using original Mongo Hex ID
             const originalHex = toMongoId(testBicsId);
@@ -151,11 +161,23 @@ async function runBicsIdAudit() {
             resActive.status === 200 && Array.isArray(resActive.body) && (resActive.body.length === 0 || isBicsId(resActive.body[0]._id))
         );
 
+    } catch (err) {
+        runtimeError = err;
+        console.error('BICS ObjId API suite error:', err);
     } finally {
-        server.close();
+        if (dbBackup !== null) {
+            try { fs.writeFileSync(DB_FILE, dbBackup, 'utf8'); } catch (_) {}
+        }
+        try {
+            const { stopSubmissionReaper } = require('../workers/submissionReaper');
+            const { stopEirfPipelineWorker } = require('../workers/eirfPipelineWorker');
+            stopSubmissionReaper();
+            stopEirfPipelineWorker();
+        } catch (_) {}
+        if (server) server.close();
         console.log('\n====================================================');
-        const allPassed = results.every(r => r.passed);
-        console.log(`BICS OBJID AUDIT RESULT: ${allPassed ? 'ALL TESTS PASSED (100%)' : 'SOME TESTS FAILED'}`);
+        const allPassed = !runtimeError && results.length >= 8 && results.every(r => r.passed);
+        console.log(`BICS OBJID AUDIT RESULT: ${allPassed ? `ALL ${results.length} TESTS PASSED (100%)` : 'SOME TESTS FAILED'}`);
         console.log('====================================================\n');
         process.exit(allPassed ? 0 : 1);
     }

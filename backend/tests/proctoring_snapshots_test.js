@@ -1,6 +1,8 @@
 const assert = require('assert');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const vm = require('vm');
 
 async function runSnapshotsSuite() {
   console.log("==================================================================");
@@ -71,34 +73,142 @@ async function runSnapshotsSuite() {
   }
   console.log("  ✅ [PASS] All 9 warning event logs correctly matched their respective evidence snapshots.");
 
-  // 3. Test resolveSnapshotUrl helper
-  console.log("  [TEST 3] Testing resolveSnapshotUrl helper");
-  const API_BASE = 'http://127.0.0.1:5000/api';
-  const resolveSnapshotUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
-    }
-    const backendBase = (API_BASE || '').replace(/\/api\/?$/, '');
-    return `${backendBase}${url.startsWith('/') ? '' : '/'}${url}`;
-  };
+  // 3. Behavioral VM Verification of frontend/src/utils/media.js (local + production URL resolution)
+  console.log("  [TEST 3] Verifying formatMediaUrl & resolveMediaOrBackendUrl across local and prod");
+  const rootDir = path.resolve(__dirname, '..', '..');
+  const mediaUtilPath = path.join(rootDir, 'frontend/src/utils/media.js');
+  const mediaSrc = fs.readFileSync(mediaUtilPath, 'utf8')
+    .replace(/^export const /gm, 'const ')
+    + '\nglobalThis.__mediaExports = { formatMediaUrl, resolveMediaOrBackendUrl };\n';
+  const mediaCtx = { globalThis: null };
+  mediaCtx.globalThis = mediaCtx;
+  vm.createContext(mediaCtx);
+  vm.runInContext(mediaSrc, mediaCtx, { filename: mediaUtilPath });
+  const { formatMediaUrl, resolveMediaOrBackendUrl } = mediaCtx.__mediaExports;
 
+  const LOCAL_API = 'http://127.0.0.1:5000/api';
+  const PROD_API = 'https://bicsportal.netlify.app/api';
+
+  // Local development cases
   assert.strictEqual(
-    resolveSnapshotUrl('/public/proctoring/sub1/123.jpeg'),
+    resolveMediaOrBackendUrl('/public/proctoring/sub1/123.jpeg', LOCAL_API),
     'http://127.0.0.1:5000/public/proctoring/sub1/123.jpeg'
   );
   assert.strictEqual(
-    resolveSnapshotUrl('data:image/jpeg;base64,abc123=='),
+    resolveMediaOrBackendUrl('/media/proctoring/sub1/123.jpg', LOCAL_API),
+    '/media/proctoring/sub1/123.jpg',
+    'Cloudinary /media paths must remain relative so Vite /media proxy serves them locally'
+  );
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('http://127.0.0.1:5000/media/proctoring/sub1/123.jpg', LOCAL_API),
+    '/media/proctoring/sub1/123.jpg'
+  );
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('https://res.cloudinary.com/dl7xqcnmr/image/upload/v1731/BICS_2026/proctoring/sub1/123.jpg', LOCAL_API),
+    '/media/proctoring/sub1/123.jpg'
+  );
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('https://res.cloudinary.com/dl7xqcnmr/raw/upload/v1731/BICS_2026/eirf_proofs/sub1/doc.pdf', PROD_API),
+    '/media/raw/eirf_proofs/sub1/doc.pdf'
+  );
+
+  // Production cases (Netlify + Render)
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('/media/proctoring/sub1/123.jpg', PROD_API),
+    '/media/proctoring/sub1/123.jpg'
+  );
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('/public/proctoring/sub1/123.jpeg', PROD_API),
+    'https://bicsportal.netlify.app/api/public/proctoring/sub1/123.jpeg',
+    'Relative /public paths in prod must route via /api/public/* to Render backend'
+  );
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('http://127.0.0.1:5000/public/proctoring/sub1/123.jpeg', PROD_API),
+    'https://bicsportal.netlify.app/api/public/proctoring/sub1/123.jpeg',
+    'Localhost /public URLs opened in prod must rewrite cleanly via /api/public/*'
+  );
+  assert.strictEqual(
+    resolveMediaOrBackendUrl('data:image/jpeg;base64,abc123==', PROD_API),
     'data:image/jpeg;base64,abc123=='
   );
   assert.strictEqual(
-    resolveSnapshotUrl('https://res.cloudinary.com/test.jpg'),
+    formatMediaUrl('https://res.cloudinary.com/test.jpg'),
     'https://res.cloudinary.com/test.jpg'
   );
-  console.log("  ✅ [PASS] resolveSnapshotUrl correctly formats local, data, and external URLs.");
+  console.log("  ✅ [PASS] Media & proctoring URL resolution verified across local dev and production.");
+
+  // 4. Portal Modal containment, CSS containing block fix, and completion status parity checks
+  console.log("  [TEST 4] Verifying modal portal rendering, CSS transform containment fix & status parity");
+  const indexCss = fs.readFileSync(path.join(rootDir, 'frontend/src/index.css'), 'utf8');
+  assert(indexCss.includes('transform: none;'), '.portal-view-transition keyframe must end at transform: none');
+  const portalRuleMatch = indexCss.match(/\.portal-view-transition\s*\{[^}]*\}/);
+  assert(portalRuleMatch, '.portal-view-transition CSS rule must exist');
+  assert(!portalRuleMatch[0].includes('transform'), '.portal-view-transition must not retain will-change: transform');
+
+  const dashSrc = fs.readFileSync(path.join(rootDir, 'frontend/src/components/StudentProctorDashboard.jsx'), 'utf8');
+  assert(dashSrc.includes("import { createPortal } from 'react-dom';"), 'StudentProctorDashboard must import createPortal');
+  assert((dashSrc.match(/createPortal\(/g) || []).length >= 3, 'All 3 modals in StudentProctorDashboard must render via createPortal');
+  assert(dashSrc.includes("subStatus !== 'started'"), 'Completed status check must cover submitted, auto-submitted, evaluated, and disqualified');
+  assert(dashSrc.includes('onError={() => setBaselineImgError(true)}'), 'Baseline photo must handle onError cleanly');
+  assert(dashSrc.includes("proofUrl.includes('/media/raw/')"), 'EIRF proof PDF detector must recognize /media/raw/ paths');
+
+  const adminProcSrc = fs.readFileSync(path.join(rootDir, 'frontend/src/pages/admin/AdminProctoring.jsx'), 'utf8');
+  assert(adminProcSrc.includes('key={selectedProctorStudent.id || selectedProctorStudent._id}'), 'AdminProctoring must key StudentProctorDashboard per submission');
+
+  const procRouteSrc = fs.readFileSync(path.join(rootDir, 'backend/routes/proctoring.js'), 'utf8');
+  assert(procRouteSrc.includes('isCloudinaryConfigured()'), 'proctoring.js must check isCloudinaryConfigured() dynamically');
+
+  const viteCfgSrc = fs.readFileSync(path.join(rootDir, 'frontend/vite.config.js'), 'utf8');
+  assert(viteCfgSrc.includes("'/media/raw'") && viteCfgSrc.includes("'/media/otrf'"), 'frontend vite.config.js must proxy /media/raw and /media/otrf to Cloudinary raw/upload');
+  console.log("  ✅ [PASS] Modal portals, CSS fix, status parity, and Vite/Cloudinary config verified.");
+
+  // 5. Live Express Server /api/public & /media endpoint check
+  console.log("  [TEST 5] Verifying Express /api/public static serving and /media Cloudinary redirects");
+  process.env.NODE_ENV = 'test';
+  const app = require('../server');
+  const pipePath = process.platform === 'win32'
+    ? `\\\\.\\pipe\\bics_snap_test_${process.pid}_${Date.now()}`
+    : `/tmp/bics_snap_test_${process.pid}_${Date.now()}.sock`;
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(pipePath, resolve));
+
+  const pipeReq = (reqPath) => new Promise((resolve, reject) => {
+    const req = http.request({ socketPath: pipePath, path: reqPath, method: 'GET' }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  try {
+    const logoRes = await pipeReq('/api/public/bics_logo.png');
+    assert.strictEqual(logoRes.status, 200, '/api/public/bics_logo.png must serve 200 without auth header');
+
+    const missingRes = await pipeReq('/api/public/proctoring/nonexistent_probe.jpeg');
+    assert.strictEqual(missingRes.status, 404, 'Missing /api/public asset must return 404 rather than 401');
+
+    const mediaImgRes = await pipeReq('/media/proctoring/sub1/snap.jpg');
+    assert.strictEqual(mediaImgRes.status, 302);
+    assert(mediaImgRes.headers.location.includes('/image/upload/BICS_2026/proctoring/sub1/snap.jpg'));
+
+    const mediaRawRes = await pipeReq('/media/raw/eirf_proofs/sub1/doc.pdf');
+    assert.strictEqual(mediaRawRes.status, 302);
+    assert(mediaRawRes.headers.location.includes('/raw/upload/BICS_2026/eirf_proofs/sub1/doc.pdf'));
+
+    console.log("  ✅ [PASS] Express /api/public and /media redirect handlers verified.");
+  } finally {
+    try {
+      const { stopSubmissionReaper } = require('../workers/submissionReaper');
+      const { stopEirfPipelineWorker } = require('../workers/eirfPipelineWorker');
+      stopSubmissionReaper();
+      stopEirfPipelineWorker();
+    } catch (_) {}
+    await new Promise((resolve) => server.close(resolve));
+  }
 
   console.log("==================================================================");
-  console.log("🏁 ALL PROCTORING SNAPSHOT TESTS PASSED SUCCESSFULLY (3/3)");
+  console.log("🏁 ALL PROCTORING SNAPSHOT TESTS PASSED SUCCESSFULLY (5/5)");
   console.log("==================================================================");
 }
 

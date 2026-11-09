@@ -1,19 +1,33 @@
 import React from 'react';
-import { ClipboardList, Calendar, CheckCircle, Clock, AlertTriangle, Loader2 } from 'lucide-react';
-import { API_BASE } from '../config';
+import { ClipboardList, Calendar, CheckCircle, Clock, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 
 export default function OnlineTestsView({
   systemConfig,
   activeStudentTests,
   currentTime,
   enteringTestId,
-  handleStartExam
+  handleStartExam,
+  activeTestsLoading = false,
+  activeTestsError = '',
+  onRetryTests
 }) {
   return (
     <div className="cf-card">
       <div className="cf-card-title">
         <ClipboardList size={16} style={{ color: '#3b5998' }} />
         <span>Online Practice &amp; Exam Tests</span>
+        {typeof onRetryTests === 'function' && (
+          <button
+            type="button"
+            className="cf-btn-secondary"
+            onClick={onRetryTests}
+            disabled={activeTestsLoading}
+            style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '8pt', padding: '3px 10px' }}
+          >
+            <RefreshCw size={12} className={activeTestsLoading ? 'spin-smooth' : ''} />
+            <span>{activeTestsLoading ? 'Syncing...' : 'Refresh'}</span>
+          </button>
+        )}
       </div>
       {(systemConfig && systemConfig.onlineExamActive === false) ? (
         <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>
@@ -26,6 +40,24 @@ export default function OnlineTestsView({
               The online examination module is currently deactivated. Please check back later or contact the administrator for scheduled session updates.
             </p>
           </div>
+        </div>
+      ) : activeTestsError && (!Array.isArray(activeStudentTests) || activeStudentTests.length === 0) ? (
+        <div className="cf-alert cf-alert-error" style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start', padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+            <AlertTriangle size={16} />
+            <span>Unable to Synchronize Active Examinations</span>
+          </div>
+          <p style={{ margin: 0, fontSize: '9.5pt', lineHeight: '1.5' }}>{activeTestsError}</p>
+          {typeof onRetryTests === 'function' && (
+            <button type="button" className="cf-btn-primary" onClick={onRetryTests} disabled={activeTestsLoading}>
+              {activeTestsLoading ? 'Retrying...' : 'Retry Connection'}
+            </button>
+          )}
+        </div>
+      ) : activeTestsLoading && (!Array.isArray(activeStudentTests) || activeStudentTests.length === 0) ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '24px 12px', color: '#475569', fontSize: '9.5pt' }}>
+          <Loader2 size={18} className="spinner" style={{ color: '#3b5998' }} />
+          <span>Synchronizing active online examinations...</span>
         </div>
       ) : (!Array.isArray(activeStudentTests) || activeStudentTests.length === 0) ? (
         <div className="cf-alert cf-alert-info" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '25px 20px', borderLeft: '5px solid #3b5998' }}>

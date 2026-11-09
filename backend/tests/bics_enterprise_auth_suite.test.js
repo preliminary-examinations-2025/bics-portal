@@ -130,13 +130,19 @@ async function runEnterpriseAuthSuite() {
         assert.strictEqual(isWhitelisted('/api/candidate/login'), true);
         assert.strictEqual(isWhitelisted('/api/admin/login'), true);
         assert.strictEqual(isWhitelisted('/api/config'), true);
-        assert.strictEqual(isWhitelisted('/api/candidate/send-verification-code/608f1b'), true);
-        assert.strictEqual(isWhitelisted('/api/candidate/verify-code/608f1b'), true);
-        assert.strictEqual(isWhitelisted('/api/test/eirf/public-key'), true);
-        assert.strictEqual(isWhitelisted('/api/tests/submission-verification/sub123'), true);
     });
 
-    test('isWhitelisted: Sensitive student routes are NO LONGER whitelisted', () => {
+    test('isWhitelisted: Candidate OTP routes are NO LONGER publicly whitelisted (Pillar 4 auth hardening)', () => {
+        assert.strictEqual(isWhitelisted('/api/candidate/send-verification-code/608f1b'), false);
+        assert.strictEqual(isWhitelisted('/api/candidate/verify-code/608f1b'), false);
+    });
+
+    test('isWhitelisted: Sensitive and retired EIRF/student routes are NO LONGER whitelisted', () => {
+        assert.strictEqual(isWhitelisted('/api/tests/submission-verification/sub123'), false);
+        assert.strictEqual(isWhitelisted('/api/tests/evaluation/sub123'), false);
+        assert.strictEqual(isWhitelisted('/api/test/eirf/public-key'), false);
+        assert.strictEqual(isWhitelisted('/api/test/eirf/generate-payload'), false);
+        assert.strictEqual(isWhitelisted('/api/test/eirf/verdict-pdf/sub123'), false);
         assert.strictEqual(isWhitelisted('/api/video-lectures'), false);
         assert.strictEqual(isWhitelisted('/api/video-lectures/lec123/chat'), false);
         assert.strictEqual(isWhitelisted('/api/video-lectures/lec123/ask'), false);

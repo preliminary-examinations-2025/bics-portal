@@ -25,6 +25,8 @@ const bicsIdMiddleware = (req, res, next) => {
         // Bypass parameter tampering and response obfuscation for administrative DB viewer & BICS decryptor
         return next();
     }
+
+    let _params = (req.params && typeof req.params === 'object') ? deobfuscateBicsIds(req.params) : {};
     Object.defineProperty(req, 'params', {
         get() {
             return _params;

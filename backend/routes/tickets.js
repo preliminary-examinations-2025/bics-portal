@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const { TicketModel, CandidateModel, SystemLogModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
@@ -37,15 +38,16 @@ router.post(['/candidate/tickets/:id', '/candidate/tickets/:candidateId'], requi
             await newTicket.save();
         } else {
             const db = getJSONData();
-            const cand = (db.candidates || []).find(c => c.id === candidateId || c._id === candidateId);
+            const cand = (db.candidates || []).find(c => String(c.id || '') === String(candidateId) || String(c._id || '') === String(candidateId));
             if (cand) {
                 candidateName = cand.name || candidateName;
                 studentId = cand.studentId || studentId;
             }
 
+            const ticketObjectId = new mongoose.Types.ObjectId().toString();
             newTicket = {
-                id: Date.now().toString(),
-                _id: Date.now().toString(),
+                id: ticketObjectId,
+                _id: ticketObjectId,
                 candidateId,
                 candidateName,
                 studentId,
@@ -88,7 +90,7 @@ router.get(['/candidate/tickets/list/:id', '/candidate/tickets/list/:candidateId
             const db = getJSONData();
             db.tickets = db.tickets || [];
             tickets = db.tickets
-                .filter(t => t.candidateId === candidateId)
+                .filter(t => String(t.candidateId || '') === String(candidateId))
                 .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         }
         return res.json({ success: true, tickets });
@@ -136,7 +138,7 @@ router.post('/admin/tickets/resolve/:ticketId', requireAdmin, async (req, res) =
         } else {
             const db = getJSONData();
             db.tickets = db.tickets || [];
-            ticket = db.tickets.find(t => t.id === ticketId || t._id === ticketId);
+            ticket = db.tickets.find(t => String(t.id || '') === String(ticketId) || String(t._id || '') === String(ticketId));
             if (!ticket) return res.status(404).json({ error: "Ticket not found." });
             ticket.status = status;
             ticket.resolutionFeedback = resolutionFeedback || '';

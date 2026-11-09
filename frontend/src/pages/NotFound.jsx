@@ -15,7 +15,7 @@ export default function NotFound({ user, onNavigate }) {
     if (onNavigate) {
       if (user?.role === 'admin') {
         onNavigate('admin');
-      } else if (user?.role === 'student') {
+      } else if (user?.role === 'student' || user?.role === 'candidate') {
         onNavigate('announcements');
       } else {
         onNavigate('login');
@@ -23,7 +23,7 @@ export default function NotFound({ user, onNavigate }) {
     } else {
       if (user?.role === 'admin') {
         navigate('/admin/dashboard');
-      } else if (user?.role === 'student') {
+      } else if (user?.role === 'student' || user?.role === 'candidate') {
         navigate('/home');
       } else {
         navigate('/login');
@@ -144,7 +144,7 @@ export default function NotFound({ user, onNavigate }) {
               e.currentTarget.style.borderColor = '#adc6fc';
             }}
           >
-            <Home size={17} /> Return to {user?.role === 'admin' ? 'Admin Dashboard' : user?.role === 'student' ? 'Student Portal' : 'Sign In'}
+            <Home size={17} /> Return to {user?.role === 'admin' ? 'Admin Dashboard' : (user?.role === 'student' || user?.role === 'candidate') ? 'Student Portal' : 'Sign In'}
           </button>
 
           <button 

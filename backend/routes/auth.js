@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
+const mongoose = require('mongoose');
 const { CandidateModel, ConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData, initialDB } = require('../config/db');
 const { logSystemAction } = require('../utils/logger');
 const { generateToken, verifyToken, revokeToken } = require('../utils/jwt');
 const { hashPassword, comparePassword, isBcryptHash } = require('../utils/password');
+const { requireAuth, requireOwnerOrAdmin } = require('../middleware/auth');
+const { resolveToObjectId } = require('../utils/bicsId');
 
 // Rate limiter and lockout trackers
 const adminFailedLogins = new Map(); // ip -> { count, lockedUntil }
@@ -293,6 +297,32 @@ router.post('/log-client-error', async (req, res) => {
     return res.json({ success: true });
 });
 
+const normalizeTimetableRows = (rows) => {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row) => {
+        const plain = row && typeof row.toObject === 'function' ? row.toObject() : { ...(row || {}) };
+        const codeStr = String(plain.code || '').trim();
+        const courseStr = String(plain.course || plain.name || plain.title || '').trim();
+        const isLab = /(?:L|P)$/i.test(codeStr) || /\blab\b/i.test(courseStr);
+        const defaultMode = isLab ? 'Computer Lab' : 'Online Proctored';
+        const defaultReportTime = isLab ? '01:30 PM' : '09:30 AM';
+        const modeVal = typeof plain.mode === 'string' ? plain.mode.trim() : '';
+        const reportTimeVal = typeof plain.reportTime === 'string'
+            ? plain.reportTime.trim()
+            : (typeof plain.reportingTime === 'string' ? plain.reportingTime.trim() : '');
+        const parsedMarks = Number(plain.marks);
+        return {
+            code: codeStr,
+            course: courseStr,
+            date: String(plain.date || '').trim(),
+            time: String(plain.time || '').trim(),
+            marks: Number.isFinite(parsedMarks) ? parsedMarks : 50,
+            mode: modeVal || defaultMode,
+            reportTime: reportTimeVal || defaultReportTime
+        };
+    });
+};
+
 // Fetch System Configuration
 router.get('/config', async (req, res) => {
     try {
@@ -317,6 +347,7 @@ router.get('/config', async (req, res) => {
             }
         }
         configObj.devModeActive = !!configObj.devModeActive;
+        configObj.timetable = normalizeTimetableRows(configObj.timetable || []);
         return res.json(configObj);
     } catch (e) {
         await logSystemAction('system', 'TECHNICAL_ERROR', `Failed to fetch system configuration: ${e.message || e}`, 'error');
@@ -327,6 +358,7 @@ router.get('/config', async (req, res) => {
 // Update System Configuration (Admin Only)
 router.post('/admin/config', async (req, res) => {
     const { courseRegistrationActive, onlineExamActive, midSemFeedbackActive, endSemFeedbackActive, exitFormActive, hallTicketDownloadActive, counterfoilActive, timetable, timetableNotice, announcements, hallTicketUrl, examType, classTests, devModeActive } = req.body;
+    const normalizedTimetable = timetable !== undefined ? normalizeTimetableRows(timetable) : undefined;
 
     if (dbState.useMongo) {
         try {
@@ -346,8 +378,8 @@ router.post('/admin/config', async (req, res) => {
             if (examType !== undefined) conf.examType = examType;
             if (devModeActive !== undefined) conf.devModeActive = devModeActive;
             
-            if (timetable !== undefined) {
-                conf.timetable = timetable;
+            if (normalizedTimetable !== undefined) {
+                conf.timetable = normalizedTimetable;
                 conf.markModified('timetable');
             }
             if (announcements !== undefined) {
@@ -359,12 +391,15 @@ router.post('/admin/config', async (req, res) => {
                 conf.markModified('classTests');
             }
             await conf.save();
-            return res.json({ success: true, config: conf });
+            const savedConfig = conf.toObject();
+            savedConfig.timetable = normalizeTimetableRows(savedConfig.timetable || []);
+            return res.json({ success: true, config: savedConfig });
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
     } else {
         const db = getJSONData();
+        db.config = db.config || { ...initialDB.config };
         if (courseRegistrationActive !== undefined) db.config.courseRegistrationActive = courseRegistrationActive;
         if (onlineExamActive !== undefined) db.config.onlineExamActive = onlineExamActive;
         if (midSemFeedbackActive !== undefined) db.config.midSemFeedbackActive = midSemFeedbackActive;
@@ -372,115 +407,156 @@ router.post('/admin/config', async (req, res) => {
         if (exitFormActive !== undefined) db.config.exitFormActive = exitFormActive;
         if (hallTicketDownloadActive !== undefined) db.config.hallTicketDownloadActive = hallTicketDownloadActive;
         if (counterfoilActive !== undefined) db.config.counterfoilActive = counterfoilActive;
-        if (timetable !== undefined) db.config.timetable = timetable;
+        if (normalizedTimetable !== undefined) db.config.timetable = normalizedTimetable;
         if (timetableNotice !== undefined) db.config.timetableNotice = timetableNotice;
         if (announcements !== undefined) db.config.announcements = announcements;
         if (hallTicketUrl !== undefined) db.config.hallTicketUrl = hallTicketUrl;
         if (examType !== undefined) db.config.examType = examType;
         if (classTests !== undefined) db.config.classTests = classTests;
         if (devModeActive !== undefined) db.config.devModeActive = devModeActive;
+        db.config.timetable = normalizeTimetableRows(db.config.timetable || []);
         saveJSONData(db);
         return res.json({ success: true, config: db.config });
     }
 });
 
-// Change Password Endpoint (Candidate Only)
-router.post('/change-password', async (req, res) => {
-    const { role, id, newPassword, code } = req.body;
+function timingSafeOtpMatch(stored, provided) {
+    if (typeof stored !== 'string' || typeof provided !== 'string') return false;
+    const a = Buffer.from(stored.trim(), 'utf8');
+    const b = Buffer.from(provided.trim(), 'utf8');
+    if (a.length === 0 || a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
 
-    if (role === 'admin' || req.user?.role === 'admin') {
-        return res.status(403).json({ 
-            error: "Forbidden: Admin credentials are configuration-authoritative and managed exclusively via server environment variables (.env)." 
-        });
-    }
+// Change Password Endpoint (Candidate Only - Authenticated Owner or Admin Reject)
+router.post(
+    '/change-password',
+    requireAuth,
+    (req, res, next) => {
+        if (req.body?.role === 'admin' || req.user?.role === 'admin') {
+            const role = req.body?.role || req.user?.role;
+            if (role === 'admin') {
+                return res.status(403).json({
+                    error: "Forbidden: Admin credentials are configuration-authoritative and managed exclusively via server environment variables (.env)."
+                });
+            }
+        }
+        return requireOwnerOrAdmin((r) => r.body?.id || r.user?.id)(req, res, next);
+    },
+    async (req, res) => {
+        const { role, id, newPassword, code } = req.body || {};
 
-    if (!newPassword || newPassword.length < 4) {
-        return res.status(400).json({ error: "Password must be at least 4 characters long" });
-    }
-
-    if (!code) {
-        return res.status(400).json({ error: "Email verification code is required." });
-    }
-
-    try {
-        let student;
-        if (dbState.useMongo) {
-            student = await CandidateModel.findById(id);
-        } else {
-            const db = getJSONData();
-            student = (db.candidates || []).find(c => c.id === id || c._id === id);
+        if (role === 'admin' || req.user?.role === 'admin') {
+            return res.status(403).json({
+                error: "Forbidden: Admin credentials are configuration-authoritative and managed exclusively via server environment variables (.env)."
+            });
         }
 
-        if (!student) return res.status(404).json({ error: "Candidate not found" });
+        if (typeof newPassword !== 'string' || newPassword.length < 4) {
+            return res.status(400).json({ error: "Password must be at least 4 characters long" });
+        }
 
-        student.verificationAttempts = (student.verificationAttempts || 0) + 1;
+        if (typeof code !== 'string' || !code.trim()) {
+            return res.status(400).json({ error: "Email verification code is required." });
+        }
 
-        if (!student.verificationCode || student.verificationCode !== code.trim()) {
-            if (student.verificationAttempts >= 5) {
+        const rawTargetId = String(id || req.user?.id || '').trim();
+        const resolvedId = String(resolveToObjectId(rawTargetId) || rawTargetId);
+
+        const persistJsonStudent = (studentObj) => {
+            const db = getJSONData();
+            const candIdx = (db.candidates || []).findIndex(c =>
+                String(c._id) === String(studentObj._id || studentObj.id) ||
+                String(c.id) === String(studentObj._id || studentObj.id) ||
+                String(c._id) === resolvedId ||
+                String(c.id) === resolvedId
+            );
+            if (candIdx !== -1) {
+                db.candidates[candIdx] = studentObj;
+                saveJSONData(db);
+            }
+        };
+
+        try {
+            let student;
+            if (dbState.useMongo) {
+                if (mongoose.Types.ObjectId.isValid(resolvedId)) {
+                    student = await CandidateModel.findById(resolvedId);
+                }
+                if (!student && rawTargetId) {
+                    student = await CandidateModel.findOne({ $or: [{ studentId: rawTargetId }, { username: rawTargetId }] });
+                }
+            } else {
+                const db = getJSONData();
+                student = (db.candidates || []).find(c =>
+                    String(c.id) === resolvedId ||
+                    String(c._id) === resolvedId ||
+                    String(c.id) === rawTargetId ||
+                    String(c._id) === rawTargetId ||
+                    String(c.studentId) === rawTargetId ||
+                    String(c.username) === rawTargetId
+                );
+            }
+
+            if (!student) return res.status(404).json({ error: "Candidate not found" });
+
+            if (!student.verificationCode) {
+                return res.status(400).json({ error: "No active verification code found. Please request a new code." });
+            }
+
+            if (student.verificationCodeExpires && new Date() > new Date(student.verificationCodeExpires)) {
                 student.verificationCode = '';
                 student.verificationCodeExpires = null;
                 student.verificationAttempts = 0;
                 if (dbState.useMongo) await student.save();
-                else {
-                    const db = getJSONData();
-                    const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-                    if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
+                else persistJsonStudent(student);
+                return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+            }
+
+            student.verificationAttempts = (student.verificationAttempts || 0) + 1;
+
+            if (!timingSafeOtpMatch(student.verificationCode, code)) {
+                if (student.verificationAttempts >= 5) {
+                    student.verificationCode = '';
+                    student.verificationCodeExpires = null;
+                    student.verificationAttempts = 0;
+                    if (dbState.useMongo) await student.save();
+                    else persistJsonStudent(student);
+                    return res.status(429).json({
+                        error: "Maximum verification attempts (5) exceeded. Your code has been invalidated. Please request a new code."
+                    });
                 }
-                return res.status(429).json({ 
-                    error: "Maximum verification attempts (5) exceeded. Your code has been invalidated. Please request a new code." 
+
+                if (dbState.useMongo) await student.save();
+                else persistJsonStudent(student);
+
+                const remainingAttempts = 5 - student.verificationAttempts;
+                return res.status(400).json({
+                    error: `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.`
                 });
             }
 
-            if (dbState.useMongo) await student.save();
-            else {
-                const db = getJSONData();
-                const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-                if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
-            }
+            // Salted bcrypt password hashing
+            const hashedPassword = await hashPassword(newPassword);
 
-            const remainingAttempts = 5 - student.verificationAttempts;
-            return res.status(400).json({ 
-                error: `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.` 
-            });
-        }
-
-        if (new Date() > new Date(student.verificationCodeExpires)) {
-            student.verificationCode = '';
-            student.verificationCodeExpires = null;
-            student.verificationAttempts = 0;
-            if (dbState.useMongo) await student.save();
-            return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
-        }
-
-        // Salted bcrypt password hashing
-        const hashedPassword = await hashPassword(newPassword);
-
-        if (dbState.useMongo) {
             student.password = hashedPassword;
             student.verificationCode = '';
             student.verificationCodeExpires = null;
             student.verificationAttempts = 0;
-            await student.save();
-        } else {
-            student.password = hashedPassword;
-            student.verificationCode = '';
-            student.verificationCodeExpires = null;
-            student.verificationAttempts = 0;
-            const db = getJSONData();
-            const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-            if (candIdx !== -1) {
-                db.candidates[candIdx] = student;
-                saveJSONData(db);
+            if (dbState.useMongo) {
+                await student.save();
+            } else {
+                persistJsonStudent(student);
             }
-        }
 
-        await logSystemAction(student.name || 'candidate', 'PASSWORD_CHANGED', `Student changed account password`, 'info');
-        return res.json({ success: true, message: "Password updated successfully." });
-    } catch (e) {
-        console.error("Password change failed:", e);
-        return res.status(500).json({ error: "Server error updating password. Please try again." });
+            await logSystemAction(student.name || 'candidate', 'PASSWORD_CHANGED', `Student changed account password`, 'info');
+            return res.json({ success: true, message: "Password updated successfully." });
+        } catch (e) {
+            console.error("Password change failed:", e);
+            return res.status(500).json({ error: "Server error updating password. Please try again." });
+        }
     }
-});
+);
 
 // Health check endpoint
 router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));

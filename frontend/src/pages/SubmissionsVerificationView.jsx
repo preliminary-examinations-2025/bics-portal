@@ -1,19 +1,56 @@
 import React from 'react';
-import { BookOpen, CheckCircle, Lock, ShieldAlert, Flag, ExternalLink } from 'lucide-react';
+import { BookOpen, CheckCircle, Lock, ShieldAlert, ExternalLink, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { getAuthToken } from '../api/client';
 
-export default function SubmissionsVerificationView({ view, submittedTestsList }) {
+export default function SubmissionsVerificationView({
+  view,
+  submittedTestsList,
+  submittedTestsLoading = false,
+  submittedTestsError = '',
+  onRetrySubmittedTests
+}) {
   return (
     <div className="cf-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div className="cf-card-title">
         <BookOpen size={16} style={{ color: '#3b5998' }} />
         <span>Evaluated Answer Sheet Verification</span>
+        {typeof onRetrySubmittedTests === 'function' && (
+          <button
+            type="button"
+            className="cf-btn-secondary"
+            onClick={onRetrySubmittedTests}
+            disabled={submittedTestsLoading}
+            style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '8pt', padding: '3px 10px' }}
+          >
+            <RefreshCw size={12} className={submittedTestsLoading ? 'spin-smooth' : ''} />
+            <span>{submittedTestsLoading ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+        )}
       </div>
 
       <p style={{ fontSize: '9.5pt', color: '#475569', margin: 0, lineHeight: 1.5 }}>
         Official evaluated examination answer sheets, score distributions, and answer keys are accessible here. You can click <strong>Verify Evaluated Paper</strong> to review your complete evaluated submission in the dedicated Online Test Review Terminal.
       </p>
 
-      {(!Array.isArray(submittedTestsList) || submittedTestsList.length === 0) ? (
+      {submittedTestsError && (!Array.isArray(submittedTestsList) || submittedTestsList.length === 0) ? (
+        <div className="cf-alert cf-alert-error" style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+            <AlertTriangle size={16} />
+            <span>Unable to Load Submitted Answer Sheets</span>
+          </div>
+          <p style={{ margin: 0, fontSize: '9.5pt', lineHeight: '1.5' }}>{submittedTestsError}</p>
+          {typeof onRetrySubmittedTests === 'function' && (
+            <button type="button" className="cf-btn-primary" onClick={onRetrySubmittedTests} disabled={submittedTestsLoading}>
+              {submittedTestsLoading ? 'Retrying...' : 'Retry Connection'}
+            </button>
+          )}
+        </div>
+      ) : submittedTestsLoading && (!Array.isArray(submittedTestsList) || submittedTestsList.length === 0) ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '20px 8px', color: '#475569', fontSize: '9.5pt' }}>
+          <Loader2 size={18} className="spinner" style={{ color: '#3b5998' }} />
+          <span>Loading evaluated answer sheet verification records...</span>
+        </div>
+      ) : (!Array.isArray(submittedTestsList) || submittedTestsList.length === 0) ? (
         <div className="cf-alert cf-alert-info">
           No submitted tests found for verification view.
         </div>
@@ -42,38 +79,55 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
             const vStatus = st.verificationStatus || (st.answersReleased ? 'released' : 'not_released');
             const isReleased = (vStatus === 'released' || vStatus === 'closed');
             const totalMax = Number(st.marks || 0);
+            const isAnnulled = sub.verificationStatus === 'annulled' || sub.eirfStatus === 'rejected';
             let totalScored = 0;
-            const hasResolvedObjections = (sub.objections || []).some(o => 
-              (o.status === 'resolved' || o.status === 'resolved_accepted') &&
-              o.resolvedMarks !== undefined && o.resolvedMarks !== null
-            );
-            if (hasResolvedObjections) {
-              totalScored = (sub.answers || []).reduce((sum, a, idx) => {
-                const resObj = (sub.objections || []).find(o => 
-                  (o.status === 'resolved' || o.status === 'resolved_accepted') &&
-                  (o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId)))
-                );
-                const aScore = (resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null) 
-                  ? Number(resObj.resolvedMarks) 
-                  : (a.isManuallyGraded ? Number(a.score || 0) : (a.aiEvaluation?.score !== undefined ? Number(a.aiEvaluation.score) : Number(a.score || 0)));
-                return sum + aScore;
-              }, 0);
-            } else if (sub.evaluation?.totalScore !== undefined && sub.evaluation?.totalScore !== null) {
-              totalScored = Number(sub.evaluation.totalScore);
-            } else if (sub.totalScore !== undefined && sub.totalScore !== null) {
-              totalScored = Number(sub.totalScore);
-            } else if (sub.score !== undefined && sub.score !== null) {
-              totalScored = Number(sub.score);
-            } else if (sub.answers && Array.isArray(sub.answers) && sub.answers.length > 0) {
-              totalScored = sub.answers.reduce((sum, a) => {
-                const pts = (a.aiEvaluation?.score !== undefined) ? Number(a.aiEvaluation.score) : Number(a.score || 0);
-                return sum + pts;
-              }, 0);
-            } else {
-              totalScored = Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0);
-            }
-            if (totalMax > 0) {
-              totalScored = Math.min(totalScored, totalMax);
+            if (!isAnnulled) {
+              const resolvedObjections = (sub.objections || []).filter(o =>
+                (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+                o.resolvedMarks !== undefined && o.resolvedMarks !== null
+              );
+              const matchedObjIndices = new Set();
+              if (resolvedObjections.length > 0 && Array.isArray(sub.answers) && sub.answers.length > 0) {
+                totalScored = sub.answers.reduce((sum, a, idx) => {
+                  const resObjIdx = resolvedObjections.findIndex(o =>
+                    o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId))
+                  );
+                  if (resObjIdx !== -1) matchedObjIndices.add(resObjIdx);
+                  const resObj = resObjIdx !== -1 ? resolvedObjections[resObjIdx] : null;
+                  const aScore = resObj
+                    ? Number(resObj.resolvedMarks)
+                    : (a.isManuallyGraded
+                        ? Number(a.score || 0)
+                        : ((a.aiEvaluation?.isEvaluated === true || a.aiEvaluation?.status === 'completed') && a.aiEvaluation?.score !== undefined
+                            ? Number(a.aiEvaluation.score)
+                            : Number(a.score || 0)));
+                  return sum + aScore;
+                }, 0);
+                // Include resolved objections on unanswered questions not present in sub.answers
+                resolvedObjections.forEach((ro, rIdx) => {
+                  if (!matchedObjIndices.has(rIdx)) {
+                    totalScored += Number(ro.resolvedMarks || 0);
+                  }
+                });
+              } else if (sub.evaluation?.totalScore !== undefined && sub.evaluation?.totalScore !== null) {
+                totalScored = Number(sub.evaluation.totalScore);
+              } else if (sub.totalScore !== undefined && sub.totalScore !== null) {
+                totalScored = Number(sub.totalScore);
+              } else if (sub.score !== undefined && sub.score !== null) {
+                totalScored = Number(sub.score);
+              } else if (sub.answers && Array.isArray(sub.answers) && sub.answers.length > 0) {
+                totalScored = sub.answers.reduce((sum, a) => {
+                  const pts = ((a.aiEvaluation?.isEvaluated === true || a.aiEvaluation?.status === 'completed') && a.aiEvaluation?.score !== undefined)
+                    ? Number(a.aiEvaluation.score)
+                    : Number(a.score || 0);
+                  return sum + pts;
+                }, 0);
+              } else {
+                totalScored = Number(sub.evaluation?.mcqScore || 0) + Number(sub.evaluation?.codingScore || 0) + Number(sub.evaluation?.webScore || 0);
+              }
+              if (totalMax > 0) {
+                totalScored = Math.min(totalScored, totalMax);
+              }
             }
             const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
             const objectionsCount = (sub.objections || []).length;
@@ -189,7 +243,7 @@ export default function SubmissionsVerificationView({ view, submittedTestsList }
                       <button
                         className="cf-btn-primary"
                         onClick={() => {
-                          const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+                          const userToken = getAuthToken() || '';
                           const authParam = userToken ? `?authToken=${encodeURIComponent(userToken)}` : '';
                           const subId = sub.bicsId || sub.id || sub._id;
                           window.location.href = `${otBase}/evaluation/answer-sheet/${subId}${authParam}`;

@@ -7,6 +7,7 @@ const { CandidateModel } = require('../models/Candidate');
 const { TestConfigModel } = require('../models/TestConfig');
 const { TestSubmissionModel } = require('../models/TestSubmission');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
+const { resolveToObjectId } = require('../utils/bicsId');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { processContestRatings } = require('../utils/ratingEngine');
 
@@ -1206,11 +1207,13 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
 
     let evaluatedCount = 0;
     try {
+        const resolvedTargetTestId = targetTestId ? resolveToObjectId(String(targetTestId)) : null;
+
         if (dbState.useMongo && mongoose.connection.readyState === 1) {
             // Find active tests with enableAiEvaluation = true
             const testQuery = { isDeleted: { $ne: true } };
-            if (targetTestId) {
-                testQuery._id = targetTestId;
+            if (resolvedTargetTestId) {
+                testQuery._id = resolvedTargetTestId;
             } else {
                 testQuery.enableAiEvaluation = true;
             }
@@ -1243,6 +1246,7 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                     $elemMatch: {
                         type: 'web',
                         isManuallyGraded: { $ne: true },
+                        isObjectionResolved: { $ne: true },
                         'aiEvaluation.isEvaluated': { $ne: true },
                         'aiEvaluation.status': { $nin: ['completed', 'skipped'] },
                         $or: [
@@ -1262,8 +1266,8 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                 for (let ansIdx = 0; ansIdx < (sub.answers || []).length; ansIdx++) {
                     const ans = sub.answers[ansIdx];
                     if (ans.type !== 'web') continue;
-                    // Strict Guard 1: Admin manual marks are NEVER overwritten by AI
-                    if (ans.isManuallyGraded === true) continue;
+                    // Strict Guard 1: Admin manual / objection-resolved marks are NEVER overwritten by AI
+                    if (ans.isManuallyGraded === true || ans.isObjectionResolved === true) continue;
                     // Strict Guard 2: Once evaluated, NEVER send to LLM again
                     if (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') continue;
                     // Strict Guard 3: Max 3 retries on transient errors to prevent infinite loops
@@ -1293,7 +1297,7 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                             evalResult.codeHash = currentCodeHash;
                             evalResult.retries = Number(ans.aiEvaluation?.retries || 0);
                             ans.aiEvaluation = evalResult;
-                            if (!ans.isManuallyGraded) {
+                            if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
                                 ans.score = evalResult.score;
                                 ans.pendingEvaluation = false;
                             }
@@ -1334,7 +1338,7 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
             db.testSubmissions = db.testSubmissions || [];
 
             const candidateTests = db.tests.filter(t => {
-                if (targetTestId) return String(t.id || t._id) === String(targetTestId);
+                if (resolvedTargetTestId) return String(t.id || t._id) === String(resolvedTargetTestId) && !t.isDeleted;
                 return t.enableAiEvaluation === true && !t.isDeleted;
             });
 
@@ -1350,7 +1354,7 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                     for (let ansIdx = 0; ansIdx < (sub.answers || []).length; ansIdx++) {
                         const ans = sub.answers[ansIdx];
                         if (ans.type !== 'web') continue;
-                        if (ans.isManuallyGraded === true) continue;
+                        if (ans.isManuallyGraded === true || ans.isObjectionResolved === true) continue;
                         if (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') continue;
                         if (Number(ans.aiEvaluation?.retries || 0) >= 3) continue;
 
@@ -1375,7 +1379,7 @@ async function evaluateWebCodingSubmissions(targetTestId = null) {
                                 evalResult.codeHash = currentCodeHash;
                                 evalResult.retries = Number(ans.aiEvaluation?.retries || 0);
                                 ans.aiEvaluation = evalResult;
-                                if (!ans.isManuallyGraded) {
+                                if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
                                     ans.score = evalResult.score;
                                     ans.pendingEvaluation = false;
                                 }

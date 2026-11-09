@@ -77,7 +77,8 @@ export const ActiveExamView = ({
   activeQuestionBtnRef,
   navTrackRef,
   setTest,
-  onClipboardAttempt
+  onClipboardAttempt,
+  suppressCustomModal = false
 }) => {
   // Horizontal splitter state (Left Question Viewer width %: default 50%)
   const [leftWidthPercent, setLeftWidthPercent] = useState(50);
@@ -128,7 +129,7 @@ export const ActiveExamView = ({
     const currentQ = test?.questions?.[selectedQuestionIndex];
     const updated = [...(examAnswersRef?.current || examAnswers)];
 
-    if (currentQ && updated[selectedQuestionIndex]) {
+    if (draftQIdx === selectedQuestionIndex && currentQ && updated[selectedQuestionIndex]) {
       // Determine if the candidate actually answered/modified the current question
       const hasAnswered = isQuestionAnswered(
         currentQ,
@@ -143,27 +144,43 @@ export const ActiveExamView = ({
         }
       );
 
-      const isMulti = Boolean(currentQ.type === 'mcc' || currentQ.isMultiChoice === true || (Array.isArray(currentQ.correctOptionIndices) && currentQ.correctOptionIndices.length > 1));
-      const selOptIndex = isMulti
-        ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
-        : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
-      const selOptIndices = isMulti
-        ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
-        : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
+      if (currentQ.type === 'web') {
+        updated[selectedQuestionIndex] = {
+          ...updated[selectedQuestionIndex],
+          questionId: currentQ.id,
+          type: currentQ.type,
+          submittedHtml: draftHtml,
+          submittedCss: draftCss,
+          submittedJs: draftJs,
+          isSavedByUser: hasAnswered
+        };
+      } else if (currentQ.type === 'coding') {
+        updated[selectedQuestionIndex] = {
+          ...updated[selectedQuestionIndex],
+          questionId: currentQ.id,
+          type: currentQ.type,
+          submittedCode: draftCode,
+          selectedLanguage: draftLanguage,
+          isSavedByUser: hasAnswered
+        };
+      } else {
+        const isMulti = Boolean(currentQ.type === 'mcc' || currentQ.isMultiChoice === true || (Array.isArray(currentQ.correctOptionIndices) && currentQ.correctOptionIndices.length > 1));
+        const selOptIndex = isMulti
+          ? (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : (typeof draftMCQ === 'number' ? draftMCQ : null))
+          : (typeof draftMCQ === 'number' ? draftMCQ : (Array.isArray(draftMCQ) && draftMCQ.length > 0 ? draftMCQ[0] : null));
+        const selOptIndices = isMulti
+          ? (Array.isArray(draftMCQ) ? draftMCQ : (draftMCQ !== null && draftMCQ !== undefined ? [Number(draftMCQ)] : []))
+          : (selOptIndex !== null && selOptIndex !== undefined ? [Number(selOptIndex)] : []);
 
-      updated[selectedQuestionIndex] = {
-        ...updated[selectedQuestionIndex],
-        questionId: currentQ.id,
-        type: currentQ.type,
-        selectedOptionIndex: selOptIndex,
-        selectedOptionIndices: selOptIndices,
-        submittedCode: draftCode,
-        selectedLanguage: draftLanguage,
-        submittedHtml: draftHtml,
-        submittedCss: draftCss,
-        submittedJs: draftJs,
-        isSavedByUser: hasAnswered
-      };
+        updated[selectedQuestionIndex] = {
+          ...updated[selectedQuestionIndex],
+          questionId: currentQ.id,
+          type: currentQ.type,
+          selectedOptionIndex: selOptIndex,
+          selectedOptionIndices: selOptIndices,
+          isSavedByUser: hasAnswered
+        };
+      }
     }
 
     if (examAnswersRef) {
@@ -172,7 +189,7 @@ export const ActiveExamView = ({
     if (typeof setExamAnswers === 'function') {
       setExamAnswers(updated);
     }
-    if (typeof saveServerDraft === 'function') {
+    if (draftQIdx === selectedQuestionIndex && typeof saveServerDraft === 'function') {
       saveServerDraft(updated);
     }
 
@@ -242,6 +259,7 @@ export const ActiveExamView = ({
           onNavigate={commitAndSwitchQuestion}
           showQuestionPalette={showQuestionPalette}
           setShowQuestionPalette={setShowQuestionPalette}
+          draftQIdx={draftQIdx}
           draftMCQ={draftMCQ}
           draftCode={draftCode}
           draftLanguage={draftLanguage}
@@ -270,6 +288,7 @@ export const ActiveExamView = ({
             setTest={setTest}
             activeQuestionBtnRef={activeQuestionBtnRef}
             navTrackRef={navTrackRef}
+            draftQIdx={draftQIdx}
             draftMCQ={draftMCQ}
             draftCode={draftCode}
             draftLanguage={draftLanguage}
@@ -373,6 +392,7 @@ export const ActiveExamView = ({
         customModal={customModal}
         setCustomModal={setCustomModal}
         devModeActive={devModeActive}
+        suppressCustomModal={suppressCustomModal}
       />
 
       {/* 4. Full Web Studio modal and Submission screen loader */}

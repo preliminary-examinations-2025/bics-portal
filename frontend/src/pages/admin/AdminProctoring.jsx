@@ -4,6 +4,7 @@ import {
   Search, Copy, Check, ExternalLink, ShieldAlert, ArrowRight, Eye, ShieldCheck, XCircle
 } from 'lucide-react';
 import { API_BASE } from '../../config';
+import { getAuthToken } from '../../api/client';
 import StudentProctorDashboard from '../../components/StudentProctorDashboard';
 
 export default function AdminProctoring({
@@ -90,11 +91,14 @@ export default function AdminProctoring({
   }, [selectedProctorTest]);
 
   const handleLaunchAudit = (row) => {
+    const targetSubId = row.bicsId || row.submissionId || row.reportId;
     const matchedSub = (Array.isArray(liveSubmissions) ? liveSubmissions : []).find(
-      s => String(s.id || s._id) === String(row.rawSubmissionId) || String(s.id || s._id) === String(row.submissionId)
+      s => String(s.id || s._id) === String(targetSubId) || String(s.id || s._id) === String(row.submissionId) || (row.submissionRefId && String(s.submissionRefId) === String(row.submissionRefId))
     ) || {
-      id: row.rawSubmissionId,
-      _id: row.rawSubmissionId,
+      id: targetSubId,
+      _id: targetSubId,
+      bicsId: row.bicsId,
+      submissionRefId: row.submissionRefId,
       studentId: row.studentId,
       candidateName: row.candidateName,
       testId: row.testId,
@@ -116,6 +120,29 @@ export default function AdminProctoring({
     setSelectedProctorStudent(matchedSub);
     setDashboardInitialTab('eirf');
     setAdminTab('feeds');
+  };
+
+  const handleOpenVerdictPdf = async (row) => {
+    const targetId = (row.reportId && row.reportId !== 'Pending Filing') ? row.reportId : (row.bicsId || row.submissionId);
+    if (!targetId) return;
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/admin/eirf/verdict-pdf/${encodeURIComponent(targetId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.error || 'Failed to retrieve official Verdict PDF.');
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (err) {
+      console.error('Failed to open Verdict PDF:', err);
+      alert('Network error while retrieving Verdict PDF.');
+    }
   };
 
   const handleCopyBicsId = (id) => {
@@ -141,6 +168,7 @@ export default function AdminProctoring({
   const countAwaiting = eirfList.filter(item => item.pipelineStatus === 'AWAITING_EIRF').length;
   const countExpired = eirfList.filter(item => item.pipelineStatus === 'EXPIRED').length;
   const countVerdict = eirfList.filter(item => item.pipelineStatus === 'VERDICT_ISSUED').length;
+  const countFailed = eirfList.filter(item => item.pipelineStatus === 'FAILED').length;
   const countTotal = eirfList.length;
 
   // Filtered List
@@ -153,9 +181,10 @@ export default function AdminProctoring({
       const matchName = (item.candidateName || '').toLowerCase().includes(q);
       const matchId = (item.studentId || '').toLowerCase().includes(q);
       const matchBics = (item.bicsId || '').toLowerCase().includes(q);
+      const matchRefNum = (item.submissionRefId || '').toLowerCase().includes(q);
       const matchExam = (item.testTitle || '').toLowerCase().includes(q);
       const matchRep = (item.reportId || '').toLowerCase().includes(q);
-      return matchName || matchId || matchBics || matchExam || matchRep;
+      return matchName || matchId || matchBics || matchRefNum || matchExam || matchRep;
     }
     return true;
   });
@@ -331,6 +360,7 @@ export default function AdminProctoring({
               </div>
             ) : (
               <StudentProctorDashboard
+                key={selectedProctorStudent.id || selectedProctorStudent._id}
                 sub={selectedProctorStudent}
                 onClose={() => setSelectedProctorStudent(null)}
                 fetchLiveSubmissions={fetchLiveSubmissions}
@@ -428,7 +458,8 @@ export default function AdminProctoring({
                 { id: 'UNDER_REVIEW', label: `Needs Review (${countUnderReview})` },
                 { id: 'AWAITING_EIRF', label: `Awaiting Filing (${countAwaiting})` },
                 { id: 'EXPIRED', label: `Expired (${countExpired})` },
-                { id: 'VERDICT_ISSUED', label: `Verdict Issued (${countVerdict})` }
+                { id: 'VERDICT_ISSUED', label: `Verdict Issued (${countVerdict})` },
+                ...(countFailed > 0 ? [{ id: 'FAILED', label: `Dispatch Failed (${countFailed})` }] : [])
               ].map(f => (
                 <button
                   key={f.id}
@@ -502,10 +533,12 @@ export default function AdminProctoring({
                   </thead>
                   <tbody>
                     {filteredList.map((row, idx) => {
-                      const isExpired = row.pipelineStatus === 'EXPIRED' || row.isExpired;
+                      const isVerdict = row.pipelineStatus === 'VERDICT_ISSUED';
+                      const isExpired = !isVerdict && !row.eirfSubmittedAt && (row.pipelineStatus === 'EXPIRED' || row.isExpired);
                       const isAwaiting = row.pipelineStatus === 'AWAITING_EIRF';
                       const isReview = row.pipelineStatus === 'UNDER_REVIEW';
-                      const isVerdict = row.pipelineStatus === 'VERDICT_ISSUED';
+                      const isFailed = row.pipelineStatus === 'FAILED';
+                      const isPendingDispatch = ['FLAGGED', 'GENERATING_QUESTIONS', 'QUESTIONS_GENERATED', 'SENDING_INVITE_EMAIL'].includes(row.pipelineStatus);
 
                       return (
                         <tr
@@ -546,7 +579,7 @@ export default function AdminProctoring({
                               </button>
                             </div>
                             <div style={{ fontSize: '7pt', color: '#94a3b8', marginTop: '2px' }}>
-                              Ref: {row.reportId}
+                              Ref: {row.reportId}{row.submissionRefId ? ` • Submission #${row.submissionRefId}` : ''}
                             </div>
                           </td>
 
@@ -593,16 +626,40 @@ export default function AdminProctoring({
                               <span style={{ fontSize: '7.5pt', color: '#0369a1', fontWeight: '500' }}>
                                 Filed by Examinee
                               </span>
-                            ) : (
+                            ) : isVerdict ? (
                               <span style={{ fontSize: '7.5pt', color: '#15803d', fontWeight: '500' }}>
                                 Adjudicated
+                              </span>
+                            ) : isFailed ? (
+                              <span style={{ fontSize: '7.5pt', color: '#be123c', fontWeight: 'bold' }} title={row.lastError || 'Email delivery failed'}>
+                                Dispatch Failed
+                              </span>
+                            ) : isPendingDispatch ? (
+                              <span style={{ fontSize: '7.5pt', color: '#d97706', fontWeight: '500' }}>
+                                Pending Dispatch
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: '500' }}>
+                                Pending Filing
                               </span>
                             )}
                           </td>
 
                           {/* Pipeline Status Pill */}
                           <td style={{ padding: '12px 14px' }}>
-                            {isReview ? (
+                            {isVerdict ? (
+                              <span style={{
+                                fontSize: '7.5pt',
+                                fontWeight: 'bold',
+                                backgroundColor: (row.status === 'approved' || row.eirfStatus === 'approved') ? '#ecfdf5' : '#fef2f2',
+                                color: (row.status === 'approved' || row.eirfStatus === 'approved') ? '#047857' : '#b91c1c',
+                                border: `1px solid ${(row.status === 'approved' || row.eirfStatus === 'approved') ? '#a7f3d0' : '#fecaca'}`,
+                                padding: '3px 8px',
+                                borderRadius: '12px'
+                              }}>
+                                {(row.status === 'approved' || row.eirfStatus === 'approved') ? 'APPROVED' : 'REJECTED'}
+                              </span>
+                            ) : isReview ? (
                               <span style={{
                                 fontSize: '7.5pt',
                                 fontWeight: 'bold',
@@ -641,17 +698,44 @@ export default function AdminProctoring({
                               }}>
                                 EXPIRED
                               </span>
+                            ) : isFailed ? (
+                              <span style={{
+                                fontSize: '7.5pt',
+                                fontWeight: 'bold',
+                                backgroundColor: '#fff1f2',
+                                color: '#be123c',
+                                border: '1px solid #fecdd3',
+                                padding: '3px 8px',
+                                borderRadius: '12px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }} title={row.lastError || 'Candidate email missing or delivery failed'}>
+                                <AlertCircle size={11} /> DISPATCH FAILED
+                              </span>
+                            ) : isPendingDispatch ? (
+                              <span style={{
+                                fontSize: '7.5pt',
+                                fontWeight: 'bold',
+                                backgroundColor: '#eff6ff',
+                                color: '#1d4ed8',
+                                border: '1px solid #bfdbfe',
+                                padding: '3px 8px',
+                                borderRadius: '12px'
+                              }}>
+                                PENDING DISPATCH
+                              </span>
                             ) : (
                               <span style={{
                                 fontSize: '7.5pt',
                                 fontWeight: 'bold',
-                                backgroundColor: row.status === 'approved' ? '#ecfdf5' : '#fef2f2',
-                                color: row.status === 'approved' ? '#047857' : '#b91c1c',
-                                border: `1px solid ${row.status === 'approved' ? '#a7f3d0' : '#fecaca'}`,
+                                backgroundColor: '#f8fafc',
+                                color: '#64748b',
+                                border: '1px solid #cbd5e1',
                                 padding: '3px 8px',
                                 borderRadius: '12px'
                               }}>
-                                {row.status === 'approved' ? 'APPROVED' : 'REJECTED'}
+                                PENDING FILING
                               </span>
                             )}
                           </td>
@@ -660,10 +744,9 @@ export default function AdminProctoring({
                           <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                             <div style={{ display: 'inline-flex', gap: '8px', alignItems: 'center' }}>
                               {isVerdict && (
-                                <a
-                                  href={`${API_BASE}/test/eirf/verdict-pdf/${row.reportId || row.rawSubmissionId}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenVerdictPdf(row)}
                                   title="Download Signed PDF Certificate"
                                   style={{
                                     display: 'inline-flex',
@@ -676,11 +759,11 @@ export default function AdminProctoring({
                                     border: '1px solid #cbd5e1',
                                     borderRadius: '4px',
                                     color: '#0369a1',
-                                    textDecoration: 'none'
+                                    cursor: 'pointer'
                                   }}
                                 >
                                   <ExternalLink size={11} /> Verdict PDF
-                                </a>
+                                </button>
                               )}
 
                               <button

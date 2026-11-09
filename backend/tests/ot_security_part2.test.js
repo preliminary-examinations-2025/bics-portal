@@ -127,21 +127,22 @@ async function runTests() {
     // =========================================================================
     console.log("\n--- [ITEM B6] Drag-and-Drop Lockdown & Action Blocked Toast Banner ---");
 
-    test("B6.1: CodeEditor explicitly configures Monaco with dragAndDrop: false", () => {
+    test("B6.1: CodeEditor configures Monaco with dragAndDrop: false and intercepts clipboard shortcuts", () => {
         const codeEditorPath = path.resolve(__dirname, '../../frontend_ot/src/components/exam/CodeEditor.jsx');
         const content = fs.readFileSync(codeEditorPath, 'utf8');
 
         assert(content.includes('dragAndDrop: false'), "Monaco editor options must have dragAndDrop: false configured");
-        assert(content.includes("'dragover', 'dragenter', 'drop'"), "CodeEditor must intercept DOM drag events");
+        assert(content.includes('contextmenu: false'), "Monaco editor options must disable contextmenu");
+        assert(content.includes('onClipboardAttempt'), "CodeEditor must report blocked clipboard shortcuts to parent proctoring handler");
     });
 
-    test("B6.2: App.jsx displays exact required toast text on blocked clipboard/drag action", () => {
+    test("B6.2: App.jsx intercepts drag-and-drop & clipboard events in capture phase and dispatches CLIPBOARD_ATTEMPT toast", () => {
         const appPath = path.resolve(__dirname, '../../frontend_ot/src/App.jsx');
         const content = fs.readFileSync(appPath, 'utf8');
 
-        const expectedText = "Action Blocked: Copy-pasting and dragging external text are strictly prohibited during the active examination environment. This attempt has been logged.";
-        assert(content.includes(expectedText), "App.jsx must contain the exact required Action Blocked toast notification text");
-        assert(content.includes("dragover") && content.includes("drop"), "App.jsx must intercept window dragover and drop events");
+        assert(content.includes('Drag and drop operations are blocked by the system in active test environment.'), "App.jsx must show blocked drag-and-drop notice");
+        assert(content.includes("addEventListener('dragover', blockDragDrop, true)") && content.includes("addEventListener('drop', blockDragDrop, true)"), "App.jsx must intercept window/document dragover and drop in capture phase");
+        assert(content.includes("addProctorToast(eventType"), "App.jsx must display proctor toast notifications for blocked actions");
     });
 
     // =========================================================================

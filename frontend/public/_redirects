@@ -1,5 +1,6 @@
-# Proxy API requests to Render backend server seamlessly
-/api/*       https://bics-portal.onrender.com/api/:splat  200!
+# Proxy API & backend static requests to Render backend server seamlessly
+/api/*       https://bics-portal.onrender.com/api/:splat     200!
+/public/*    https://bics-portal.onrender.com/public/:splat  200!
 
 # Proxy Assessment requests to the separate OT deployment site
 /assessment    https://otbicsexam.netlify.app/assessment/test  200!
@@ -29,11 +30,11 @@
 /status/*     https://bicsworkspace.netlify.app/athenaeum/status/:splat  200!
 
 # Netlify Proxy Redirects for Cloudinary Media Storage (BICS_2026)
-/media/v:ver/*  https://res.cloudinary.com/dl7xqcnmr/image/upload/v:ver/BICS_2026/:splat  200!
-/media/raw/*    https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/:splat          200!
-/media/eirf/*         https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/eirf/:splat     200!
+/media/v:ver/*        https://res.cloudinary.com/dl7xqcnmr/image/upload/v:ver/BICS_2026/:splat      200!
+/media/otrf/*         https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/otrf/:splat         200!
+/media/raw/*          https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026/:splat              200!
 /media/proctoring/*   https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/proctoring/:splat 200!
-/media/*              https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/:splat        200!
+/media/*              https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026/:splat            200!
 
 # Client-side React Router rewrites for Main Portal
 /main/*      /index.html                                 200

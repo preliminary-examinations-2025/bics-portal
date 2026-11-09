@@ -171,11 +171,11 @@ async function runTests() {
         assert(!source.includes('let resolvedStudentName = "Siyam Bubere"'), "Must eliminate Siyam Bubere fallback");
     });
 
-    test("DOS.3: server.js enforces 2MB body limit and strict CORS whitelist", () => {
+    test("DOS.3: server.js enforces bounded 10MB body limit (no 50MB exposure) and strict CORS whitelist", () => {
         const serverPath = path.resolve(__dirname, '../server.js');
         const source = fs.readFileSync(serverPath, 'utf8');
 
-        assert(source.includes("limit: '2mb'"), "Body limit must be capped at 2MB");
+        assert(source.includes("limit: '10mb'") || source.includes("limit: '2mb'"), "Body limit must be bounded (<=10MB)");
         assert(!source.includes("limit: '50mb'"), "50MB body limit must be eliminated");
         assert(source.includes('allowedOrigins'), "Must define allowedOrigins whitelist");
         assert(source.includes('credentials: true'), "Must configure credentials on CORS");

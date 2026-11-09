@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ShieldAlert, FileText, Upload, CheckCircle, Download } from 'lucide-react';
 import LedgerUploadForm from '../components/LedgerUploadForm';
 import { API_BASE } from '../config';
@@ -18,12 +18,72 @@ export default function HallTicketView({
   verificationError,
   verificationCodeSent,
   sendingVerificationCode,
+  verificationCooldown = 0,
   handleSendVerificationCode,
   handleVerifyCode,
   verificationEmailCode,
   setVerificationEmailCode,
   verifyingCode
 }) {
+  const [downloadingTicket, setDownloadingTicket] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
+
+  const handleDownloadHallTicket = async () => {
+    const candidateKey = studentProfile?.id || studentProfile?._id;
+    if (!candidateKey || downloadingTicket) return;
+
+    setDownloadError('');
+    setDownloadingTicket(true);
+
+    try {
+      const token =
+        localStorage.getItem('bics_auth_token') ||
+        sessionStorage.getItem('bics_auth_token') ||
+        localStorage.getItem('token') ||
+        '';
+      const examCode = systemConfig.examType === 'midsem' ? 'mid' : 'end';
+      const url = `${API_BASE}/candidate/generate-hallticket/${encodeURIComponent(candidateKey)}?type=${examCode}&t=${Date.now()}`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        const cleanMessage = errText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        throw new Error(cleanMessage || `Failed to download Hall Ticket (HTTP ${response.status}).`);
+      }
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.includes('application/pdf')) {
+        throw new Error('Unexpected response format while generating Hall Ticket PDF.');
+      }
+
+      const pdfBlob = await response.blob();
+      let filename = `BICS_HallTicket_${examCode}sem_${studentProfile.studentId || candidateKey}.pdf`;
+      const disp = response.headers.get('content-disposition') || '';
+      const fnMatch = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+      if (fnMatch && fnMatch[1]) {
+        filename = decodeURIComponent(fnMatch[1].trim());
+      }
+
+      const blobUrl = window.URL.createObjectURL(pdfBlob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = filename;
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 10000);
+    } catch (err) {
+      console.error('[HALL_TICKET_DOWNLOAD_ERROR]', err);
+      setDownloadError(err.message || 'Unable to download Hall Ticket PDF. Please try again.');
+    } finally {
+      setDownloadingTicket(false);
+    }
+  };
   return (
     <div className="cf-card">
       <div className="cf-card-title">
@@ -125,11 +185,15 @@ export default function HallTicketView({
                   <button 
                     type="button" 
                     className="cf-btn-primary" 
-                    disabled={sendingVerificationCode}
+                    disabled={sendingVerificationCode || verificationCooldown > 0}
                     onClick={handleSendVerificationCode}
                     style={{ padding: '8px 16px', fontSize: '9.5pt', fontWeight: 'bold' }}
                   >
-                    {sendingVerificationCode ? "Sending Code..." : "Send Verification Code"}
+                    {sendingVerificationCode
+                      ? "Sending Code..."
+                      : verificationCooldown > 0
+                        ? `Wait (${verificationCooldown}s)`
+                        : "Send Verification Code"}
                   </button>
                 ) : (
                   <form onSubmit={handleVerifyCode} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -158,11 +222,15 @@ export default function HallTicketView({
                       <button 
                         type="button" 
                         className="cf-btn-secondary" 
-                        disabled={sendingVerificationCode} 
+                        disabled={sendingVerificationCode || verificationCooldown > 0} 
                         onClick={handleSendVerificationCode}
                         style={{ flex: '1', padding: '8px', fontSize: '8.5pt' }}
                       >
-                        Resend
+                        {sendingVerificationCode
+                          ? 'Sending...'
+                          : verificationCooldown > 0
+                            ? `Resend (${verificationCooldown}s)`
+                            : 'Resend'}
                       </button>
                     </div>
                   </form>
@@ -183,16 +251,21 @@ export default function HallTicketView({
                 Your identity, malpractice undertaking, coursework submissions, and feedback surveys have been verified. Click the button below to retrieve your official dynamic A4 PDF Examination Hall Ticket.
               </p>
               
+              {downloadError && (
+                <div className="cf-alert cf-alert-error" style={{ maxWidth: '520px', margin: '0 auto 18px auto', fontSize: '9pt', textAlign: 'left' }}>
+                  {downloadError}
+                </div>
+              )}
+
               <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                <button 
-                  className="cf-btn-primary" 
-                  onClick={() => {
-                    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-                    window.open(`${API_BASE}/candidate/generate-hallticket/${studentProfile.id || studentProfile._id}?type=${systemConfig.examType === 'midsem' ? 'mid' : 'end'}&authToken=${encodeURIComponent(token)}&t=${Date.now()}`, '_blank');
-                  }}
-                  style={{ padding: '12px 24px', fontSize: '10.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                <button
+                  type="button"
+                  className="cf-btn-primary"
+                  disabled={downloadingTicket}
+                  onClick={handleDownloadHallTicket}
+                  style={{ padding: '12px 24px', fontSize: '10.5pt', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '8px', opacity: downloadingTicket ? 0.7 : 1 }}
                 >
-                  <Download size={18} /> Download Official Hall Ticket (PDF)
+                  <Download size={18} /> {downloadingTicket ? 'Downloading Hall Ticket...' : 'Download Official Hall Ticket (PDF)'}
                 </button>
                 <button 
                   className="cf-btn-secondary" 

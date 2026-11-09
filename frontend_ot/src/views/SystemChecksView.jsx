@@ -31,6 +31,8 @@ export function SystemChecksView({
   isFocused,
   webcamGranted,
   micGranted,
+  isAuthorizingMedia = false,
+  mediaPermissionError = '',
   systemChecksCompleted = false,
   onCompleteSystemChecks,
   onStartTicketReceived,
@@ -194,8 +196,14 @@ export function SystemChecksView({
 
       // If all local client probes pass, post probe payload to server /api/tests/precheck to acquire HMAC Start Ticket
       try {
-        const activeToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
-        const examToken = sessionStorage.getItem('bics_exam_token') || '';
+        const activeToken = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') ||
+                            sessionStorage.getItem('bics_ot_auth_token') ||
+                            sessionStorage.getItem('bics_auth_token') ||
+                            localStorage.getItem('bics_auth_token') ||
+                            '';
+        const examToken = (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') ||
+                          sessionStorage.getItem('bics_exam_token') ||
+                          '';
         const headers = { 'Content-Type': 'application/json' };
         if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
         if (examToken) headers['x-exam-token'] = examToken;
@@ -235,11 +243,13 @@ export function SystemChecksView({
           });
         }
       } catch (srvErr) {
-        console.warn("Precheck endpoint notice:", srvErr.message);
-        // In case of local/offline dev connectivity without blocking valid candidate:
-        if (onCompleteSystemChecks) {
-          onCompleteSystemChecks();
-        }
+        console.warn("Precheck endpoint error:", srvErr.message);
+        setProbeError('Unable to reach server verification service. Please verify your internet connection and retry.');
+        setRetryCount(c => {
+          const next = c + 1;
+          if (next >= 2) setSupportCode(`SRV-PRECHECK-${Date.now().toString(36).toUpperCase().slice(-6)}`);
+          return next;
+        });
       }
     } catch (err) {
       console.error("System probe execution error:", err);
@@ -260,6 +270,26 @@ export function SystemChecksView({
       executeProbes();
     }
   }, [isInitiallyCompleted, executeProbes]);
+
+  // Re-check device labels after media permission is granted (Incognito hides camera labels until allowed)
+  useEffect(() => {
+    if (!webcamGranted || !micGranted) return;
+    let active = true;
+    probeMediaDevices()
+      .then(med => {
+        if (!active || !med) return;
+        setProbeMetrics(prev => ({
+          ...prev,
+          virtualCameraDetected: med.virtualCameraDetected,
+          virtualCameraName: med.flaggedDeviceName || ''
+        }));
+        if (med.virtualCameraDetected) {
+          setProbeError(`Virtual or software camera detected ("${med.flaggedDeviceName || 'OBS Virtual'}"). You must use a physical webcam.`);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [webcamGranted, micGranted]);
 
   const allAutomatedChecksCompleted = Object.values(checkStatuses).every(st => st === 'completed');
   const allSystemChecksPassed = Boolean(
@@ -557,34 +587,78 @@ export function SystemChecksView({
           {/* Card 6: Camera & Microphone Authorization */}
           <div style={{
             backgroundColor: '#ffffff',
-            border: `1px solid ${webcamGranted && micGranted && !probeMetrics.virtualCameraDetected ? '#e2e8f0' : '#fed7aa'}`,
+            border: `1px solid ${webcamGranted && micGranted && !probeMetrics.virtualCameraDetected ? '#e2e8f0' : (mediaPermissionError ? '#fca5a5' : '#fed7aa')}`,
             borderRadius: '8px',
             padding: '12px 20px',
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
+            flexDirection: 'column',
+            gap: '8px',
             fontSize: '9pt',
             transition: 'all 0.3s ease'
           }}>
-            <span style={{ color: '#334155', fontWeight: '500' }}>Hardware permissions (Camera &amp; Mic)</span>
-            {probeMetrics.virtualCameraDetected ? (
-              <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Virtual Camera Prohibited ({probeMetrics.virtualCameraName || 'OBS'})</span>
-                <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
-              </span>
-            ) : webcamGranted && micGranted ? (
-              <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Hardware Authorized &amp; Active</span>
-                <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
-              </span>
-            ) : (
-              <button 
-                className="cf-btn-primary" 
-                onClick={handleAuthorizeCamera}
-                style={{ width: '190px', minWidth: '190px', justifyContent: 'center', padding: '6px 14px', fontSize: '8pt', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                <Camera size={13} /> Authorize Camera &amp; Mic
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+              <span style={{ color: '#334155', fontWeight: '500' }}>Hardware permissions (Camera &amp; Mic)</span>
+              {probeMetrics.virtualCameraDetected ? (
+                <span style={{ color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>Virtual Camera Prohibited ({probeMetrics.virtualCameraName || 'OBS'})</span>
+                  <AlertTriangle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
+                </span>
+              ) : webcamGranted && micGranted ? (
+                <span style={{ color: '#002147', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>Hardware Authorized &amp; Active</span>
+                  <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="cf-btn-primary"
+                  disabled={isAuthorizingMedia}
+                  onClick={handleAuthorizeCamera}
+                  style={{
+                    width: '190px',
+                    minWidth: '190px',
+                    justifyContent: 'center',
+                    padding: '6px 14px',
+                    fontSize: '8pt',
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    opacity: isAuthorizingMedia ? 0.75 : 1,
+                    cursor: isAuthorizingMedia ? 'wait' : 'pointer'
+                  }}
+                >
+                  {isAuthorizingMedia ? (
+                    <>
+                      <Loader2 size={13} className="spinner" />
+                      <span>Waiting for Permission...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera size={13} />
+                      <span>Authorize Camera &amp; Mic</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+            {mediaPermissionError && (!webcamGranted || !micGranted) && (
+              <div style={{
+                backgroundColor: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: '4px',
+                padding: '8px 10px',
+                fontSize: '8pt',
+                color: '#991b1b',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                lineHeight: '1.45',
+                whiteSpace: 'pre-line'
+              }}>
+                <AlertTriangle size={14} style={{ color: '#dc2626', flexShrink: 0, marginTop: '2px' }} />
+                <span>{mediaPermissionError}</span>
+              </div>
             )}
           </div>
 

@@ -108,10 +108,11 @@ async function runPipelineIntegrityAudit() {
     // TEST 5: Dead-Man Reaper & Beacon Disconnect EIRF Flagging
     // ------------------------------------------------------------------
     console.log("\n[TEST 5] Dead-Man Reaper & Disconnect EIRF Flagging:");
-    assert(reaperSource.includes("sub.hasEirfFlag = true"), "Reaper must set hasEirfFlag = true on abandoned sessions");
-    assert(reaperSource.includes("sub.eirfStatus = 'pending'"), "Reaper must mark eirfStatus = 'pending'");
-    assert(reaperSource.includes("sendEirfNoticeEmail"), "Reaper must dispatch EIRF notice email to candidate");
-    assert(testsSource.includes("submission.hasEirfFlag = true"), "beacon-disconnect must set hasEirfFlag = true");
+    assert(reaperSource.includes("evaluateEirfIncident(sub, testDoc)"), "Reaper must evaluate EIRF incident state via evaluateEirfIncident()");
+    assert(reaperSource.includes("sub.hasEirfFlag = eirfEval.hasEirfFlag"), "Reaper must set hasEirfFlag from evaluateEirfIncident on abandoned sessions");
+    assert(reaperSource.includes("sub.eirfStatus = eirfEval.eirfStatus"), "Reaper must set eirfStatus from evaluateEirfIncident on abandoned sessions");
+    assert(reaperSource.includes("runPipelineTick()"), "Reaper must trigger EIRF pipeline worker (runPipelineTick) for notification dispatch");
+    assert(testsSource.includes("submission.hasEirfFlag = eirfEval.hasEirfFlag") || testsSource.includes("sub.hasEirfFlag = eirfEval.hasEirfFlag"), "beacon-disconnect must evaluate and persist hasEirfFlag");
     console.log("  ✅ Disconnect resilience verified: Sudden crashes and drops automatically flag session for EIRF committee review.");
 
     // ------------------------------------------------------------------
@@ -119,10 +120,10 @@ async function runPipelineIntegrityAudit() {
     // ------------------------------------------------------------------
     console.log("\n[TEST 6] Strict Assessment Routing Enforcement:");
     assert(frontendOtSource.includes("path === '/assessment/test'"), "Must enforce strict test route: /assessment/test?token=***");
-    assert(frontendOtSource.includes("path.startsWith('/assessment/verification/')"), "Must enforce strict verification route: /assessment/verification/:id");
+    assert(frontendOtSource.includes("path.startsWith('/assessment/evaluation/')"), "Must enforce strict evaluation review route: /assessment/evaluation/:id");
     assert(frontendOtSource.includes("path.startsWith('/assessment/eirf/')"), "Must enforce strict EIRF route: /assessment/eirf/:submissionId");
     assert(frontendOtSource.includes("setVerifyError(\"You do not have permission to view this directory or page using the credentials that you supplied.\")"), "All other routes must be rejected with 403 Forbidden");
-    console.log("  ✅ Strict routing verified: Assessment portal operates solely on the 3 designated routes with zero aliases.");
+    console.log("  ✅ Strict routing verified: Assessment portal operates solely on the designated /assessment routes with zero aliases.");
 
     // ------------------------------------------------------------------
     // TEST 7: WebRTC Signal Authorization & Cleanup
@@ -133,13 +134,14 @@ async function runPipelineIntegrityAudit() {
     console.log("  ✅ WebRTC security verified: Telemetry streams are strictly isolated and replay-resistant.");
 
     // ------------------------------------------------------------------
-    // TEST 8: 50-Second Network Disconnection Auto-Finalize Guard
+    // TEST 8: 70-Second Network Disconnection Auto-Finalize Guard
     // ------------------------------------------------------------------
-    console.log("\n[TEST 8] 50-Second Network Disconnection Auto-Finalize Guard:");
-    assert(frontendOtSource.includes("setDisconnectCountdown(50)"), "Frontend must initialize 50s disconnect countdown on connection loss");
-    assert(frontendOtSource.includes("50 seconds elapsed without connection. Auto-finalizing exam"), "Frontend must auto-finalize exam when 50s disconnect expires");
-    assert(frontendOtSource.includes("Your session will auto-finalize in"), "Frontend must display real-time warning countdown banner to candidate");
-    console.log("  ✅ 50-second disconnect guard verified: Client gracefully auto-submits and displays FinishedView, matching server reaper timing.");
+    console.log("\n[TEST 8] 70-Second Network Disconnection Auto-Finalize Guard:");
+    const examHeaderSource = fs.readFileSync(path.join(__dirname, '../../frontend_ot/src/components/exam/ExamHeader.jsx'), 'utf8');
+    assert(frontendOtSource.includes("disconnectDeadlineRef.current = Date.now() + 70000"), "Frontend must initialize 70s disconnect deadline on connection loss");
+    assert(frontendOtSource.includes("70 seconds elapsed without connection. Auto-finalizing exam"), "Frontend must auto-finalize exam when 70s disconnect expires");
+    assert(examHeaderSource.includes("Auto-submitting in ${currentCountdown}s"), "ExamHeader must display real-time disconnect warning countdown tooltip to candidate");
+    console.log("  ✅ 70-second disconnect guard verified: Client gracefully auto-submits and displays FinishedView, matching server reaper timing.");
 
     console.log("\n==================================================================");
     console.log("🏁 ALL 8 PIPELINE & ANTI-TAMPER AUDIT CHECKS PASSED SUCCESSFULLY!");

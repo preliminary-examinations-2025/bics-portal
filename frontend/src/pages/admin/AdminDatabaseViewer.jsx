@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Database, Folder, Search, RefreshCw, ChevronRight, ChevronDown,
   Copy, Check, Download, List, Code, Table as TableIcon, Lock,
@@ -2231,20 +2232,21 @@ export default function AdminDatabaseViewer({ API_BASE }) {
       </div>
 
       {/* FULL DOCUMENT INSPECTOR MODAL (Read-Only) */}
-      {inspectedDoc && (
-        <div
-          onClick={() => setInspectedDoc(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '24px'
-          }}
-        >
+      {inspectedDoc && (() => {
+        const modalMarkup = (
+          <div
+            onClick={() => setInspectedDoc(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 99999,
+              padding: '24px'
+            }}
+          >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -2303,7 +2305,9 @@ export default function AdminDatabaseViewer({ API_BASE }) {
             </div>
           </div>
         </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(modalMarkup, document.body) : modalMarkup;
+      })()}
     </div>
   );
 }

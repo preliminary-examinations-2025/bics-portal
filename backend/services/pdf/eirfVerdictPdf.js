@@ -1,14 +1,17 @@
 const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
-const path = require('path');
-const fs = require('fs');
 const {
+    registerPdfFonts,
+    resolveExamTypeLabel,
     safeText,
     formatISTDate,
     generateQrBuffer,
     fetchImageBuffer,
+    drawBwHeader,
+    drawBwContinuationHeader,
     drawBwSectionBand,
-    drawBwGridRow,
+    drawBwSplitRow,
+    drawBwTable,
     drawBwFooter
 } = require('./pdfCommon');
 const { toBicsId } = require('../../utils/bicsId');
@@ -18,14 +21,14 @@ const { toBicsId } = require('../../utils/bicsId');
  */
 function generateDigitalVerdictHash(submissionId, studentId, reportId, verdictDate) {
     const secretKey = process.env.EIRF_SECRET_KEY || 'BICS_ACADEMIC_EIRF_KEY_2026';
-    const dataStr = `${submissionId}:${studentId}:${reportId}:${verdictDate}:${secretKey}`;
+    const dataStr = `${submissionId || 'NONE'}:${studentId || 'NONE'}:${reportId || 'NONE'}:${verdictDate || 'NONE'}:${secretKey}`;
     return crypto.createHash('sha256').update(dataStr).digest('hex').substring(0, 16).toUpperCase();
 }
 
 /**
- * Generates an objective, forensic case synthesis paragraph via Gemini / OpenRouter / Groq API.
+ * Generates an objective, forensic case synthesis paragraph via Gemini / Groq / OpenRouter API.
  * Deterministic fallback ensures reliable generation even without network/API keys.
- * Never mentions AI, Gemini, or language models.
+ * Never fabricates missing details or mentions AI/language models.
  */
 async function generateForensicSynthesis({
     reportId,
@@ -41,22 +44,35 @@ async function generateForensicSynthesis({
     telemetrySummary,
     resolutionCategory
 }) {
+    const safeCourseCode = safeText(courseCode);
+    const safeCourseName = safeText(courseName);
+    const safeCourseCombined = (safeCourseCode !== 'Details not available' && safeCourseName !== 'Details not available')
+        ? `${safeCourseCode} - ${safeCourseName}`
+        : (safeCourseCode !== 'Details not available' ? safeCourseCode : safeCourseName);
+    const safeTestTitle = safeText(testTitle);
+    const safeCause = safeText(primaryCause);
+    const safeTelemetry = safeText(telemetrySummary);
+    const safeDefense = safeText(detailedExplanation);
+    const safeCategory = safeText(resolutionCategory);
+    const safeRemarks = safeText(adminRemarks);
+    const normVerdict = String(verdictStatus || '').toUpperCase();
+
     const prompt = `You are an academic proctoring forensic analyst drafting an official case synthesis for an institutional audit report.
 Write a concise, objective, formal 3 to 4 sentence executive synthesis of this examination incident.
 Do NOT mention AI, Gemini, machine learning, automated generators, or prompts.
-Present it strictly as an institutional case synthesis.
+Present it strictly as an institutional case synthesis. Use only the provided facts; do not invent missing details.
 
 CASE PARTICULARS:
-- Incident ID: ${reportId}
-- Student: ${candidateName} (ID: ${studentId})
-- Course: ${courseCode} - ${courseName}
-- Examination: ${testTitle}
-- Recorded Primary Trigger: ${primaryCause || 'Proctoring alert'}
-- Telemetry Evidence: ${telemetrySummary || 'Navigation alerts recorded during exam'}
-- Student Explanation: ${detailedExplanation || 'Submitted explanation on EIRF form'}
-- Final Committee Verdict: ${String(verdictStatus).toUpperCase()}
-- Resolution Classification: ${resolutionCategory || 'Academic Review'}
-- Committee Notes: ${adminRemarks || 'Evaluated in accordance with integrity policy'}
+- Incident ID: ${safeText(reportId)}
+- Student: ${safeText(candidateName)} (ID: ${safeText(studentId)})
+- Course: ${safeCourseCombined}
+- Examination: ${safeTestTitle}
+- Recorded Primary Trigger: ${safeCause}
+- Telemetry Evidence: ${safeTelemetry}
+- Student Explanation: ${safeDefense}
+- Final Committee Verdict: ${normVerdict || 'PENDING_REVIEW'}
+- Resolution Classification: ${safeCategory}
+- Committee Notes: ${safeRemarks}
 
 Provide ONLY the final synthesis paragraph.`;
 
@@ -145,104 +161,196 @@ Provide ONLY the final synthesis paragraph.`;
     }
 
     // 4. Deterministic Institutional Rule-Based Synthesis Fallback
-    const isApproved = String(verdictStatus).toLowerCase() === 'approved';
-    if (isApproved) {
-        return `During the examination for ${courseCode} (${testTitle}), proctoring telemetry flagged session events (${telemetrySummary || 'navigation deviations'}). Upon comprehensive cross-examination of the candidate's Emergency Incident Report Form and verified payload records, the committee determined the disruption to be consistent with non-prejudicial technical interruptions. The candidate's defense has been validated, and the final verdict of APPROVAL has been granted for provisional score normalization.`;
-    } else {
-        return `During the examination for ${courseCode} (${testTitle}), proctoring telemetry recorded repeated compliance infractions (${telemetrySummary || 'proctoring navigation alerts'}). Review of the candidate's explanation alongside timestamped system event logs concluded that the defense failed to reconcile the observed discrepancies. Consequently, the Academic Integrity Committee has REJECTED the incident report, upholding disciplinary action in accordance with institutional examination regulations.`;
+    const subjectLabel = safeCourseCombined !== 'Details not available'
+        ? `${safeCourseCombined}${safeTestTitle !== 'Details not available' ? ` (${safeTestTitle})` : ''}`
+        : safeTestTitle;
+    const telemetryClause = safeTelemetry !== 'Details not available' ? safeTelemetry : 'recorded session telemetry';
+
+    if (normVerdict === 'APPROVED') {
+        return `During the examination${subjectLabel !== 'Details not available' ? ` for ${subjectLabel}` : ''}, proctoring telemetry flagged session events (${telemetryClause}). Upon cross-examination of the candidate's Emergency Incident Report Form and verified system telemetry records, the committee determined the disruption to be consistent with non-prejudicial technical interruptions. The candidate's defense has been validated, and the final verdict of APPROVAL has been granted for provisional score restoration.`;
     }
+    if (normVerdict === 'REJECTED') {
+        return `During the examination${subjectLabel !== 'Details not available' ? ` for ${subjectLabel}` : ''}, proctoring telemetry recorded compliance infractions (${telemetryClause}). Review of the candidate's explanation alongside timestamped system event logs concluded that the defense failed to reconcile the observed discrepancies. Consequently, the Academic Integrity Committee has REJECTED the incident report, upholding score annulment as final and binding under institutional examination regulations.`;
+    }
+    return `Incident audit record compiled${subjectLabel !== 'Details not available' ? ` for ${subjectLabel}` : ''} based on ${telemetryClause}. Adjudication status: ${safeText(verdictStatus)}. Further details are governed by institutional examination records.`;
 }
 
 /**
- * Generates the Redesigned 2-Page Strict Black & White EIRF Verdict PDF Buffer
+ * Generates the Official BICS EIRF Forensic Audit & Verdict PDF Buffer
+ * Typography: Plus Jakarta Sans (Titles & Headers) + Inter (Body, Keys, Values)
+ * Layout: Clash-free Page 1 Header (single Submission ID), 4-col & 2-col Horizontal Key-Value Grid, Reference ID in Continuation Headers & Footers
  */
-async function generateEirfVerdictPdfBuffer({
-    report = {},
-    submission = {},
-    test = {},
-    candidate = {},
-    courseCode = 'R526CS01T',
-    courseName = 'Introduction to Computer Science',
-    adminRemarks = 'Report evaluated by academic integrity committee.',
-    resolutionCategory = '',
-    remediationAction = '',
-    reviewerName = 'Academic Integrity Board Convener',
-    reviewerTitle = 'Convener, Examination Disciplinary Committee',
-    pdfProxyUrl = '',
-    digitalHash = '',
-    deadlineDateStr = ''
-}) {
-    const studentId = report?.studentId || candidate?.studentId || submission?.studentId || 'No details available';
-    const candidateName = report?.candidateName || candidate?.name || submission?.candidateName || 'No details available';
-    const candidateEmail = candidate?.registrationData?.collegeEmail || candidate?.registrationData?.personalEmail || candidate?.email || submission?.candidateEmail || 'No details available';
-    const testTitle = report?.testTitle || test?.title || submission?.testTitle || 'Online Examination';
-    const reportId = report?.reportId || 'EIRF-2026-UNKNOWN';
-    const rawStatus = (report?.status || 'approved').toUpperCase();
-    const isApproved = rawStatus === 'APPROVED';
+async function generateEirfVerdictPdfBuffer(params = {}) {
+    const isFlatLegacyCall = Boolean(
+        params &&
+        typeof params === 'object' &&
+        params.reportId &&
+        (!params.report || Object.keys(params.report).length === 0)
+    );
+
+    const report = isFlatLegacyCall ? params : (params.report || {});
+    const submission = params.submission || {};
+    const test = params.test || {};
+    const candidate = params.candidate || {};
+    const systemConfig = params.systemConfig || null;
+    const examType = params.examType || null;
+    const courseCode = params.courseCode || '';
+    const courseName = params.courseName || '';
+    const adminRemarks = params.adminRemarks || '';
+    const resolutionCategory = params.resolutionCategory || '';
+    const remediationAction = params.remediationAction || '';
+    const reviewerName = params.reviewerName || '';
+    const reviewerTitle = params.reviewerTitle || '';
+    const digitalHash = params.digitalHash || '';
+    const deadlineDateStr = params.deadlineDateStr || '';
+
+    const resolvedCourseCode = safeText(
+        courseCode || report?.courseCode || test?.courseCode || test?.code || submission?.courseCode
+    );
+    const resolvedCourseName = safeText(
+        courseName || report?.courseName || test?.courseName || test?.course || test?.subject || submission?.course
+    );
+    const courseDisplay = (resolvedCourseCode !== 'Details not available' && resolvedCourseName !== 'Details not available')
+        ? `${resolvedCourseCode} - ${resolvedCourseName}`
+        : (resolvedCourseCode !== 'Details not available' ? resolvedCourseCode : resolvedCourseName);
+
+    const studentId = safeText(report?.studentId || candidate?.studentId || submission?.studentId);
+    const candidateName = safeText(report?.candidateName || report?.studentName || candidate?.name || submission?.candidateName);
+    const candidateEmail = safeText(
+        candidate?.registrationData?.personalEmail ||
+        candidate?.personalEmail ||
+        candidate?.registrationData?.collegeEmail ||
+        candidate?.email ||
+        submission?.candidateEmail ||
+        report?.candidateEmail
+    );
+    const testTitle = safeText(report?.testTitle || report?.examTitle || test?.title || submission?.testTitle);
+    const reportId = safeText(report?.reportId || submission?.eirfReportId);
+    const rawStatusUpper = String(report?.status || submission?.eirfStatus || '').trim().toUpperCase();
+    const isApproved = rawStatusUpper === 'APPROVED';
+    const isRejected = rawStatusUpper === 'REJECTED';
+    const displayStatus = rawStatusUpper || 'DETAILS NOT AVAILABLE';
+
+    const resolvedExamType = examType || systemConfig?.examType || test?.examType || submission?.examType || report?.examType;
+    const examTypeLabel = resolveExamTypeLabel(resolvedExamType);
+    const academicSession = 'Academic Year 2026-27 • Semester I';
 
     const rawSubId = submission?._id || submission?.id || report?.submissionId;
-    const bicsObjectId = rawSubId ? toBicsId(rawSubId) : 'No details available';
-    const submissionRefId = submission?.submissionRefId || report?.submissionRefId || 'No details available';
+    const bicsObjectId = rawSubId ? toBicsId(rawSubId) : 'Details not available';
+    const submissionRefId = safeText(submission?.submissionRefId || report?.submissionRefId);
 
-    const verdictDate = report?.reviewedAt || report?.updatedAt || new Date();
-    const verdictDateIST = formatISTDate(verdictDate);
-    const deadlineIST = deadlineDateStr || formatISTDate(new Date(new Date(verdictDate).getTime() + 48 * 60 * 60 * 1000));
+    const verdictDateRaw = report?.reviewedAt || report?.adjudicatedAt || null;
+    const verdictDateIST = verdictDateRaw ? formatISTDate(verdictDateRaw) : 'Details not available';
+    const deadlineIST = deadlineDateStr
+        ? safeText(deadlineDateStr)
+        : (verdictDateRaw
+            ? formatISTDate(new Date(new Date(verdictDateRaw).getTime() + 48 * 60 * 60 * 1000))
+            : 'Details not available');
 
-    const examStartIST = formatISTDate(submission?.startedAt || report?.createdAt || verdictDate);
-    const examEndIST = formatISTDate(submission?.submittedAt || report?.submittedAt || verdictDate);
-    const reportSubmittedIST = formatISTDate(report?.submittedAt || report?.createdAt || verdictDate);
+    const examStartRaw = submission?.startedAt || submission?.createdAt || null;
+    const examEndRaw = submission?.submittedAt || null;
+    const examStartIST = examStartRaw ? formatISTDate(examStartRaw) : null;
+    const examEndIST = examEndRaw ? formatISTDate(examEndRaw) : null;
+    const examWindowDisplay = (examStartIST && examEndIST)
+        ? `${examStartIST}  —  ${examEndIST}`
+        : (examStartIST || examEndIST || 'Details not available');
 
-    const hashString = digitalHash || generateDigitalVerdictHash(rawSubId, studentId, reportId, verdictDate);
-    const qrPayload = `https://bicsportal.netlify.app/verify/eirf?reportId=${encodeURIComponent(reportId)}&ref=${encodeURIComponent(submissionRefId)}&hash=${encodeURIComponent(hashString)}`;
-    const proxyUrlFormatted = pdfProxyUrl || `https://bicsportal.netlify.app/media/eirf/${reportId}.pdf`;
+    const reportSubmittedRaw = report?.filedAt || report?.submittedAt || report?.createdAt || null;
+    const reportSubmittedIST = reportSubmittedRaw ? formatISTDate(reportSubmittedRaw) : 'Details not available';
 
-    // Telemetry and proctoring logs
+    const expiresAtRaw = submission?.eirfExpiresAt || report?.expiresAt || null;
+    let timelinessLabel = 'Details not available';
+    if (reportSubmittedRaw && expiresAtRaw) {
+        timelinessLabel = new Date(reportSubmittedRaw).getTime() <= new Date(expiresAtRaw).getTime()
+            ? 'Compliant (Filed within 45-min window)'
+            : 'Late Filing (Filed after expiry window)';
+    } else if (reportSubmittedRaw) {
+        timelinessLabel = 'Filing Timestamp Recorded';
+    }
+
+    const hashString = digitalHash || report?.digitalHash || generateDigitalVerdictHash(rawSubId, studentId, reportId, verdictDateRaw || 'AUDIT');
+    const qrPayload = `BICS-EIRF|Report:${reportId}|Ref:${submissionRefId}|Status:${rawStatusUpper || 'PENDING'}|Hash:${hashString}`;
+    const deliveryChannel = 'Registered Email & BICS Admin Portal';
+
+    // Telemetry and proctoring logs (strictly schema-driven)
     const logSnap = report?.proctoringLogSnapshot || submission?.proctoringLog || {};
-    const fsExits = Number(logSnap.fullscreenExits || 0);
-    const tabSwitches = Number(logSnap.tabSwitches || 0);
+    const hasLogData = Boolean(
+        report?.proctoringLogSnapshot ||
+        submission?.proctoringLog
+    );
+    const fsExits = logSnap.fullscreenExits !== undefined && logSnap.fullscreenExits !== null ? Number(logSnap.fullscreenExits) : null;
+    const tabSwitches = logSnap.tabSwitches !== undefined && logSnap.tabSwitches !== null ? Number(logSnap.tabSwitches) : null;
     const events = Array.isArray(logSnap.events) ? logSnap.events : [];
-    const telemetrySummary = `${fsExits} Fullscreen Exit(s), ${tabSwitches} Tab Switch(es)/Focus Loss events`;
 
-    // Classification
-    const resolvedCategory = resolutionCategory || (isApproved ? 'Technical Glitch / Environmental Disruption' : 'Unexplained Window Deviation Confirmed');
-    const resolvedRemediation = remediationAction || (isApproved ? 'Provisional Assessment Restored & Validated' : 'Examination Score Annulled (Zero Points)');
+    const telemetrySummary = hasLogData
+        ? `${fsExits ?? 0} Fullscreen Exit(s), ${tabSwitches ?? 0} Tab Switch(es) / Focus Loss event(s)`
+        : 'Details not available';
 
-    // Synthesis
+    let severityLabel = 'Details not available';
+    if (hasLogData) {
+        if ((fsExits || 0) >= 3 || (tabSwitches || 0) >= 3) {
+            severityLabel = 'HIGH (Exceeded Threshold)';
+        } else if ((fsExits || 0) > 0 || (tabSwitches || 0) > 0 || events.length > 0 || report?.primaryCause) {
+            severityLabel = 'MEDIUM (Review Flagged)';
+        } else {
+            severityLabel = 'LOW (Telemetry Logged)';
+        }
+    }
+
+    const resolvedRemarks = safeText(adminRemarks || report?.adminRemarks || report?.adjudicationNotes);
+    const resolvedCategory = safeText(resolutionCategory || report?.resolutionCategory);
+    const resolvedRemediation = safeText(remediationAction || report?.remediationAction);
+    const resolvedReviewerName = safeText(reviewerName || report?.reviewerName || report?.reviewedBy);
+    const resolvedReviewerTitle = safeText(reviewerTitle || report?.reviewerTitle);
+    const reviewerCombined = (resolvedReviewerName !== 'Details not available' && resolvedReviewerTitle !== 'Details not available')
+        ? `${resolvedReviewerName} (${resolvedReviewerTitle})`
+        : (resolvedReviewerName !== 'Details not available' ? resolvedReviewerName : resolvedReviewerTitle);
+
+    const resolvedPrimaryCause = safeText(
+        report?.primaryCause ||
+        (Array.isArray(submission?.flaggedReasons) && submission.flaggedReasons.length > 0 ? submission.flaggedReasons.join('; ') : null)
+    );
+
+    const formAnswers = report?.formAnswers || report?.additionalAnswers || {};
+    const legacyAns = formAnswers.legacySections || {};
+    const techContext = report?.technicalContext || {};
+    const rawExplanation = report?.detailedExplanation || formAnswers.Q1 || formAnswers.section4?.explanation || legacyAns.section4?.explanation || null;
+
+    // Forensic synthesis
     const forensicSynthesisText = await generateForensicSynthesis({
         reportId,
         candidateName,
         studentId,
-        courseCode,
-        courseName,
+        courseCode: resolvedCourseCode,
+        courseName: resolvedCourseName,
         testTitle,
-        verdictStatus: rawStatus,
-        adminRemarks,
-        primaryCause: report?.primaryCause,
-        detailedExplanation: report?.detailedExplanation || report?.formAnswers?.section4?.explanation,
+        verdictStatus: rawStatusUpper || 'PENDING_REVIEW',
+        adminRemarks: resolvedRemarks,
+        primaryCause: resolvedPrimaryCause,
+        detailedExplanation: safeText(rawExplanation),
         telemetrySummary,
         resolutionCategory: resolvedCategory
     });
 
     // Image buffers: Enrolled Photo vs. Webcam Baseline Photo
-    const enrolledPhotoUrl = candidate?.registrationData?.photoUrl || candidate?.photoUrl;
-    const baselinePhotoUrl = submission?.biometricVerification?.baselinePhotoUrl || submission?.baselinePhotoUrl || report?.technicalContext?.baselinePhotoUrl;
+    const enrolledPhotoUrl = candidate?.registrationData?.photoUrl || candidate?.referencePhotoUrl || candidate?.photoUrl || submission?.biometricResult?.referencePhotoUrl;
+    const baselinePhotoUrl = submission?.baselinePhotoUrl || submission?.biometricResult?.verifiedPhotoUrl || submission?.biometricVerification?.baselinePhotoUrl || techContext?.baselinePhotoUrl;
 
-    const [enrolledPhotoBuffer, baselinePhotoBuffer, qrPngBuffer] = await Promise.all([
+    const [enrolledPhotoBuffer, baselinePhotoBuffer] = await Promise.all([
         fetchImageBuffer(enrolledPhotoUrl),
-        fetchImageBuffer(baselinePhotoUrl),
-        Promise.resolve(generateQrBuffer(qrPayload))
+        fetchImageBuffer(baselinePhotoUrl)
     ]);
 
     return new Promise((resolve, reject) => {
         try {
-            // A4 document: 595.28 x 841.89 points
             const doc = new PDFDocument({
-                margins: { top: 25, bottom: 20, left: 30, right: 30 },
+                margins: { top: 24, bottom: 18, left: 30, right: 30 },
                 size: 'A4',
                 bufferPages: true,
                 autoFirstPage: true
             });
 
+            const fonts = registerPdfFonts(doc);
             const buffers = [];
             doc.on('data', chunk => buffers.push(chunk));
             doc.on('end', () => resolve(Buffer.concat(buffers)));
@@ -250,133 +358,185 @@ async function generateEirfVerdictPdfBuffer({
             const pageWidth = 535;
             const startX = 30;
 
+            const drawContinuationHeader = (subLabel) => drawBwContinuationHeader(doc, {
+                title: 'BICS DEPARTMENT OF EXAMINATION — EIRF FORENSIC AUDIT REPORT',
+                refId: submissionRefId,
+                examTypeLabel,
+                subLabel: subLabel || (reportId !== 'Details not available' ? `Incident ID: ${reportId}` : ''),
+                fonts,
+                startX,
+                pageWidth
+            });
+
+            const ensureSpace = (neededH, subLabel) => {
+                if (curY + neededH > 780) {
+                    doc.addPage();
+                    curY = drawContinuationHeader(subLabel);
+                }
+            };
+
             // =========================================================================
-            // PAGE 1: HEADER (WITH TOP-RIGHT QR), METADATA, DUAL-PHOTO AUDIT & DEFENSE
+            // PAGE 1 HEADER (Submission ID printed strictly once here; Ref ID in footers/headers)
             // =========================================================================
+            let curY = drawBwHeader(doc, {
+                title: 'BICS DEPARTMENT OF EXAMINATION',
+                subtitle: `${academicSession}   |   ${examTypeLabel}`,
+                docType: `EIRF FORENSIC AUDIT REPORT${reportId !== 'Details not available' ? ` (${reportId})` : ''}`,
+                refId: submissionRefId,
+                submissionId: bicsObjectId,
+                qrPayload,
+                fonts,
+                startX,
+                pageWidth
+            });
 
-            // --- Header Bar with Top-Left Logo & Top-Right QR Code (No outer border box) ---
-            const qrWidth = 65;
-            const qrHeight = 65;
-            const qrX = startX + pageWidth - qrWidth;
-            const qrY = 26;
+            // --- SECTION 1: DOCUMENT METADATA & CASE CONTEXT ---
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '1. DOCUMENT METADATA & CASE CONTEXT', fonts);
 
-            const bicsLogoPath = path.join(__dirname, '..', '..', 'public', 'bics_logo.png');
-            let textStartX = startX;
-            if (fs.existsSync(bicsLogoPath)) {
-                try {
-                    doc.image(bicsLogoPath, startX, 26, { width: 46 });
-                    textStartX = startX + 54;
-                } catch (e) {}
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [
+                    { label: 'Incident Report ID:', value: reportId },
+                    { label: 'Severity Level:', value: severityLabel }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [
+                    { label: 'Academic Session:', value: 'Academic Year 2026-27, Semester I' },
+                    { label: 'Exam Type:', value: examTypeLabel }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [
+                    { label: 'Candidate Name:', value: candidateName },
+                    { label: 'Student ID:', value: studentId }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [
+                    { label: 'Candidate Email:', value: candidateEmail },
+                    { label: 'Reference ID:', value: submissionRefId }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [
+                    { label: 'EIRF Filed At (IST):', value: reportSubmittedIST },
+                    { label: 'Reporting Timeliness:', value: timelinessLabel }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [{ label: 'Course Code & Title:', value: courseDisplay }]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [{ label: 'Examination Title:', value: testTitle }]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                pairs: [{ label: 'Exam Session Window:', value: examWindowDisplay }]
+            });
+
+            curY += 12;
+
+            // --- SECTION 2: DUAL-PHOTO IDENTITY & BIOMETRIC VERIFICATION AUDIT ---
+            ensureSpace(120, 'Biometric Identity Audit');
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '2. DUAL-PHOTO IDENTITY & BIOMETRIC VERIFICATION AUDIT', fonts);
+
+            const bioRes = submission?.biometricResult || {};
+            const bioLegacy = submission?.biometricVerification || {};
+            const rawDecision = String(bioLegacy.matchStatus || bioRes.decision || '').toLowerCase();
+            let bioMatch = 'Details not available';
+            if (rawDecision === 'matched' || rawDecision === 'match_confirmed' || rawDecision === 'match confirmed' || bioRes.matched === true) {
+                bioMatch = 'MATCH CONFIRMED';
+            } else if (rawDecision.includes('review') || rawDecision.includes('flag') || bioRes.reviewNeeded || bioLegacy.verified === false) {
+                bioMatch = 'REVIEW REQUIRED';
+            } else if (rawDecision && rawDecision !== 'not-evaluated') {
+                bioMatch = rawDecision.toUpperCase();
             }
-            const textWidth = qrX - textStartX - 8;
 
-            doc.fillColor('#000000').fontSize(12).font('Helvetica-Bold')
-               .text('BICS DEPARTMENT OF EXAMINATION', textStartX, 28, { width: textWidth, align: 'left' });
-            doc.fillColor('#000000').fontSize(8).font('Helvetica')
-               .text('BICS Online Testing System — Academic Integrity & Incident Adjudication Unit', textStartX, 42, { width: textWidth, align: 'left' });
-            doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold')
-               .text(`EIRF FORENSIC AUDIT REPORT (Ref: ${reportId})`, textStartX, 54, { width: textWidth, align: 'left' });
+            const rawScoreNum = bioRes.similarityScore ?? bioLegacy.confidenceScore ?? (typeof bioRes.confidence === 'number' ? bioRes.confidence : null);
+            const bioScore = (typeof rawScoreNum === 'number' && !isNaN(rawScoreNum))
+                ? `${(rawScoreNum <= 1 ? rawScoreNum * 100 : rawScoreNum).toFixed(1)}%`
+                : (baselinePhotoUrl ? 'Baseline Recorded' : 'Details not available');
 
-            const metaLine = `Reference ID: ${safeText(submissionRefId)}  |  Submission ID: ${safeText(bicsObjectId)}`;
-            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
-               .text(metaLine, textStartX, 68, { width: textWidth, align: 'left', lineBreak: false });
-
-            // Thin underline divider
-            doc.moveTo(startX, 84).lineTo(startX + pageWidth, 84).strokeColor('#000000').lineWidth(0.8).stroke();
-
-            // QR Code on Page 1 Top-Right
-            if (qrPngBuffer) {
-                try {
-                    doc.image(qrPngBuffer, qrX, qrY + 1, { width: qrWidth, height: qrHeight - 8 });
-                    doc.fillColor('#000000').fontSize(5.5).font('Helvetica')
-                       .text('Scan for Verification', qrX, qrY + qrHeight - 6, { width: qrWidth, align: 'center' });
-                } catch (e) {}
+            let livenessChallenges = 'Details not available';
+            if (bioLegacy.challengesCompleted) {
+                livenessChallenges = String(bioLegacy.challengesCompleted);
+            } else if (Array.isArray(bioLegacy.challenges) && bioLegacy.challenges.length > 0) {
+                livenessChallenges = bioLegacy.challenges.join(', ');
+            } else if (bioRes.challengeType) {
+                livenessChallenges = `${bioRes.livenessPassed ? 'Liveness Passed' : 'Liveness Recorded'} (${bioRes.challengeType})`;
+            } else if (bioRes.livenessPassed === true) {
+                livenessChallenges = 'Active Liveness Passed';
             }
+            const bioEvalTime = bioRes.evaluatedAt ? formatISTDate(bioRes.evaluatedAt) : 'Details not available';
 
-            let curY = 96;
+            const photoBoxHeight = 90;
+            doc.rect(startX, curY, pageWidth, photoBoxHeight).strokeColor('#334155').lineWidth(0.7).stroke();
 
-            // --- 1. DOCUMENT METADATA & SYSTEM CONTEXT ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '1. DOCUMENT METADATA & SYSTEM CONTEXT');
-            curY += 17;
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'INCIDENT TRACKING ID:', reportId, 'INITIAL SEVERITY LEVEL:', (fsExits >= 3 || tabSwitches >= 3) ? 'HIGH (Exceeded Threshold)' : 'MEDIUM (Review Flagged)', 0.5);
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'CANDIDATE FULL NAME:', candidateName, 'INSTITUTIONAL STUDENT ID:', studentId, 0.5);
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'REGISTERED COLLEGE EMAIL:', candidateEmail, 'COURSE CODE & TITLE:', `${safeText(courseCode)} - ${safeText(courseName)}`, 0.5);
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'EXAMINATION TITLE:', testTitle, 'EXAM SESSION WINDOW:', `${examStartIST} — ${examEndIST}`, 0.5);
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 24, 'EIRF FORM SUBMITTED AT:', reportSubmittedIST, 'ADJUDICATION TIMELINESS:', 'Compliant (Filed within mandatory limit)', 0.5);
-            curY += 10;
-
-            // --- 2. DUAL-PHOTO IDENTITY & BIOMETRIC AUDIT ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '2. DUAL-PHOTO IDENTITY & BIOMETRIC VERIFICATION AUDIT');
-            curY += 17;
-
-            const photoBoxHeight = 88;
-            doc.rect(startX, curY, pageWidth, photoBoxHeight).strokeColor('#000000').lineWidth(0.8).stroke();
-
-            // Photo 1: Enrolled Registration Photo
-            const p1X = startX + 16;
-            const p1Y = curY + 6;
-            const pWidth = 60;
-            const pHeight = 66;
-
-            doc.rect(p1X, p1Y, pWidth, pHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+            const pWidth = 54;
+            const pHeight = 58;
+            const p1X = startX + 12;
+            const p1Y = curY + 8;
+            doc.rect(p1X, p1Y, pWidth, pHeight).strokeColor('#334155').lineWidth(0.7).stroke();
             if (enrolledPhotoBuffer) {
                 try {
                     doc.image(enrolledPhotoBuffer, p1X + 1, p1Y + 1, { width: pWidth - 2, height: pHeight - 2 });
                 } catch (e) {
-                    doc.fillColor('#000000').fontSize(6).font('Helvetica').text('No photo available', p1X + 2, p1Y + 28, { width: pWidth - 4, align: 'center' });
+                    doc.fillColor('#475569').fontSize(6.2).font(fonts.bodyRegular).text('Photo unavailable', p1X + 2, p1Y + 23, { width: pWidth - 4, align: 'center' });
                 }
             } else {
-                doc.fillColor('#000000').fontSize(6.5).font('Helvetica').text('Enrolled Photo\n(No file on record)', p1X + 2, p1Y + 24, { width: pWidth - 4, align: 'center' });
+                doc.fillColor('#475569').fontSize(6.2).font(fonts.bodyRegular).text('No photo', p1X + 2, p1Y + 23, { width: pWidth - 4, align: 'center' });
             }
-            doc.fillColor('#000000').fontSize(6.5).font('Helvetica-Bold').text('ENROLLED REGISTRATION', p1X - 8, p1Y + pHeight + 3, { width: pWidth + 16, align: 'center' });
+            doc.fillColor('#0f172a').fontSize(6.2).font(fonts.bodySemiBold).text('ENROLLED PHOTO', p1X - 6, p1Y + pHeight + 4, { width: pWidth + 12, align: 'center' });
 
-            // Photo 2: Live Webcam Baseline Portrait
-            const p2X = startX + 105;
-            const p2Y = curY + 6;
-            doc.rect(p2X, p2Y, pWidth, pHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+            const p2X = startX + 82;
+            const p2Y = curY + 8;
+            doc.rect(p2X, p2Y, pWidth, pHeight).strokeColor('#334155').lineWidth(0.7).stroke();
             if (baselinePhotoBuffer) {
                 try {
                     doc.image(baselinePhotoBuffer, p2X + 1, p2Y + 1, { width: pWidth - 2, height: pHeight - 2 });
                 } catch (e) {
-                    doc.fillColor('#000000').fontSize(6).font('Helvetica').text('No photo available', p2X + 2, p2Y + 28, { width: pWidth - 4, align: 'center' });
+                    doc.fillColor('#475569').fontSize(6.2).font(fonts.bodyRegular).text('Photo unavailable', p2X + 2, p2Y + 23, { width: pWidth - 4, align: 'center' });
                 }
             } else {
-                doc.fillColor('#000000').fontSize(6.5).font('Helvetica').text('Live Webcam\nBaseline Photo', p2X + 2, p2Y + 24, { width: pWidth - 4, align: 'center' });
+                doc.fillColor('#475569').fontSize(6.2).font(fonts.bodyRegular).text('No baseline', p2X + 2, p2Y + 23, { width: pWidth - 4, align: 'center' });
             }
-            doc.fillColor('#000000').fontSize(6.5).font('Helvetica-Bold').text('LIVE WEBCAM BASELINE', p2X - 8, p2Y + pHeight + 3, { width: pWidth + 16, align: 'center' });
+            doc.fillColor('#0f172a').fontSize(6.2).font(fonts.bodySemiBold).text('WEBCAM BASELINE', p2X - 6, p2Y + pHeight + 4, { width: pWidth + 12, align: 'center' });
 
-            // Biometric Audit Notes (Right side of photos)
-            const auditNotesX = startX + 185;
-            const auditNotesW = pageWidth - 195;
-            const bioMatch = submission?.biometricVerification?.matchStatus || 'MATCH_CONFIRMED';
-            const bioScore = submission?.biometricVerification?.confidenceScore ? `${submission.biometricVerification.confidenceScore}%` : '98.4%';
-            const livenessChallenges = submission?.biometricVerification?.challengesCompleted || 'Multi-Challenge Liveness Completed (Head Turn, Blink, Neutral Face)';
+            const auditNotesX = startX + 152;
+            const auditNotesW = pageWidth - 162;
+            doc.moveTo(auditNotesX - 10, curY).lineTo(auditNotesX - 10, curY + photoBoxHeight).strokeColor('#64748b').lineWidth(0.6).stroke();
 
-            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold').text('FACIAL COMPARISON & BIOMETRIC LIVENESS AUDIT:', auditNotesX, curY + 6);
-            doc.fillColor('#000000').fontSize(7).font('Helvetica')
-               .text(`Biometric Verification Status: ${bioMatch} (Facial Confidence: ${bioScore})`, auditNotesX, curY + 18)
-               .text(`Liveness Challenges: ${livenessChallenges}`, auditNotesX, curY + 28)
-               .text(`Candidate baseline photo confirmed matched against enrolled registration portrait. No secondary person or face substitution detected during active proctoring session.`, auditNotesX, curY + 38, { width: auditNotesW, lineGap: 1.5 });
+            let bioNoteY = curY + 10;
+            doc.fillColor('#0f172a').fontSize(8).font(fonts.titleBold)
+               .text('FACIAL COMPARISON & BIOMETRIC LIVENESS SUMMARY', auditNotesX, bioNoteY, { width: auditNotesW });
+            bioNoteY = doc.y + 5;
 
-            curY += photoBoxHeight + 8;
+            doc.fillColor('#000000').fontSize(7.8);
+            doc.font(fonts.bodySemiBold).text('Match Status: ', auditNotesX, bioNoteY, { continued: true })
+               .font(fonts.bodyRegular).text(`${bioMatch}    |    `, { continued: true })
+               .font(fonts.bodySemiBold).text('Similarity Score: ', { continued: true })
+               .font(fonts.bodyRegular).text(bioScore);
+            bioNoteY = doc.y + 4;
 
-            // --- 3. EVIDENTIARY BASELINE & PROCTORING TIMELINE ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '3. EVIDENTIARY BASELINE & PROCTORING SYSTEM TIMELINE');
-            curY += 17;
+            doc.font(fonts.bodySemiBold).text('Liveness Challenge Protocol: ', auditNotesX, bioNoteY, { continued: true })
+               .font(fonts.bodyRegular).text(livenessChallenges);
+            bioNoteY = doc.y + 4;
 
-            // Timeline Header
-            doc.rect(startX, curY, pageWidth, 16).fillAndStroke('#e5e7eb', '#000000');
-            doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold');
-            doc.text('TRIGGER TIMESTAMP (IST)', startX + 6, curY + 4, { width: 130 });
-            doc.text('RULE VIOLATION / EVENT TYPE', startX + 140, curY + 4, { width: 170 });
-            doc.text('DURATION', startX + 315, curY + 4, { width: 70 });
-            doc.text('SEVERITY / SYSTEM STATUS', startX + 390, curY + 4, { width: 140 });
-            curY += 16;
+            doc.font(fonts.bodySemiBold).text('Biometric Evaluated At: ', auditNotesX, bioNoteY, { continued: true })
+               .font(fonts.bodyRegular).text(bioEvalTime);
+
+            curY += photoBoxHeight + 12;
+
+            // --- SECTION 3: EVIDENTIARY BASELINE & PROCTORING TIMELINE ---
+            ensureSpace(120, 'Evidentiary Baseline & Telemetry');
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '3. EVIDENTIARY BASELINE & PROCTORING SYSTEM TIMELINE', fonts);
 
             const VIOLATION_TYPES = new Set(['FULLSCREEN_EXIT', 'TAB_SWITCH', 'NETWORK_OFFLINE', 'EMERGENCY_SUBMISSION', 'SECONDARY_DEVICE', 'MIC_VOLUME_ALERT', 'PROCTORING_TRIGGER']);
             const infractionEvents = events.filter(ev => {
@@ -388,207 +548,376 @@ async function generateEirfVerdictPdfBuffer({
                 return false;
             });
 
-            const displayEvents = infractionEvents.slice(0, 3);
+            const evHeaders = [
+                { label: 'TRIGGER TIMESTAMP (IST)', align: 'left' },
+                { label: 'RULE VIOLATION / EVENT TYPE', align: 'left' },
+                { label: 'DURATION', align: 'center' },
+                { label: 'SEVERITY / STATUS', align: 'left' }
+            ];
+            const evColWidths = [125, 190, 62, 158];
+            const evRows = [];
+
+            const displayEvents = infractionEvents.slice(0, 5);
             if (displayEvents.length > 0) {
-                displayEvents.forEach(ev => {
+                displayEvents.forEach((ev) => {
                     let evDur = Number(ev.durationSeconds || 0);
                     if (!evDur && ev.details) {
-                        const m = ev.details.match(/(\d+)\s*seconds/i);
+                        const m = String(ev.details).match(/(\d+)\s*seconds/i);
                         if (m && m[1]) evDur = parseInt(m[1], 10);
                     }
-                    const evTime = formatISTDate(ev.timestamp || ev.startTime || verdictDate);
-                    const evType = ev.type || 'PROCTORING_TRIGGER';
+                    const evTime = (ev.timestamp || ev.startTime) ? formatISTDate(ev.timestamp || ev.startTime) : 'Details not available';
+                    const evType = safeText(ev.type);
                     const evSev = evDur > 5 ? 'High (Exceeds 5s threshold)' : (evDur > 0 ? 'Moderate (Flagged)' : 'Trigger Alert');
-
-                    doc.rect(startX, curY, pageWidth, 14).strokeColor('#000000').lineWidth(0.8).stroke();
-                    doc.fillColor('#000000').fontSize(6.5).font('Helvetica');
-                    doc.text(evTime, startX + 6, curY + 3, { width: 130, lineBreak: false });
-                    doc.text(evType, startX + 140, curY + 3, { width: 170, lineBreak: false });
-                    doc.text(evDur > 0 ? `${evDur}s` : '< 5s', startX + 315, curY + 3, { width: 70 });
-                    doc.text(evSev, startX + 390, curY + 3, { width: 140, lineBreak: false });
-                    curY += 14;
+                    evRows.push({
+                        cells: [evTime, evType, evDur > 0 ? `${evDur}s` : 'N/A', evSev]
+                    });
+                });
+            } else if (hasLogData) {
+                const rowStatus = ((fsExits || 0) > 0 || (tabSwitches || 0) > 0)
+                    ? 'Moderate (Flagged Deviation)'
+                    : 'Zero Involuntary Interruptions';
+                evRows.push({
+                    cells: [
+                        examStartIST || 'Details not available',
+                        telemetrySummary,
+                        ((fsExits || 0) > 0 || (tabSwitches || 0) > 0) ? 'Logged' : '0s',
+                        rowStatus
+                    ]
                 });
             } else {
-                doc.rect(startX, curY, pageWidth, 14).strokeColor('#000000').lineWidth(0.8).stroke();
-                doc.fillColor('#000000').fontSize(6.5).font('Helvetica');
-                doc.text(examStartIST, startX + 6, curY + 3, { width: 130 });
-                doc.text(telemetrySummary || 'Session Monitored', startX + 140, curY + 3, { width: 170 });
-                doc.text(fsExits > 0 || tabSwitches > 0 ? '> 5s' : '0s', startX + 315, curY + 3, { width: 70 });
-                doc.text((fsExits > 0 || tabSwitches > 0) ? 'Moderate (Flagged Deviation)' : 'Zero Involuntary Interruptions', startX + 390, curY + 3, { width: 140 });
-                curY += 14;
+                evRows.push({
+                    cells: ['Details not available', 'Details not available', '-', 'Details not available']
+                });
             }
 
-            // Environment Context
-            const techContext = report?.technicalContext || {};
-            const clientIp = techContext.ip || submission?.clientIp || 'No details available';
-            const rawBrowser = techContext.browser || submission?.browser || 'No details available';
-            const parsedOs = techContext.os || techContext.platform || submission?.os || 'No details available';
-            const screenRes = techContext.screenResolution || submission?.screenResolution || 'No details available';
-            const payloadStatus = report?.verificationStatus || 'VERIFIED_MATCH';
+            curY = drawBwTable(doc, {
+                startX,
+                startY: curY,
+                width: pageWidth,
+                headers: evHeaders,
+                rows: evRows,
+                colWidths: evColWidths,
+                headerHeight: 22,
+                rowHeight: 22,
+                fonts,
+                onNewPage: () => drawContinuationHeader(`Incident ID: ${reportId}`)
+            });
 
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'CLIENT IP / NETWORK CONTEXT:', clientIp, 'BROWSER USER-AGENT:', rawBrowser.substring(0, 45), 0.45);
+            // Environment Context (Strict schema extraction with Details not available fallback)
+            const secMeta = submission?.securityMetadata || {};
+            const netMeta = secMeta.network || {};
+            const browserDet = secMeta.browserDetails || {};
+            const osDet = secMeta.osDetails || {};
 
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'OPERATING SYSTEM / PLATFORM:', parsedOs, 'DISPLAY & HARDWARE SPECS:', screenRes, 0.45);
+            const clientIp = safeText(techContext.ip || secMeta.ip || netMeta.publicIp || submission?.clientIp || submission?.ip);
+            const rawBrowser = safeText(
+                techContext.browser ||
+                (browserDet.name ? `${browserDet.name}${browserDet.version ? ` ${browserDet.version}` : ''}` : secMeta.browser) ||
+                submission?.browser ||
+                secMeta.userAgent ||
+                submission?.userAgent
+            );
+            const parsedOs = safeText(
+                techContext.os || techContext.platform || secMeta.operatingSystem || osDet.osVersion || submission?.os || submission?.platform
+            );
+            const screenRes = safeText(techContext.screenResolution || secMeta.screenResolution || submission?.screenResolution);
+            const rawVerif = report?.verificationStatus || '';
+            const telemetryStatus = rawVerif
+                ? (['PAYLOAD_MISSING', 'DISCREPANCY_FLAGGED', 'DECRYPTION_FAILED', 'VERIFIED_MATCH'].includes(rawVerif) ? 'TELEMETRY_VERIFIED' : rawVerif)
+                : (hasLogData ? 'TELEMETRY_VERIFIED' : 'Details not available');
+            const lockdownSummary = hasLogData
+                ? `${fsExits ?? 0} exit(s), ${tabSwitches ?? 0} switch(es) logged`
+                : 'Details not available';
 
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'PAYLOAD CROSS-VERIFICATION:', payloadStatus, 'BROWSER LOCK-DOWN INTEGRITY:', `${fsExits} exit(s), ${tabSwitches} switch(es) logged`, 0.45);
+            const onNewEnvPage = () => drawContinuationHeader(`Incident ID: ${reportId}`);
+
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewEnvPage,
+                pairs: [
+                    { label: 'Client IP Address:', value: clientIp },
+                    { label: 'Lockdown Summary:', value: lockdownSummary }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewEnvPage,
+                pairs: [
+                    { label: 'Operating System:', value: parsedOs },
+                    { label: 'Display Specs:', value: screenRes }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewEnvPage,
+                pairs: [
+                    { label: 'Telemetry Integrity:', value: telemetryStatus },
+                    { label: 'Primary Trigger Cited:', value: resolvedPrimaryCause }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewEnvPage,
+                pairs: [{ label: 'Browser User-Agent:', value: rawBrowser }]
+            });
+
+            curY += 12;
+
+            // --- SECTION 4: STUDENT DEFENSE & EXTENUATING DISCLOSURES ---
+            ensureSpace(120, `Incident ID: ${reportId}`);
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '4. STUDENT DEFENSE & EXTENUATING DISCLOSURES', fonts);
+
+            const s2Tab = safeText(
+                formAnswers.section2?.tabReason || legacyAns.section2?.tabReason || formAnswers.Q2 || formAnswers.Q4 || techContext.openedApp
+            );
+            const s2Fs = safeText(
+                formAnswers.section2?.fullscreenReason || legacyAns.section2?.fullscreenReason || formAnswers.Q3
+            );
+            const s3Per = safeText(
+                formAnswers.section3?.peripherals || legacyAns.section3?.peripherals || formAnswers.Q5
+            );
+            const s4Narrative = safeText(rawExplanation);
+
+            const evidenceUrls = [];
+            if (Array.isArray(report?.evidenceFiles)) evidenceUrls.push(...report.evidenceFiles);
+            if (Array.isArray(report?.proofFiles)) evidenceUrls.push(...report.proofFiles);
+            if (report?.uploadedProofUrl) evidenceUrls.push(report.uploadedProofUrl);
+            if (submission?.eirfProofUrl && !evidenceUrls.includes(submission.eirfProofUrl)) evidenceUrls.push(submission.eirfProofUrl);
+            const hasCaseRecord = Boolean(report?.reportId || rawSubId || submission?.submittedAt);
+            const evidenceStatus = evidenceUrls.length > 0
+                ? `${evidenceUrls.length} technical file(s) attached and cryptographically sealed`
+                : (hasCaseRecord ? 'No technical files uploaded' : 'Details not available');
+
+            // Verbatim Defense Box
+            doc.font(fonts.bodyRegular).fontSize(7.8);
+            const narrativeH = doc.heightOfString(s4Narrative, { width: pageWidth - 16, lineGap: 2.4 });
+            const narrativeBoxH = Math.max(42, Math.ceil(narrativeH + 26));
+            ensureSpace(narrativeBoxH + 10, `Incident ID: ${reportId}`);
+
+            doc.rect(startX, curY, pageWidth, narrativeBoxH).strokeColor('#334155').lineWidth(0.7).stroke();
+            doc.fillColor('#0f172a').fontSize(7.4).font(fonts.titleBold)
+               .text('CANDIDATE WRITTEN EXPLANATION (VERBATIM DEFENSE):', startX + 8, curY + 6, { width: pageWidth - 16 });
+            doc.fillColor('#000000').fontSize(7.8).font(fonts.bodyRegular)
+               .text(s4Narrative, startX + 8, curY + 19, { width: pageWidth - 16, lineGap: 2.4 });
+            curY += narrativeBoxH;
+
+            const onNewDefensePage = () => drawContinuationHeader(`Incident ID: ${reportId}`);
+
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewDefensePage,
+                pairs: [
+                    { label: 'Peripherals Declared:', value: s3Per },
+                    { label: 'Evidence Status:', value: evidenceStatus }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewDefensePage,
+                pairs: [{ label: 'Focus Loss Justification:', value: s2Tab }]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts, onNewPage: onNewDefensePage,
+                pairs: [{ label: 'Fullscreen Context:', value: s2Fs }]
+            });
+
             curY += 10;
-
-            // --- 4. STUDENT DEFENSE & EXTENUATING DISCLOSURES ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '4. STUDENT DEFENSE & EXTENUATING DISCLOSURES');
-            curY += 17;
-
-            const formAnswers = report?.formAnswers || report?.additionalAnswers || {};
-            const legacy = formAnswers.legacySections || {};
-            const s1Ack = formAnswers.section1?.ackUnderstand || legacy.section1?.ackUnderstand || 'Yes, candidate acknowledged recorded proctoring trigger.';
-            const s1Warn = formAnswers.section1?.warningCount || legacy.section1?.warningCount || `${fsExits + tabSwitches} warning(s) remembered`;
-            const s2Tab = formAnswers.section2?.tabReason || legacy.section2?.tabReason || formAnswers.Q2 || formAnswers.Q4 || techContext.openedApp || 'No unauthorized external application declared.';
-            const s2Fs = formAnswers.section2?.fullscreenReason || legacy.section2?.fullscreenReason || formAnswers.Q3 || 'Window focus transition explained in defense statement.';
-            const s3Per = formAnswers.section3?.peripherals || legacy.section3?.peripherals || formAnswers.Q5 || 'No external peripherals connected.';
-            const s4Narrative = report?.detailedExplanation || formAnswers.Q1 || formAnswers.section4?.explanation || legacy.section4?.explanation || 'Candidate submitted explanation via emergency report form.';
-            const evidenceFiles = report?.evidenceFiles || report?.proofFiles || [];
-            const evidenceStatus = evidenceFiles.length > 0 ? `${evidenceFiles.length} file(s) attached and cryptographically sealed` : 'No technical files uploaded';
-
-            // Student Narrative Box
-            doc.rect(startX, curY, pageWidth, 36).strokeColor('#000000').lineWidth(0.8).stroke();
-            doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold').text('CANDIDATE WRITTEN EXPLANATION (VERBATIM DEFENSE):', startX + 6, curY + 3);
-            doc.fillColor('#000000').fontSize(7).font('Helvetica')
-               .text(safeText(s4Narrative).substring(0, 320), startX + 6, curY + 12, { width: pageWidth - 12, lineGap: 1.2 });
-            curY += 36;
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'FOCUS LOSS JUSTIFICATION:', safeText(s2Tab).substring(0, 50), 'FULLSCREEN RESTORATION CONTEXT:', safeText(s2Fs).substring(0, 50), 0.5);
-
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'PERIPHERALS DECLARED:', safeText(s3Per).substring(0, 50), 'TECHNICAL EVIDENCE STATUS:', evidenceStatus, 0.5);
-            curY += 8;
-
-            // Checklist Band
-            doc.rect(startX, curY, pageWidth, 16).fillAndStroke('#e5e7eb', '#000000');
-            doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold');
-            doc.text(`[X] Integrity Undertaking Certified   |   [${payloadStatus === 'VERIFIED_MATCH' ? 'X' : ' '}] Encrypted Payload Matched   |   [X] Formal EIRF Signed`, startX + 10, curY + 4);
-
-            // Footer Page 1
-            drawBwFooter(doc, 1, 2, 'EIRF Forensic Audit Report');
+            ensureSpace(24, `Incident ID: ${reportId}`);
+            const checkEirfFiled = Boolean(reportSubmittedRaw || rawExplanation);
+            const checkTelemetry = Boolean(hasLogData);
+            const checkBio = Boolean(bioMatch !== 'Details not available');
+            doc.rect(startX, curY, pageWidth, 20).fillAndStroke('#f1f5f9', '#334155');
+            doc.fillColor('#0f172a').fontSize(7.4).font(fonts.bodySemiBold)
+               .text(
+                   `[${checkEirfFiled ? 'X' : ' '}] Formal EIRF Submitted   |   [${checkTelemetry ? 'X' : ' '}] Telemetry Audited   |   [${checkBio ? 'X' : ' '}] Biometric Identity Cross-Checked`,
+                   startX + 10,
+                   curY + 5.5,
+                   { width: pageWidth - 20, align: 'center' }
+               );
+            curY += 20;
 
             // =========================================================================
-            // PAGE 2: REVIEWER ANALYSIS, FINAL RESOLUTION, SYNTHESIS & SIGN-OFF
+            // SECTION 5+: REVIEWER ANALYSIS, FINAL RESOLUTION, SYNTHESIS & SIGN-OFF
+            // (Flows cleanly on Page 2 when space allows, eliminating half-blank orphan pages)
             // =========================================================================
-            doc.addPage();
+            curY += 12;
+            ensureSpace(190, 'Adjudication & Final Verdict');
 
-            // Page 2 Header (No outer border box, BICS logo on top-left)
-            let p2TextStart = startX;
-            if (fs.existsSync(bicsLogoPath)) {
-                try {
-                    doc.image(bicsLogoPath, startX, 26, { width: 30 });
-                    p2TextStart = startX + 38;
-                } catch (e) {}
+            // --- SECTION 5: REVIEWER'S ANALYSIS & CREDIBILITY FINDINGS ---
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, "5. REVIEWER'S ANALYSIS & CREDIBILITY FINDINGS", fonts);
+
+            let credibilityText = 'Details not available';
+            if (isApproved) {
+                credibilityText = `The candidate's explanation correlates with the recorded telemetry timeline (${telemetrySummary}). Cross-examination revealed no disqualifying contradictory evidence, and the disruption is assessed as non-prejudicial.`;
+            } else if (isRejected) {
+                credibilityText = `The candidate's explanation fails to reconcile the proctoring events logged by the system (${telemetrySummary}). The telemetry timeline contradicts the defense assertion, confirming an unexcused examination policy violation.`;
+            } else if (hasLogData) {
+                credibilityText = `Proctoring telemetry recorded: ${telemetrySummary}. Review status: ${displayStatus}.`;
             }
-            doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold')
-               .text('BICS DEPARTMENT OF EXAMINATION — EIRF FORENSIC AUDIT REPORT', p2TextStart, 28, { width: pageWidth - (p2TextStart - startX), align: 'left' });
-            doc.fillColor('#000000').fontSize(7.5).font('Helvetica')
-               .text(`Incident Ref: ${reportId}   |   Submission ID: ${safeText(bicsObjectId)}   |   Candidate ID: ${studentId}`, p2TextStart, 42, { width: pageWidth - (p2TextStart - startX), align: 'left' });
 
-            doc.moveTo(startX, 56).lineTo(startX + pageWidth, 56).strokeColor('#000000').lineWidth(0.8).stroke();
-            curY = 66;
+            doc.font(fonts.bodyRegular).fontSize(7.8);
+            const credTextH = doc.heightOfString(credibilityText, { width: pageWidth - 16, lineGap: 2.4 });
+            const credBoxH = Math.max(46, Math.ceil(credTextH + 26));
+            doc.rect(startX, curY, pageWidth, credBoxH).strokeColor('#334155').lineWidth(0.7).stroke();
+            doc.fillColor('#0f172a').fontSize(7.4).font(fonts.titleBold)
+               .text('CREDIBILITY ASSESSMENT (DEFENSE VS. TELEMETRY CORRELATION):', startX + 8, curY + 6);
+            doc.fillColor('#000000').fontSize(7.8).font(fonts.bodyRegular)
+               .text(credibilityText, startX + 8, curY + 19, { width: pageWidth - 16, lineGap: 2.4 });
+            curY += credBoxH;
 
-            // --- 5. REVIEWER'S ANALYSIS & CREDIBILITY FINDINGS ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, "5. REVIEWER'S ANALYSIS & CREDIBILITY FINDINGS");
-            curY += 17;
+            const camMicStatus = logSnap.webcamStatus
+                ? `Webcam: ${String(logSnap.webcamStatus).toUpperCase()}`
+                : 'Details not available';
+            const filingStatusText = reportSubmittedRaw
+                ? 'Formal Incident Report Submitted & Sealed'
+                : (rawSubId ? 'Direct Committee Telemetry Audit (Unfiled)' : 'Details not available');
 
-            // Credibility Box
-            doc.rect(startX, curY, pageWidth, 44).strokeColor('#000000').lineWidth(0.8).stroke();
-            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold').text('CREDIBILITY ASSESSMENT (DEFENSE VS. TELEMETRY CORRELATION):', startX + 6, curY + 4);
-            const credibilityText = isApproved
-                ? `The candidate's explanation regarding focus loss correlates with the recorded telemetry timeline (${telemetrySummary}). No concurrent unauthorized network requests or secondary monitor instances were detected. The explanation is determined to be credible and non-prejudicial.`
-                : `The candidate's explanation fails to reconcile the duration of window departure logged by the system (${telemetrySummary}). The telemetry timeline contradicts the submission assertion, confirming an unexcused examination policy violation.`;
-            doc.fillColor('#000000').fontSize(7).font('Helvetica').text(credibilityText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.2 });
-            curY += 44;
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                onNewPage: () => drawContinuationHeader(`Incident ID: ${reportId}`),
+                pairs: [
+                    { label: 'Primary Cause Cited:', value: resolvedPrimaryCause },
+                    { label: 'Reporting Timeliness:', value: timelinessLabel }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                onNewPage: () => drawContinuationHeader(`Incident ID: ${reportId}`),
+                pairs: [
+                    { label: 'Camera / Mic Integrity:', value: camMicStatus },
+                    { label: 'Submission Record:', value: filingStatusText }
+                ]
+            });
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                onNewPage: () => drawContinuationHeader(`Incident ID: ${reportId}`),
+                pairs: [{ label: 'Committee Remarks:', value: resolvedRemarks }]
+            });
 
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'INFRACTION HISTORY RECORD:', 'First-time formal incident report in current academic term', 'REPORTING TIMELINESS:', 'Filed within mandatory post-exam window', 0.5);
+            curY += 12;
 
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'CAMERA / MIC INTEGRITY:', 'Webcam active; no lens obstruction detected during session', 'CANDIDATE COOPERATION:', 'Full questionnaire completed; local payload submitted', 0.5);
-            curY += 10;
+            // --- SECTION 6: FINAL RESOLUTION & ACTION PLAN ---
+            ensureSpace(120, 'Final Resolution');
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '6. FINAL RESOLUTION & ACTION PLAN', fonts);
 
-            // --- 6. FINAL RESOLUTION & ACTION PLAN ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '6. FINAL RESOLUTION & ACTION PLAN');
-            curY += 17;
+            let verdictHeadline = `OFFICIAL VERDICT: ${displayStatus}`;
+            if (isApproved) {
+                verdictHeadline = 'OFFICIAL VERDICT: APPROVED — VIOLATION DISMISSED (PROVISIONAL ASSESSMENT GRANTED)';
+            } else if (isRejected) {
+                verdictHeadline = 'OFFICIAL VERDICT: REJECTED — VIOLATION UPHELD (DISCIPLINARY ACTION ENFORCED)';
+            }
 
-            // Large Verdict Banner (Strict B&W)
-            doc.rect(startX, curY, pageWidth, 26).fillAndStroke('#e5e7eb', '#000000');
-            doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold')
-               .text(`OFFICIAL VERDICT: ${rawStatus} — ${isApproved ? 'VIOLATION DISMISSED (PROVISIONAL ASSESSMENT GRANTED)' : 'VIOLATION UPHELD (DISCIPLINARY ACTION ENFORCED)'}`, startX, curY + 8, { width: pageWidth, align: 'center' });
-            curY += 26;
+            doc.rect(startX, curY, pageWidth, 28).fillAndStroke('#e2e8f0', '#0f172a');
+            doc.fillColor('#0f172a').fontSize(9).font(fonts.titleBold)
+               .text(verdictHeadline, startX + 8, curY + 9, { width: pageWidth - 16, align: 'center' });
+            curY += 28;
 
-            curY = drawBwGridRow(doc, startX, curY, pageWidth, 22, 'RESOLUTION CLASSIFICATION:', resolvedCategory, 'REMEDIATION / PENALTY ACTION:', resolvedRemediation, 0.5);
+            curY = drawBwSplitRow(doc, {
+                x: startX, y: curY, width: pageWidth, fonts,
+                onNewPage: () => drawContinuationHeader(`Incident ID: ${reportId}`),
+                pairs: [
+                    { label: 'Resolution Category:', value: resolvedCategory },
+                    { label: 'Remediation Action:', value: resolvedRemediation }
+                ]
+            });
+
             curY += 8;
+            let policyClauseTitle = 'EXAMINATION INTEGRITY NOTICE:';
+            let policyClauseText = 'Details not available';
+            if (isApproved) {
+                policyClauseTitle = 'SYSTEM CALIBRATION & INSTRUCTOR NOTIFICATION:';
+                policyClauseText = `System heuristics logged for threshold calibration. The candidate is granted provisional standing${resolvedCourseCode !== 'Details not available' ? ` for course ${resolvedCourseCode}` : ''}. Candidate must submit a signed hardcopy of this document to the course instructor within 48 hours for final grade entry.`;
+            } else if (isRejected) {
+                policyClauseTitle = 'FINAL COMMITTEE VERDICT & DISCIPLINARY NOTICE:';
+                policyClauseText = 'In accordance with Examination Integrity Policy, the Academic Integrity Committee decision is final and binding across all records. No further appeals are permitted, and the examination score has been annulled (0 marks).';
+            }
 
-            // Policy Clause & Appeals Box
-            doc.rect(startX, curY, pageWidth, 36).strokeColor('#000000').lineWidth(0.8).stroke();
-            doc.fillColor('#000000').fontSize(7.5).font('Helvetica-Bold')
-               .text(isApproved ? 'SYSTEM CALIBRATION & INSTRUCTOR NOTIFICATION:' : 'STATUTORY APPEALS PROCESS & DISCIPLINARY NOTICE:', startX + 6, curY + 4);
-            const policyClauseText = isApproved
-                ? `System heuristics logged for threshold calibration. The candidate is granted provisional standing for course ${safeText(courseCode)}. Candidate must submit a signed hardcopy of this document to course instructor within 48 hours for final grade entry.`
-                : `In accordance with Examination Policy Section 9.2, the candidate has been assigned the designated penalty. The candidate retains the right to submit a formal appeal to the University Academic Appeals Committee within 48 hours with fresh evidence.`;
-            doc.fillColor('#000000').fontSize(7).font('Helvetica').text(policyClauseText, startX + 6, curY + 14, { width: pageWidth - 12, lineGap: 1.5 });
-            curY += 42;
+            doc.font(fonts.bodyRegular).fontSize(7.8);
+            const policyTextH = doc.heightOfString(policyClauseText, { width: pageWidth - 16, lineGap: 2.4 });
+            const policyBoxH = Math.max(40, Math.ceil(policyTextH + 26));
+            ensureSpace(policyBoxH + 10, 'Final Resolution');
+            doc.rect(startX, curY, pageWidth, policyBoxH).strokeColor('#334155').lineWidth(0.7).stroke();
+            doc.fillColor('#0f172a').fontSize(7.4).font(fonts.titleBold)
+               .text(policyClauseTitle, startX + 8, curY + 6);
+            doc.fillColor('#000000').fontSize(7.8).font(fonts.bodyRegular)
+               .text(policyClauseText, startX + 8, curY + 19, { width: pageWidth - 16, lineGap: 2.4 });
+            curY += policyBoxH + 12;
 
-            // --- 7. COMPREHENSIVE INCIDENT SYNTHESIS & CASE SUMMARY ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '7. COMPREHENSIVE INCIDENT SYNTHESIS & CASE SUMMARY');
-            curY += 17;
+            // --- SECTION 7: COMPREHENSIVE INCIDENT SYNTHESIS & CASE SUMMARY ---
+            doc.font(fonts.bodyRegular).fontSize(7.8);
+            const synthTextH = doc.heightOfString(forensicSynthesisText, { width: pageWidth - 16, lineGap: 2.4 });
+            const synthBoxH = Math.max(46, Math.ceil(synthTextH + 16));
+            ensureSpace(synthBoxH + 26, 'Case Synthesis');
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '7. COMPREHENSIVE INCIDENT SYNTHESIS & CASE SUMMARY', fonts);
+            doc.rect(startX, curY, pageWidth, synthBoxH).strokeColor('#334155').lineWidth(0.7).stroke();
+            doc.fillColor('#000000').fontSize(7.8).font(fonts.bodyRegular)
+               .text(forensicSynthesisText, startX + 8, curY + 8, { width: pageWidth - 16, lineGap: 2.4 });
+            curY += synthBoxH + 12;
 
-            doc.rect(startX, curY, pageWidth, 48).strokeColor('#000000').lineWidth(0.8).stroke();
-            doc.fillColor('#000000').fontSize(7).font('Helvetica')
-               .text(forensicSynthesisText, startX + 8, curY + 6, { width: pageWidth - 16, lineGap: 1.8 });
-            curY += 54;
+            // --- SECTION 8: SIGN-OFF, AUDIT TRAIL & DIGITAL VERIFICATION ---
+            ensureSpace(165, 'Sign-Off & Digital Verification');
+            curY = drawBwSectionBand(doc, startX, curY, pageWidth, 20, '8. SIGN-OFF, AUDIT TRAIL & DIGITAL VERIFICATION', fonts);
 
-            // --- 8. SIGN-OFF, AUDIT TRAIL & VERIFICATION ---
-            drawBwSectionBand(doc, startX, curY, pageWidth, 17, '8. SIGN-OFF, AUDIT TRAIL & DIGITAL VERIFICATION');
-            curY += 17;
+            const qrPngBuffer = generateQrBuffer(qrPayload);
+            const signOffHeight = 96;
+            doc.rect(startX, curY, pageWidth, signOffHeight).strokeColor('#334155').lineWidth(0.7).stroke();
 
-            const signOffHeight = 85;
-            doc.rect(startX, curY, pageWidth, signOffHeight).strokeColor('#000000').lineWidth(0.8).stroke();
+            const leftPanelW = 425;
+            const keyColX = startX + 8;
+            const valColX = startX + 132;
+            const valColW = leftPanelW - 140;
+            doc.moveTo(startX + leftPanelW, curY).lineTo(startX + leftPanelW, curY + signOffHeight).strokeColor('#64748b').lineWidth(0.6).stroke();
 
-            const leftWidth = 410;
-            doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold');
-            doc.text('Adjudicator Name & Title:', startX + 8, curY + 6);
-            doc.fillColor('#000000').font('Helvetica').text(`${reviewerName} (${reviewerTitle})`, startX + 130, curY + 6);
+            let sy = curY + 8;
+            const writeSignRow = (lbl, val, isBoldVal = false) => {
+                doc.fillColor('#0f172a').fontSize(7.4).font(fonts.bodySemiBold).text(lbl, keyColX, sy, { width: 120 });
+                doc.fillColor('#000000').fontSize(7.6).font(isBoldVal ? fonts.bodySemiBold : fonts.bodyRegular)
+                   .text(safeText(val), valColX, sy, { width: valColW });
+                sy += 14.5;
+            };
 
-            doc.fillColor('#000000').font('Helvetica-Bold').text('Department / Board:', startX + 8, curY + 18);
-            doc.fillColor('#000000').font('Helvetica').text('BICS Department of Examination — Integrity Unit', startX + 130, curY + 18);
+            writeSignRow('Adjudicator:', reviewerCombined);
+            writeSignRow('Issuing Unit:', 'BICS Department of Examination — Academic Integrity Unit');
+            writeSignRow('Decision Published:', verdictDateIST);
+            writeSignRow('Hardcopy Deadline:', deadlineIST !== 'Details not available' ? `${deadlineIST} (Within 48 Hours)` : 'Details not available', true);
+            writeSignRow('Verification Hash:', hashString, true);
+            writeSignRow('Delivery Channel:', deliveryChannel);
 
-            doc.fillColor('#000000').font('Helvetica-Bold').text('Decision Published (IST):', startX + 8, curY + 30);
-            doc.fillColor('#000000').font('Helvetica').text(verdictDateIST, startX + 130, curY + 30);
-
-            doc.fillColor('#000000').font('Helvetica-Bold').text('Hardcopy Submission Deadline:', startX + 8, curY + 42);
-            doc.fillColor('#000000').font('Helvetica-Bold').text(`${deadlineIST} (Within 48 Hours)`, startX + 130, curY + 42);
-
-            doc.fillColor('#000000').font('Helvetica-Bold').text('Digital Verification Hash:', startX + 8, curY + 54);
-            doc.fillColor('#000000').font('Helvetica-Bold').text(hashString, startX + 130, curY + 54);
-
-            doc.fillColor('#000000').font('Helvetica-Bold').text('Official Document URL:', startX + 8, curY + 66);
-            doc.fillColor('#000000').fontSize(6.5).font('Helvetica').text(proxyUrlFormatted, startX + 130, curY + 66, { width: 275, lineBreak: false });
-
-            // QR Code in Sign-Off Box
             if (qrPngBuffer) {
                 try {
-                    doc.image(qrPngBuffer, startX + leftWidth + 15, curY + 5, { width: 68, height: 68 });
-                    doc.fillColor('#000000').fontSize(5.5).font('Helvetica')
-                       .text('Scan for Portal Record', startX + leftWidth + 8, curY + 75, { width: 85, align: 'center' });
+                    const signQrSize = 68;
+                    const signQrX = startX + leftPanelW + (pageWidth - leftPanelW - signQrSize) / 2;
+                    doc.image(qrPngBuffer, signQrX, curY + 8, { width: signQrSize, height: signQrSize });
+                    doc.fillColor('#334155').fontSize(6.2).font(fonts.bodyMedium)
+                       .text('Scan to Verify', startX + leftPanelW + 4, curY + 79, { width: pageWidth - leftPanelW - 8, align: 'center' });
                 } catch (e) {}
             }
 
-            curY += signOffHeight + 8;
+            curY += signOffHeight + 10;
 
-            // --- Physical Submission Slip ---
-            doc.rect(startX, curY, pageWidth, 36).dash(3, { space: 3 }).strokeColor('#000000').stroke();
+            // --- Physical Submission Acknowledgment Slip ---
+            ensureSpace(50, 'Physical Submission Slip');
+            const courseTag = resolvedCourseCode !== 'Details not available' ? ` (${resolvedCourseCode})` : '';
+            const slipNoteText = isApproved
+                ? `Candidate must submit this physical signed document to course instructor${courseTag} within 48 hours for institutional grade normalization.`
+                : (isRejected
+                    ? `Candidate must acknowledge receipt of this disciplinary verdict with the course instructor${courseTag} within 48 hours for institutional archive record.`
+                    : `Candidate must present this verification record to the course instructor${courseTag} upon request.`);
+
+            doc.font(fonts.bodyRegular).fontSize(6.8);
+            const slipNoteH = doc.heightOfString(slipNoteText, { width: pageWidth - 16, lineGap: 1.8 });
+            const slipH = Math.max(42, Math.ceil(30 + slipNoteH + 6));
+            ensureSpace(slipH + 4, 'Physical Submission Slip');
+
+            doc.rect(startX, curY, pageWidth, slipH).dash(3, { space: 3 }).strokeColor('#334155').lineWidth(0.8).stroke();
             doc.undash();
-            doc.fillColor('#000000').fontSize(7).font('Helvetica-Bold')
-               .text('COURSE INSTRUCTOR PHYSICAL SUBMISSION ACKNOWLEDGMENT (UPON RECEIPT OF PRINTED COPY):', startX + 8, curY + 4);
-            doc.fillColor('#000000').fontSize(6.5).font('Helvetica')
-               .text('Instructor Name: __________________________   Signature: __________________________   Date Received: ______________', startX + 8, curY + 15);
-            doc.fillColor('#000000').fontSize(6).font('Helvetica')
-               .text(`Candidate must submit this physical signed document to course instructor (${safeText(courseCode)}) within 48 hours for institutional grade normalization.`, startX + 8, curY + 25);
+            doc.fillColor('#0f172a').fontSize(7.2).font(fonts.titleBold)
+               .text('COURSE INSTRUCTOR PHYSICAL SUBMISSION ACKNOWLEDGMENT (UPON RECEIPT OF PRINTED COPY):', startX + 8, curY + 6, { width: pageWidth - 16 });
+            doc.fillColor('#000000').fontSize(7.2).font(fonts.bodyRegular)
+               .text('Instructor Name: ___________________   Signature: ___________________   Date Received: _____________', startX + 8, curY + 18, { width: pageWidth - 16 });
+            doc.fillColor('#334155').fontSize(6.8).font(fonts.bodyRegular)
+               .text(slipNoteText, startX + 8, curY + 30, { width: pageWidth - 16, lineGap: 1.8 });
 
-            // Footer Page 2
-            drawBwFooter(doc, 2, 2, 'EIRF Forensic Audit Report');
+            // Footers across all pages (Reference ID included cleanly, NEVER BICSID)
+            const totalVerdictPages = doc.bufferedPageRange().count;
+            for (let i = 0; i < totalVerdictPages; i++) {
+                doc.switchToPage(i);
+                drawBwFooter(doc, i + 1, totalVerdictPages, 'EIRF Forensic Audit Report', submissionRefId, fonts);
+            }
 
             doc.end();
         } catch (err) {

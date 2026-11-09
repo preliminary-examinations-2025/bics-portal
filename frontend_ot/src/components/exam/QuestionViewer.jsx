@@ -20,6 +20,7 @@ export const QuestionViewer = ({
   setTest,
   activeQuestionBtnRef,
   navTrackRef,
+  draftQIdx,
   draftMCQ,
   draftCode,
   draftLanguage,
@@ -28,7 +29,6 @@ export const QuestionViewer = ({
   draftJs
 }) => {
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
-  if (!currentQuestion) return null;
 
   const navigateTo = (idx) => {
     if (typeof onNavigate === 'function') {
@@ -40,7 +40,9 @@ export const QuestionViewer = ({
 
   const isQuestionAnswered = (q, qIdx) => {
     const ans = examAnswers[qIdx];
-    const isCurrent = qIdx === selectedQuestionIndex;
+    const isCurrent =
+      qIdx === selectedQuestionIndex &&
+      (draftQIdx === undefined || draftQIdx === selectedQuestionIndex);
     const drafts = isCurrent ? {
       draftMCQ,
       draftCode,
@@ -68,6 +70,8 @@ export const QuestionViewer = ({
       });
     }
   }, [selectedQuestionIndex]);
+
+  if (!currentQuestion) return null;
 
   return (
     <div style={{

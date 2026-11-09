@@ -33,6 +33,7 @@ yarn-error.log*
 # Local uploads
 backend/public/uploads/
 backend/public/proctoring/
+backend/public/otrf/*.pdf
 public/proctoring/
 backend/temp_runs/
 

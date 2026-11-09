@@ -16,10 +16,25 @@ export default defineConfig({
         target: 'http://127.0.0.1:5000',
         changeOrigin: true
       },
-      '/media': {
-        target: 'https://res.cloudinary.com/dl7xqcnmr/image/upload/BICS_2026',
+      '/media/otrf': {
+        target: 'https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/media/, '')
+        rewrite: (path) => path.replace(/^\/media\/otrf/, '/otrf')
+      },
+      '/media/raw': {
+        target: 'https://res.cloudinary.com/dl7xqcnmr/raw/upload/BICS_2026',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/media\/raw/, '')
+      },
+      '/media': {
+        target: 'https://res.cloudinary.com/dl7xqcnmr/image/upload',
+        changeOrigin: true,
+        rewrite: (path) => {
+          const stripped = path.replace(/^\/media/, '');
+          const verMatch = stripped.match(/^\/(v\d+)(\/.*)$/);
+          if (verMatch) return `/${verMatch[1]}/BICS_2026${verMatch[2]}`;
+          return `/BICS_2026${stripped}`;
+        }
       }
     }
   }

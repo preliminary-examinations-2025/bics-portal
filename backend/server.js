@@ -40,6 +40,7 @@ const counterfoilRouter = require('./routes/counterfoil');
 const marksLedgerRouter = require('./routes/marksLedger');
 const ticketsRouter = require('./routes/tickets');
 const adminDbViewerRouter = require('./routes/adminDbViewer');
+const adminEmailsRouter = require('./routes/adminEmails');
 const kataRouter = require('./routes/kata');
 
 const app = express();
@@ -68,13 +69,35 @@ app.use(cors({
             callback(new Error('CORS policy: Access denied for this origin.'));
         }
     },
-    credentials: true
+    credentials: true,
+    exposedHeaders: ['Content-Disposition']
 }));
 app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(bicsIdMiddleware);
 app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use('/api/public', express.static(path.join(__dirname, 'public')), (_req, res) => {
+    res.status(404).json({ error: 'Static asset not found' });
+});
+app.get('/media/*', (req, res) => {
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'dl7xqcnmr';
+    const subPath = String(req.params[0] || '').replace(/^\/+/, '');
+    if (!subPath || subPath.includes('..')) {
+        return res.status(404).end();
+    }
+    if (/^otrf\//i.test(subPath)) {
+        return res.redirect(302, `https://res.cloudinary.com/${cloudName}/raw/upload/BICS_2026/${subPath}`);
+    }
+    if (/^raw\//i.test(subPath)) {
+        return res.redirect(302, `https://res.cloudinary.com/${cloudName}/raw/upload/BICS_2026/${subPath.replace(/^raw\//i, '')}`);
+    }
+    const verMatch = subPath.match(/^(v\d+)\/(.+)$/);
+    if (verMatch) {
+        return res.redirect(302, `https://res.cloudinary.com/${cloudName}/image/upload/${verMatch[1]}/BICS_2026/${verMatch[2]}`);
+    }
+    return res.redirect(302, `https://res.cloudinary.com/${cloudName}/image/upload/BICS_2026/${subPath}`);
+});
 
 // Database connection readiness check & production fail-loud protection
 app.use((req, res, next) => {
@@ -110,6 +133,7 @@ app.use('/api', counterfoilRouter);
 app.use('/api/admin/marks-ledger', marksLedgerRouter);
 app.use('/api', ticketsRouter);
 app.use('/api/admin/db', adminDbViewerRouter);
+app.use('/api/admin/emails', adminEmailsRouter);
 app.use('/api/kata', kataRouter);
 
 // Global Technical Error Handling Middleware

@@ -2,38 +2,111 @@ const { executeCode } = require('./codeRunner');
 
 function calculateSubmissionScore(submission, test) {
     if (!test || !submission) return submission;
-    
+
+    const testMaxMarks = Number(test.marks || 100);
+    if (submission.verificationStatus === 'annulled' || submission.eirfStatus === 'rejected') {
+        submission.score = 0;
+        submission.totalScore = 0;
+        submission.evaluation = submission.evaluation || {};
+        submission.evaluation.mcqScore = 0;
+        submission.evaluation.codingScore = 0;
+        submission.evaluation.webScore = 0;
+        submission.evaluation.totalScore = 0;
+        submission.evaluation.score = 0;
+        submission.evaluation.maxScore = testMaxMarks;
+        submission.evaluation.percentage = 0;
+        return submission;
+    }
+
     submission.answers = submission.answers || [];
     let mcqPoints = 0;
     let codingPoints = 0;
     let webPoints = 0;
 
     const questionMap = new Map();
+    const questionIndexMap = new Map();
     (test.questions || []).forEach((q, idx) => {
-        const key = q.id ? String(q.id) : (q._id ? String(q._id) : String(idx));
-        questionMap.set(key, q);
+        const keys = [];
+        if (q.id) keys.push(String(q.id));
+        if (q._id) keys.push(String(q._id));
+        if (keys.length === 0) keys.push(String(idx));
+        keys.forEach(k => {
+            questionMap.set(k, q);
+            questionIndexMap.set(k, idx);
+        });
+    });
+
+    // Reconcile missing answers for bonus questions or resolved objections on unanswered questions
+    const matchedQuestionKeys = new Set();
+    submission.answers.forEach((ans, index) => {
+        if (ans.questionId && String(ans.questionId) !== 'undefined') {
+            const matchedQ = questionMap.get(String(ans.questionId));
+            if (matchedQ) {
+                if (matchedQ.id) matchedQuestionKeys.add(String(matchedQ.id));
+                if (matchedQ._id) matchedQuestionKeys.add(String(matchedQ._id));
+                matchedQuestionKeys.add(`idx:${questionIndexMap.get(String(ans.questionId))}`);
+            }
+        } else if (test.questions && test.questions[index]) {
+            const matchedQ = test.questions[index];
+            if (matchedQ.id) matchedQuestionKeys.add(String(matchedQ.id));
+            if (matchedQ._id) matchedQuestionKeys.add(String(matchedQ._id));
+            matchedQuestionKeys.add(`idx:${index}`);
+        }
+    });
+
+    (test.questions || []).forEach((q, idx) => {
+        const qKeyId = q.id ? String(q.id) : (q._id ? String(q._id) : String(idx));
+        const alreadyAnswered =
+            matchedQuestionKeys.has(`idx:${idx}`) ||
+            (q.id && matchedQuestionKeys.has(String(q.id))) ||
+            (q._id && matchedQuestionKeys.has(String(q._id)));
+        if (alreadyAnswered) return;
+
+        const isBonus = Boolean(q.isBonus || q.grantBonusToAll || q.isBonusQuestion);
+        const resolvedObj = (submission.objections || []).find(o =>
+            (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+            (o.questionIndex === idx || (o.questionId && (String(o.questionId) === String(q.id) || String(o.questionId) === String(q._id)))) &&
+            o.resolvedMarks !== undefined && o.resolvedMarks !== null && !isNaN(o.resolvedMarks)
+        );
+        if (isBonus || resolvedObj) {
+            submission.answers.push({
+                questionId: qKeyId,
+                type: q.type || 'mcq',
+                score: 0,
+                maxPoints: Number(q.points || 0)
+            });
+        }
     });
 
     submission.answers.forEach((ans, index) => {
         let quest = null;
+        let qIdx = index;
         if (ans.questionId && String(ans.questionId) !== 'undefined') {
             quest = questionMap.get(String(ans.questionId));
+            if (questionIndexMap.has(String(ans.questionId))) {
+                qIdx = questionIndexMap.get(String(ans.questionId));
+            }
         }
         if (!quest && test.questions && test.questions[index]) {
             quest = test.questions[index];
+            qIdx = index;
         }
 
-        const qPoints = Number(quest?.points || ans.maxPoints || 0);
+        const qPoints = Number(quest?.points ?? ans.maxPoints ?? 0);
+        ans.maxPoints = qPoints;
 
         // Check if an objection was resolved for this question
         const resolvedObj = (submission.objections || []).find(o => 
             (o.status === 'resolved' || o.status === 'resolved_accepted') &&
-            (o.questionIndex === index || (o.questionId && String(o.questionId) === String(ans.questionId)))
+            (o.questionIndex === qIdx || o.questionIndex === index || (o.questionId && String(o.questionId) === String(ans.questionId)))
         );
 
         if (resolvedObj && resolvedObj.resolvedMarks !== undefined && resolvedObj.resolvedMarks !== null && !isNaN(resolvedObj.resolvedMarks)) {
             ans.score = Number(resolvedObj.resolvedMarks);
+            ans.resolvedMarks = Number(resolvedObj.resolvedMarks);
             ans.isObjectionResolved = true;
+        } else if (ans.isObjectionResolved && ans.scoreAfterObjection !== undefined && ans.scoreAfterObjection !== null) {
+            ans.score = Number(ans.scoreAfterObjection);
         }
         // 1. Check Bonus Question Rules
         else if (quest && (quest.isBonus || quest.grantBonusToAll || quest.isBonusQuestion)) {
@@ -102,15 +175,18 @@ function calculateSubmissionScore(submission, test) {
         // 4. Web Coding Automated Scoring (deferred for LLMs / manual evaluation)
         else if (quest && quest.type === 'web') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                if (ans.aiEvaluation && ans.aiEvaluation.score !== undefined && ans.aiEvaluation.score !== null) {
+                const isAiCompleted = Boolean(ans.aiEvaluation && (ans.aiEvaluation.isEvaluated === true || ans.aiEvaluation.status === 'completed'));
+                if (isAiCompleted && ans.aiEvaluation.score !== undefined && ans.aiEvaluation.score !== null) {
                     ans.score = Number(ans.aiEvaluation.score) || 0;
                     ans.pendingEvaluation = false;
-                } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
+                } else if (ans.score !== undefined && ans.score !== null && Number(ans.score) > 0) {
                     ans.pendingEvaluation = false;
                 } else {
                     ans.pendingEvaluation = true;
                     ans.score = 0;
                 }
+            } else {
+                ans.pendingEvaluation = false;
             }
         }
 
@@ -118,9 +194,9 @@ function calculateSubmissionScore(submission, test) {
         ans.score = Math.max(0, Math.min(Number(ans.score || 0), qPoints));
 
         // Accumulate by type
-        if (quest?.type === 'coding') {
+        if (quest?.type === 'coding' || (!quest && ans.type === 'coding')) {
             codingPoints += ans.score;
-        } else if (quest?.type === 'web') {
+        } else if (quest?.type === 'web' || (!quest && ans.type === 'web')) {
             webPoints += ans.score;
         } else {
             mcqPoints += ans.score;
@@ -128,7 +204,6 @@ function calculateSubmissionScore(submission, test) {
     });
 
     const rawTotal = mcqPoints + codingPoints + webPoints;
-    const testMaxMarks = Number(test.marks || 100);
     const finalTotal = Math.min(rawTotal, testMaxMarks);
 
     submission.score = finalTotal;
@@ -140,6 +215,8 @@ function calculateSubmissionScore(submission, test) {
     submission.evaluation.webScore = webPoints;
     submission.evaluation.totalScore = finalTotal;
     submission.evaluation.score = finalTotal;
+    submission.evaluation.maxScore = testMaxMarks;
+    submission.evaluation.percentage = testMaxMarks > 0 ? Math.round((finalTotal / testMaxMarks) * 100) : 0;
 
     return submission;
 }
@@ -150,14 +227,30 @@ function recalculateMCQScore(submission, test) {
 
 function calculateCodingScoreFast(submission, test) {
     if (!test || !submission) return;
+    const testMaxMarks = Number(test.marks || 100);
+    if (submission.verificationStatus === 'annulled' || submission.eirfStatus === 'rejected') {
+        submission.score = 0;
+        submission.totalScore = 0;
+        submission.evaluation = submission.evaluation || {};
+        submission.evaluation.mcqScore = 0;
+        submission.evaluation.codingScore = 0;
+        submission.evaluation.webScore = 0;
+        submission.evaluation.totalScore = 0;
+        submission.evaluation.score = 0;
+        submission.evaluation.maxScore = testMaxMarks;
+        submission.evaluation.percentage = 0;
+        return;
+    }
+
     submission.answers = submission.answers || [];
     let totalCodingPoints = 0;
     let totalWebPoints = 0;
 
     const questionMap = new Map();
     (test.questions || []).forEach((q, idx) => {
-        const key = q.id ? String(q.id) : (q._id ? String(q._id) : String(idx));
-        questionMap.set(key, q);
+        if (q.id) questionMap.set(String(q.id), q);
+        if (q._id) questionMap.set(String(q._id), q);
+        if (!q.id && !q._id) questionMap.set(String(idx), q);
     });
 
     submission.answers.forEach((ans, index) => {
@@ -168,6 +261,9 @@ function calculateCodingScoreFast(submission, test) {
         if (!quest && test.questions && test.questions[index]) {
             quest = test.questions[index];
         }
+
+        const qPoints = Number(quest?.points ?? ans.maxPoints ?? 0);
+        if (qPoints > 0) ans.maxPoints = qPoints;
 
         if (quest && quest.type === 'coding') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
@@ -182,26 +278,30 @@ function calculateCodingScoreFast(submission, test) {
                     ans.score = 0;
                 }
             }
+            if (qPoints > 0) ans.score = Math.max(0, Math.min(Number(ans.score || 0), qPoints));
             totalCodingPoints += Number(ans.score || 0);
         } else if (quest && quest.type === 'web') {
             if (!ans.isManuallyGraded && !ans.isObjectionResolved) {
-                if (ans.aiEvaluation && ans.aiEvaluation.score !== undefined && ans.aiEvaluation.score !== null) {
+                const isAiCompleted = Boolean(ans.aiEvaluation && (ans.aiEvaluation.isEvaluated === true || ans.aiEvaluation.status === 'completed'));
+                if (isAiCompleted && ans.aiEvaluation.score !== undefined && ans.aiEvaluation.score !== null) {
                     ans.score = Number(ans.aiEvaluation.score) || 0;
                     ans.pendingEvaluation = false;
-                } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
+                } else if (ans.score !== undefined && ans.score !== null && Number(ans.score) > 0) {
                     ans.pendingEvaluation = false;
                 } else {
                     ans.pendingEvaluation = true;
                     ans.score = 0;
                 }
+            } else {
+                ans.pendingEvaluation = false;
             }
+            if (qPoints > 0) ans.score = Math.max(0, Math.min(Number(ans.score || 0), qPoints));
             totalWebPoints += Number(ans.score || 0);
         }
     });
 
     const mcqScore = Number(submission.evaluation?.mcqScore || 0);
     const rawTotal = mcqScore + totalCodingPoints + totalWebPoints;
-    const testMaxMarks = Number(test.marks || 100);
     const finalTotal = Math.min(rawTotal, testMaxMarks);
 
     submission.score = finalTotal;
@@ -212,6 +312,8 @@ function calculateCodingScoreFast(submission, test) {
     submission.evaluation.webScore = totalWebPoints;
     submission.evaluation.totalScore = finalTotal;
     submission.evaluation.score = finalTotal;
+    submission.evaluation.maxScore = testMaxMarks;
+    submission.evaluation.percentage = testMaxMarks > 0 ? Math.round((finalTotal / testMaxMarks) * 100) : 0;
     submission.evaluation.evaluatedAt = new Date();
 }
 
@@ -222,7 +324,7 @@ async function recalculateCodingScore(submission, test) {
 
     for (let i = 0; i < submission.answers.length; i++) {
         const ans = submission.answers[i];
-        const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
+        const quest = (test.questions || []).find((q, idx) => String(q.id || q._id || idx) === String(ans.questionId)) || test.questions?.[i];
         if (quest && quest.type === 'coding') {
             ans.testCaseResults = [];
             if (!ans.submittedCode || ans.submittedCode.trim() === '') {
@@ -325,8 +427,8 @@ async function recalculateCodingScore(submission, test) {
     }
 
     let totalCodingScore = 0;
-    submission.answers.forEach(ans => {
-        const quest = test.questions.find(q => String(q.id) === String(ans.questionId));
+    submission.answers.forEach((ans, idx) => {
+        const quest = (test.questions || []).find((q, qIdx) => String(q.id || q._id || qIdx) === String(ans.questionId)) || test.questions?.[idx];
         if (quest && quest.type === 'coding') {
             totalCodingScore += Number(ans.score || 0);
         }

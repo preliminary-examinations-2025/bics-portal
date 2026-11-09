@@ -20,8 +20,10 @@ export default function Sidebar({
   adminObjectionsList = [],
   studentObjectionsList = [],
   recycleBinItems = [],
+  adminEmailPendingCount = 0,
   fetchCandidates,
   fetchSystemLogs,
+  fetchAdminEmailSummary,
   fetchLiveSubmissions,
   fetchAdminTickets,
   fetchAdminSubmissions,
@@ -121,6 +123,14 @@ export default function Sidebar({
 
             {/* 5. SYSTEM */}
             <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>System</div>
+            <button className={`sidebar-item ${view === 'admin_emails' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_emails'); setIsMobileSidebarOpen(false); fetchAdminEmailSummary && fetchAdminEmailSummary(); }}>
+              <Mail size={16} style={{ color: '#2563eb' }} /> Email Center
+              {adminEmailPendingCount > 0 && (
+                <span style={{ marginLeft: 'auto', backgroundColor: '#ef4444', color: '#fff', fontSize: '7.5pt', padding: '1px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                  {adminEmailPendingCount}
+                </span>
+              )}
+            </button>
             <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs && fetchSystemLogs(); }}>
               <Activity size={16} /> System Logs
             </button>

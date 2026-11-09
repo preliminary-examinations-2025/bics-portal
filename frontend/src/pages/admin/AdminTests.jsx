@@ -77,6 +77,8 @@ export default function AdminTests({
   adminActiveWebTabs = {},
   setAdminActiveWebTabs,
   runAdminCodeVerification,
+  markQuestionManuallyEdited,
+  resetManualEditedFlags,
   view
 }) {
   const [isRefreshingSubmissions, setIsRefreshingSubmissions] = useState(false);
@@ -130,8 +132,8 @@ export default function AdminTests({
 
               {/* ADMIN - ONLINE TEST CREATOR & BUILDER */}
               <div className="cf-card">
-                <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: 'auto' }}>
                     <ClipboardList size={18} style={{ color: '#3b82f6' }} />
                     <span>Online Test Configurations Manager</span>
                   </div>
@@ -1550,21 +1552,36 @@ export default function AdminTests({
                             </td>
                             <td style={{ fontWeight: 'bold' }}>
                               {(() => {
-                                const hasResolvedObjections = (s.objections || []).some(o => 
+                                if (s.verificationStatus === 'annulled' || s.eirfStatus === 'rejected') {
+                                  return 0;
+                                }
+                                const resolvedObjections = (s.objections || []).filter(o =>
                                   (o.status === 'resolved' || o.status === 'resolved_accepted') &&
                                   o.resolvedMarks !== undefined && o.resolvedMarks !== null
                                 );
-                                if (hasResolvedObjections) {
-                                  return (s.answers || []).reduce((sum, a, idx) => {
-                                    const resObj = (s.objections || []).find(o => 
-                                      (o.status === 'resolved' || o.status === 'resolved_accepted') &&
-                                      (o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId)))
+                                if (resolvedObjections.length > 0 && Array.isArray(s.answers) && s.answers.length > 0) {
+                                  const matchedIndices = new Set();
+                                  let total = s.answers.reduce((sum, a, idx) => {
+                                    const resObjIdx = resolvedObjections.findIndex(o =>
+                                      o.questionIndex === idx || (o.questionId && String(o.questionId) === String(a.questionId))
                                     );
-                                    const qScore = (resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null)
+                                    if (resObjIdx !== -1) matchedIndices.add(resObjIdx);
+                                    const resObj = resObjIdx !== -1 ? resolvedObjections[resObjIdx] : null;
+                                    const qScore = resObj
                                       ? Number(resObj.resolvedMarks)
-                                      : (a.isManuallyGraded ? Number(a.score || 0) : (a.aiEvaluation?.score !== undefined ? Number(a.aiEvaluation.score) : Number(a.score || 0)));
+                                      : (a.isManuallyGraded
+                                          ? Number(a.score || 0)
+                                          : ((a.aiEvaluation?.isEvaluated === true || a.aiEvaluation?.status === 'completed') && a.aiEvaluation?.score !== undefined
+                                              ? Number(a.aiEvaluation.score)
+                                              : Number(a.score || 0)));
                                     return sum + qScore;
                                   }, 0);
+                                  resolvedObjections.forEach((ro, rIdx) => {
+                                    if (!matchedIndices.has(rIdx)) {
+                                      total += Number(ro.resolvedMarks || 0);
+                                    }
+                                  });
+                                  return total;
                                 }
                                 if (s.evaluation?.totalScore !== undefined && s.evaluation?.totalScore !== null) {
                                   return Number(s.evaluation.totalScore);
@@ -1577,11 +1594,13 @@ export default function AdminTests({
                                 }
                                 if (s.answers && Array.isArray(s.answers) && s.answers.length > 0) {
                                   return s.answers.reduce((sum, a) => {
-                                    const pts = (a.aiEvaluation?.score !== undefined) ? Number(a.aiEvaluation.score) : Number(a.score || 0);
+                                    const pts = ((a.aiEvaluation?.isEvaluated === true || a.aiEvaluation?.status === 'completed') && a.aiEvaluation?.score !== undefined)
+                                      ? Number(a.aiEvaluation.score)
+                                      : Number(a.score || 0);
                                     return sum + pts;
                                   }, 0);
                                 }
-                                return s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`;
+                                return s.status === 'evaluated' ? (Number(s.evaluation?.mcqScore || 0) + Number(s.evaluation?.codingScore || 0) + Number(s.evaluation?.webScore || 0)) : `${s.evaluation?.mcqScore || 0} (MCQ)`;
                               })()}
                             </td>
                             <td>
@@ -1589,48 +1608,54 @@ export default function AdminTests({
                                 className="cf-btn-primary"
                                 style={{ padding: '3px 8px', fontSize: '8pt' }}
                                 onClick={() => {
+                                  if (resetManualEditedFlags) resetManualEditedFlags();
                                   setSelectedExamSubmission(s);
                                   const relatedTest = adminTests.find(t => (t.id || t._id) === s.testId);
                                   const initialScores = {};
-                                  s.answers?.forEach(ans => {
-                                    if (ans.isManuallyGraded && ans.score !== undefined && ans.score !== null) {
+                                  const subObjections = Array.isArray(s.objections) ? s.objections : [];
+                                  s.answers?.forEach((ans, aIdx) => {
+                                    const q = relatedTest?.questions?.find(quest => String(quest.id || quest._id) === String(ans.questionId));
+                                    const resObj = subObjections.find(o =>
+                                      (o.status === 'resolved' || o.status === 'resolved_accepted') &&
+                                      (o.questionIndex === aIdx || (o.questionId && String(o.questionId) === String(ans.questionId)))
+                                    );
+                                    if (resObj && resObj.resolvedMarks !== undefined && resObj.resolvedMarks !== null) {
+                                      initialScores[ans.questionId] = Number(resObj.resolvedMarks);
+                                    } else if ((ans.isManuallyGraded || ans.isObjectionResolved) && ans.score !== undefined && ans.score !== null) {
                                       initialScores[ans.questionId] = Number(ans.score);
-                                    } else {
-                                      const q = relatedTest?.questions?.find(quest => quest.id === ans.questionId);
-                                      if (q) {
-                                        if (q.grantBonusToAll || q.isBonus) {
-                                          initialScores[ans.questionId] = Number(q.points || 0);
-                                        } else if (ans.type === 'mcq' || ans.type === 'scc' || ans.type === 'mcc' || q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') {
-                                          const isMulti = q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1);
-                                          if (isMulti) {
-                                            const correctArr = Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 0
-                                              ? q.correctOptionIndices
-                                              : (q.correctOptionIndex !== undefined && q.correctOptionIndex !== null ? [q.correctOptionIndex] : []);
-                                            const selArr = Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
-                                              ? ans.selectedOptionIndices
-                                              : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [ans.selectedOptionIndex] : []);
-                                            const cSet = new Set(correctArr.map(Number));
-                                            const sSet = new Set(selArr.map(Number));
-                                            let match = cSet.size > 0 && cSet.size === sSet.size;
-                                            if (match) {
-                                              for (let k of cSet) { if (!sSet.has(k)) { match = false; break; } }
-                                            }
-                                            initialScores[ans.questionId] = match ? Number(q.points || 0) : 0;
-                                          } else {
-                                            const expected = Number(q.correctOptionIndex ?? (Array.isArray(q.correctOptionIndices) ? q.correctOptionIndices[0] : 0));
-                                            const candSelected = Number(ans.selectedOptionIndex ?? (Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices[0] : -1));
-                                            initialScores[ans.questionId] = expected === candSelected ? Number(q.points || 0) : 0;
+                                    } else if (q) {
+                                      if (q.grantBonusToAll || q.isBonus || ans.isBonusAwarded) {
+                                        initialScores[ans.questionId] = Number(q.points || 0);
+                                      } else if (ans.type === 'mcq' || ans.type === 'scc' || ans.type === 'mcc' || q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') {
+                                        const isMulti = q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1);
+                                        if (isMulti) {
+                                          const correctArr = Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 0
+                                            ? q.correctOptionIndices
+                                            : (q.correctOptionIndex !== undefined && q.correctOptionIndex !== null ? [q.correctOptionIndex] : []);
+                                          const selArr = Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
+                                            ? ans.selectedOptionIndices
+                                            : (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? [ans.selectedOptionIndex] : []);
+                                          const cSet = new Set(correctArr.map(Number));
+                                          const sSet = new Set(selArr.map(Number));
+                                          let match = cSet.size > 0 && cSet.size === sSet.size;
+                                          if (match) {
+                                            for (let k of cSet) { if (!sSet.has(k)) { match = false; break; } }
                                           }
-                                        } else if (ans.type === 'web' && ans.aiEvaluation?.score !== undefined) {
-                                          initialScores[ans.questionId] = Number(ans.aiEvaluation.score);
-                                        } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
-                                          initialScores[ans.questionId] = Number(ans.score);
+                                          initialScores[ans.questionId] = match ? Number(q.points || 0) : 0;
                                         } else {
-                                          initialScores[ans.questionId] = 0;
+                                          const expected = Number(q.correctOptionIndex ?? (Array.isArray(q.correctOptionIndices) ? q.correctOptionIndices[0] : 0));
+                                          const candSelected = Number(ans.selectedOptionIndex ?? (Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices[0] : -1));
+                                          initialScores[ans.questionId] = expected === candSelected ? Number(q.points || 0) : 0;
                                         }
+                                      } else if (ans.type === 'web' && (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') && ans.aiEvaluation?.score !== undefined) {
+                                        initialScores[ans.questionId] = Number(ans.aiEvaluation.score);
+                                      } else if (ans.score !== undefined && ans.score !== null && ans.score > 0) {
+                                        initialScores[ans.questionId] = Number(ans.score);
                                       } else {
-                                        initialScores[ans.questionId] = Number(ans.score || 0);
+                                        initialScores[ans.questionId] = 0;
                                       }
+                                    } else {
+                                      initialScores[ans.questionId] = Number(ans.score || 0);
                                     }
                                   });
                                   setAdminGradingAnswers(initialScores);
@@ -1799,7 +1824,7 @@ export default function AdminTests({
                             } else {
                               calculatedAutoScore = Number(ans.score || 0);
                             }
-                          } else if (ans.type === 'web' && ans.aiEvaluation?.score !== undefined) {
+                          } else if (ans.type === 'web' && (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') && ans.aiEvaluation?.score !== undefined) {
                             calculatedAutoScore = Number(ans.aiEvaluation.score || 0);
                           } else {
                             calculatedAutoScore = Number(ans.score || 0);
@@ -1920,6 +1945,7 @@ export default function AdminTests({
                                       value={adminGradingAnswers[ans.questionId] ?? 0}
                                       onChange={(e) => {
                                         const val = Math.max(0, Math.min(Number(e.target.value || 0), maxPts));
+                                        if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
                                         setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
                                       }}
                                     />
@@ -1929,7 +1955,10 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0 }}
-                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: calculatedAutoScore }))}
+                                        onClick={() => {
+                                          if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                          setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: calculatedAutoScore }));
+                                        }}
                                       >
                                         Reset Auto ({calculatedAutoScore} pts)
                                       </button>
@@ -1937,7 +1966,10 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#b45309', backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}
-                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }))}
+                                        onClick={() => {
+                                          if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                          setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }));
+                                        }}
                                       >
                                         Full Points ({maxPts} pts)
                                       </button>
@@ -1976,7 +2008,7 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '8pt', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
-                                        onClick={() => runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig?.testCases)}
+                                        onClick={() => runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig?.testCases, { autoUpdateScore: !(ans.isManuallyGraded || ans.isObjectionResolved) })}
                                         disabled={codingEvaluationResults[ans.questionId]?.isRunning}
                                       >
                                         {codingEvaluationResults[ans.questionId]?.isRunning ? (
@@ -2107,6 +2139,7 @@ export default function AdminTests({
                                       value={adminGradingAnswers[ans.questionId] ?? 0}
                                       onChange={(e) => {
                                         const val = Math.max(0, Math.min(Number(e.target.value || 0), maxPts));
+                                        if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
                                         setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
                                       }}
                                     />
@@ -2116,7 +2149,10 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0 }}
-                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: calculatedAutoScore }))}
+                                        onClick={() => {
+                                          if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                          setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: calculatedAutoScore }));
+                                        }}
                                       >
                                         Reset Auto ({calculatedAutoScore} pts)
                                       </button>
@@ -2124,7 +2160,10 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#b45309', backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}
-                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }))}
+                                        onClick={() => {
+                                          if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                          setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }));
+                                        }}
                                       >
                                         Full Points ({maxPts} pts)
                                       </button>
@@ -2271,17 +2310,21 @@ export default function AdminTests({
                                       value={adminGradingAnswers[ans.questionId] ?? 0}
                                       onChange={(e) => {
                                         const val = Math.max(0, Math.min(Number(e.target.value || 0), maxPts));
+                                        if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
                                         setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: val }));
                                       }}
                                     />
                                     <span style={{ fontSize: '8pt', color: '#64748b' }}>/ {maxPts} points</span>
                                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-                                      {ans.aiEvaluation?.score !== undefined && (
+                                      {ans.aiEvaluation?.score !== undefined && (ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed') && (
                                         <button
                                           type="button"
                                           className="cf-btn-secondary"
                                           style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#7c3aed', backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' }}
-                                          onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: Number(ans.aiEvaluation.score) }))}
+                                          onClick={() => {
+                                            if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                            setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: Number(ans.aiEvaluation.score) }));
+                                          }}
                                         >
                                           Apply AI Score ({ans.aiEvaluation.score} pts)
                                         </button>
@@ -2290,7 +2333,10 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0, color: '#b45309', backgroundColor: '#fffbeb', borderColor: '#fcd34d' }}
-                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }))}
+                                        onClick={() => {
+                                          if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                          setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: maxPts }));
+                                        }}
                                       >
                                         Full Points ({maxPts} pts)
                                       </button>
@@ -2298,7 +2344,10 @@ export default function AdminTests({
                                         type="button"
                                         className="cf-btn-secondary"
                                         style={{ padding: '2px 8px', fontSize: '7.5pt', margin: 0 }}
-                                        onClick={() => setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: 0 }))}
+                                        onClick={() => {
+                                          if (markQuestionManuallyEdited) markQuestionManuallyEdited(ans.questionId);
+                                          setAdminGradingAnswers(prev => ({ ...prev, [ans.questionId]: 0 }));
+                                        }}
                                       >
                                         Zero (0 pts)
                                       </button>

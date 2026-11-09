@@ -12,9 +12,7 @@
 
 const { TestSubmissionModel, TestConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
-const { encryptEirfPayload } = require('../utils/cipher');
-const { recalculateMCQScore, calculateCodingScoreFast } = require('../routes/tests');
-const { sendEirfNoticeEmail } = require('../utils/email');
+const { recalculateMCQScore, calculateCodingScoreFast } = require('../utils/scoreCalculator');
 const { evaluateEirfIncident } = require('../services/eirfEvaluator');
 const { runPipelineTick } = require('./eirfPipelineWorker');
 
@@ -32,7 +30,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
             // and startedAt is also older than cutoff (give brand new sessions at least 45s)
             const abandonedSessions = await TestSubmissionModel.find({
                 status: 'started',
-                isDeleted: false,
+                isDeleted: { $ne: true },
                 $and: [
                     {
                         $or: [
@@ -55,7 +53,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                 try {
                     const lastActivityTime = sub.lastHeartbeatAt || sub.startedAt || sub.createdAt || new Date(0);
                     const idleSeconds = Math.max(0, Math.round((Date.now() - new Date(lastActivityTime).getTime()) / 1000));
-                    console.log(`[DEAD-MAN REAPER] Auto-finalizing abandoned session ${sub._id} (${sub.candidateName || sub.studentId}) - Inactive for ${idleSeconds}s.`);
+                    console.log(`[DEAD-MAN REAPER] Auto-finalizing abandoned session ${sub.submissionRefId || sub._id} (${sub.candidateName || sub.studentId}) - Inactive for ${idleSeconds}s.`);
 
                     sub.status = 'auto-submitted';
                     sub.submissionReason = 'dead_man_reaper';
@@ -70,13 +68,15 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                         details: `Session auto-finalized by server dead-man switch: Candidate heartbeat lost for ${idleSeconds}s (browser crash, connection loss, or power trip).`
                     });
 
-                    // Evaluate marks if test configuration exists
+                    // Evaluate marks if active test configuration exists
                     let testDoc = null;
                     if (sub.testId) {
-                        testDoc = await TestConfigModel.findById(sub.testId);
+                        testDoc = await TestConfigModel.findOne({ _id: sub.testId, isDeleted: { $ne: true } });
                         if (testDoc) {
                             recalculateMCQScore(sub, testDoc);
                             calculateCodingScoreFast(sub, testDoc);
+                            sub.totalScore = sub.evaluation?.totalScore ?? sub.score ?? 0;
+                            if (sub.evaluation) sub.evaluation.evaluatedAt = new Date();
                         }
                     }
 
@@ -85,20 +85,12 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                     sub.hasEirfFlag = eirfEval.hasEirfFlag;
                     sub.eirfStatus = eirfEval.eirfStatus;
                     sub.flaggedReasons = eirfEval.flaggedReasons;
-                    sub.pipelineStatus = 'FLAGGED';
+                    sub.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
 
-                    // Generate encrypted .eirf snapshot
-                    const sStudId = sub.studentId || 'Candidate';
-                    const dbPayloadSnap = {
-                        submissionId: String(sub._id || sub.id),
-                        studentId: sStudId,
-                        candidateName: sub.candidateName || 'Candidate',
-                        testTitle: sub.testTitle || 'BICS Online Examination',
-                        answers: sub.answers || [],
-                        proctoringLog: sub.proctoringLog || {},
-                        generatedAt: new Date().toISOString()
-                    };
-                    sub.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(sub._id || sub.id));
+                    if (typeof sub.markModified === 'function') {
+                        sub.markModified('answers');
+                        sub.markModified('evaluation');
+                    }
 
                     await sub.save();
                     // Kick off sequential pipeline to generate questions and dispatch tokenized magic link
@@ -133,11 +125,19 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                             details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 45s.'
                         });
 
-                        const eirfEval = evaluateEirfIncident(sub);
+                        const testDoc = (db.tests || []).find(t => !t.isDeleted && String(t.id || t._id) === String(sub.testId));
+                        if (testDoc) {
+                            recalculateMCQScore(sub, testDoc);
+                            calculateCodingScoreFast(sub, testDoc);
+                            sub.totalScore = sub.evaluation?.totalScore ?? sub.score ?? 0;
+                            if (sub.evaluation) sub.evaluation.evaluatedAt = new Date();
+                        }
+
+                        const eirfEval = evaluateEirfIncident(sub, testDoc);
                         sub.hasEirfFlag = eirfEval.hasEirfFlag;
                         sub.eirfStatus = eirfEval.eirfStatus;
                         sub.flaggedReasons = eirfEval.flaggedReasons;
-                        sub.pipelineStatus = 'FLAGGED';
+                        sub.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
                         changed = true;
                     }
                 }
@@ -145,6 +145,9 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
 
             if (changed) {
                 saveJSONData(db);
+                setImmediate(() => {
+                    runPipelineTick().catch(() => {});
+                });
             }
         }
     } catch (err) {

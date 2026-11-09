@@ -3,16 +3,12 @@ import { ShieldAlert, AlertTriangle, Printer, Upload, Loader2, CheckCircle2, Fil
 import { API_BASE } from '../config/constants';
 
 /**
- * EirfFormView: Renders the Emergency Incident Report Form (EIRF) for candidate appeal / telemetry dispute.
+ * EirfFormView: Renders the Emergency Incident Report Form (EIRF) for candidate incident defense & telemetry verification.
  * Phase 2: Supports dynamic LLM-generated inquiry questions (~8 questions: Text, Radio, Checkbox, Proof Upload)
  * with backward compatibility for legacy static sections.
  */
 export const EirfFormView = ({
   eirfDetails,
-  eirfFileName,
-  setEirfFileName,
-  eirfFileContent,
-  setEirfFileContent,
   eirfDeclarationChecked,
   setEirfDeclarationChecked,
   eirfExplanation,
@@ -55,17 +51,6 @@ export const EirfFormView = ({
       setDynamicAnswers(existingReport.formAnswers);
     }
   }, [existingReport]);
-
-  const handleEirfFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setEirfFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setEirfFileContent(event.target.result);
-    };
-    reader.readAsText(file);
-  };
 
   // Upload proof image/screenshot to server / Cloudinary
   const handleProofUpload = async (questionId, file) => {
@@ -245,10 +230,7 @@ export const EirfFormView = ({
             interruptions: eirfInterruptions,
             peripherals: eirfPeripherals,
             dynamicAnswers
-          },
-          encryptedPayload: eirfFileContent || undefined,
-          encryptedPayloadFile: eirfFileContent || undefined,
-          payloadFileName: eirfFileName || 'local_backup.eirf'
+          }
         })
       });
 
@@ -260,7 +242,7 @@ export const EirfFormView = ({
       }
 
       setEirfSuccessMessage(`EIRF Incident Report filed successfully! Report Ref: ${data.reportId}. Your report is pending committee review.`);
-      if (loadEirfDetails) loadEirfDetails(subId);
+      if (loadEirfDetails) loadEirfDetails(subId, token);
     } catch (err) {
       console.error("EIRF Submit error:", err);
       setEirfErrorMessage("Network error while submitting report. Please try again.");
@@ -310,13 +292,21 @@ export const EirfFormView = ({
             <strong style={{ color: '#334155' }}>{eirfDetails?.studentId}</strong>
           </div>
           <div>
+            <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Submission Reference ID</span>
+            <strong style={{ color: '#334155', fontFamily: 'monospace' }}>{eirfDetails?.submissionRefId || eirfDetails?.bicsId || 'N/A'}</strong>
+          </div>
+          <div>
             <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Examination</span>
             <strong style={{ color: '#334155' }}>{eirfDetails?.testTitle}</strong>
           </div>
           <div>
             <span style={{ color: '#64748b', display: 'block', fontSize: '8pt' }}>Filing Window Expiry</span>
-            <strong style={{ color: isExpired ? '#dc2626' : '#d97706' }}>
-              {isExpired ? 'Filing Expired (45-Minute Window Passed)' : (eirfDetails?.expiresAt ? `${new Date(eirfDetails.expiresAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A')}
+            <strong style={{ color: existingReport ? '#047857' : (isExpired ? '#dc2626' : '#d97706') }}>
+              {existingReport
+                ? 'Submitted (Confirmation Receipt)'
+                : (isExpired
+                  ? 'Filing Expired (45-Minute Window Passed)'
+                  : (eirfDetails?.expiresAt ? `${new Date(eirfDetails.expiresAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A'))}
             </strong>
           </div>
         </div>
@@ -403,6 +393,9 @@ export const EirfFormView = ({
                     return dVal ? `${new Date(dVal).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : 'N/A';
                   })()}
                 </p>
+                <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', color: '#334155', padding: '10px 12px', borderRadius: '4px', marginTop: '8px', fontSize: '8.5pt' }}>
+                  <strong>Finality Notice:</strong> Committee decisions after EIRF filing are final and binding. Official Verdict PDFs are dispatched exclusively to your registered email address.
+                </div>
                 <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0', marginTop: '10px' }}>
                   <strong>Candidate Written Explanation:</strong>
                   <p style={{ margin: '4px 0 0 0', color: '#475569' }}>{existingReport.detailedExplanation}</p>
@@ -419,12 +412,15 @@ export const EirfFormView = ({
                         if (k === 'declarationChecked' || k === 'legacySections') return null;
                         const matchedQ = generatedQuestions.find(q => q.questionId === k);
                         const label = matchedQ ? `${k}: ${matchedQ.questionText}` : `Question ${k}`;
+                        const resolvedFileUrl = typeof val === 'object' && val?.fileUrl
+                          ? (val.fileUrl.startsWith('/') ? `${(API_BASE || '').replace(/\/api\/?$/, '')}${val.fileUrl}` : val.fileUrl)
+                          : '';
                         return (
                           <div key={k} style={{ backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '8.5pt' }}>
                             <strong style={{ color: '#0284c7' }}>{label}</strong>
                             <div style={{ marginTop: '4px', color: '#334155' }}>
                               {typeof val === 'object' && val?.uploaded ? (
-                                <a href={val.fileUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#0284c7', textDecoration: 'underline' }}>
+                                <a href={resolvedFileUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#0284c7', textDecoration: 'underline' }}>
                                   <FileText size={14} /> View Attached Evidence ({val.fileName}) <ExternalLink size={12} />
                                 </a>
                               ) : Array.isArray(val) ? (
@@ -1021,33 +1017,6 @@ export const EirfFormView = ({
                   <strong>Formal Academic Integrity Certification:</strong> By submitting this report, I hereby certify on my honor that the explanation and technical statements provided above are completely truthful, accurate, and unmanipulated. I understand that false claims will result in immediate disqualification and disciplinary action by the Academic Examination Committee.
                 </span>
               </label>
-            </div>
-
-            {/* Attach Encrypted Local Backup (.eirf) - Optional / Deprecated */}
-            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '20px' }}>
-              <h3 style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#002147', margin: '0 0 6px 0' }}>
-                Attach Encrypted Local Backup (.eirf) <span style={{ fontSize: '8.5pt', fontWeight: 'normal', color: '#64748b' }}>(Optional / Diagnostic)</span>
-              </h3>
-              <p style={{ fontSize: '8.5pt', color: '#64748b', margin: '0 0 12px 0' }}>
-                Your exam answers are automatically preserved in secure client storage and synchronized to the server upon reconnection. If an encrypted payload file (.eirf) was saved to your device, you may attach it below for cross-verification; otherwise, leave this section blank.
-              </p>
-              <div style={{ border: '2px dashed #cbd5e1', borderRadius: '6px', padding: '16px', textAlign: 'center', backgroundColor: '#f8fafc' }}>
-                <input
-                  type="file"
-                  accept=".eirf,.json"
-                  onChange={handleEirfFileUpload}
-                  id="eirf-file-input"
-                  style={{ display: 'none' }}
-                />
-                <label htmlFor="eirf-file-input" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', backgroundColor: '#ffffff', padding: '7px 16px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', fontWeight: 'bold', color: '#0284c7' }}>
-                  <Upload size={14} /> Choose .eirf File
-                </label>
-                {eirfFileName && (
-                  <div style={{ fontSize: '8.5pt', color: '#059669', fontWeight: 'bold', marginTop: '8px' }}>
-                    Selected File: {eirfFileName} ({eirfFileContent?.length || 0} bytes loaded)
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Submit Action Button */}

@@ -1,9 +1,10 @@
 const assert = require('assert');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const { generateToken, verifyToken } = require('../utils/jwt');
 const { toBicsId, toMongoId } = require('../utils/bicsId');
 const { authorizeApiRequest, requireAuth } = require('../middleware/auth');
-const { dbState, getJSONData, saveJSONData } = require('../config/db');
+const { DB_FILE, dbState, getJSONData, saveJSONData } = require('../config/db');
 
 function createMockReqRes({ method = 'POST', originalUrl = '/', url = '/', headers = {}, params = {}, query = {}, body = {}, user = null }) {
     const req = {
@@ -51,6 +52,8 @@ function createMockReqRes({ method = 'POST', originalUrl = '/', url = '/', heade
 
 async function runTest() {
     console.log('Testing Exam Start & Token Authentication Pipeline...');
+    const dbBackup = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8') : null;
+    try {
 
     const candidateId = new mongoose.Types.ObjectId().toString();
     const testId = new mongoose.Types.ObjectId().toString();
@@ -124,6 +127,11 @@ async function runTest() {
     console.log('  [PASS] 3. Unauthenticated request without JWT or valid TestToken is strictly blocked with 401');
 
     console.log('\nAll Exam Auth Pipeline Tests Passed!');
+    } finally {
+        if (dbBackup !== null) {
+            try { fs.writeFileSync(DB_FILE, dbBackup, 'utf8'); } catch (_) {}
+        }
+    }
 }
 
 runTest().catch(err => {

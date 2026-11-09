@@ -6,17 +6,17 @@
 <meta name="x-apple-disable-message-reformatting">
 <title>EIRF Verdict: Rejected | BICS</title>
 <!--
-  EMAIL 3 OF 3: EIRF VERDICT REJECTED (score annulled, appeal, PDF attached)
+  EMAIL 3 OF 3: EIRF VERDICT REJECTED (score annulled, final & binding, PDF attached)
 
   Suggested subject line:
   EIRF Verdict: Not approved | {{report_id}}
 
-  Attachment: {{report_id}}.pdf (from pdfUrl)
+  Attachment: EIRF_Verdict_{{report_id}}.pdf
 
   Placeholders to merge before sending:
   {{candidate_name}}, {{report_id}}, {{submission_ref_id}}, {{test_title}}, {{course_name}}, {{course_code}},
   {{resolution_category}}, {{remediation_action}}, {{reviewed_by}}, {{reviewed_at}}, {{admin_remarks}},
-  {{digital_hash}}, {{hardcopy_deadline}}, {{appeal_deadline}}, {{appeal_link}}
+  {{digital_hash}}, {{hardcopy_deadline}}
 -->
 <style type="text/css">
   body, table, td, p, a, div { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
@@ -93,7 +93,7 @@
 </head>
 <body style="margin:0;padding:0;background:#F5F7FA;">
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
-    Your EIRF {{report_id}} was not approved. Verdict document attached; appeal window closes {{appeal_deadline}}.
+    Your EIRF {{report_id}} was not approved and your test score has been annulled. The Committee decision is final and binding. Verdict document attached.
   </div>
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F7FA;">
@@ -221,39 +221,22 @@
             </td>
           </tr>
 
-          <!-- Right of Appeal -->
+          <!-- Committee Decision Finality Notice -->
           <tr>
             <td class="content-cell" style="padding:20px 32px 4px 32px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="details-table" style="border:1px solid #E8ECF1;border-radius:4px;border-collapse:separate;border-spacing:0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="details-table" style="border:1px solid #EBDAD7;border-radius:4px;border-collapse:separate;border-spacing:0;">
                 <tr>
-                  <td colspan="2" style="background:#F2F5F9;padding:11px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.2px;color:#6B7B8C;">RIGHT OF APPEAL</td>
+                  <td colspan="2" style="background:#FAF3F2;padding:11px 18px;border-bottom:1px solid #EBDAD7;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.2px;color:#9A6E69;">FINALITY OF COMMITTEE DECISION</td>
                 </tr>
                 <tr class="mobile-stack">
-                  <td width="40%" class="details-label" valign="top" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Appeal Window Closes</td>
-                  <td class="details-value" valign="top" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#2F3B48;font-weight:bold;">{{appeal_deadline}}</td>
+                  <td width="40%" class="details-label" valign="top" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Determination Status</td>
+                  <td class="details-value" valign="top" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#991B1B;font-weight:bold;">Final &amp; Binding (No Appeals Permitted)</td>
                 </tr>
                 <tr class="mobile-stack">
                   <td width="40%" class="details-label" valign="top" style="padding:12px 18px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Governing Provision</td>
-                  <td class="details-value" valign="top" style="padding:12px 18px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#2F3B48;font-weight:bold;">Examination Regulations, Section 9.2</td>
+                  <td class="details-value" valign="top" style="padding:12px 18px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#2F3B48;font-weight:bold;">In accordance with Examination Integrity Policy, decisions rendered after EIRF adjudication are definitive and binding across all academic records.</td>
                 </tr>
               </table>
-            </td>
-          </tr>
-
-          <!-- CTA Button -->
-          <tr>
-            <td class="content-cell" align="center" style="padding:26px 32px 4px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="cta-btn-wrapper">
-                <tr>
-                  <td align="center" style="background:#5F7C99;border-radius:4px;">
-                    <a href="{{appeal_link}}" class="cta-button" target="_blank" style="display:inline-block;padding:13px 34px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14.5px;font-weight:bold;letter-spacing:0.4px;color:#FFFFFF;text-decoration:none;">Submit an Appeal</a>
-                  </td>
-                </tr>
-              </table>
-              <div style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#98A3AF;padding-top:10px;">
-                You may appeal this verdict within 48 hours of its dispatch. If the button does not open, copy this link into your browser:<br>
-                <span style="word-break:break-all;color:#5F7C99;">{{appeal_link}}</span>
-              </div>
             </td>
           </tr>
 

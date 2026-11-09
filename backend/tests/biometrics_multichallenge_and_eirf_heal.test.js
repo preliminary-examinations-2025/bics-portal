@@ -80,13 +80,17 @@ async function runTestSuite() {
     assert(healed[2].placeholder.includes('13:33:20 IST'), 'Q3 UTC timestamp 08:03:20 must be converted to 13:33:20 IST');
     console.log('  ✅ Empty options successfully healed and legacy UTC timestamps converted to IST.');
 
-    // TEST 4: Multi-Challenge Biometric Route Configuration
-    console.log('\n[TEST 4] Server-Side Multi-Challenge Route Configuration:');
+    // TEST 4: Randomized Single-Challenge Biometric Route Configuration (including MOVE_HEAD_DOWN)
+    console.log('\n[TEST 4] Server-Side Randomized Biometric Challenge Route Configuration:');
     const testsRouteSrc = fs.readFileSync(path.join(__dirname, '../routes/tests.js'), 'utf8');
-    assert(testsRouteSrc.includes('challenges = ['), 'tests.js must generate sequential challenges array');
-    assert(testsRouteSrc.includes('totalSteps: challenges.length'), 'tests.js must return totalSteps');
+    const biometricViewSrc = fs.readFileSync(path.join(__dirname, '../../frontend_ot/src/views/BiometricCheckView.jsx'), 'utf8');
+    assert(testsRouteSrc.includes("action: 'MOVE_HEAD_DOWN'"), 'tests.js CHALLENGE_ACTIONS must include MOVE_HEAD_DOWN');
+    assert(testsRouteSrc.includes('crypto.randomInt(0, CHALLENGE_ACTIONS.length)'), 'tests.js must randomly select a single challenge per session');
+    assert(testsRouteSrc.includes('challenges = ['), 'tests.js must return challenges array for UI compatibility');
+    assert(testsRouteSrc.includes('totalSteps: challenges.length'), 'tests.js must return totalSteps (1)');
     assert(testsRouteSrc.includes('allCompleted'), 'tests.js verify route must check allCompleted');
-    console.log('  ✅ Server-side multi-challenge route correctly configured for 2 distinct sequential steps.');
+    assert(biometricViewSrc.includes("'MOVE_HEAD_DOWN'") && biometricViewSrc.includes('deltaPitch') && biometricViewSrc.includes('deltaCenterY'), 'BiometricCheckView.jsx must detect MOVE_HEAD_DOWN via pitch and downward vertical shift');
+    console.log('  ✅ Server-side single random challenge selection (with MOVE_HEAD_DOWN) correctly configured.');
 
     // TEST 5: System Checks Abstraction Text
     console.log('\n[TEST 5] System Checks Candidate UI Abstraction:');

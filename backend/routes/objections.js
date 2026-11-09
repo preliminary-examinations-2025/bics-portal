@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const { TestSubmissionModel, TestConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { generateObjectionId, buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
 const { calculateSubmissionScore } = require('../utils/scoreCalculator');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
-const { isBicsId, toMongoId, toBicsId } = require('../utils/bicsId');
+const { isBicsId, toMongoId, toBicsId, resolveToObjectId } = require('../utils/bicsId');
 
 const ensureObjectionIdsSaved = async (submissionsList) => {
     try {
@@ -68,44 +69,46 @@ router.post('/tests/objection/:submissionId', requireAuth, async (req, res) => {
     try {
         let submission = null;
         let test = null;
+        let jsonDb = null;
         const is12Digit = /^\d{12}$/.test(String(submissionId).trim());
         const mongoId = isBicsId(submissionId) ? toMongoId(submissionId) : submissionId;
 
         if (dbState.useMongo) {
             if (is12Digit) {
-                submission = await TestSubmissionModel.findOne({ submissionRefId: submissionId });
+                submission = await TestSubmissionModel.findOne({ submissionRefId: submissionId, isDeleted: { $ne: true } });
             } else if (mongoose.Types.ObjectId.isValid(mongoId)) {
-                submission = await TestSubmissionModel.findById(mongoId);
+                submission = await TestSubmissionModel.findOne({ _id: mongoId, isDeleted: { $ne: true } });
             }
             if (!submission) {
                 submission = await TestSubmissionModel.findOne({
                     $or: [
                         { submissionRefId: submissionId },
-                        { _id: mongoId },
+                        { _id: mongoose.Types.ObjectId.isValid(mongoId) ? mongoId : undefined },
                         { id: submissionId }
-                    ]
+                    ].filter(Boolean),
+                    isDeleted: { $ne: true }
                 });
             }
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
             test = await TestConfigModel.findById(submission.testId);
         } else {
-            const db = getJSONData();
-            db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => 
+            jsonDb = getJSONData();
+            jsonDb.testSubmissions = jsonDb.testSubmissions || [];
+            submission = jsonDb.testSubmissions.find(s => !s.isDeleted && (
                 String(s.submissionRefId) === String(submissionId) ||
                 String(s.id || s._id) === String(submissionId) ||
                 String(s.id || s._id) === resolveToObjectId(submissionId)
-            );
+            ));
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
-            db.tests = db.tests || [];
-            test = db.tests.find(t => t.id === String(submission.testId) || t._id === String(submission.testId));
+            jsonDb.tests = jsonDb.tests || [];
+            test = jsonDb.tests.find(t => String(t.id || t._id) === String(submission.testId));
         }
 
         if (req.user && req.user.role !== 'admin') {
             const subCandId = String(submission.candidateId || submission.studentId || '');
             const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
             const subNorm = isBicsId(subCandId) ? toMongoId(subCandId) : subCandId;
-            if (subNorm !== userMongo && subCandId !== String(req.user.studentId || '')) {
+            if (subNorm !== userMongo && subCandId !== String(req.user.studentId || '') && String(submission.studentId || '') !== String(req.user.studentId || '')) {
                 return res.status(403).json({ success: false, error: "Access denied: You cannot raise an objection on another candidate's submission." });
             }
         }
@@ -164,11 +167,10 @@ router.post('/tests/objection/:submissionId', requireAuth, async (req, res) => {
             submission.markModified('answers');
             await submission.save();
         } else {
-            const db = getJSONData();
             submission.objections = submission.objections || [];
             submission.objections = submission.objections.filter(o => o.questionIndex !== Number(questionIndex));
             submission.objections.push(newObj);
-            saveJSONData(db);
+            saveJSONData(jsonDb);
         }
 
         await logSystemAction(submission.candidateName || 'Candidate', 'OBJECTION_RAISED', `Candidate raised objection ${generatedId} for Question #${Number(questionIndex) + 1} on submission ${submissionId}: ${reason}`, 'info');
@@ -196,17 +198,18 @@ router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => 
 
         if (dbState.useMongo) {
             if (is12Digit) {
-                submission = await TestSubmissionModel.findOne({ submissionRefId: submissionId });
+                submission = await TestSubmissionModel.findOne({ submissionRefId: submissionId, isDeleted: { $ne: true } });
             } else if (mongoose.Types.ObjectId.isValid(mongoId)) {
-                submission = await TestSubmissionModel.findById(mongoId);
+                submission = await TestSubmissionModel.findOne({ _id: mongoId, isDeleted: { $ne: true } });
             }
             if (!submission) {
                 submission = await TestSubmissionModel.findOne({
                     $or: [
                         { submissionRefId: submissionId },
-                        { _id: mongoId },
+                        { _id: mongoose.Types.ObjectId.isValid(mongoId) ? mongoId : undefined },
                         { id: submissionId }
-                    ]
+                    ].filter(Boolean),
+                    isDeleted: { $ne: true }
                 });
             }
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
@@ -237,7 +240,7 @@ router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => 
                 targetAnswer.initialScore = firstAssigned;
             }
 
-            if (status === 'resolved' && revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
+            if ((status === 'resolved' || status === 'resolved_accepted') && revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
                 const quest = test?.questions?.find(q => String(q.id || q._id) === String(obj.questionId || (targetAnswer && targetAnswer.questionId))) || test?.questions?.[questionIndex];
                 const maxPts = Number(quest?.points || targetAnswer?.maxPoints || 100);
 
@@ -254,9 +257,26 @@ router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => 
                 obj.marksAfter = revised;
                 obj.marksDiff = Number((revised - firstAssigned).toFixed(2));
 
-                if (targetAnswer) {
+                if (!targetAnswer) {
+                    const synthesizedQId = String(obj.questionId || quest?.id || quest?._id || questionId || `q_${questionIndex}`);
+                    targetAnswer = {
+                        questionId: synthesizedQId,
+                        type: quest?.type || 'mcq',
+                        score: revised,
+                        initialScore: firstAssigned,
+                        scoreAfterObjection: revised,
+                        resolvedMarks: revised,
+                        maxPoints: maxPts,
+                        isObjected: true,
+                        isObjectionResolved: true
+                    };
+                    submission.answers = submission.answers || [];
+                    submission.answers.push(targetAnswer);
+                } else {
                     targetAnswer.score = revised;
                     targetAnswer.scoreAfterObjection = revised;
+                    targetAnswer.resolvedMarks = revised;
+                    targetAnswer.maxPoints = maxPts;
                     targetAnswer.isObjectionResolved = true;
                 }
 
@@ -280,11 +300,11 @@ router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => 
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => 
+            submission = db.testSubmissions.find(s => !s.isDeleted && (
                 String(s.submissionRefId) === String(submissionId) ||
                 String(s.id || s._id) === String(submissionId) ||
                 String(s.id || s._id) === resolveToObjectId(submissionId)
-            );
+            ));
             if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
 
             test = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
@@ -313,7 +333,7 @@ router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => 
                 targetAnswer.initialScore = firstAssigned;
             }
 
-            if (status === 'resolved' && revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
+            if ((status === 'resolved' || status === 'resolved_accepted') && revisedMarks !== undefined && revisedMarks !== null && !isNaN(revisedMarks)) {
                 const quest = test?.questions?.find(q => String(q.id || q._id) === String(obj.questionId || (targetAnswer && targetAnswer.questionId))) || test?.questions?.[questionIndex];
                 const maxPts = Number(quest?.points || targetAnswer?.maxPoints || 100);
 
@@ -330,9 +350,26 @@ router.post('/admin/tests/objection/resolve', requireAdmin, async (req, res) => 
                 obj.marksAfter = revised;
                 obj.marksDiff = Number((revised - firstAssigned).toFixed(2));
 
-                if (targetAnswer) {
+                if (!targetAnswer) {
+                    const synthesizedQId = String(obj.questionId || quest?.id || quest?._id || questionId || `q_${questionIndex}`);
+                    targetAnswer = {
+                        questionId: synthesizedQId,
+                        type: quest?.type || 'mcq',
+                        score: revised,
+                        initialScore: firstAssigned,
+                        scoreAfterObjection: revised,
+                        resolvedMarks: revised,
+                        maxPoints: maxPts,
+                        isObjected: true,
+                        isObjectionResolved: true
+                    };
+                    submission.answers = submission.answers || [];
+                    submission.answers.push(targetAnswer);
+                } else {
                     targetAnswer.score = revised;
                     targetAnswer.scoreAfterObjection = revised;
+                    targetAnswer.resolvedMarks = revised;
+                    targetAnswer.maxPoints = maxPts;
                     targetAnswer.isObjectionResolved = true;
                 }
 
@@ -365,12 +402,12 @@ router.get('/admin/objections', requireAdmin, async (req, res) => {
     try {
         let submissions = [];
         if (dbState.useMongo) {
-            submissions = await TestSubmissionModel.find({ "objections.0": { $exists: true } });
+            submissions = await TestSubmissionModel.find({ "objections.0": { $exists: true }, isDeleted: { $ne: true } });
             await ensureObjectionIdsSaved(submissions);
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submissions = db.testSubmissions.filter(s => s.objections && s.objections.length > 0);
+            submissions = db.testSubmissions.filter(s => !s.isDeleted && s.objections && s.objections.length > 0);
             await ensureObjectionIdsSaved(submissions);
         }
 
@@ -467,13 +504,23 @@ router.get('/tests/objections/student', requireAuth, async (req, res) => {
         if (dbState.useMongo) {
             const candFilter = buildCandidateQueryFilter(candidateId);
             if (candFilter) {
-                submissions = await TestSubmissionModel.find({ ...candFilter, "objections.0": { $exists: true } });
+                submissions = await TestSubmissionModel.find({ ...candFilter, "objections.0": { $exists: true }, isDeleted: { $ne: true } });
                 await ensureObjectionIdsSaved(submissions);
             }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submissions = db.testSubmissions.filter(s => s.candidateId && s.candidateId.toString() === candidateId.toString() && s.objections && s.objections.length > 0);
+            const candNorm = resolveToObjectId(String(candidateId));
+            const reqStudId = String(req.user?.studentId || '');
+            submissions = db.testSubmissions.filter(s => {
+                if (s.isDeleted || !s.objections || s.objections.length === 0) return false;
+                const sCand = s.candidateId ? String(s.candidateId) : '';
+                const sCandNorm = sCand ? resolveToObjectId(sCand) : '';
+                return (
+                    (sCand && (sCand === String(candidateId) || sCandNorm === candNorm)) ||
+                    (s.studentId && (String(s.studentId) === String(candidateId) || (reqStudId && String(s.studentId) === reqStudId)))
+                );
+            });
             await ensureObjectionIdsSaved(submissions);
         }
 

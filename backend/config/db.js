@@ -82,6 +82,7 @@ const initialDB = {
         }
     ],
     testSubmissions: [],
+    emailLogs: [],
     tickets: [],
     classroomSubmissions: [
         {

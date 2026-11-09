@@ -313,13 +313,15 @@ export function FinishedView({
                         // Drain queued offline proctoring events safely with auth (Issue B5)
                         getOfflineEvents(subId).then(async events => {
                           if (events && events.length > 0) {
-                            const userAuth = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                            const userAuth = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') || sessionStorage.getItem('bics_ot_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('bics_auth_token') || '';
+                            const examToken = (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') || sessionStorage.getItem('bics_exam_token') || '';
                             const uploads = events.map(ev => 
                               fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
                                 method: 'POST',
                                 headers: { 
                                   'Content-Type': 'application/json',
-                                  ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+                                  ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+                                  ...(examToken ? { 'x-exam-token': examToken } : {})
                                 },
                                 body: JSON.stringify(ev)
                               }).then(r => r.ok).catch(() => false)
@@ -334,13 +336,15 @@ export function FinishedView({
                         // Drain queued offline proctoring snapshots safely with auth (Issue B5)
                         getOfflineSnapshots(subId).then(async snapshots => {
                           if (snapshots && snapshots.length > 0) {
-                            const userAuth = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+                            const userAuth = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') || sessionStorage.getItem('bics_ot_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('bics_auth_token') || '';
+                            const examToken = (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : '') || sessionStorage.getItem('bics_exam_token') || '';
                             const uploads = snapshots.map(snap => 
                               fetch(`${API_BASE}/tests/proctoring/snapshot/${subId}`, {
                                 method: 'POST',
                                 headers: { 
                                   'Content-Type': 'application/json',
-                                  ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {})
+                                  ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+                                  ...(examToken ? { 'x-exam-token': examToken } : {})
                                 },
                                 body: JSON.stringify(snap)
                               }).then(r => r.ok).catch(() => false)

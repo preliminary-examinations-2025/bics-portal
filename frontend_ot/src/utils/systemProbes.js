@@ -86,23 +86,37 @@ export async function probeDisplays() {
     let screenCount = 1;
     let isExtended = false;
 
-    // Use Window Management API if supported by browser
-    if (typeof window !== 'undefined' && 'getScreenDetails' in window) {
+    // Only invoke Window Management API when permission is ALREADY granted so mounting
+    // SystemChecksView never fires an un-gestured prompt (which Chrome Incognito auto-dismisses).
+    let windowMgmtPerm = 'prompt';
+    if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
+      try {
+        const permStatus = await navigator.permissions.query({ name: 'window-management' });
+        windowMgmtPerm = permStatus?.state || 'prompt';
+      } catch (_) {
+        windowMgmtPerm = 'unsupported';
+      }
+    }
+
+    if (typeof window !== 'undefined' && 'getScreenDetails' in window && windowMgmtPerm === 'granted') {
       try {
         const screenDetails = await window.getScreenDetails();
         if (screenDetails && screenDetails.screens) {
           screenCount = screenDetails.screens.length;
           isExtended = screenDetails.screens.length > 1;
         }
-      } catch (permErr) {
-        // User denied window management permission; check screen.isExtended fallback
+      } catch (_) {
         if (window.screen && typeof window.screen.isExtended === 'boolean') {
           isExtended = window.screen.isExtended;
           if (isExtended) screenCount = 2;
         }
       }
-    } else if (typeof window !== 'undefined' && window.screen && typeof window.screen.isExtended === 'boolean') {
-      isExtended = window.screen.isExtended;
+    } else if (typeof window !== 'undefined') {
+      if (window.screen && typeof window.screen.isExtended === 'boolean') {
+        isExtended = window.screen.isExtended;
+      } else if (typeof window.screenLeft === 'number' && typeof window.screenTop === 'number') {
+        isExtended = window.screenLeft < 0 || window.screenTop < 0;
+      }
       if (isExtended) screenCount = 2;
     }
 

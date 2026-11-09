@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { RefreshCw, Plus, ExternalLink, CheckCircle, XCircle } from 'lucide-react';
 import { API_BASE } from '../../config';
 
@@ -389,17 +390,19 @@ export default function AdminSubmissions({
       <CounterfoilApprovalsCard />
 
       {/* MANUAL ADD/EDIT MODAL */}
-      {showSubmissionModal && editingSubmission && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.4)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          zIndex: 1000
-        }}>
+      {showSubmissionModal && editingSubmission && (() => {
+        const modalMarkup = (
+          <div style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            zIndex: 99999,
+            padding: '16px'
+          }}>
           <div className="cf-card" style={{ width: '90%', maxWidth: '650px', padding: '20px', backgroundColor: '#fff', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>{editingSubmission._id ? "Edit Submission Details" : "Record New Submission"}</span>
+            <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', alignItems: 'center' }}>
+              <span style={{ marginRight: 'auto' }}>{editingSubmission._id ? "Edit Submission Details" : "Record New Submission"}</span>
               <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => { setShowSubmissionModal(false); setEditingSubmission(null); }}>✕</button>
             </div>
 
@@ -576,7 +579,9 @@ export default function AdminSubmissions({
             </form>
           </div>
         </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(modalMarkup, document.body) : modalMarkup;
+      })()}
     </div>
   );
 }

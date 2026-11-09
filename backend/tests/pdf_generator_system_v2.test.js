@@ -1,4 +1,5 @@
 const assert = require('assert');
+const fs = require('fs');
 const zlib = require('zlib');
 const {
     generateHallTicketPdfBuffer,
@@ -17,10 +18,30 @@ const {
     ensureSubmissionRefIds
 } = require('../utils/submissionMigrator');
 const { toBicsId } = require('../utils/bicsId');
-const { getJSONData, saveJSONData } = require('../config/db');
+const { DB_FILE, getJSONData, saveJSONData } = require('../config/db');
+
+let cachedPdfJs = null;
 
 /**
- * Extracts and decodes all text from PDF streams (handling zlib FlateDecode and hex encoding)
+ * Extracts Unicode text per page via pdfjs-dist (supports embedded TTF CID fonts like Plus Jakarta Sans & Inter)
+ */
+async function extractUnicodePdfText(buf) {
+    if (!cachedPdfJs) {
+        cachedPdfJs = await import('../node_modules/pdfjs-dist/legacy/build/pdf.mjs');
+    }
+    const doc = await cachedPdfJs.getDocument({ data: new Uint8Array(buf), verbosity: 0 }).promise;
+    const pageTexts = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+        const page = await doc.getPage(p);
+        const tc = await page.getTextContent();
+        const txt = tc.items.map(i => i.str + (i.hasEOL ? ' ' : '')).join('').replace(/\s+/g, ' ').trim();
+        pageTexts.push(txt);
+    }
+    return { allText: pageTexts.join('\n'), numPages: doc.numPages, pageTexts };
+}
+
+/**
+ * Extracts raw PDF streams + Latin-1 metadata (useful for PostScript standard font & Helvetica checks)
  */
 function extractAllPdfText(buf) {
     let fullDecoded = '';
@@ -54,12 +75,13 @@ function extractAllPdfText(buf) {
 }
 
 async function runTestSuite() {
+    const dbBackup = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8') : null;
+    let passedTests = 0;
+    let failedTests = 0;
+    try {
     console.log('================================================================');
     console.log('🧪 RUNNING PDF GENERATOR SYSTEM & FIELD TRACKING TEST SUITE V2');
     console.log('================================================================\n');
-
-    let passedTests = 0;
-    let failedTests = 0;
 
     function test(name, fn) {
         return (async () => {
@@ -252,7 +274,7 @@ async function runTestSuite() {
         assert.ok(pdfText.includes('Helvetica'), 'Must use Helvetica PostScript font family');
     });
 
-    await test('generateHallTicketPdfBuffer handles missing fields with "No details available"', async () => {
+    await test('generateHallTicketPdfBuffer handles missing fields with "Details not available"', async () => {
         const emptyCandidate = {};
         const pdfBuffer = await generateHallTicketPdfBuffer({
             candidate: emptyCandidate,
@@ -260,8 +282,9 @@ async function runTestSuite() {
         });
 
         assert.ok(Buffer.isBuffer(pdfBuffer), 'Must generate buffer even with empty candidate');
-        const pdfText = extractAllPdfText(pdfBuffer);
-        assert.ok(pdfText.includes('No details available'), 'Missing fields must render fallback text');
+        const { allText } = await extractUnicodePdfText(pdfBuffer);
+        assert.ok(allText.includes('Details not available'), 'Missing fields must render "Details not available"');
+        assert.strictEqual(allText.includes('No details available'), false, 'Must NOT render "No details available"');
     });
 
     // -------------------------------------------------------------------------
@@ -318,6 +341,7 @@ async function runTestSuite() {
         const pdfBuffer = await generateEirfVerdictPdfBuffer({
             report: mockReport,
             submission: mockSubmission,
+            systemConfig: { examType: 'midsem' },
             courseCode: 'R526CS01T',
             courseName: 'Introduction to Computer Science'
         });
@@ -328,14 +352,41 @@ async function runTestSuite() {
         const pdfHeader = pdfBuffer.slice(0, 5).toString('ascii');
         assert.strictEqual(pdfHeader, '%PDF-', 'Must have valid PDF magic number header');
 
-        const pdfText = extractAllPdfText(pdfBuffer);
-        assert.ok(pdfText.includes('EIRF FORENSIC AUDIT REPORT'), 'Report title must be present');
-        assert.ok(pdfText.includes('982341059281'), '12-Digit Ref ID must be rendered');
-        assert.ok(pdfText.includes('DUAL-PHOTO IDENTITY'), 'Dual photo audit section must be present');
-        assert.ok(pdfText.includes('APPROVED'), 'Verdict must be rendered');
-        assert.ok(pdfText.includes('Page 1 of 2'), 'Must have Page 1 footer');
-        assert.ok(pdfText.includes('Page 2 of 2'), 'Must have Page 2 footer');
-        assert.ok(pdfText.includes('Helvetica'), 'Must use Helvetica font');
+        const { allText, numPages, pageTexts } = await extractUnicodePdfText(pdfBuffer);
+        const rawPdfStr = pdfBuffer.toString('latin1');
+        const bicsIdExpected = toBicsId('66f1a2b3c4d5e6f7a8b9c0d1');
+
+        assert.ok(allText.includes('EIRF FORENSIC AUDIT REPORT'), 'Report title must be present');
+        assert.ok(allText.includes('982341059281'), '12-Digit Ref ID must be rendered');
+        assert.strictEqual(allText.split(bicsIdExpected).length - 1, 1, 'Submission ID (BICSID) must appear strictly ONCE');
+        assert.ok(pageTexts[0].includes(bicsIdExpected), 'Submission ID (BICSID) must appear on Page 1 only');
+        assert.ok(allText.includes('Academic Year 2026-27'), 'Academic year must be present');
+        assert.ok(allText.includes('Semester I'), 'Semester I must be present');
+        assert.ok(allText.includes('Mid-Sem Test 2026'), 'Resolved exam type must be present');
+        assert.ok(allText.includes('DUAL-PHOTO IDENTITY'), 'Dual photo audit section must be present');
+        assert.ok(allText.includes('APPROVED'), 'Verdict must be rendered');
+        assert.ok(numPages >= 2 && numPages <= 3, `Expected 2-3 pages, got ${numPages}`);
+        for (let p = 1; p <= numPages; p++) {
+            assert.ok(pageTexts[p - 1].includes(`Page ${p} of ${numPages}`), `Must have Page ${p} of ${numPages} footer`);
+        }
+        assert.ok(rawPdfStr.includes('PlusJakartaSans'), 'Must embed Plus Jakarta Sans font');
+        assert.ok(rawPdfStr.includes('Inter'), 'Must embed Inter font');
+    });
+
+    await test('generateEirfVerdictPdfBuffer handles missing fields with "Details not available" and End-Sem Exam 2026', async () => {
+        const pdfBuffer = await generateEirfVerdictPdfBuffer({
+            report: {},
+            submission: {},
+            test: {},
+            candidate: {},
+            systemConfig: { examType: 'endsem' }
+        });
+
+        assert.ok(Buffer.isBuffer(pdfBuffer), 'Must return Buffer for empty records');
+        const { allText } = await extractUnicodePdfText(pdfBuffer);
+        assert.ok(allText.includes('Details not available'), 'Missing fields must use "Details not available"');
+        assert.strictEqual(allText.includes('No details available'), false, 'Must NOT render "No details available"');
+        assert.ok(allText.includes('End-Sem Exam 2026'), 'Must display End-Sem Exam 2026 from systemConfig');
     });
 
     // -------------------------------------------------------------------------
@@ -343,7 +394,7 @@ async function runTestSuite() {
     // -------------------------------------------------------------------------
     console.log('\n--- 6. Online Test Report Form (OTRF) PDF Generator ---');
 
-    await test('generateOtrfReportPdfBuffer renders 7 mandatory sections with top-right QR and NO pass/fail string', async () => {
+    await test('generateOtrfReportPdfBuffer renders 8 sections with Plus Jakarta Sans + Inter, single Page-1 Submission ID and NO pass/fail string', async () => {
         const mockSubmission = {
             _id: '66f1a2b3c4d5e6f7a8b9c0d1',
             submissionRefId: '982341059281',
@@ -390,10 +441,10 @@ async function runTestSuite() {
             durationMinutes: 120,
             totalMarks: 50,
             questions: [
-                { _id: 'q1', type: 'MCQ', maxMarks: 10 },
-                { _id: 'q2', type: 'CODING', maxMarks: 10 },
-                { _id: 'q3', type: 'CODING', maxMarks: 20 },
-                { _id: 'q4', type: 'SUBJECTIVE', maxMarks: 10 }
+                { _id: 'q1', type: 'MCQ', title: 'Asymptotic Time Complexity', maxMarks: 10 },
+                { _id: 'q2', type: 'CODING', title: 'Negative Indexing Subarray Solver', maxMarks: 10 },
+                { _id: 'q3', type: 'CODING', title: 'Balanced Binary Search Tree Balancing', maxMarks: 20 },
+                { _id: 'q4', type: 'WEB', title: 'Semantic ARIA Navigation Toolbar', maxMarks: 10 }
             ]
         };
 
@@ -409,7 +460,8 @@ async function runTestSuite() {
         const pdfBuffer = await generateOtrfReportPdfBuffer({
             submission: mockSubmission,
             test: mockTest,
-            candidate: mockCandidate
+            candidate: mockCandidate,
+            systemConfig: { examType: 'endsem' }
         });
 
         assert.ok(Buffer.isBuffer(pdfBuffer), 'Must return Buffer');
@@ -418,55 +470,68 @@ async function runTestSuite() {
         const pdfHeader = pdfBuffer.slice(0, 5).toString('ascii');
         assert.strictEqual(pdfHeader, '%PDF-', 'Must have valid PDF magic number header');
 
-        const pdfText = extractAllPdfText(pdfBuffer);
+        const { allText, numPages, pageTexts } = await extractUnicodePdfText(pdfBuffer);
+        const rawPdfStr = pdfBuffer.toString('latin1');
 
-        // Check the 7 Mandatory Sections
-        assert.ok(pdfText.includes('TEST DETAILS'), 'Section 1: Test Details must be present');
-        assert.ok(pdfText.includes('CANDIDATE DETAILS'), 'Section 2: Candidate Details must be present');
-        assert.ok(pdfText.includes('TECHNICAL METADATA'), 'Section 3: Technical Metadata must be present');
-        assert.ok(pdfText.includes('QUESTIONWISE BREAKDOWN'), 'Section 4: Questionwise Breakdown must be present');
-        assert.ok(pdfText.includes('OBJECTIONS SUMMARY'), 'Section 5: Objections Summary must be present');
-        assert.ok(pdfText.includes('EIRF DETAILS'), 'Section 6: EIRF Details must be present');
-        assert.ok(pdfText.includes('AUTHORITATIVE & SYSTEM SIGNED'), 'Section 7: Authoritative Signed must be present');
+        // Check all 8 Sections
+        assert.ok(allText.includes('1. EXAMINATION & ASSESSMENT PARTICULARS'), 'Section 1 present');
+        assert.ok(allText.includes('2. CANDIDATE DETAILS & REGISTRATION RECORD'), 'Section 2 present');
+        assert.ok(allText.includes('3. BIOMETRIC VERIFICATION & SYSTEM TELEMETRY'), 'Section 3 present');
+        assert.ok(allText.includes('4. QUESTIONWISE BREAKDOWN & SCORE MATRIX'), 'Section 4 present');
+        assert.ok(allText.includes('5. PROCTORING TELEMETRY & AUDIT LOGS'), 'Section 5 present');
+        assert.ok(allText.includes('6. OBJECTIONS SUMMARY & MARKS AUDIT'), 'Section 6 present');
+        assert.ok(allText.includes('7. EIRF INCIDENT & ADJUDICATION SUMMARY'), 'Section 7 present');
+        assert.ok(allText.includes('8. DIGITAL VERIFICATION & AUTHORITATIVE SEAL'), 'Section 8 present');
 
-        // Check Identifiers
-        assert.ok(pdfText.includes('982341059281'), '12-Digit Ref ID must be rendered');
+        // Check Identifiers & Single Page-1 Submission ID Rule
+        assert.ok(allText.includes('982341059281'), '12-Digit Ref ID must be rendered');
         const bicsIdExpected = toBicsId('66f1a2b3c4d5e6f7a8b9c0d1');
-        assert.ok(pdfText.includes(bicsIdExpected), 'BICS Object ID must be rendered');
+        assert.strictEqual(allText.split(bicsIdExpected).length - 1, 1, 'BICS Object ID must appear strictly ONCE');
+        assert.ok(pageTexts[0].includes(bicsIdExpected), 'BICS Object ID must appear on Page 1');
+        assert.ok(allText.includes('End-Sem Exam 2026'), 'Exam type must appear from systemConfig');
+        assert.ok(allText.includes('Academic Year 2026-27'), 'Academic year must appear');
 
         // Check Questionwise columns & Objection values
-        assert.ok(pdfText.includes('MARKS BEFORE OBJ'), 'Marks before objection column header must be present');
-        assert.ok(pdfText.includes('MARKS AFTER OBJ'), 'Marks after objection column header must be present');
-        assert.ok(pdfText.includes('42.0 / 50.0') || pdfText.includes('TOTAL MARKS SCORED'), 'Total score row must be rendered');
+        assert.ok(allText.includes('QUESTION TITLE'), 'Question title header present');
+        assert.ok(allText.includes('BEFORE'), 'Before column header must be present');
+        assert.ok(allText.includes('AFTER'), 'After column header must be present');
+        assert.ok(allText.includes('42.0 / 50.0'), 'Total score 42.0 / 50.0 must be rendered');
 
         // Check Objections Table
-        assert.ok(pdfText.includes('OBJ-849102'), 'Objection ID must be rendered in table');
-        assert.ok(pdfText.includes('+2.0') || pdfText.includes('+2'), 'Marks Diff must be rendered');
+        assert.ok(allText.includes('OBJ-849102'), 'Objection ID must be rendered in table');
+        assert.ok(allText.includes('+2.0'), 'Marks Diff must be rendered');
 
         // CRITICAL CHECK: NO pass/fail tag
-        assert.strictEqual(pdfText.includes('QUALIFIED / PASSED'), false, 'Must NOT contain "QUALIFIED / PASSED"');
-        assert.strictEqual(pdfText.includes('First Class with Distinction'), false, 'Must NOT contain "First Class with Distinction"');
+        assert.strictEqual(allText.includes('QUALIFIED / PASSED'), false, 'Must NOT contain "QUALIFIED / PASSED"');
+        assert.strictEqual(allText.includes('First Class with Distinction'), false, 'Must NOT contain "First Class with Distinction"');
 
-        // Check fonts & footer
-        assert.ok(pdfText.includes('Helvetica'), 'Must use Helvetica font');
-        assert.ok(pdfText.includes('Online Test Report Form (OTRF)'), 'Footer must contain document name');
+        // Check embedded fonts & dynamic footers
+        assert.ok(rawPdfStr.includes('PlusJakartaSans'), 'Must embed Plus Jakarta Sans font');
+        assert.ok(rawPdfStr.includes('Inter'), 'Must embed Inter font');
+        assert.ok(allText.includes('Online Test Report Form (OTRF)'), 'Footer must contain document name');
+        for (let p = 1; p <= numPages; p++) {
+            assert.ok(pageTexts[p - 1].includes(`Page ${p} of ${numPages}`), `Page ${p} footer present`);
+        }
     });
 
-    await test('generateOtrfReportPdfBuffer handles missing fields with "No details available"', async () => {
-        const emptySubmission = {};
-        const emptyTest = {};
-        const emptyCandidate = {};
-
+    await test('generateOtrfReportPdfBuffer handles missing fields with "Details not available"', async () => {
         const pdfBuffer = await generateOtrfReportPdfBuffer({
-            submission: emptySubmission,
-            test: emptyTest,
-            candidate: emptyCandidate
+            submission: {},
+            test: {},
+            candidate: {}
         });
 
         assert.ok(Buffer.isBuffer(pdfBuffer), 'Must generate buffer even with empty records');
-        const pdfText = extractAllPdfText(pdfBuffer);
-        assert.ok(pdfText.includes('No details available'), 'Missing fields must render fallback text');
+        const { allText } = await extractUnicodePdfText(pdfBuffer);
+        assert.ok(allText.includes('Details not available'), 'Missing fields must render "Details not available"');
+        assert.strictEqual(allText.includes('No details available'), false, 'Must NOT render "No details available"');
     });
+
+    } finally {
+        if (dbBackup !== null) {
+            fs.writeFileSync(DB_FILE, dbBackup, 'utf8');
+        }
+    }
 
     // -------------------------------------------------------------------------
     // SUMMARY

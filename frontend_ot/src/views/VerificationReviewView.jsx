@@ -1,12 +1,13 @@
 import React from 'react';
 import { 
-  Lock, ShieldCheck, BookOpen, Check, X, Flag, ShieldAlert, Clock, Award, ArrowRight, ExternalLink 
+  Lock, ShieldCheck, BookOpen, Check, X, Flag, ShieldAlert, Clock, Award, ArrowRight 
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
-import { getReturnUrl, API_BASE } from '../config/constants';
+import { getReturnUrl } from '../config/constants';
 import { RichText } from '../components/common/RichText';
 import { CenteredFooter } from '../components/common/CenteredFooter';
 import { ObjectionModal } from '../components/verification/ObjectionModal';
+import { buildWebPreviewSrcDoc } from '../utils/webPreviewBuilder';
 
 export function VerificationReviewView({
   candidate,
@@ -32,19 +33,35 @@ export function VerificationReviewView({
   const answers = submission?.answers || [];
   const objections = submission?.objections || [];
   
-  // Dynamic Score Helper (respects official admin objection resolution marks)
+  // Dynamic Score Helper (respects annulled status, resolved objections, bonus grants & AI evaluation rules)
+  const isAnnulled = submission?.verificationStatus === 'annulled' || submission?.eirfStatus === 'rejected';
   const getQuestionScore = (q, idx) => {
-    const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
-    const obj = objections.find(o => o.questionIndex === idx || (q.id && String(o.questionId) === String(q.id)));
-    
-    if (obj && obj.status === 'resolved' && obj.resolvedMarks !== undefined && obj.resolvedMarks !== null && !isNaN(obj.resolvedMarks)) {
+    if (isAnnulled) return 0;
+    const qIdPrimary = q.id ? String(q.id) : null;
+    const qIdMongo = q._id ? String(q._id) : null;
+    const ans = answers.find(a => (qIdPrimary && String(a.questionId) === qIdPrimary) || (qIdMongo && String(a.questionId) === qIdMongo)) || answers[idx] || {};
+    const obj = objections.find(o => o.questionIndex === idx || (qIdPrimary && String(o.questionId) === qIdPrimary) || (qIdMongo && String(o.questionId) === qIdMongo));
+
+    if (obj && (obj.status === 'resolved' || obj.status === 'resolved_accepted') && obj.resolvedMarks !== undefined && obj.resolvedMarks !== null && !isNaN(obj.resolvedMarks)) {
       return Number(obj.resolvedMarks);
     }
-    
+
+    if (q.grantBonusToAll || q.isBonus || ans.isBonusAwarded) {
+      return Number(q.points || 0);
+    }
+
+    if (q.type === 'web') {
+      const webEvalDone = ans.isManuallyGraded || ans.isObjectionResolved || ans.aiEvaluation?.isEvaluated === true || ans.aiEvaluation?.status === 'completed';
+      if (webEvalDone || (ans.score !== undefined && Number(ans.score) > 0)) {
+        return Number(ans.score || 0);
+      }
+      return 0;
+    }
+
     if (ans.score !== undefined && ans.score !== null && !isNaN(ans.score)) {
       return Number(ans.score);
     }
-    
+
     if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') {
       const isMulti = Boolean(q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1));
       if (isMulti) {
@@ -62,15 +79,17 @@ export function VerificationReviewView({
       const candSel = Number(ans.selectedOptionIndex ?? (Array.isArray(ans.selectedOptionIndices) ? ans.selectedOptionIndices[0] : -1));
       return (candSel !== -1 && candSel === expected) ? Number(q.points || 0) : 0;
     }
-    
+
     return 0;
   };
 
   // Calculate totals
   const totalMax = questions.reduce((sum, q) => sum + Number(q.points || 0), 0);
-  const totalScored = questions.length > 0 
-    ? questions.reduce((sum, q, idx) => sum + getQuestionScore(q, idx), 0)
-    : ((submission?.evaluation?.mcqScore || 0) + (submission?.evaluation?.codingScore || 0));
+  const totalScored = isAnnulled
+    ? 0
+    : (questions.length > 0
+        ? Math.min(totalMax || Number(submission?.totalScore || 0), questions.reduce((sum, q, idx) => sum + getQuestionScore(q, idx), 0))
+        : Number(submission?.totalScore ?? ((submission?.evaluation?.mcqScore || 0) + (submission?.evaluation?.codingScore || 0) + (submission?.evaluation?.webScore || 0))));
   const percentage = totalMax > 0 ? Math.round((totalScored / totalMax) * 100) : 0;
 
   return (
@@ -273,32 +292,10 @@ export function VerificationReviewView({
                   Academic Integrity Disciplinary Committee Clearance • EIRF Approved
                 </div>
                 <div style={{ fontSize: '8pt', color: '#047857', marginTop: '2px' }}>
-                  Technical / environmental disruption claim validated by the Examination Board. Official score restored and released.
+                  Technical / environmental disruption claim validated by the Examination Board. Official verdict certificate has been dispatched to your registered email.
                 </div>
               </div>
             </div>
-
-            <a
-              href={`${API_BASE}/test/eirf/verdict-pdf/${submission.eirfReportId || submission.id || submission._id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                backgroundColor: '#ffffff',
-                color: '#047857',
-                border: '1px solid #a7f3d0',
-                padding: '8px 14px',
-                borderRadius: '6px',
-                fontSize: '8pt',
-                fontWeight: 'bold',
-                textDecoration: 'none',
-                boxShadow: '0 1px 2px rgba(16, 185, 129, 0.05)'
-              }}
-            >
-              <ExternalLink size={13} /> View Signed Verdict Certificate
-            </a>
           </div>
         ) : submission?.eirfStatus === 'rejected' ? (
           <div style={{
@@ -331,32 +328,10 @@ export function VerificationReviewView({
                   Academic Integrity Disciplinary Sanction • Examination Annulled
                 </div>
                 <div style={{ fontSize: '8pt', color: '#b91c1c', marginTop: '2px' }}>
-                  EIRF report rejected due to confirmed protocol deviations. Examination score set to 0 points.
+                  EIRF report rejected due to confirmed protocol deviations. Examination score set to 0 points. Official decision notice has been dispatched to your registered email.
                 </div>
               </div>
             </div>
-
-            <a
-              href={`${API_BASE}/test/eirf/verdict-pdf/${submission.eirfReportId || submission.id || submission._id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                backgroundColor: '#ffffff',
-                color: '#b91c1c',
-                border: '1px solid #fecaca',
-                padding: '8px 14px',
-                borderRadius: '6px',
-                fontSize: '8pt',
-                fontWeight: 'bold',
-                textDecoration: 'none',
-                boxShadow: '0 1px 2px rgba(220, 38, 38, 0.05)'
-              }}
-            >
-              <ExternalLink size={13} /> View Decision Notice
-            </a>
           </div>
         ) : (submission?.hasEirfFlag || (submission?.eirfStatus && submission?.eirfStatus !== 'none')) ? (
           <div style={{
@@ -453,8 +428,10 @@ export function VerificationReviewView({
 
         {/* Questions Render Loop */}
         {questions.map((q, idx) => {
-          const ans = answers.find(a => String(a.questionId) === String(q.id)) || answers[idx] || {};
-          const obj = objections.find(o => o.questionIndex === idx || (q.id && String(o.questionId) === String(q.id)));
+          const qIdPrimary = q.id ? String(q.id) : null;
+          const qIdMongo = q._id ? String(q._id) : null;
+          const ans = answers.find(a => (qIdPrimary && String(a.questionId) === qIdPrimary) || (qIdMongo && String(a.questionId) === qIdMongo)) || answers[idx] || {};
+          const obj = objections.find(o => o.questionIndex === idx || (qIdPrimary && String(o.questionId) === qIdPrimary) || (qIdMongo && String(o.questionId) === qIdMongo));
           const qScore = getQuestionScore(q, idx);
           const isFull = qScore === Number(q.points || 0);
           const isPartial = qScore > 0 && qScore < Number(q.points || 0);
@@ -463,7 +440,7 @@ export function VerificationReviewView({
 
           return (
             <div
-              key={q.id || idx}
+              key={q.id || q._id || idx}
               id={`question-${idx + 1}`}
               className="cf-card"
               style={{
@@ -540,8 +517,8 @@ export function VerificationReviewView({
               <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '12px 16px' }}>
                 {obj ? (
                   <div style={{
-                    backgroundColor: obj.status === 'resolved' ? '#f0fdf4' : (obj.status === 'rejected' ? '#fef2f2' : '#fffbeb'),
-                    border: `1px solid ${obj.status === 'resolved' ? '#86efac' : (obj.status === 'rejected' ? '#fca5a5' : '#fcd34d')}`,
+                    backgroundColor: (obj.status === 'resolved' || obj.status === 'resolved_accepted') ? '#f0fdf4' : (obj.status === 'rejected' ? '#fef2f2' : '#fffbeb'),
+                    border: `1px solid ${(obj.status === 'resolved' || obj.status === 'resolved_accepted') ? '#86efac' : (obj.status === 'rejected' ? '#fca5a5' : '#fcd34d')}`,
                     borderRadius: '6px',
                     padding: '12px 15px',
                     display: 'flex',
@@ -550,8 +527,8 @@ export function VerificationReviewView({
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Flag size={16} style={{ color: obj.status === 'resolved' ? '#166534' : (obj.status === 'rejected' ? '#991b1b' : '#b45309') }} />
-                        <strong style={{ fontSize: '9.5pt', color: obj.status === 'resolved' ? '#166534' : (obj.status === 'rejected' ? '#991b1b' : '#b45309') }}>
+                        <Flag size={16} style={{ color: (obj.status === 'resolved' || obj.status === 'resolved_accepted') ? '#166534' : (obj.status === 'rejected' ? '#991b1b' : '#b45309') }} />
+                        <strong style={{ fontSize: '9.5pt', color: (obj.status === 'resolved' || obj.status === 'resolved_accepted') ? '#166534' : (obj.status === 'rejected' ? '#991b1b' : '#b45309') }}>
                           Objection Filed on Q{idx + 1} ({obj.status.toUpperCase()})
                         </strong>
                       </div>
@@ -589,7 +566,7 @@ export function VerificationReviewView({
                     </div>
                     <button
                       className="cf-btn-secondary"
-                      onClick={() => handleOpenObjectionModal(idx, q.id)}
+                      onClick={() => handleOpenObjectionModal(idx, q.id || q._id)}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -843,10 +820,15 @@ export function VerificationReviewView({
                   {activeWebTab === 'preview' ? (
                     <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', height: '280px', backgroundColor: '#ffffff', overflow: 'hidden' }}>
                       <iframe
+                        key={`verification_web_preview_${idx}`}
                         title={`web-preview-${idx}`}
                         sandbox="allow-scripts"
-                        srcDoc={`<!DOCTYPE html><html><head><style>${ans.submittedCss || ''}</style></head><body>${ans.submittedHtml || ''}<script>${ans.submittedJs || ''}<\/script></body></html>`}
-                        style={{ width: '100%', height: '100%', border: 'none' }}
+                        srcDoc={buildWebPreviewSrcDoc({
+                          html: ans.submittedHtml ?? (q.initialHtml || q.initialCode?.html || ''),
+                          css: ans.submittedCss ?? (q.initialCss || q.initialCode?.css || ''),
+                          js: ans.submittedJs ?? (q.initialJs || q.initialCode?.js || '')
+                        })}
+                        style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
                       />
                     </div>
                   ) : (

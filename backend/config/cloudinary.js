@@ -13,13 +13,27 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
     console.warn("--> Cloudinary credentials missing in .env. Falling back to mock URLs during registration.");
 }
 
+const isCloudinaryConfigured = () => !!(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+);
+
 // Helper to convert Cloudinary URLs to Netlify /media/ proxy URLs
 const formatCloudinaryMediaUrl = (url) => {
     if (!url || typeof url !== 'string') return url;
     if (url.startsWith('/media/') || url.includes('.netlify.app/media/')) return url;
-    const match = url.match(/cloudinary\.com\/[^/]+\/(?:image|raw|video|auto)\/upload\/(?:v\d+\/)?(?:BICS_2026\/)?(.+)$/i);
-    if (match && match[1]) {
-        return `/media/${match[1]}`;
+    const match = url.match(/cloudinary\.com\/[^/]+\/(image|raw|video|auto)\/upload\/(?:v\d+\/)?(?:BICS_2026\/)?(.+)$/i);
+    if (match && match[2]) {
+        const resourceType = match[1].toLowerCase();
+        const subPath = match[2];
+        if (subPath.toLowerCase().startsWith('otrf/')) {
+            return `/media/${subPath}`;
+        }
+        if (resourceType === 'raw' && !subPath.toLowerCase().startsWith('raw/')) {
+            return `/media/raw/${subPath}`;
+        }
+        return `/media/${subPath}`;
     }
     return url;
 };
@@ -27,6 +41,13 @@ const formatCloudinaryMediaUrl = (url) => {
 // Helper to stream file buffers to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto', customPublicId = null) => {
     return new Promise((resolve, reject) => {
+        if (isCloudinaryConfigured()) {
+            cloudinary.config({
+                cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                api_key: process.env.CLOUDINARY_API_KEY,
+                api_secret: process.env.CLOUDINARY_API_SECRET
+            });
+        }
         const options = { 
             folder: folder, 
             resource_type: resourceType,
@@ -53,6 +74,7 @@ const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto', customPub
 module.exports = {
     cloudinary,
     useCloudinary,
+    isCloudinaryConfigured,
     formatCloudinaryMediaUrl,
     uploadToCloudinary
 };

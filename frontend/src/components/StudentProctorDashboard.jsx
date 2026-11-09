@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { 
-  Video, Loader2, VolumeX, Volume2, ClipboardList, Camera, Eye, 
-  ZoomIn, X, ShieldAlert, Laptop, CheckCircle2, Clock, Image as ImageIcon, ExternalLink, AlertTriangle
+  Video, Loader2, VolumeX, Volume2, ClipboardList, Camera, CameraOff, Eye, 
+  ZoomIn, X, ShieldAlert, Laptop, CheckCircle2, Clock, Image as ImageIcon, ExternalLink, AlertTriangle,
+  Send, Copy, Check
 } from 'lucide-react';
 import { API_BASE } from '../config';
+import { getAuthToken } from '../api/client';
+import { resolveMediaOrBackendUrl } from '../utils/media';
 
 const PRESET_COURSES = [
   { code: 'R526CS01T', name: 'Introduction to Computer Science (Theory)' },
@@ -15,14 +19,9 @@ const PRESET_COURSES = [
   { code: 'CUSTOM', name: 'Other / Custom Course Code...' }
 ];
 
-const resolveSnapshotUrl = (url) => {
-  if (!url) return '';
-  if (url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
-  }
-  const backendBase = (API_BASE || '').replace(/\/api\/?$/, '');
-  return `${backendBase}${url.startsWith('/') ? '' : '/'}${url}`;
-};
+const resolveSnapshotUrl = (url) => resolveMediaOrBackendUrl(url, API_BASE);
+
+const isSubmissionFinished = (subStatus) => Boolean(subStatus) && subStatus !== 'started';
 
 // Helper to compute authoritative distinct incident counts from events log
 const getDistinctCount = (log, evType, filterFn) => {
@@ -81,16 +80,103 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const [submittingAction, setSubmittingAction] = useState(false);
   const [previewProofModalOpen, setPreviewProofModalOpen] = useState(false);
   const [proofPreviewUrl, setProofPreviewUrl] = useState('');
+  const [baselineImgError, setBaselineImgError] = useState(false);
+  const [lightboxImgError, setLightboxImgError] = useState(false);
+  const [proofImgError, setProofImgError] = useState(false);
+  const [candidateEmailInput, setCandidateEmailInput] = useState('');
+  const [isDispatchingNotice, setIsDispatchingNotice] = useState(false);
+  const [dispatchError, setDispatchError] = useState('');
+  const [dispatchSuccess, setDispatchSuccess] = useState('');
+  const [copiedLink, setCopiedLink] = useState(false);
   const pcRef = useRef(null);
+  const statusRef = useRef(sub.status || 'started');
   const subId = sub.id || sub._id;
+
+  useEffect(() => {
+    setLogs(sub.proctoringLog?.events || []);
+    setSnapshots(sub.proctoringLog?.snapshots || []);
+    setBaselinePhotoUrl(sub.baselinePhotoUrl || '');
+    setBaselineImgError(false);
+    setSecurityMetadata(sub.securityMetadata || null);
+    const nextStatus = sub.status || 'started';
+    setStatus(nextStatus);
+    statusRef.current = nextStatus;
+    setSelectedSnapshot(null);
+    setLightboxImgError(false);
+    setPreviewProofModalOpen(false);
+    setProofImgError(false);
+    setIsCourseModalOpen(false);
+    setActionSuccess('');
+  }, [subId]);
+
+  useEffect(() => {
+    if (Array.isArray(sub.proctoringLog?.events) && sub.proctoringLog.events.length > 0) {
+      setLogs(sub.proctoringLog.events);
+    }
+    if (Array.isArray(sub.proctoringLog?.snapshots) && sub.proctoringLog.snapshots.length > 0) {
+      setSnapshots(sub.proctoringLog.snapshots);
+    }
+    if (sub.baselinePhotoUrl) {
+      setBaselinePhotoUrl(sub.baselinePhotoUrl);
+    }
+    if (sub.securityMetadata) {
+      setSecurityMetadata(sub.securityMetadata);
+    }
+    if (sub.status) {
+      setStatus(sub.status);
+      statusRef.current = sub.status;
+    }
+  }, [sub.status, sub.baselinePhotoUrl, sub.proctoringLog, sub.securityMetadata]);
+
+  useEffect(() => {
+    setBaselineImgError(false);
+  }, [baselinePhotoUrl]);
+
+  useEffect(() => {
+    setLightboxImgError(false);
+  }, [selectedSnapshot]);
+
+  useEffect(() => {
+    if (!selectedSnapshot && !isCourseModalOpen && !previewProofModalOpen) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (previewProofModalOpen) setPreviewProofModalOpen(false);
+        else if (selectedSnapshot) setSelectedSnapshot(null);
+        else if (isCourseModalOpen && !submittingAction) setIsCourseModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedSnapshot, isCourseModalOpen, previewProofModalOpen, submittingAction]);
 
   const fetchEirfDetails = async () => {
     setEirfLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}?role=admin`);
+      const res = await fetch(`${API_BASE}/test/eirf/details/${subId}`);
       if (res.ok) {
         const data = await res.json();
         setEirfData(data);
+        if (data?.candidateEmail) {
+          setCandidateEmailInput(prev => prev || data.candidateEmail);
+        }
+        const resolvedCode = data?.existingReport?.courseCode || data?.courseCode || sub?.courseCode;
+        const resolvedName = data?.existingReport?.courseName || data?.courseName || sub?.courseName;
+        if (resolvedCode) {
+          const presetMatch = PRESET_COURSES.find(c => c.code === resolvedCode && c.code !== 'CUSTOM');
+          if (presetMatch) {
+            setSelectedCourseCode(presetMatch.code);
+            setSelectedCourseName(resolvedName || presetMatch.name);
+          } else {
+            setSelectedCourseCode('CUSTOM');
+            setCustomCourseCode(resolvedCode);
+            setCustomCourseName(resolvedName || data?.testTitle || sub?.testTitle || '');
+          }
+        }
       }
     } catch (e) {
       console.error("Failed to load EIRF details for admin dashboard:", e);
@@ -99,14 +185,75 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
     }
   };
 
+  const handleDispatchEirfNotice = async (emailOverride) => {
+    setIsDispatchingNotice(true);
+    setDispatchError('');
+    setDispatchSuccess('');
+    try {
+      const token = getAuthToken();
+      const effectiveEmail = emailOverride !== undefined ? emailOverride : candidateEmailInput;
+      const res = await fetch(`${API_BASE}/admin/eirf/dispatch-notice/${subId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ email: effectiveEmail })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to dispatch EIRF notice email');
+      }
+      setDispatchSuccess(`Official EIRF notice dispatched successfully to ${data.recipient || effectiveEmail}! Window active for 45 minutes.`);
+      fetchEirfDetails();
+      if (fetchLiveSubmissions) fetchLiveSubmissions();
+    } catch (err) {
+      setDispatchError(err.message || 'Dispatch error occurred');
+    } finally {
+      setIsDispatchingNotice(false);
+    }
+  };
+
+  const handleCopyDirectLink = (link) => {
+    if (!link) return;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     if (activeTab === 'eirf' || sub.hasEirfFlag || (sub.eirfStatus && sub.eirfStatus !== 'none')) {
       fetchEirfDetails();
     }
   }, [subId, activeTab]);
 
+  const handleOpenVerdictPdf = async () => {
+    const targetId = eirfData?.existingReport?.reportId || eirfData?.bicsId || subId;
+    if (!targetId) return;
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/admin/eirf/verdict-pdf/${encodeURIComponent(targetId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.error || 'Failed to load official Verdict PDF.');
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (err) {
+      console.error('Failed to open Verdict PDF:', err);
+      alert('Network error while retrieving Verdict PDF.');
+    }
+  };
+
   const handleAdminEirfAction = async (actionType, courseCodeVal, courseNameVal) => {
-    if (!eirfData?.existingReport?.reportId) return;
+    const targetActionId = eirfData?.existingReport?.reportId || eirfData?.bicsId || subId;
+    if (!targetActionId) return;
     const targetStatus = (actionType === 'approve' || actionType === 'approved') ? 'approved' : 'rejected';
     
     const finalCourseCode = courseCodeVal === 'CUSTOM' ? customCourseCode : (courseCodeVal || selectedCourseCode);
@@ -120,7 +267,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
 
     setSubmittingAction(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/eirf/action/${eirfData.existingReport.reportId}`, {
+      const res = await fetch(`${API_BASE}/admin/eirf/action/${targetActionId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,13 +306,15 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   }, [remoteStream]);
 
   useEffect(() => {
+    if (!sub?.testId || !subId) return undefined;
     let active = true;
-    const interval = setInterval(async () => {
+
+    const syncSubmission = async () => {
       try {
         const res = await fetch(`${API_BASE}/admin/tests/submissions/${sub.testId}`);
         if (res.ok && active) {
           const subs = await res.json();
-          const match = subs.find(s => (s.id || s._id) === subId);
+          const match = (Array.isArray(subs) ? subs : []).find(s => (s.id || s._id) === subId);
           if (match) {
             if (match.proctoringLog) {
               setLogs(match.proctoringLog.events || []);
@@ -180,9 +329,10 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
               setSecurityMetadata(match.securityMetadata);
             }
             if (match.status) {
-              if (match.status !== status) {
+              if (match.status !== statusRef.current) {
+                statusRef.current = match.status;
                 setStatus(match.status);
-                fetchLiveSubmissions();
+                if (fetchLiveSubmissions) fetchLiveSubmissions();
               }
               if (match.status !== 'started') {
                 if (pcRef.current) {
@@ -200,7 +350,15 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
       } catch (e) {
         console.error(e);
       }
+    };
+
+    syncSubmission();
+    const interval = setInterval(() => {
+      if (statusRef.current === 'started') {
+        syncSubmission();
+      }
     }, 5000);
+
     return () => {
       active = false;
       clearInterval(interval);
@@ -296,7 +454,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   };
 
   useEffect(() => {
-    if (sub.status === 'started') {
+    if ((sub.status || statusRef.current) === 'started') {
       startWebRTC();
     } else {
       setConnectionStatus('Offline (Session Completed)');
@@ -332,13 +490,13 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
         })
       });
       onClose();
-      fetchLiveSubmissions();
+      if (fetchLiveSubmissions) fetchLiveSubmissions();
     } catch (e) {
       console.error(e);
     }
   };
 
-  const isCompleted = status === 'submitted' || status === 'auto-submitted';
+  const isCompleted = isSubmissionFinished(status);
 
   return (
     <div className="cf-card" style={{ padding: '20px', margin: 0, border: '1px solid var(--cf-border)' }}>
@@ -392,69 +550,90 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
       </div>
 
       {/* Lightbox Modal for Snapshot Inspection */}
-      {selectedSnapshot && (
-        <div 
-          onClick={() => setSelectedSnapshot(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.75)',
-            zIndex: 99999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-            backdropFilter: 'blur(3px)'
-          }}
-        >
-          <div 
-            onClick={e => e.stopPropagation()}
+      {selectedSnapshot && (() => {
+        const resolvedUrl = resolveSnapshotUrl(selectedSnapshot.url);
+        const modalMarkup = (
+          <div
+            onClick={() => setSelectedSnapshot(null)}
             style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '6px',
-              maxWidth: '720px',
-              width: '100%',
-              overflow: 'hidden',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
-              border: '1px solid #cbd5e1'
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.75)',
+              zIndex: 99999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px',
+              backdropFilter: 'blur(3px)',
+              WebkitBackdropFilter: 'blur(3px)',
+              boxSizing: 'border-box',
+              overflowY: 'auto'
             }}
           >
-            <div style={{ padding: '12px 18px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h4 style={{ margin: 0, fontSize: '11pt', fontWeight: 'bold', color: '#002147' }}>
-                  Proctoring Evidence Snapshot: {selectedSnapshot.type}
-                </h4>
-                <span style={{ fontSize: '8pt', color: '#64748b' }}>
-                  Captured: {new Date(selectedSnapshot.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
-                </span>
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '6px',
+                maxWidth: '760px',
+                width: '100%',
+                maxHeight: 'calc(100vh - 32px)',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+                border: '1px solid #cbd5e1'
+              }}
+            >
+              <div style={{ padding: '12px 18px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, backgroundColor: '#ffffff' }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '11pt', fontWeight: 'bold', color: '#002147' }}>
+                    Proctoring Evidence Snapshot: {selectedSnapshot.type}
+                  </h4>
+                  <span style={{ fontSize: '8pt', color: '#64748b' }}>
+                    Captured: {new Date(selectedSnapshot.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close snapshot preview"
+                  onClick={() => setSelectedSnapshot(null)}
+                  className="cf-btn-secondary"
+                  style={{ padding: '4px 8px', fontSize: '8pt', margin: 0, flexShrink: 0 }}
+                >
+                  <X size={14} />
+                </button>
               </div>
-              <button 
-                onClick={() => setSelectedSnapshot(null)}
-                className="cf-btn-secondary"
-                style={{ padding: '4px 8px', fontSize: '8pt', margin: 0 }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div style={{ backgroundColor: '#0f172a', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '360px' }}>
-              <img 
-                src={resolveSnapshotUrl(selectedSnapshot.url)} 
-                alt="Proctoring Snapshot" 
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 400 300"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="14" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Evidence Snapshot Recorded on Server</text></svg>';
-                }}
-                style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain' }}
-              />
-            </div>
-            {selectedSnapshot.details && (
-              <div style={{ padding: '12px 18px', backgroundColor: '#f8fafc', borderTop: '1px solid #e2e8f0', fontSize: '8.5pt', color: '#334155' }}>
-                <strong>Details:</strong> {selectedSnapshot.details}
+              <div style={{ backgroundColor: '#0f172a', display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1, minHeight: '220px', overflow: 'auto', padding: '12px' }}>
+                {!lightboxImgError && resolvedUrl ? (
+                  <img
+                    src={resolvedUrl}
+                    alt={`Proctoring Snapshot: ${selectedSnapshot.type}`}
+                    onError={() => setLightboxImgError(true)}
+                    style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 190px)', objectFit: 'contain', display: 'block', borderRadius: '4px' }}
+                  />
+                ) : (
+                  <div style={{ color: '#94a3b8', textAlign: 'center', padding: '24px 16px', maxWidth: '460px' }}>
+                    <CameraOff size={34} style={{ color: '#64748b', margin: '0 auto 10px auto', display: 'block' }} />
+                    <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#e2e8f0', marginBottom: '6px' }}>
+                      Evidence Snapshot Unavailable
+                    </div>
+                    <div style={{ fontSize: '8.5pt', color: '#94a3b8', lineHeight: 1.45 }}>
+                      This captured evidence image could not be loaded from storage (missing or expired from temporary local disk).
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+              {selectedSnapshot.details && (
+                <div style={{ padding: '12px 18px', backgroundColor: '#f8fafc', borderTop: '1px solid #e2e8f0', fontSize: '8.5pt', color: '#334155', flexShrink: 0 }}>
+                  <strong>Details:</strong> {selectedSnapshot.details}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(modalMarkup, document.body) : modalMarkup;
+      })()}
 
       {activeTab === 'proctoring' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: "'Roboto', -apple-system, sans-serif" }}>
@@ -550,14 +729,16 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 justifyContent: 'center',
                 position: 'relative'
               }}>
-                {baselinePhotoUrl ? (
+                {baselinePhotoUrl && !baselineImgError ? (
                   <>
-                    <img 
-                      src={resolveSnapshotUrl(baselinePhotoUrl)} 
-                      alt="Baseline Identity" 
+                    <img
+                      src={resolveSnapshotUrl(baselinePhotoUrl)}
+                      alt="Baseline Identity"
+                      onError={() => setBaselineImgError(true)}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                     <button
+                      type="button"
                       onClick={() => setSelectedSnapshot({ url: baselinePhotoUrl, type: 'BASELINE_REFERENCE', timestamp: sub.startedAt || new Date(), details: 'Initial onboarding baseline identity photograph.' })}
                       style={{
                         position: 'absolute',
@@ -580,8 +761,14 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                   </>
                 ) : (
                   <div style={{ textAlign: 'center', color: '#94a3b8', padding: '10px' }}>
-                    <Camera size={24} style={{ marginBottom: '4px' }} />
-                    <div style={{ fontSize: '7.5pt' }}>No Baseline Photo</div>
+                    {baselineImgError ? (
+                      <CameraOff size={24} style={{ margin: '0 auto 4px auto', display: 'block', color: '#64748b' }} />
+                    ) : (
+                      <Camera size={24} style={{ margin: '0 auto 4px auto', display: 'block' }} />
+                    )}
+                    <div style={{ fontSize: '7.5pt', color: baselineImgError ? '#64748b' : '#94a3b8' }}>
+                      {baselineImgError ? 'Baseline Photo Unavailable' : 'No Baseline Photo'}
+                    </div>
                   </div>
                 )}
               </div>
@@ -605,7 +792,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                     color: isCompleted ? '#475569' : '#15803d',
                     border: `1px solid ${isCompleted ? '#cbd5e1' : '#bbf7d0'}`
                   }}>
-                    {isCompleted ? 'Finished' : 'In Progress'}
+                    {isCompleted ? (status === 'evaluated' ? 'Evaluated' : status === 'disqualified' ? 'Disqualified' : 'Finished') : 'In Progress'}
                   </span>
                 </div>
 
@@ -871,7 +1058,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                             alt={snap.type} 
                             onError={(e) => {
                               e.target.onerror = null;
-                              e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 160 110"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="11" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Snapshot Stored</text></svg>';
+                              e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="110" viewBox="0 0 160 110"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="11" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Snapshot Unavailable</text></svg>';
                             }}
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />
@@ -953,10 +1140,12 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
 
                     <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
                       <div style={{ fontSize: '8pt', color: '#64748b', fontWeight: 'bold' }}>Report Filing Status</div>
-                      <div style={{ fontSize: '11pt', fontWeight: 'bold', color: eirfData.existingReport ? '#0284c7' : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? '#d97706' : '#166534'), marginTop: '4px' }}>
+                      <div style={{ fontSize: '11pt', fontWeight: 'bold', color: eirfData.existingReport ? '#0284c7' : (eirfData.pipelineStatus === 'FAILED' ? '#be123c' : ((eirfData.hasEirfFlag || eirfData.eirfNoticeEmailSent || sub.hasEirfFlag) ? '#d97706' : '#166534')), marginTop: '4px' }}>
                         {eirfData.existingReport 
-                          ? (eirfData.existingReport.verificationStatus || eirfData.existingReport.status) 
-                          : ((eirfData.hasEirfFlag || sub.hasEirfFlag) ? 'Filing Pending' : 'No EIRF Required')}
+                          ? (eirfData.existingReport.status || 'pending_review').toUpperCase()
+                          : (eirfData.pipelineStatus === 'FAILED'
+                              ? 'Dispatch Failed'
+                              : ((eirfData.hasEirfFlag || sub.hasEirfFlag) ? (eirfData.isExpired ? 'Filing Expired' : 'Filing Pending') : 'No EIRF Required'))}
                       </div>
                     </div>
                   </div>
@@ -966,9 +1155,132 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
               {/* Submitted EIRF Report Audit */}
               {!eirfData.existingReport ? (
                 (eirfData.hasEirfFlag || sub.hasEirfFlag) ? (
-                  <div style={{ padding: '20px', backgroundColor: '#f0f9ff', borderRadius: '4px', border: '1px solid #bae6fd', color: '#0369a1', fontSize: '9pt' }}>
-                    <strong>Filing Link Sent via Email:</strong> The candidate has been flagged for proctoring review (&gt;5s individual major violation, &gt;5% exam duration minor warning threshold, or emergency trigger). An official EIRF filing link was dispatched to the candidate's email.
-                  </div>
+                  eirfData.pipelineStatus === 'FAILED' ? (
+                    <div style={{ padding: '16px 20px', backgroundColor: '#fff1f2', borderRadius: '6px', border: '1px solid #fecdd3', color: '#9f1239', fontSize: '9pt' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <ShieldAlert size={18} style={{ color: '#e11d48' }} />
+                        <strong style={{ fontSize: '10pt', color: '#9f1239' }}>EIRF Filing Notice Dispatch Failed</strong>
+                      </div>
+                      <div style={{ color: '#881337', marginBottom: '12px', lineHeight: 1.5 }}>
+                        The automated EIRF filing invitation email could not be delivered to the examinee.
+                        {eirfData.lastPipelineError && (
+                          <span style={{ fontWeight: 'bold' }}> Reason: {eirfData.lastPipelineError}.</span>
+                        )}
+                        {' '}Candidate has not received their filing link. Please enter candidate email below to dispatch the notice, or copy the direct filing link.
+                      </div>
+
+                      {/* Email Input + Dispatch Button */}
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+                        <input
+                          type="email"
+                          placeholder="Enter candidate email (e.g. examinee@example.com)"
+                          value={candidateEmailInput}
+                          onChange={e => setCandidateEmailInput(e.target.value)}
+                          disabled={isDispatchingNotice}
+                          style={{
+                            padding: '7px 12px',
+                            fontSize: '8.5pt',
+                            border: '1px solid #fda4af',
+                            borderRadius: '4px',
+                            minWidth: '280px',
+                            backgroundColor: '#ffffff',
+                            color: '#1e293b'
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleDispatchEirfNotice(candidateEmailInput)}
+                          disabled={isDispatchingNotice || !candidateEmailInput.trim()}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '7px 14px',
+                            backgroundColor: '#e11d48',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '8.5pt',
+                            fontWeight: 'bold',
+                            cursor: (isDispatchingNotice || !candidateEmailInput.trim()) ? 'not-allowed' : 'pointer',
+                            opacity: (isDispatchingNotice || !candidateEmailInput.trim()) ? 0.7 : 1
+                          }}
+                        >
+                          {isDispatchingNotice ? <Loader2 size={13} className="spin-smooth" /> : <Send size={13} />}
+                          <span>{isDispatchingNotice ? 'Dispatching...' : 'Save Email & Dispatch EIRF Notice'}</span>
+                        </button>
+
+                        {eirfData.magicLink && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyDirectLink(eirfData.magicLink)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '7px 12px',
+                              backgroundColor: '#ffffff',
+                              color: '#0369a1',
+                              border: '1px solid #bae6fd',
+                              borderRadius: '4px',
+                              fontSize: '8.5pt',
+                              fontWeight: '500',
+                              cursor: 'pointer'
+                            }}
+                            title="Copy secure candidate EIRF filing link"
+                          >
+                            {copiedLink ? <Check size={13} style={{ color: '#10b981' }} /> : <Copy size={13} />}
+                            <span>{copiedLink ? 'Link Copied!' : 'Copy Direct Filing Link'}</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {dispatchSuccess && (
+                        <div style={{ color: '#047857', fontWeight: 'bold', marginTop: '6px', fontSize: '8.5pt' }}>
+                          ✓ {dispatchSuccess}
+                        </div>
+                      )}
+                      {dispatchError && (
+                        <div style={{ color: '#b91c1c', fontWeight: 'bold', marginTop: '6px', fontSize: '8.5pt' }}>
+                          ✕ {dispatchError}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', backgroundColor: eirfData.isExpired ? '#fef2f2' : '#f0f9ff', borderRadius: '4px', border: `1px solid ${eirfData.isExpired ? '#fecaca' : '#bae6fd'}`, color: eirfData.isExpired ? '#b91c1c' : '#0369a1', fontSize: '9pt' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                        <div>
+                          <strong>{eirfData.isExpired ? '45-Minute EIRF Filing Window Expired (No Candidate Report Filed):' : 'Filing Link Sent via Email:'}</strong>{' '}
+                          {eirfData.isExpired
+                            ? 'The candidate did not file an Emergency Incident Report within the 45-minute window. Committee members may still issue a binding final adjudication below.'
+                            : `The candidate has been flagged for proctoring review (>5s individual major violation, >5% exam duration minor warning threshold, or emergency trigger). An official EIRF filing link was dispatched to the candidate's email${eirfData.candidateEmail ? ` (${eirfData.candidateEmail})` : ''}.`}
+                        </div>
+                        {eirfData.magicLink && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyDirectLink(eirfData.magicLink)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              padding: '5px 10px',
+                              backgroundColor: '#ffffff',
+                              color: '#0369a1',
+                              border: '1px solid #bae6fd',
+                              borderRadius: '4px',
+                              fontSize: '8pt',
+                              fontWeight: '500',
+                              cursor: 'pointer'
+                            }}
+                            title="Copy secure candidate EIRF filing link"
+                          >
+                            {copiedLink ? <Check size={12} style={{ color: '#10b981' }} /> : <Copy size={12} />}
+                            <span>{copiedLink ? 'Link Copied!' : 'Copy Direct Filing Link'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
                 ) : (
                   <div style={{ padding: '20px', backgroundColor: '#f0fdf4', borderRadius: '4px', border: '1px solid #bbf7d0', color: '#166534', fontSize: '9pt' }}>
                     <strong>No EIRF Required:</strong> The candidate completed the examination session within standard compliance parameters (all individual major warnings &le; 5s, minor warnings &le; 5% of actual exam duration). No incident report filing was required or dispatched.
@@ -978,17 +1290,20 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                   <div style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1', padding: '15px', borderRadius: '4px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                      <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Report Ref: {eirfData.existingReport.reportId}</span>
+                      <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>
+                        Report Ref: {eirfData.existingReport.reportId}
+                        {(eirfData.submissionRefId || eirfData.existingReport.submissionRefId) ? ` | Submission #${eirfData.submissionRefId || eirfData.existingReport.submissionRefId}` : ''}
+                      </span>
                       <span style={{
                         fontSize: '8pt',
                         fontWeight: 'bold',
                         padding: '2px 8px',
                         borderRadius: '12px',
-                        backgroundColor: eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#ecfdf5' : '#fef2f2',
-                        color: eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#047857' : '#b91c1c',
-                        border: `1px solid ${eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#a7f3d0' : '#fecaca'}`
+                        backgroundColor: '#ecfdf5',
+                        color: '#047857',
+                        border: '1px solid #a7f3d0'
                       }}>
-                        {eirfData.existingReport.verificationStatus}
+                        TELEMETRY VERIFIED
                       </span>
                     </div>
 
@@ -996,24 +1311,21 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                       <strong>Primary Trigger / Cause:</strong> <span style={{ color: '#0284c7', fontWeight: 'bold' }}>{eirfData.existingReport.primaryCause}</span>
                     </div>
 
-                    {/* Payload Verification Match Card */}
+                    {/* Telemetry Integrity Status Card */}
                     <div style={{
-                      backgroundColor: eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#f0fdf4' : (eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' ? '#fffbeb' : '#fef2f2'),
-                      border: `1px solid ${eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#bbf7d0' : (eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' ? '#fde68a' : '#fecaca')}`,
+                      backgroundColor: '#f0fdf4',
+                      border: '1px solid #bbf7d0',
                       borderRadius: '6px',
                       padding: '12px 14px',
                       marginBottom: '15px'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                        <strong style={{ fontSize: '8.5pt', color: eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' ? '#166534' : (eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' ? '#b45309' : '#991b1b') }}>
-                          Payload Cross-Verification Status: {eirfData.existingReport.verificationStatus}
+                        <strong style={{ fontSize: '8.5pt', color: '#166534' }}>
+                          Telemetry Integrity Status: TELEMETRY_VERIFIED
                         </strong>
                       </div>
                       <p style={{ fontSize: '8pt', margin: 0, color: '#475569', lineHeight: 1.4 }}>
-                        {eirfData.existingReport.verificationStatus === 'VERIFIED_MATCH' && "Local client payload match verified against server submission telemetry."}
-                        {eirfData.existingReport.verificationStatus === 'PAYLOAD_MISSING' && "Candidate did not attach an encrypted local payload file (.eirf). Verification evaluated via server telemetry."}
-                        {eirfData.existingReport.verificationStatus === 'DISCREPANCY_FLAGGED' && "Discrepancy detected between uploaded client payload and server submission record."}
-                        {eirfData.existingReport.verificationStatus === 'DECRYPTION_FAILED' && "Failed to decrypt uploaded payload file using system secret key."}
+                        Verified against authoritative server proctoring telemetry, event timestamps, and continuous webcam snapshots.
                       </p>
                       {eirfData.existingReport.verificationDetails?.discrepancies?.length > 0 && (
                         <ul style={{ margin: '6px 0 0 0', paddingLeft: '18px', fontSize: '8pt', color: '#b91c1c' }}>
@@ -1032,7 +1344,8 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                                        (sub.eirfProofUrl ? sub.eirfProofUrl : '');
                       if (!proofUrl) return null;
                       const resolvedUrl = resolveSnapshotUrl(proofUrl);
-                      const isImg = /\.(png|jpe?g|webp|gif|bmp)(\?.*)?$/i.test(proofUrl) || proofUrl.includes('cloudinary.com') || proofUrl.startsWith('data:image/');
+                      const isPdf = /\.pdf(\?.*)?$/i.test(proofUrl) || proofUrl.includes('/raw/upload/') || proofUrl.includes('/media/raw/');
+                      const isImg = !isPdf && (/\.(png|jpe?g|webp|gif|bmp)(\?.*)?$/i.test(proofUrl) || proofUrl.includes('cloudinary.com') || proofUrl.includes('/media/') || proofUrl.includes('/public/') || proofUrl.startsWith('data:image/'));
 
                       return (
                         <div style={{
@@ -1050,6 +1363,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                             <button
                               type="button"
                               onClick={() => {
+                                setProofImgError(false);
                                 setProofPreviewUrl(resolvedUrl);
                                 setPreviewProofModalOpen(true);
                               }}
@@ -1067,7 +1381,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                                 gap: '4px'
                               }}
                             >
-                              <ZoomIn size={12} /> Click to Enlarge
+                              <ZoomIn size={12} /> {isPdf ? 'Preview PDF' : 'Click to Enlarge'}
                             </button>
                           </div>
 
@@ -1075,6 +1389,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                             {isImg ? (
                               <div
                                 onClick={() => {
+                                  setProofImgError(false);
                                   setProofPreviewUrl(resolvedUrl);
                                   setPreviewProofModalOpen(true);
                                 }}
@@ -1095,25 +1410,33 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                   onError={(e) => {
                                     e.target.onerror = null;
-                                    e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 120 80"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="10" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Proof Document</text></svg>';
+                                    e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><rect fill="%231e293b" width="100%" height="100%"/><text fill="%2394a3b8" font-size="10" font-family="sans-serif" x="50%" y="50%" text-anchor="middle" dominant-baseline="middle">Proof Unavailable</text></svg>';
                                   }}
                                 />
                               </div>
                             ) : (
-                              <div style={{
-                                width: '120px',
-                                height: '80px',
-                                backgroundColor: '#eff6ff',
-                                borderRadius: '4px',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                border: '1px solid #bfdbfe',
-                                flexShrink: 0
-                              }}>
+                              <div
+                                onClick={() => {
+                                  setProofImgError(false);
+                                  setProofPreviewUrl(resolvedUrl);
+                                  setPreviewProofModalOpen(true);
+                                }}
+                                style={{
+                                  width: '120px',
+                                  height: '80px',
+                                  backgroundColor: '#eff6ff',
+                                  borderRadius: '4px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  border: '1px solid #bfdbfe',
+                                  cursor: 'pointer',
+                                  flexShrink: 0
+                                }}
+                              >
                                 <ImageIcon size={24} style={{ color: '#2563eb', marginBottom: '4px' }} />
-                                <span style={{ fontSize: '7.5pt', color: '#1e40af', fontWeight: 'bold' }}>Document File</span>
+                                <span style={{ fontSize: '7.5pt', color: '#1e40af', fontWeight: 'bold' }}>{isPdf ? 'PDF Document' : 'Document File'}</span>
                               </div>
                             )}
 
@@ -1198,6 +1521,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                                       <button
                                         type="button"
                                         onClick={() => {
+                                          setProofImgError(false);
                                           setProofPreviewUrl(resolveSnapshotUrl(qAns.fileUrl));
                                           setPreviewProofModalOpen(true);
                                         }}
@@ -1300,10 +1624,9 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                           Category: <strong>{eirfData.existingReport.resolutionCategory || 'N/A'}</strong> | Remediation: <strong>{eirfData.existingReport.remediationAction || 'N/A'}</strong>
                         </div>
                       </div>
-                      <a
-                        href={`${API_BASE}/test/eirf/verdict-pdf/${eirfData.existingReport.reportId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={handleOpenVerdictPdf}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
@@ -1315,74 +1638,76 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                           borderRadius: '4px',
                           fontSize: '8pt',
                           fontWeight: 'bold',
-                          textDecoration: 'none'
+                          cursor: 'pointer'
                         }}
                       >
                         <ExternalLink size={13} /> View Official Signed PDF Verdict
-                      </a>
+                      </button>
                     </div>
                   )}
+                </div>
+              )}
 
-                  {/* Admin Decision Actions */}
-                  <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '4px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Committee Review & Action</div>
-                    {actionSuccess && (
-                      <div style={{ padding: '8px 12px', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857', borderRadius: '4px', fontSize: '8.5pt', fontWeight: 'bold' }}>
-                        {actionSuccess}
-                      </div>
-                    )}
-                    <textarea
-                      placeholder="Add administrative remarks or committee notes..."
-                      value={adminRemarks}
-                      onChange={e => setAdminRemarks(e.target.value)}
-                      rows={2}
-                      className="cf-input"
-                      style={{ fontSize: '8.5pt', padding: '8px' }}
-                    />
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPendingActionType('approve');
-                          setIsCourseModalOpen(true);
-                        }}
-                        style={{
-                          flex: 1,
-                          backgroundColor: '#ecfdf5',
-                          border: '1px solid #a7f3d0',
-                          color: '#047857',
-                          padding: '8px',
-                          fontSize: '8.5pt',
-                          fontWeight: 'bold',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        Approve EIRF Report
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPendingActionType('reject');
-                          setIsCourseModalOpen(true);
-                        }}
-                        style={{
-                          flex: 1,
-                          backgroundColor: '#fef2f2',
-                          border: '1px solid #fecaca',
-                          color: '#b91c1c',
-                          padding: '8px',
-                          fontSize: '8.5pt',
-                          fontWeight: 'bold',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        Reject EIRF Report
-                      </button>
+              {/* Admin Decision Actions (Available for filed EIRF or flagged/expired submissions) */}
+              {(eirfData.existingReport || eirfData.hasEirfFlag || sub.hasEirfFlag) && (
+                <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '4px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Committee Review &amp; Action</div>
+                  {actionSuccess && (
+                    <div style={{ padding: '8px 12px', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857', borderRadius: '4px', fontSize: '8.5pt', fontWeight: 'bold' }}>
+                      {actionSuccess}
                     </div>
+                  )}
+                  <textarea
+                    placeholder="Add administrative remarks or committee notes..."
+                    value={adminRemarks}
+                    onChange={e => setAdminRemarks(e.target.value)}
+                    rows={2}
+                    className="cf-input"
+                    style={{ fontSize: '8.5pt', padding: '8px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingActionType('approve');
+                        setIsCourseModalOpen(true);
+                      }}
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#ecfdf5',
+                        border: '1px solid #a7f3d0',
+                        color: '#047857',
+                        padding: '8px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Approve EIRF Report
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingActionType('reject');
+                        setIsCourseModalOpen(true);
+                      }}
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        color: '#b91c1c',
+                        padding: '8px',
+                        fontSize: '8.5pt',
+                        fontWeight: 'bold',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Reject EIRF Report
+                    </button>
                   </div>
                 </div>
               )}
@@ -1392,30 +1717,39 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
       )}
 
       {/* Admin Course Selection & Verdict Confirmation Modal */}
-      {isCourseModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(3px)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '16px'
-        }}>
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: '8px',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-            maxWidth: '480px',
-            width: '100%',
-            padding: '20px',
-            border: '1px solid #e2e8f0'
-          }}>
+      {isCourseModalOpen && (() => {
+        const courseModalMarkup = (
+          <div
+            onClick={() => { if (!submittingAction) setIsCourseModalOpen(false); }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(3px)',
+              WebkitBackdropFilter: 'blur(3px)',
+              zIndex: 99999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px',
+              boxSizing: 'border-box',
+              overflowY: 'auto'
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '8px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                maxWidth: '480px',
+                width: '100%',
+                maxHeight: 'calc(100vh - 32px)',
+                overflowY: 'auto',
+                padding: '20px',
+                border: '1px solid #e2e8f0'
+              }}
+            >
             <h3 style={{ margin: '0 0 8px 0', fontSize: '11pt', color: '#002147', fontWeight: 'bold' }}>
               Select Academic Course for EIRF Verdict PDF
             </h3>
@@ -1593,70 +1927,96 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                 {submittingAction ? 'Processing...' : `Confirm & ${pendingActionType === 'approve' ? 'Approve EIRF' : 'Reject EIRF'}`}
               </button>
             </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(courseModalMarkup, document.body) : courseModalMarkup;
+      })()}
 
       {/* Disruption Evidence Proof Lightbox Zoom Modal */}
-      {previewProofModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.85)',
-          backdropFilter: 'blur(4px)',
-          zIndex: 10000,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px'
-        }}>
-          <div style={{
-            maxWidth: '90vw',
-            maxHeight: '90vh',
-            backgroundColor: '#ffffff',
-            borderRadius: '8px',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
-              <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <ImageIcon size={15} style={{ color: '#0284c7' }} /> Candidate Disruption Supporting Proof
+      {previewProofModalOpen && (() => {
+        const proofModalMarkup = (
+          <div
+            onClick={() => setPreviewProofModalOpen(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.85)',
+              backdropFilter: 'blur(4px)',
+              WebkitBackdropFilter: 'blur(4px)',
+              zIndex: 100000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+              boxSizing: 'border-box',
+              overflowY: 'auto'
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                maxWidth: '90vw',
+                maxHeight: '90vh',
+                backgroundColor: '#ffffff',
+                borderRadius: '8px',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc', flexShrink: 0 }}>
+                <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <ImageIcon size={15} style={{ color: '#0284c7' }} /> Candidate Disruption Supporting Proof
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <a
+                    href={proofPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: '8pt', color: '#0284c7', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 'bold' }}
+                  >
+                    <ExternalLink size={12} /> Open Raw Link
+                  </a>
+                  <button
+                    type="button"
+                    aria-label="Close proof preview"
+                    onClick={() => setPreviewProofModalOpen(false)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <a
-                  href={proofPreviewUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  download="Disruption_Proof.png"
-                  style={{ fontSize: '8pt', color: '#0284c7', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 'bold' }}
-                >
-                  <ExternalLink size={12} /> Open Raw Link
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setPreviewProofModalOpen(false)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
-                >
-                  <X size={18} />
-                </button>
+              <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto', backgroundColor: '#0f172a', minWidth: '320px', minHeight: '240px', flex: 1 }}>
+                {/\.pdf(\?.*)?$/i.test(proofPreviewUrl) || proofPreviewUrl.includes('/raw/upload/') || proofPreviewUrl.includes('/media/raw/') ? (
+                  <iframe
+                    title="Disruption Proof PDF"
+                    src={proofPreviewUrl}
+                    style={{ width: '75vw', height: '75vh', border: 'none', borderRadius: '4px', backgroundColor: '#ffffff' }}
+                  />
+                ) : !proofImgError && proofPreviewUrl ? (
+                  <img
+                    src={proofPreviewUrl}
+                    alt="Disruption Proof Attachment"
+                    onError={() => setProofImgError(true)}
+                    style={{ maxWidth: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '4px', display: 'block' }}
+                  />
+                ) : (
+                  <div style={{ color: '#94a3b8', textAlign: 'center', padding: '24px 16px' }}>
+                    <CameraOff size={32} style={{ color: '#64748b', margin: '0 auto 8px auto', display: 'block' }} />
+                    <div style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#e2e8f0' }}>Supporting Proof Image Unavailable</div>
+                    <div style={{ fontSize: '8pt', marginTop: '4px' }}>Use Open Raw Link above if hosted externally.</div>
+                  </div>
+                )}
               </div>
-            </div>
-            <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto', backgroundColor: '#0f172a', minWidth: '320px', minHeight: '240px' }}>
-              <img
-                src={proofPreviewUrl}
-                alt="Disruption Proof Attachment"
-                style={{ maxWidth: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '4px' }}
-              />
             </div>
           </div>
-        </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(proofModalMarkup, document.body) : proofModalMarkup;
+      })()}
     </div>
   );
 }

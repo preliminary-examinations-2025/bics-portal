@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { RefreshCw } from 'lucide-react';
 import { API_BASE } from '../../config';
 
@@ -174,22 +175,24 @@ export default function AdminTickets({
       </div>
 
       {/* ADMIN RESOLUTION DETAIL MODAL */}
-      {selectedAdminTicket && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.4)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
+      {selectedAdminTicket && (() => {
+        const modalMarkup = (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 99999,
+            padding: '16px'
+          }}>
           <div className="cf-card" style={{ width: '90%', maxWidth: '600px', padding: '20px', border: '1px solid #b9c9fe', boxShadow: 'none', backgroundColor: '#fff', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Ticket Details & Resolution</span>
+            <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', alignItems: 'center' }}>
+              <span style={{ marginRight: 'auto' }}>Ticket Details & Resolution</span>
               <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedAdminTicket(null)}>Close</button>
             </div>
 
@@ -267,7 +270,9 @@ export default function AdminTickets({
             </form>
           </div>
         </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(modalMarkup, document.body) : modalMarkup;
+      })()}
     </div>
   );
 }

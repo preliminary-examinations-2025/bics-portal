@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Code, Plus, Trash2, Edit2, Play, RefreshCw, CheckCircle, AlertCircle, FileText, ChevronRight } from 'lucide-react';
 
 export default function AdminKataManager({ API_BASE, token: propToken }) {
@@ -1269,20 +1270,21 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
             )}
 
             {/* CREATE / EDIT QUESTION MODAL */}
-            {isModalOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: 'rgba(0,0,0,0.5)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 9999,
-                    padding: '20px'
-                }}>
+            {isModalOpen && (() => {
+                const modalMarkup = (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999,
+                        padding: '20px'
+                    }}>
                     <div style={{
                         background: '#ffffff',
                         borderRadius: '8px',
@@ -1540,7 +1542,9 @@ export default function AdminKataManager({ API_BASE, token: propToken }) {
                         </form>
                     </div>
                 </div>
-            )}
+                );
+                return typeof document !== 'undefined' ? createPortal(modalMarkup, document.body) : modalMarkup;
+            })()}
         </div>
     );
 }

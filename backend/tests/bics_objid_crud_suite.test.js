@@ -1,24 +1,30 @@
 const http = require('http');
+const fs = require('fs');
 const mongoose = require('mongoose');
 const { toBicsId, toMongoId, isBicsId, isMongoId, obfuscateObjectIds, deobfuscateBicsIds } = require('../utils/bicsId');
+const { DB_FILE } = require('../config/db');
 
+process.env.NODE_ENV = 'test';
 process.env.PORT = '5003';
 process.env.JWT_SECRET = 'audit_test_secret_key_2026';
 process.env.ADMIN_USER = 'admin';
 process.env.ADMIN_PASS = 'admin123';
-process.env.API_ACCESS_SECRET = 'audit_test_api_access_secret';
+
+const pipePath = process.platform === 'win32'
+    ? `\\\\.\\pipe\\bics_objid_crud_${process.pid}_${Date.now()}`
+    : `/tmp/bics_objid_crud_${process.pid}_${Date.now()}.sock`;
 
 const app = require('../server');
 
-function makeRequest({ method = 'GET', path, headers = {}, body = null, port = 5003 }) {
+function makeRequest({ method = 'GET', path, headers = {}, body = null }) {
     return new Promise((resolve, reject) => {
         const payload = body ? JSON.stringify(body) : null;
         const options = {
-            hostname: '127.0.0.1',
-            port,
+            socketPath: pipePath,
             path,
             method,
             headers: {
+                Host: '127.0.0.1:5003',
                 ...headers,
                 ...(payload ? {
                     'Content-Type': 'application/json',
@@ -50,6 +56,7 @@ async function runCrudAudit() {
     console.log('   STARTING BICS OBJID CRUD & LIFECYCLE AUDIT       ');
     console.log('====================================================\n');
 
+    const dbBackup = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8') : null;
     let server;
     let passed = 0;
     let total = 0;
@@ -67,13 +74,11 @@ async function runCrudAudit() {
 
     try {
         server = await new Promise((resolve) => {
-            const s = app.listen(5003, '127.0.0.1', () => {
-                console.log('[TEST HARNESS] CRUD Audit server listening on port 5003\n');
+            const s = http.createServer(app).listen(pipePath, () => {
+                console.log(`[TEST HARNESS] CRUD Audit server listening on ${pipePath}\n`);
                 resolve(s);
             });
         });
-
-        await new Promise(r => setTimeout(r, 1500));
 
         // 1. Admin login to obtain JWT
         const adminLogin = await makeRequest({
@@ -168,10 +173,20 @@ async function runCrudAudit() {
         console.error('Audit failed with error:', err);
         process.exitCode = 1;
     } finally {
+        if (dbBackup !== null) {
+            try { fs.writeFileSync(DB_FILE, dbBackup, 'utf8'); } catch (_) {}
+        }
+        try {
+            const { stopSubmissionReaper } = require('../workers/submissionReaper');
+            const { stopEirfPipelineWorker } = require('../workers/eirfPipelineWorker');
+            stopSubmissionReaper();
+            stopEirfPipelineWorker();
+        } catch (_) {}
         if (server) {
             server.close();
         }
-        process.exit(process.exitCode || 0);
+        const ok = !process.exitCode && total >= 10 && passed === total;
+        process.exit(ok ? 0 : 1);
     }
 }
 

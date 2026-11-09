@@ -1,6 +1,7 @@
 import React from 'react';
 import Editor from '@monaco-editor/react';
 import { Code, Layers, FileCode, Laptop, Tablet, Smartphone, Terminal, X, HelpCircle, CheckSquare, Award, Info, Loader2 } from 'lucide-react';
+import { resolveWebQuestionDrafts, buildWebPreviewSrcDoc } from '../../utils/webPreviewBuilder';
 
 /**
  * ExamModals: Encompasses the Full Web Studio Modal, Question Info Guidelines Modal,
@@ -230,6 +231,18 @@ export const ExamModals = ({
           </div>
 
           {/* Studio Split Body */}
+          {(() => {
+            const resolvedWeb = resolveWebQuestionDrafts({
+              question: currentQuestion,
+              answer: examAnswers?.[selectedQuestionIndex],
+              selectedQuestionIndex,
+              draftQIdx,
+              draftHtml,
+              draftCss,
+              draftJs
+            });
+            const studioSrcDoc = buildWebPreviewSrcDoc(resolvedWeb);
+            return (
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
             {/* Left Pane: Code Editor */}
             <div style={{ flex: '1 1 50%', width: '50%', borderRight: '1px solid #cbd5e1', display: 'flex', flexDirection: 'column', backgroundColor: '#ffffff' }}>
@@ -238,23 +251,29 @@ export const ExamModals = ({
               </div>
               <div style={{ flex: 1, overflow: 'hidden' }}>
                 <Editor
+                  key={`web_studio_editor_${selectedQuestionIndex}`}
                   height="100%"
                   language={webActiveTab === 'html' ? 'html' : webActiveTab === 'css' ? 'css' : 'javascript'}
                   theme="vs-light"
                   onMount={handleEditorMount}
-                  value={(() => {
-                    const isCurrent = (draftQIdx === selectedQuestionIndex);
-                    const activeAns = examAnswers[selectedQuestionIndex];
-                    if (webActiveTab === 'html') return isCurrent ? draftHtml : (activeAns?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
-                    if (webActiveTab === 'css') return isCurrent ? draftCss : (activeAns?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
-                    return isCurrent ? draftJs : (activeAns?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
-                  })()}
+                  value={
+                    webActiveTab === 'html'
+                      ? resolvedWeb.html
+                      : webActiveTab === 'css'
+                        ? resolvedWeb.css
+                        : resolvedWeb.js
+                  }
                   onChange={(val) => {
-                    setDraftQIdx(selectedQuestionIndex);
                     const value = val || '';
-                    let newHtml = draftHtml;
-                    let newCss = draftCss;
-                    let newJs = draftJs;
+                    let newHtml = resolvedWeb.html;
+                    let newCss = resolvedWeb.css;
+                    let newJs = resolvedWeb.js;
+                    if (draftQIdx !== selectedQuestionIndex) {
+                      if (webActiveTab !== 'html') setDraftHtml(newHtml);
+                      if (webActiveTab !== 'css') setDraftCss(newCss);
+                      if (webActiveTab !== 'js') setDraftJs(newJs);
+                    }
+                    setDraftQIdx(selectedQuestionIndex);
                     if (webActiveTab === 'html') {
                       newHtml = value;
                       setDraftHtml(value);
@@ -312,71 +331,14 @@ export const ExamModals = ({
                   transition: 'all 0.2s ease',
                   border: '1px solid #cbd5e1'
                 }}>
-                  {(() => {
-                    const activeAnsForWeb = examAnswers?.[selectedQuestionIndex];
-                    const isCurrent = (draftQIdx === selectedQuestionIndex);
-                    const livePreviewHtml = isCurrent ? draftHtml : (activeAnsForWeb?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
-                    const livePreviewCss = isCurrent ? draftCss : (activeAnsForWeb?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
-                    const livePreviewJs = isCurrent ? draftJs : (activeAnsForWeb?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
-
-                    return (
-                      <iframe
-                        title="Full Web Studio Sandbox"
-                        srcDoc={`<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <base href="https://invalid-sandbox-origin.invalid/">
-    <style>
-      html, body {
-        margin: 0;
-        padding: 10px;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        word-wrap: break-word;
-        box-sizing: border-box;
-      }
-      ${livePreviewCss || ''}
-    </style>
-    <script>
-      (function() {
-        var _log = console.log;
-        var _err = console.error;
-        console.log = function() {
-          _log.apply(console, arguments);
-          var text = Array.from(arguments).join(' ');
-          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'log', text: text }, '*');
-          window.parent.postMessage({ type: 'IFRAME_CONSOLE_LOG', level: 'log', text: text }, '*');
-        };
-        console.error = function() {
-          _err.apply(console, arguments);
-          var text = Array.from(arguments).join(' ');
-          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: text }, '*');
-          window.parent.postMessage({ type: 'IFRAME_CONSOLE_LOG', level: 'error', text: text }, '*');
-        };
-        window.onerror = function(msg, url, line) {
-          var errText = msg + (line ? ' (line ' + line + ')' : '');
-          window.parent.postMessage({ type: 'WEB_CONSOLE_LOG', level: 'error', text: errText }, '*');
-          window.parent.postMessage({ type: 'IFRAME_CONSOLE_LOG', level: 'error', text: errText }, '*');
-        };
-        document.addEventListener('DOMContentLoaded', function() {
-          try {
-            ${livePreviewJs || ''}
-          } catch(err) {
-            console.error(err.message || String(err));
-          }
-        });
-      })();
-    </script>
-  </head>
-  <body>
-    ${livePreviewHtml || ''}
-  </body>
-</html>`}
-                        style={{ width: '100%', height: '100%', border: 'none' }}
-                        sandbox="allow-scripts"
-                      />
-                    );
-                  })()}
+                  <iframe
+                    key={`web_studio_preview_q_${selectedQuestionIndex}_${currentQuestion.id || currentQuestion._id || ''}`}
+                    id="web-studio-sandbox-preview"
+                    title="Full Web Studio Sandbox"
+                    srcDoc={studioSrcDoc}
+                    style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                    sandbox="allow-scripts allow-modals"
+                  />
                 </div>
               </div>
 
@@ -419,6 +381,8 @@ export const ExamModals = ({
               )}
             </div>
           </div>
+            );
+          })()}
         </div>
       )}
 

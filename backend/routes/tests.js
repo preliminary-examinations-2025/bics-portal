@@ -2,17 +2,19 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
 const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
-const { encryptEirfPayload } = require('../utils/cipher');
 const { recalculateMCQScore, calculateCodingScoreFast } = require('../utils/scoreCalculator');
-const { sendEirfNoticeEmail } = require('../utils/email');
 const { executeCode } = require('../utils/codeRunner');
 const { verifyToken } = require('../utils/jwt');
 const { authenticateToken, requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
-const { isBicsId, toMongoId, toBicsId, resolveToObjectId } = require('../utils/bicsId');
+const upload = require('../middleware/upload');
+const { uploadToCloudinary } = require('../config/cloudinary');
+const { isBicsId, toMongoId, toBicsId, resolveToObjectId, generateSubmissionRefId, isSubmissionRefId } = require('../utils/bicsId');
 const { compareFaceBiometrics, isPlaceholderPhoto } = require('../utils/biometricMatcher');
 const { evaluateEirfIncident } = require('../services/eirfEvaluator');
 const { runPipelineTick } = require('../workers/eirfPipelineWorker');
@@ -20,6 +22,99 @@ const { sendTestSubmittedEmail } = require('../services/gmailEmailService');
 const proctoringRouter = require('./proctoring');
 
 const activeSubmissionsProcessing = new Set();
+
+function isSubmissionOwnerForUser(user, submission) {
+    if (!user || !submission) return false;
+    if (user.role === 'admin' || user.role === 'superadmin' || user.isAdmin) return true;
+
+    const userIds = new Set();
+    [user.id, user.studentId, user.username].forEach(val => {
+        if (!val) return;
+        const s = String(val).trim();
+        if (!s) return;
+        userIds.add(s);
+        const resolved = resolveToObjectId(s);
+        if (resolved) {
+            userIds.add(String(resolved));
+            const bics = toBicsId(String(resolved));
+            if (bics) userIds.add(bics);
+        }
+    });
+
+    const subRefs = [submission.candidateId, submission.studentId];
+    for (const ref of subRefs) {
+        if (!ref) continue;
+        const s = String(ref).trim();
+        if (!s) continue;
+        if (userIds.has(s)) return true;
+        const resolved = resolveToObjectId(s);
+        if (resolved && userIds.has(String(resolved))) return true;
+    }
+    return false;
+}
+
+async function allocateUniqueSubmissionRefId(jsonDb = null) {
+    let refId = generateSubmissionRefId();
+    if (dbState.useMongo) {
+        let existing = await TestSubmissionModel.findOne({ submissionRefId: refId }).select('_id').lean();
+        let guard = 0;
+        while (existing && guard < 20) {
+            refId = generateSubmissionRefId();
+            existing = await TestSubmissionModel.findOne({ submissionRefId: refId }).select('_id').lean();
+            guard++;
+        }
+    } else {
+        const db = jsonDb || getJSONData();
+        const existingSet = new Set((db.testSubmissions || []).map(s => String(s.submissionRefId || '')).filter(Boolean));
+        let guard = 0;
+        while (existingSet.has(refId) && guard < 20) {
+            refId = generateSubmissionRefId();
+            guard++;
+        }
+    }
+    return refId;
+}
+
+async function findActiveSubmissionByParam(idParam, selectProjection = null) {
+    if (!idParam) return null;
+    const rawId = String(idParam).trim();
+    const resolvedId = resolveToObjectId(rawId);
+
+    if (dbState.useMongo) {
+        if (isSubmissionRefId(rawId)) {
+            const q = TestSubmissionModel.findOne({ submissionRefId: rawId, isDeleted: { $ne: true } });
+            if (selectProjection) q.select(selectProjection);
+            const doc = await q;
+            if (doc) return doc;
+        }
+        if (mongoose.Types.ObjectId.isValid(resolvedId)) {
+            const q = TestSubmissionModel.findOne({ _id: resolvedId, isDeleted: { $ne: true } });
+            if (selectProjection) q.select(selectProjection);
+            const doc = await q;
+            if (doc) return doc;
+        }
+        const q = TestSubmissionModel.findOne({
+            $or: [
+                { _id: mongoose.Types.ObjectId.isValid(resolvedId) ? resolvedId : undefined },
+                { id: resolvedId },
+                { id: rawId },
+                { submissionRefId: rawId }
+            ].filter(Boolean),
+            isDeleted: { $ne: true }
+        });
+        if (selectProjection) q.select(selectProjection);
+        return await q;
+    }
+
+    const db = getJSONData();
+    const subs = db.testSubmissions || [];
+    return subs.find(s => !s.isDeleted && (
+        String(s.submissionRefId || '') === rawId ||
+        String(s.id || s._id || '') === resolvedId ||
+        String(s.id || s._id || '') === rawId ||
+        (isBicsId(rawId) && toBicsId(s._id || s.id) === rawId)
+    )) || null;
+}
 
 // Delegate proctoring routes so both /api/proctoring and /api/tests/proctoring resolve seamlessly
 router.use('/proctoring', proctoringRouter);
@@ -38,7 +133,7 @@ router.get('/active', requireAuth, async (req, res) => {
                 $or: [{ isPublished: true }, { isPublished: { $exists: false } }],
                 isDeleted: { $ne: true }
             })
-            .select('_id title marks duration startDate endDate instructions isPublished questions._id')
+            .select('_id title course courseCode marks duration startDate endDate instructions isPublished questions._id')
             .lean();
         } else {
             const db = getJSONData();
@@ -90,12 +185,16 @@ router.get('/active', requireAuth, async (req, res) => {
                     }
                 } else {
                     const db = getJSONData();
+                    const candNorm = resolveToObjectId(String(candidateId));
+                    const reqStudId = String(req.user?.studentId || '');
                     (db.testSubmissions || []).forEach(s => {
-                        if (
-                            s.candidateId && s.testId &&
-                            (s.candidateId.toString() === candidateId.toString() || s.studentId === candidateId.toString()) &&
-                            !s.isDeleted
-                        ) {
+                        const sCand = s.candidateId ? String(s.candidateId) : '';
+                        const sCandNorm = sCand ? resolveToObjectId(sCand) : '';
+                        const isMatch = (
+                            (sCand && (sCand === String(candidateId) || sCandNorm === candNorm)) ||
+                            (s.studentId && (String(s.studentId) === String(candidateId) || (reqStudId && String(s.studentId) === reqStudId)))
+                        );
+                        if (isMatch && s.testId && !s.isDeleted) {
                             const tKey = String(s.testId);
                             if (!submissionMap.has(tKey)) {
                                 submissionMap.set(tKey, s);
@@ -165,12 +264,22 @@ router.get('/submitted', requireAuth, async (req, res) => {
         if (dbState.useMongo) {
             const candFilter = buildCandidateQueryFilter(candidateId);
             if (candFilter) {
-                submissions = await TestSubmissionModel.find(candFilter);
+                submissions = await TestSubmissionModel.find({ ...candFilter, isDeleted: { $ne: true } });
             }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submissions = db.testSubmissions.filter(s => s.candidateId && s.candidateId.toString() === candidateId.toString());
+            const candNorm = resolveToObjectId(String(candidateId));
+            const reqStudId = String(req.user?.studentId || '');
+            submissions = db.testSubmissions.filter(s => {
+                if (s.isDeleted) return false;
+                const sCand = s.candidateId ? String(s.candidateId) : '';
+                const sCandNorm = sCand ? resolveToObjectId(sCand) : '';
+                return (
+                    (sCand && (sCand === String(candidateId) || sCandNorm === candNorm)) ||
+                    (s.studentId && (String(s.studentId) === String(candidateId) || (reqStudId && String(s.studentId) === reqStudId)))
+                );
+            });
         }
 
         const enrichedList = await Promise.all(submissions.map(async (subDoc) => {
@@ -178,18 +287,18 @@ router.get('/submitted', requireAuth, async (req, res) => {
             let test = null;
             const testId = sub.testId;
             if (dbState.useMongo) {
-                test = await TestConfigModel.findById(testId);
-                if (test && (!sub.evaluation || sub.evaluation.totalScore == null)) {
+                test = await TestConfigModel.findOne({ _id: testId, isDeleted: { $ne: true } });
+                if (test && (!sub.evaluation || sub.evaluation.totalScore == null) && sub.verificationStatus !== 'annulled' && sub.eirfStatus !== 'rejected') {
                     recalculateMCQScore(sub, test);
                 }
             } else {
                 const db = getJSONData();
                 db.tests = db.tests || [];
-                test = db.tests.find(t => (t.id || t._id).toString() === testId.toString());
+                test = db.tests.find(t => !t.isDeleted && (t.id || t._id).toString() === testId.toString());
                 if (test) {
-                    const dbSub = db.testSubmissions.find(s => s.id === sub.id || s._id === sub._id);
+                    const dbSub = db.testSubmissions.find(s => !s.isDeleted && (s.id === sub.id || s._id === sub._id));
                     if (dbSub) {
-                        if (!dbSub.evaluation || dbSub.evaluation.totalScore == null) {
+                        if ((!dbSub.evaluation || dbSub.evaluation.totalScore == null) && dbSub.verificationStatus !== 'annulled' && dbSub.eirfStatus !== 'rejected') {
                             recalculateMCQScore(dbSub, test);
                             saveJSONData(db);
                         }
@@ -206,6 +315,8 @@ router.get('/submitted', requireAuth, async (req, res) => {
             return {
                 id: testId,
                 title: test.title,
+                course: test.course || '',
+                courseCode: test.courseCode || '',
                 marks: test.marks,
                 startDate: test.startDate,
                 endDate: test.endDate,
@@ -213,11 +324,16 @@ router.get('/submitted', requireAuth, async (req, res) => {
                 verificationStatus: vStatus,
                 submission: {
                     id: sub._id || sub.id,
+                    submissionRefId: sub.submissionRefId || null,
                     status: sub.status,
-                    submittedAt: sub.submittedAt,
+                    verificationStatus: sub.verificationStatus || 'active',
+                    eirfStatus: sub.eirfStatus || 'none',
                     startedAt: sub.startedAt,
+                    submittedAt: sub.submittedAt,
                     createdAt: sub.createdAt,
-                    totalScore: sub.totalScore !== undefined && sub.totalScore !== null ? Number(sub.totalScore) : (sub.evaluation?.totalScore || 0),
+                    totalScore: (sub.verificationStatus === 'annulled' || sub.eirfStatus === 'rejected')
+                        ? 0
+                        : (sub.totalScore !== undefined && sub.totalScore !== null ? Number(sub.totalScore) : (sub.evaluation?.totalScore || 0)),
                     proctoringLog: sub.proctoringLog ? {
                         fullscreenExits: sub.proctoringLog.fullscreenExits || 0,
                         tabSwitches: sub.proctoringLog.tabSwitches || 0,
@@ -232,8 +348,12 @@ router.get('/submitted', requireAuth, async (req, res) => {
                         questionId: a.questionId,
                         type: a.type,
                         score: a.score,
-                        maxScore: a.maxScore,
-                        isManuallyGraded: a.isManuallyGraded
+                        maxPoints: a.maxPoints ?? a.maxScore ?? 0,
+                        maxScore: a.maxPoints ?? a.maxScore ?? 0,
+                        isManuallyGraded: a.isManuallyGraded,
+                        isObjectionResolved: a.isObjectionResolved,
+                        isBonusAwarded: a.isBonusAwarded,
+                        pendingEvaluation: a.pendingEvaluation
                     })),
                     questions: []
                 }
@@ -262,6 +382,43 @@ router.get('/submitted', requireAuth, async (req, res) => {
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: e.message });
+    }
+});
+
+// 2.1 Candidate Grievance / Re-evaluation Proof Upload (JPG, PNG, WEBP, PDF <= 5MB)
+router.post('/upload-proof', requireAuth, upload.single('imageFile'), async (req, res) => {
+    try {
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ success: false, error: "Proof file upload is required." });
+        }
+
+        let fileUrl = '';
+        const useCloudinary = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+
+        if (useCloudinary) {
+            const isPdf = file.mimetype === 'application/pdf';
+            fileUrl = await uploadToCloudinary(file.buffer, 'BICS_2026/proofs', isPdf ? 'raw' : 'image');
+        } else {
+            if (process.env.VERCEL || process.env.RENDER) {
+                return res.status(503).json({ success: false, error: "Cloud file storage is not configured in this deployment environment." });
+            }
+            const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+            if (!fs.existsSync(uploadsDir)) {
+                fs.mkdirSync(uploadsDir, { recursive: true });
+            }
+            const safeName = (file.originalname || 'proof.png').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const fileName = `proof-${Date.now()}-${safeName}`;
+            const filePath = path.join(uploadsDir, fileName);
+            fs.writeFileSync(filePath, file.buffer);
+            const host = `${req.protocol}://${req.get('host')}`;
+            fileUrl = `${host}/public/uploads/${fileName}`;
+        }
+
+        return res.json({ success: true, url: fileUrl });
+    } catch (err) {
+        console.error("Student proof upload failed:", err);
+        return res.status(500).json({ success: false, error: err.message || "Proof upload failed." });
     }
 });
 
@@ -550,13 +707,13 @@ router.get('/biometrics/challenge', requireAuth, (req, res) => {
     const CHALLENGE_ACTIONS = [
         { action: 'TURN_LEFT', instruction: 'Slowly turn your head slightly to the left', targetDurationMs: 1200 },
         { action: 'TURN_RIGHT', instruction: 'Slowly turn your head slightly to the right', targetDurationMs: 1200 },
-        { action: 'TILT_HEAD', instruction: 'Tilt your head slightly to one side', targetDurationMs: 1200 }
+        { action: 'TILT_HEAD', instruction: 'Tilt your head slightly to one side', targetDurationMs: 1200 },
+        { action: 'MOVE_HEAD_DOWN', instruction: 'Slowly move or nod your head slightly downwards', targetDurationMs: 1200 }
     ];
-    // Select 2 distinct sequential challenges
-    const shuffled = [...CHALLENGE_ACTIONS].sort(() => 0.5 - Math.random());
+    // Randomly select 1 active liveness challenge per session
+    const picked = CHALLENGE_ACTIONS[crypto.randomInt(0, CHALLENGE_ACTIONS.length)];
     const challenges = [
-        { step: 1, action: shuffled[0].action, instruction: shuffled[0].instruction },
-        { step: 2, action: shuffled[1].action, instruction: shuffled[1].instruction }
+        { step: 1, action: picked.action, instruction: picked.instruction }
     ];
     const selected = challenges[0];
     const challengeId = `chal_${crypto.randomBytes(8).toString('hex')}`;
@@ -594,23 +751,48 @@ router.get('/biometrics/challenge', requireAuth, (req, res) => {
 // 2.7 Server-Side Identity Verification & Face Match (Phase 2)
 router.post('/biometrics/verify', requireAuth, async (req, res) => {
     let { candidateId, testId, liveFrame, challengeId, challengeTelemetry } = req.body;
+    if (req.user && req.user.role !== 'admin' && !req.isExamTokenAuth) {
+        const userMongo = resolveToObjectId(String(req.user.id || ''));
+        const allowedIds = [
+            String(req.user.id || ''),
+            String(req.user.studentId || ''),
+            String(req.user.username || ''),
+            userMongo,
+            toBicsId(userMongo)
+        ].filter(Boolean);
+        if (candidateId) {
+            const candNorm = resolveToObjectId(String(candidateId));
+            if (candNorm !== userMongo && !allowedIds.includes(String(candidateId))) {
+                return res.status(403).json({ success: false, error: "Access denied: Candidate mismatch." });
+            }
+        }
+        candidateId = req.user.id || req.user.studentId;
+    }
     if (!candidateId && req.user) candidateId = req.user.id || req.user.studentId;
     if (!candidateId) return res.status(400).json({ success: false, error: "Candidate ID is required." });
     if (!liveFrame) return res.status(400).json({ success: false, error: "Live capture frame is required." });
 
     try {
         let candidate = null;
-        const mongoCandId = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+        const mongoCandId = resolveToObjectId(String(candidateId));
 
         if (dbState.useMongo) {
-            candidate = await CandidateModel.findById(mongoCandId).lean();
+            if (mongoose.Types.ObjectId.isValid(mongoCandId)) {
+                candidate = await CandidateModel.findById(mongoCandId).lean();
+            }
             if (!candidate && String(candidateId).length < 24) {
                 candidate = await CandidateModel.findOne({ studentId: String(candidateId) }).lean();
             }
         } else {
             const db = getJSONData();
             db.candidates = db.candidates || [];
-            candidate = db.candidates.find(c => c.id === candidateId || c._id === candidateId || c.studentId === candidateId);
+            candidate = db.candidates.find(c =>
+                String(c.id || '') === String(candidateId) ||
+                String(c._id || '') === String(candidateId) ||
+                String(c.id || '') === mongoCandId ||
+                String(c._id || '') === mongoCandId ||
+                String(c.studentId || '') === String(candidateId)
+            );
         }
 
         const referencePhotoUrl = req.body.registeredPhotoUrl ||
@@ -623,8 +805,12 @@ router.post('/biometrics/verify', requireAuth, async (req, res) => {
         let livenessPassed = false;
         if (challengeId && activeBiometricChallenges.has(challengeId)) {
             const challenge = activeBiometricChallenges.get(challengeId);
+            const chalCandNorm = challenge.candidateId ? resolveToObjectId(String(challenge.candidateId)) : null;
+            const reqUserNorm = req.user?.id ? resolveToObjectId(String(req.user.id)) : null;
+            const candidateMatches = !chalCandNorm || !reqUserNorm || chalCandNorm === reqUserNorm || req.user?.role === 'admin' || String(challenge.candidateId) === String(req.user?.studentId);
+            const actionMatches = !challengeTelemetry?.action || challengeTelemetry.action === challenge.action || (Array.isArray(challengeTelemetry.completedActions) && challengeTelemetry.completedActions.includes(challenge.action));
             const isCompleted = challengeTelemetry?.allCompleted || challengeTelemetry?.actionCompleted;
-            if (Date.now() <= challenge.expiresAt && isCompleted) {
+            if (candidateMatches && actionMatches && Date.now() <= challenge.expiresAt && isCompleted) {
                 livenessPassed = true;
             }
             activeBiometricChallenges.delete(challengeId);
@@ -673,23 +859,12 @@ router.post('/biometrics/continuity/:submissionId', requireAuth, async (req, res
     const { liveFrame } = req.body;
     if (!liveFrame) return res.status(400).json({ success: false, error: "Live frame is required." });
 
-    const mongoSubId = isBicsId(String(submissionId)) ? toMongoId(String(submissionId)) : String(submissionId);
-
     try {
-        let submission = null;
-        let db = null;
-        if (dbState.useMongo) {
-            submission = await TestSubmissionModel.findById(mongoSubId);
-            if (!submission && mongoSubId !== submissionId) {
-                submission = await TestSubmissionModel.findById(submissionId);
-            }
-        } else {
-            db = getJSONData();
-            db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === mongoSubId || s._id === mongoSubId || (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId));
-        }
-
+        const submission = await findActiveSubmissionByParam(submissionId);
         if (!submission) return res.status(404).json({ success: false, error: "Submission not found." });
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
+            return res.status(403).json({ success: false, error: "Access denied: You do not own this examination session." });
+        }
 
         const verifiedPhoto = submission.biometricResult?.verifiedPhotoUrl || submission.baselinePhotoUrl || '';
         if (!verifiedPhoto) {
@@ -707,21 +882,27 @@ router.post('/biometrics/continuity/:submissionId', requireAuth, async (req, res
             };
 
             if (dbState.useMongo) {
-                await TestSubmissionModel.findByIdAndUpdate(mongoSubId, {
+                await TestSubmissionModel.findByIdAndUpdate(submission._id, {
                     $push: { 'proctoringLog.events': eventObj },
                     $set: { 'biometricResult.continuityFlagged': true }
                 });
             } else {
-                submission.proctoringLog = submission.proctoringLog || {};
-                submission.proctoringLog.events = submission.proctoringLog.events || [];
-                submission.proctoringLog.events.push(eventObj);
-                saveJSONData(db);
+                const db = getJSONData();
+                const jsonSub = (db.testSubmissions || []).find(s => !s.isDeleted && String(s._id || s.id) === String(submission._id || submission.id));
+                if (jsonSub) {
+                    jsonSub.proctoringLog = jsonSub.proctoringLog || {};
+                    jsonSub.proctoringLog.events = jsonSub.proctoringLog.events || [];
+                    jsonSub.proctoringLog.events.push(eventObj);
+                    jsonSub.biometricResult = jsonSub.biometricResult || {};
+                    jsonSub.biometricResult.continuityFlagged = true;
+                    saveJSONData(db);
+                }
             }
 
             await logSystemAction(
                 submission.candidateName || submission.studentId || 'Candidate',
                 'PROCTOR_VIOLATION',
-                `Continuous facial identity deviation detected for submission ${submissionId}: ${Math.round(matchResult.similarityScore * 100)}% match.`,
+                `Continuous facial identity deviation detected for submission ${submission.submissionRefId || submissionId}: ${Math.round(matchResult.similarityScore * 100)}% match.`,
                 'warning'
             ).catch(() => {});
         }
@@ -741,17 +922,26 @@ router.post('/biometrics/continuity/:submissionId', requireAuth, async (req, res
 // 3. Get specific test for exam view (Strips answers & hidden test cases)
 router.get('/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
+    const targetTestId = resolveToObjectId(id);
     try {
         let test = null;
         if (dbState.useMongo) {
-            test = await TestConfigModel.findById(id).lean();
+            if (mongoose.Types.ObjectId.isValid(targetTestId)) {
+                test = await TestConfigModel.findOne({ _id: targetTestId, isDeleted: { $ne: true } }).lean();
+            }
+            if (!test) {
+                test = await TestConfigModel.findOne({ _id: id, isDeleted: { $ne: true } }).lean();
+            }
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            test = db.tests.find(t => t.id === id || t._id === id);
+            test = db.tests.find(t => !t.isDeleted && (String(t.id || '') === targetTestId || String(t._id || '') === targetTestId || String(t.id || '') === id || String(t._id || '') === id));
         }
 
         if (!test) return res.status(404).json({ error: "Test not found" });
+        if (req.user && req.user.role !== 'admin' && test.isPublished === false) {
+            return res.status(403).json({ error: "This examination is currently unpublished." });
+        }
 
         const qSanitized = (test.questions || []).map(q => sanitizeQuestionForCandidate(q));
 
@@ -831,14 +1021,14 @@ router.post('/start/:id', requireAuth, async (req, res) => {
     try {
         let test = null;
         if (dbState.useMongo) {
-            test = await TestConfigModel.findById(mongoTestId);
-            if (!test && mongoTestId !== id) {
-                test = await TestConfigModel.findById(id);
+            test = await TestConfigModel.findOne({ _id: mongoTestId, isDeleted: { $ne: true } });
+            if (!test && mongoTestId !== id && mongoose.Types.ObjectId.isValid(id)) {
+                test = await TestConfigModel.findOne({ _id: id, isDeleted: { $ne: true } });
             }
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            test = db.tests.find(t => t.id === id || t._id === id || t.id === mongoTestId || t._id === mongoTestId);
+            test = db.tests.find(t => !t.isDeleted && (String(t.id || '') === String(id) || String(t._id || '') === String(id) || String(t.id || '') === String(mongoTestId) || String(t._id || '') === String(mongoTestId)));
         }
 
         if (!test) return res.status(404).json({ error: "Test configuration not found" });
@@ -932,20 +1122,37 @@ router.post('/start/:id', requireAuth, async (req, res) => {
             const candFilter = buildCandidateQueryFilter(targetCandId);
             const queryTestId = mongoose.Types.ObjectId.isValid(targetTestId) ? new mongoose.Types.ObjectId(targetTestId) : targetTestId;
             if (candFilter) {
-                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: queryTestId });
+                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: queryTestId, isDeleted: { $ne: true } });
             }
             if (submission) {
                 return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
             }
+
+            let candDoc = null;
+            if (mongoose.Types.ObjectId.isValid(targetCandId)) {
+                candDoc = await CandidateModel.findById(targetCandId).lean();
+            } else if (studentId || targetCandId) {
+                candDoc = await CandidateModel.findOne({ studentId: String(studentId || targetCandId) }).lean();
+            }
+            const resolvedEmail = candDoc?.registrationData?.collegeEmail || candDoc?.registrationData?.personalEmail || (String(candDoc?.username || '').includes('@') ? candDoc.username : '') || '';
+            const resolvedCandName = candidateName || candDoc?.name || 'Candidate';
+            const resolvedStudId = studentId || candDoc?.studentId || req.user?.studentId || '';
+            const submissionRefId = await allocateUniqueSubmissionRefId();
+
             submission = new TestSubmissionModel({
-                candidateId: mongoose.Types.ObjectId.isValid(targetCandId) ? new mongoose.Types.ObjectId(targetCandId) : undefined,
-                candidateName,
-                studentId,
+                submissionRefId,
+                candidateId: mongoose.Types.ObjectId.isValid(targetCandId) ? new mongoose.Types.ObjectId(targetCandId) : (candDoc?._id || undefined),
+                candidateName: resolvedCandName,
+                candidateEmail: resolvedEmail,
+                studentId: resolvedStudId,
                 testId: targetTestId,
                 testTitle: test.title,
+                durationMinutes: Number(test.duration || 60),
                 startedAt: new Date(),
                 lastHeartbeatAt: new Date(),
                 status: 'started',
+                verificationStatus: 'active',
+                isDeleted: false,
                 baselinePhotoUrl: baselinePhotoUrl || '',
                 biometricResult: submissionBiometrics,
                 securityMetadata: enrichedSecurityMetadata,
@@ -962,25 +1169,50 @@ router.post('/start/:id', requireAuth, async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => 
-                s.candidateId && s.testId &&
-                s.candidateId.toString() === candidateId.toString() && 
-                s.testId.toString() === id.toString()
-            );
+            const targetCandId = mongoCandId || candidateId;
+            const targetTestId = mongoTestId || id;
+            const candNorm = resolveToObjectId(String(targetCandId));
+            const reqStudId = String(studentId || req.user?.studentId || '');
+            submission = db.testSubmissions.find(s => {
+                if (s.isDeleted) return false;
+                const sTest = s.testId ? resolveToObjectId(String(s.testId)) : '';
+                if (sTest !== String(targetTestId) && String(s.testId || '') !== String(id)) return false;
+                const sCand = s.candidateId ? resolveToObjectId(String(s.candidateId)) : '';
+                return (
+                    (sCand && (sCand === candNorm || String(s.candidateId) === String(candidateId))) ||
+                    (s.studentId && reqStudId && String(s.studentId) === reqStudId)
+                );
+            });
             if (submission) {
                 return res.status(400).json({ error: "You have already attempted or completed this examination. Re-attempts are not permitted." });
             }
+
+            const candDoc = (db.candidates || []).find(c =>
+                resolveToObjectId(String(c._id || c.id || '')) === candNorm ||
+                (reqStudId && String(c.studentId || '') === reqStudId)
+            );
+            const resolvedEmail = candDoc?.registrationData?.collegeEmail || candDoc?.registrationData?.personalEmail || (String(candDoc?.username || '').includes('@') ? candDoc.username : '') || '';
+            const resolvedCandName = candidateName || candDoc?.name || 'Candidate';
+            const resolvedStudId = studentId || candDoc?.studentId || req.user?.studentId || '';
+            const submissionRefId = await allocateUniqueSubmissionRefId(db);
+            const generatedId = new mongoose.Types.ObjectId().toString();
+
             submission = {
-                id: Date.now().toString(),
-                _id: Date.now().toString(),
-                candidateId,
-                candidateName,
-                studentId,
-                testId: id,
+                id: generatedId,
+                _id: generatedId,
+                submissionRefId,
+                candidateId: candNorm || candidateId,
+                candidateName: resolvedCandName,
+                candidateEmail: resolvedEmail,
+                studentId: resolvedStudId,
+                testId: targetTestId || id,
                 testTitle: test.title,
+                durationMinutes: Number(test.duration || 60),
                 startedAt: new Date(),
                 lastHeartbeatAt: new Date(),
                 status: 'started',
+                verificationStatus: 'active',
+                isDeleted: false,
                 baselinePhotoUrl: baselinePhotoUrl || '',
                 biometricResult: submissionBiometrics,
                 securityMetadata: enrichedSecurityMetadata,
@@ -1000,6 +1232,7 @@ router.post('/start/:id', requireAuth, async (req, res) => {
 
         const subPayload = submission.toObject ? submission.toObject() : { ...submission };
         subPayload.bicsId = toBicsId(submission._id || submission.id);
+        subPayload.submissionRefId = submission.submissionRefId;
 
         const now = new Date();
         const durationMin = Number(test.duration || 60);
@@ -1028,53 +1261,59 @@ router.post('/start/:id', requireAuth, async (req, res) => {
 });
 
 // 4.1 Candidate Liveness Heartbeat for Server Dead-Man's Switch (Item 2.4)
-router.post('/heartbeat/:submissionId', async (req, res) => {
+router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
     const { submissionId } = req.params;
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
-    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
     try {
         const now = new Date();
+        const existingSub = await findActiveSubmissionByParam(submissionId, '_id id candidateId studentId lastHeartbeatAt status startedAt testId');
+        if (!existingSub) return res.status(404).json({ error: "Submission session not found" });
+
+        if (!isSubmissionOwnerForUser(req.user, existingSub)) {
+            return res.status(403).json({ error: "Access denied: You do not own this examination session." });
+        }
+
         if (dbState.useMongo) {
-            const existingSub = await TestSubmissionModel.findById(targetSubId).select('lastHeartbeatAt status startedAt testId');
-            if (!existingSub) return res.status(404).json({ error: "Submission session not found" });
+            let sub = existingSub;
+            if (existingSub.status === 'started') {
+                const prevHeartbeat = existingSub.lastHeartbeatAt ? new Date(existingSub.lastHeartbeatAt).getTime() : null;
+                const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
 
-            const prevHeartbeat = existingSub.lastHeartbeatAt ? new Date(existingSub.lastHeartbeatAt).getTime() : null;
-            const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
-
-            const updateOps = {
-                $set: { lastHeartbeatAt: now }
-            };
-
-            // Rule 3: Heartbeat gap >= 10s (missing >= 2 consecutive 5s pulses) confirms > 5s network disconnection
-            if (gapMs >= 10000) {
-                const gapSeconds = Math.round(gapMs / 1000);
-                const downtimeSeconds = Math.max(0, gapSeconds - 5);
-                updateOps.$push = {
-                    'proctoringLog.serverOfflineGaps': {
-                        gapSeconds,
-                        downtimeSeconds,
-                        timestamp: now
-                    },
-                    'proctoringLog.events': {
-                        timestamp: now,
-                        type: 'SERVER_DETECTED_OFFLINE_GAP',
-                        details: `Heartbeat restored after ${gapSeconds}s gap (detected network downtime: ${downtimeSeconds}s).`,
-                        durationSeconds: downtimeSeconds
-                    }
+                const updateOps = {
+                    $set: { lastHeartbeatAt: now }
                 };
-            }
 
-            const sub = await TestSubmissionModel.findByIdAndUpdate(
-                targetSubId,
-                updateOps,
-                { new: true, select: 'status startedAt testId' }
-            );
+                // Rule 3: Heartbeat gap >= 10s (missing >= 2 consecutive 5s pulses) confirms > 5s network disconnection
+                if (gapMs >= 10000) {
+                    const gapSeconds = Math.round(gapMs / 1000);
+                    const downtimeSeconds = Math.max(0, gapSeconds - 5);
+                    updateOps.$push = {
+                        'proctoringLog.serverOfflineGaps': {
+                            gapSeconds,
+                            downtimeSeconds,
+                            timestamp: now
+                        },
+                        'proctoringLog.events': {
+                            timestamp: now,
+                            type: 'SERVER_DETECTED_OFFLINE_GAP',
+                            details: `Heartbeat restored after ${gapSeconds}s gap (detected network downtime: ${downtimeSeconds}s).`,
+                            durationSeconds: downtimeSeconds
+                        }
+                    };
+                }
+
+                sub = await TestSubmissionModel.findByIdAndUpdate(
+                    existingSub._id,
+                    updateOps,
+                    { new: true, select: 'status startedAt testId' }
+                ) || existingSub;
+            }
 
             let expiresAtMs = null;
             let remainingSeconds = null;
             if (sub.testId && sub.startedAt) {
-                const testDoc = await TestConfigModel.findById(sub.testId).select('duration').lean();
+                const testDoc = await TestConfigModel.findOne({ _id: sub.testId, isDeleted: { $ne: true } }).select('duration').lean();
                 const durMin = Number(testDoc?.duration || 60);
                 const startedAtMs = new Date(sub.startedAt).getTime();
                 expiresAtMs = startedAtMs + (durMin * 60 * 1000);
@@ -1093,39 +1332,41 @@ router.post('/heartbeat/:submissionId', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            const sub = db.testSubmissions.find(s => String(s.id || s._id) === String(targetSubId) || String(s.id || s._id) === String(submissionId));
+            const sub = db.testSubmissions.find(s => !s.isDeleted && String(s.id || s._id) === String(existingSub.id || existingSub._id));
             if (!sub) return res.status(404).json({ error: "Submission session not found" });
 
-            const prevHeartbeat = sub.lastHeartbeatAt ? new Date(sub.lastHeartbeatAt).getTime() : null;
-            const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
-            sub.lastHeartbeatAt = now;
+            if (sub.status === 'started') {
+                const prevHeartbeat = sub.lastHeartbeatAt ? new Date(sub.lastHeartbeatAt).getTime() : null;
+                const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
+                sub.lastHeartbeatAt = now;
 
-            if (gapMs >= 10000) {
-                const gapSeconds = Math.round(gapMs / 1000);
-                const downtimeSeconds = Math.max(0, gapSeconds - 5);
-                if (!sub.proctoringLog) sub.proctoringLog = {};
-                if (!Array.isArray(sub.proctoringLog.serverOfflineGaps)) sub.proctoringLog.serverOfflineGaps = [];
-                if (!Array.isArray(sub.proctoringLog.events)) sub.proctoringLog.events = [];
+                if (gapMs >= 10000) {
+                    const gapSeconds = Math.round(gapMs / 1000);
+                    const downtimeSeconds = Math.max(0, gapSeconds - 5);
+                    if (!sub.proctoringLog) sub.proctoringLog = {};
+                    if (!Array.isArray(sub.proctoringLog.serverOfflineGaps)) sub.proctoringLog.serverOfflineGaps = [];
+                    if (!Array.isArray(sub.proctoringLog.events)) sub.proctoringLog.events = [];
 
-                sub.proctoringLog.serverOfflineGaps.push({
-                    gapSeconds,
-                    downtimeSeconds,
-                    timestamp: now
-                });
-                sub.proctoringLog.events.push({
-                    timestamp: now,
-                    type: 'SERVER_DETECTED_OFFLINE_GAP',
-                    details: `Heartbeat restored after ${gapSeconds}s gap (detected network downtime: ${downtimeSeconds}s).`,
-                    durationSeconds: downtimeSeconds
-                });
+                    sub.proctoringLog.serverOfflineGaps.push({
+                        gapSeconds,
+                        downtimeSeconds,
+                        timestamp: now
+                    });
+                    sub.proctoringLog.events.push({
+                        timestamp: now,
+                        type: 'SERVER_DETECTED_OFFLINE_GAP',
+                        details: `Heartbeat restored after ${gapSeconds}s gap (detected network downtime: ${downtimeSeconds}s).`,
+                        durationSeconds: downtimeSeconds
+                    });
+                }
+                saveJSONData(db);
             }
-            saveJSONData(db);
 
             let expiresAtMs = null;
             let remainingSeconds = null;
             if (sub.testId && sub.startedAt) {
                 db.tests = db.tests || [];
-                const testDoc = db.tests.find(t => String(t.id || t._id) === String(sub.testId));
+                const testDoc = db.tests.find(t => !t.isDeleted && String(t.id || t._id) === String(sub.testId));
                 const durMin = Number(testDoc?.duration || 60);
                 const startedAtMs = new Date(sub.startedAt).getTime();
                 expiresAtMs = startedAtMs + (durMin * 60 * 1000);
@@ -1153,89 +1394,93 @@ const handleDraftSave = async (req, res) => {
     const { submissionId } = req.params;
     const { answers, proctoringLog } = req.body;
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
-    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
     try {
         const now = new Date();
+        const submission = await findActiveSubmissionByParam(submissionId);
+        if (!submission) return res.status(404).json({ error: "Submission session not found" });
+
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
+            return res.status(403).json({ error: "Access denied: You do not own this examination session." });
+        }
+
+        // Hard Immutability: If exam is reaped or finalized, reject all draft updates with 409
+        if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
+            return res.status(409).json({
+                error: `Exam attempt is permanently closed (Status: ${submission.status}). Draft updates are prohibited.`,
+                status: submission.status,
+                isFinalized: true
+            });
+        }
+
+        if (submission.status !== 'started') {
+            return res.status(409).json({
+                error: "Exam is not currently in started state.",
+                status: submission.status
+            });
+        }
+
+        const sanitizeDraftAnswers = (rawAnswers) => rawAnswers.map(a => {
+            const cleanAns = { ...a };
+            delete cleanAns.score;
+            delete cleanAns.isManuallyGraded;
+            delete cleanAns.isBonusAwarded;
+            delete cleanAns.isObjectionResolved;
+            // Normalize MCC multi-choice arrays vs SCC / MCQ single index
+            if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || (cleanAns.type !== 'scc' && cleanAns.type !== 'coding' && cleanAns.type !== 'web' && Array.isArray(cleanAns.selectedOptionIndex))) {
+                if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
+                    cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
+                } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
+                    cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
+                } else {
+                    cleanAns.selectedOptionIndices = [];
+                }
+                if (cleanAns.selectedOptionIndex === undefined || cleanAns.selectedOptionIndex === null) {
+                    cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndices.length > 0 ? cleanAns.selectedOptionIndices[0] : null;
+                }
+            } else if (cleanAns.type === 'scc' || cleanAns.type === 'mcq') {
+                if (Array.isArray(cleanAns.selectedOptionIndex)) {
+                    cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+                } else if (cleanAns.selectedOptionIndex !== undefined && cleanAns.selectedOptionIndex !== null) {
+                    cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndex);
+                } else if (Array.isArray(cleanAns.selectedOptionIndices) && cleanAns.selectedOptionIndices.length > 0) {
+                    cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndices[0]);
+                } else {
+                    cleanAns.selectedOptionIndex = null;
+                }
+                cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex !== null ? [cleanAns.selectedOptionIndex] : [];
+            }
+            if (Array.isArray(cleanAns.testCaseResults)) {
+                cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                    testCaseIndex: tc.testCaseIndex,
+                    status: tc.status,
+                    points: Number(tc.points) || 0,
+                    scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                    actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                    expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                    input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input,
+                    isSample: Boolean(tc.isSample),
+                    executionTimeMs: Number(tc.executionTimeMs || 0),
+                    memoryUsedKb: Number(tc.memoryUsedKb || 0)
+                }));
+            }
+            if (cleanAns.compileError) {
+                cleanAns.compileError = String(cleanAns.compileError).slice(0, 2000);
+            }
+            if (cleanAns.consoleTab) {
+                cleanAns.consoleTab = String(cleanAns.consoleTab).slice(0, 20);
+            }
+            return cleanAns;
+        });
+
         if (dbState.useMongo) {
-            const submission = await TestSubmissionModel.findById(targetSubId);
-            if (!submission) return res.status(404).json({ error: "Submission session not found" });
-
-            // Hard Immutability: If exam is reaped or finalized, reject all draft updates with 409
-            if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
-                return res.status(409).json({
-                    error: `Exam attempt is permanently closed (Status: ${submission.status}). Draft updates are prohibited.`,
-                    status: submission.status,
-                    isFinalized: true
-                });
-            }
-
-            if (submission.status !== 'started') {
-                return res.status(409).json({
-                    error: "Exam is not currently in started state.",
-                    status: submission.status
-                });
-            }
-
             const updateFields = {
                 lastHeartbeatAt: now
             };
 
-            // Authoritative input sanitization: strip client score tampering while preserving executed testCaseResults
             let answersCount = submission.answers?.length || 0;
             if (Array.isArray(answers)) {
-                updateFields.answers = answers.map(a => {
-                    const cleanAns = { ...a };
-                    delete cleanAns.score;
-                    delete cleanAns.isManuallyGraded;
-                    delete cleanAns.isBonusAwarded;
-                    delete cleanAns.isObjectionResolved;
-                    // Normalize MCC multi-choice arrays vs SCC / MCQ single index
-                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || (cleanAns.type !== 'scc' && cleanAns.type !== 'coding' && cleanAns.type !== 'web' && Array.isArray(cleanAns.selectedOptionIndex))) {
-                        if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
-                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
-                        } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
-                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
-                        } else {
-                            cleanAns.selectedOptionIndices = [];
-                        }
-                        if (cleanAns.selectedOptionIndex === undefined || cleanAns.selectedOptionIndex === null) {
-                            cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndices.length > 0 ? cleanAns.selectedOptionIndices[0] : null;
-                        }
-                    } else if (cleanAns.type === 'scc' || cleanAns.type === 'mcq') {
-                        if (Array.isArray(cleanAns.selectedOptionIndex)) {
-                            cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
-                        } else if (cleanAns.selectedOptionIndex !== undefined && cleanAns.selectedOptionIndex !== null) {
-                            cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndex);
-                        } else if (Array.isArray(cleanAns.selectedOptionIndices) && cleanAns.selectedOptionIndices.length > 0) {
-                            cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndices[0]);
-                        } else {
-                            cleanAns.selectedOptionIndex = null;
-                        }
-                        cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex !== null ? [cleanAns.selectedOptionIndex] : [];
-                    }
-                    if (Array.isArray(cleanAns.testCaseResults)) {
-                        cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
-                            testCaseIndex: tc.testCaseIndex,
-                            status: tc.status,
-                            points: Number(tc.points) || 0,
-                            scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
-                            actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
-                            expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
-                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input,
-                            isSample: Boolean(tc.isSample),
-                            executionTimeMs: Number(tc.executionTimeMs || 0),
-                            memoryUsedKb: Number(tc.memoryUsedKb || 0)
-                        }));
-                    }
-                    if (cleanAns.compileError) {
-                        cleanAns.compileError = String(cleanAns.compileError).slice(0, 2000);
-                    }
-                    if (cleanAns.consoleTab) {
-                        cleanAns.consoleTab = String(cleanAns.consoleTab).slice(0, 20);
-                    }
-                    return cleanAns;
-                });
+                updateFields.answers = sanitizeDraftAnswers(answers);
                 answersCount = updateFields.answers.length;
             }
 
@@ -1245,14 +1490,14 @@ const handleDraftSave = async (req, res) => {
 
             // Atomic update prevents Mongoose VersionError (__v) collisions with concurrent heartbeats/proctoring logs
             await TestSubmissionModel.updateOne(
-                { _id: targetSubId, status: 'started' },
+                { _id: submission._id, status: 'started' },
                 { $set: updateFields }
             );
 
             let expiresAtMs = null;
             let remainingSeconds = null;
             if (submission.testId && submission.startedAt) {
-                const testDoc = await TestConfigModel.findById(submission.testId).select('duration').lean();
+                const testDoc = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } }).select('duration').lean();
                 const durMin = Number(testDoc?.duration || 60);
                 const startedAtMs = new Date(submission.startedAt).getTime();
                 expiresAtMs = startedAtMs + (durMin * 60 * 1000);
@@ -1271,80 +1516,37 @@ const handleDraftSave = async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            const submission = db.testSubmissions.find(s => String(s.id || s._id) === String(targetSubId) || String(s.id || s._id) === String(submissionId));
-            if (!submission) return res.status(404).json({ error: "Submission session not found" });
+            const jsonSub = db.testSubmissions.find(s => !s.isDeleted && String(s.id || s._id) === String(submission.id || submission._id));
+            if (!jsonSub) return res.status(404).json({ error: "Submission session not found" });
 
-            if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
-                return res.status(409).json({
-                    error: `Exam attempt is permanently closed (Status: ${submission.status}). Draft updates are prohibited.`,
-                    status: submission.status,
-                    isFinalized: true
-                });
-            }
-
+            let answersCount = jsonSub.answers?.length || 0;
             if (Array.isArray(answers)) {
-                submission.answers = answers.map(a => {
-                    const cleanAns = { ...a };
-                    delete cleanAns.score;
-                    delete cleanAns.isManuallyGraded;
-                    delete cleanAns.isBonusAwarded;
-                    delete cleanAns.isObjectionResolved;
-                    if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || Array.isArray(cleanAns.selectedOptionIndex)) {
-                        if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
-                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
-                        } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
-                            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
-                        } else {
-                            cleanAns.selectedOptionIndices = [];
-                        }
-                    } else if (cleanAns.type === 'mcq' && Array.isArray(cleanAns.selectedOptionIndex)) {
-                        cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
-                    }
-                    if (Array.isArray(cleanAns.testCaseResults)) {
-                        cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
-                            testCaseIndex: tc.testCaseIndex,
-                            status: tc.status,
-                            points: Number(tc.points) || 0,
-                            scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
-                            actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
-                            expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
-                            input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input,
-                            isSample: Boolean(tc.isSample),
-                            executionTimeMs: Number(tc.executionTimeMs || 0),
-                            memoryUsedKb: Number(tc.memoryUsedKb || 0)
-                        }));
-                    }
-                    if (cleanAns.compileError) {
-                        cleanAns.compileError = String(cleanAns.compileError).slice(0, 2000);
-                    }
-                    if (cleanAns.consoleTab) {
-                        cleanAns.consoleTab = String(cleanAns.consoleTab).slice(0, 20);
-                    }
-                    return cleanAns;
-                });
+                jsonSub.answers = sanitizeDraftAnswers(answers);
+                answersCount = jsonSub.answers.length;
             }
 
             if (proctoringLog) {
-                submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
+                jsonSub.proctoringLog = reconcileProctoringLog(jsonSub.proctoringLog || {}, proctoringLog);
             }
 
-            submission.lastHeartbeatAt = now;
+            jsonSub.lastHeartbeatAt = now;
             saveJSONData(db);
 
             let expiresAtMs = null;
             let remainingSeconds = null;
-            if (submission.testId && submission.startedAt) {
+            if (jsonSub.testId && jsonSub.startedAt) {
                 db.tests = db.tests || [];
-                const testDoc = db.tests.find(t => String(t.id || t._id) === String(submission.testId));
+                const testDoc = db.tests.find(t => !t.isDeleted && String(t.id || t._id) === String(jsonSub.testId));
                 const durMin = Number(testDoc?.duration || 60);
-                const startedAtMs = new Date(submission.startedAt).getTime();
+                const startedAtMs = new Date(jsonSub.startedAt).getTime();
                 expiresAtMs = startedAtMs + (durMin * 60 * 1000);
                 remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
             }
 
             return res.json({ 
                 success: true, 
-                savedAt: submission.lastHeartbeatAt,
+                savedAt: jsonSub.lastHeartbeatAt,
+                answersCount,
                 serverTime: now.getTime(),
                 expiresAt: expiresAtMs,
                 remainingSeconds: remainingSeconds,
@@ -1357,8 +1559,8 @@ const handleDraftSave = async (req, res) => {
     }
 };
 
-router.put('/draft/:submissionId', handleDraftSave);
-router.post('/draft/:submissionId', handleDraftSave);
+router.put('/draft/:submissionId', requireAuth, handleDraftSave);
+router.post('/draft/:submissionId', requireAuth, handleDraftSave);
 
 // 4.2 Browser Beacon on Disconnect / Tab Close (Item 2.4 & Issue B3)
 router.post('/beacon-disconnect', express.json({ type: ['application/json', 'text/plain', '*/*'] }), async (req, res) => {
@@ -1366,56 +1568,109 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
     if (typeof payload === 'string') {
         try { payload = JSON.parse(payload); } catch (_) {}
     }
-    const { submissionId, answers, proctoringLog, authToken } = payload || {};
+    const { submissionId, answers, proctoringLog, authToken, examToken } = payload || {};
     if (!submissionId) return res.status(400).json({ error: "Submission ID required" });
-    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
 
-    // Verify token if provided or in header
-    let authUser = null;
-    const rawToken = authToken || (req.headers.authorization ? req.headers.authorization.replace(/^Bearer\s+/i, '') : null);
-    if (rawToken) {
-        try {
-            authUser = jwt.verify(rawToken, JWT_SECRET);
-        } catch (_) {}
+    // Verify JWT or exam token (never fall back to unauthenticated mutation)
+    let authUser = req.user || null;
+    const rawToken = authToken || (req.headers.authorization ? req.headers.authorization.replace(/^Bearer\s+/i, '').trim() : null);
+    if (!authUser && rawToken) {
+        const decoded = verifyToken(rawToken);
+        if (decoded) {
+            authUser = decoded;
+        }
+    }
+    if (!authUser) {
+        const rawExamToken = examToken || req.headers['x-exam-token'] || req.query?.token || (payload && payload.token);
+        if (rawExamToken && typeof rawExamToken === 'string') {
+            try {
+                let tokenDoc = null;
+                if (dbState.useMongo) {
+                    tokenDoc = await TestTokenModel.findOne({ token: rawExamToken.trim() }).lean();
+                } else {
+                    const dbTok = getJSONData();
+                    tokenDoc = (dbTok.tokens || []).find(t => t.token === rawExamToken.trim());
+                }
+                const isNotExpired = tokenDoc && (!tokenDoc.expiresAt || Date.now() <= new Date(tokenDoc.expiresAt).getTime());
+                if (isNotExpired) {
+                    authUser = {
+                        id: String(tokenDoc.candidateId),
+                        role: 'candidate',
+                        studentId: String(tokenDoc.candidateId),
+                        username: 'candidate'
+                    };
+                }
+            } catch (_) {}
+        }
     }
 
-    try {
-        if (dbState.useMongo) {
-            const submission = await TestSubmissionModel.findById(targetSubId);
-            if (!submission) return res.status(404).json({ error: "Submission not found" });
+    if (!authUser) {
+        return res.status(401).json({ error: "Unauthorized: Valid session or exam token required for disconnect beacon." });
+    }
 
-            if (authUser && authUser.role !== 'admin' && String(submission.studentId) !== String(authUser.studentId) && String(submission.candidateId) !== String(authUser.id)) {
-                return res.status(403).json({ error: "Access denied: Unauthorized to submit disconnect beacon for another candidate." });
+    const sanitizeBeaconAnswers = (rawAnswers) => rawAnswers.map(a => {
+        const cleanAns = { ...a };
+        delete cleanAns.score;
+        delete cleanAns.isManuallyGraded;
+        delete cleanAns.isBonusAwarded;
+        delete cleanAns.isObjectionResolved;
+        if (cleanAns.type === 'mcc' || Array.isArray(cleanAns.selectedOptionIndices) || (cleanAns.type !== 'scc' && cleanAns.type !== 'coding' && cleanAns.type !== 'web' && Array.isArray(cleanAns.selectedOptionIndex))) {
+            if (!Array.isArray(cleanAns.selectedOptionIndices) && Array.isArray(cleanAns.selectedOptionIndex)) {
+                cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex.map(Number);
+            } else if (Array.isArray(cleanAns.selectedOptionIndices)) {
+                cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndices.map(Number);
+            } else {
+                cleanAns.selectedOptionIndices = [];
             }
+            if (cleanAns.selectedOptionIndex === undefined || cleanAns.selectedOptionIndex === null) {
+                cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndices.length > 0 ? cleanAns.selectedOptionIndices[0] : null;
+            }
+        } else if (cleanAns.type === 'scc' || cleanAns.type === 'mcq') {
+            if (Array.isArray(cleanAns.selectedOptionIndex)) {
+                cleanAns.selectedOptionIndex = cleanAns.selectedOptionIndex.length > 0 ? Number(cleanAns.selectedOptionIndex[0]) : null;
+            } else if (cleanAns.selectedOptionIndex !== undefined && cleanAns.selectedOptionIndex !== null) {
+                cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndex);
+            } else if (Array.isArray(cleanAns.selectedOptionIndices) && cleanAns.selectedOptionIndices.length > 0) {
+                cleanAns.selectedOptionIndex = Number(cleanAns.selectedOptionIndices[0]);
+            } else {
+                cleanAns.selectedOptionIndex = null;
+            }
+            cleanAns.selectedOptionIndices = cleanAns.selectedOptionIndex !== null ? [cleanAns.selectedOptionIndex] : [];
+        }
+        if (Array.isArray(cleanAns.testCaseResults)) {
+            cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
+                testCaseIndex: tc.testCaseIndex,
+                status: tc.status,
+                points: Number(tc.points) || 0,
+                scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
+                actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
+                expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
+                input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
+            }));
+        }
+        return cleanAns;
+    });
 
+    try {
+        const submission = await findActiveSubmissionByParam(submissionId);
+        if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+        if (!isSubmissionOwnerForUser(authUser, submission)) {
+            return res.status(403).json({ error: "Access denied: Unauthorized to submit disconnect beacon for another candidate." });
+        }
+
+        if (dbState.useMongo) {
             if (submission.status === 'started') {
                 submission.status = 'auto-submitted';
                 submission.submittedAt = new Date();
                 submission.submissionReason = 'disconnect_beacon';
                 if (answers && Array.isArray(answers) && answers.length > 0) {
-                    submission.answers = answers.map(a => {
-                        const cleanAns = { ...a };
-                        delete cleanAns.score;
-                        delete cleanAns.isManuallyGraded;
-                        delete cleanAns.isBonusAwarded;
-                        delete cleanAns.isObjectionResolved;
-                        if (Array.isArray(cleanAns.testCaseResults)) {
-                            cleanAns.testCaseResults = cleanAns.testCaseResults.map(tc => ({
-                                testCaseIndex: tc.testCaseIndex,
-                                status: tc.status,
-                                points: Number(tc.points) || 0,
-                                scoredPoints: Number(tc.scoredPoints) || (tc.status === 'Accepted' || tc.status === 'passed' ? Number(tc.points) || 0 : 0),
-                                actualOutput: typeof tc.actualOutput === 'string' ? tc.actualOutput.slice(0, 1000) : tc.actualOutput,
-                                expectedOutput: typeof tc.expectedOutput === 'string' ? tc.expectedOutput.slice(0, 1000) : tc.expectedOutput,
-                                input: typeof tc.input === 'string' ? tc.input.slice(0, 500) : tc.input
-                            }));
-                        }
-                        return cleanAns;
-                    });
+                    submission.answers = sanitizeBeaconAnswers(answers);
                 }
                 if (proctoringLog) {
                     submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
                 }
+                if (!submission.proctoringLog) submission.proctoringLog = {};
                 if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
                 submission.proctoringLog.events.push({
                     timestamp: new Date(),
@@ -1424,10 +1679,11 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                     details: 'Candidate closed exam browser tab/window. Finalized via navigator.sendBeacon.'
                 });
 
-                const test = await TestConfigModel.findById(submission.testId);
+                const test = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } });
                 if (test) {
                     recalculateMCQScore(submission, test);
                     calculateCodingScoreFast(submission, test);
+                    submission.totalScore = submission.evaluation?.totalScore ?? submission.score ?? 0;
                     if (submission.evaluation) {
                         submission.evaluation.evaluatedAt = new Date();
                     }
@@ -1440,34 +1696,6 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                 submission.flaggedReasons = eirfEval.flaggedReasons;
                 submission.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
 
-                // Generate encrypted .eirf snapshot
-                const sStudId = submission.studentId || 'Candidate';
-                const dbPayloadSnap = {
-                    submissionId: String(submission._id || submission.id),
-                    studentId: sStudId,
-                    candidateName: submission.candidateName || 'Candidate',
-                    testTitle: submission.testTitle || 'BICS Online Examination',
-                    answers: submission.answers || [],
-                    proctoringLog: submission.proctoringLog || {},
-                    generatedAt: new Date().toISOString()
-                };
-                submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
-
-                if (!submission.eirfNoticeEmailSent && submission.candidateEmail) {
-                    try {
-                        await sendEirfNoticeEmail(
-                            submission.candidateEmail,
-                            submission.candidateName || 'Candidate',
-                            submission.testTitle || 'BICS Examination',
-                            'Exam session auto-submitted: Browser tab/window closed by candidate.',
-                            String(submission._id || submission.id)
-                        );
-                        submission.eirfNoticeEmailSent = true;
-                    } catch (mailErr) {
-                        console.error("[BEACON DISCONNECT] Failed to send EIRF notice email:", mailErr.message);
-                    }
-                }
-
                 try {
                     if (typeof submission.markModified === 'function') {
                         submission.markModified('answers');
@@ -1478,21 +1706,21 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                     if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
                         // Atomic fallback update if concurrent draft save modified version
                         await TestSubmissionModel.updateOne(
-                            { _id: targetSubId },
+                            { _id: submission._id, status: 'started' },
                             {
                                 $set: {
                                     status: submission.status,
+                                    submissionReason: submission.submissionReason,
                                     submittedAt: submission.submittedAt,
                                     score: submission.score,
+                                    totalScore: submission.totalScore,
                                     evaluation: submission.evaluation,
                                     answers: submission.answers,
                                     proctoringLog: submission.proctoringLog,
-                                    encryptedDbPayload: submission.encryptedDbPayload,
                                     hasEirfFlag: submission.hasEirfFlag,
                                     eirfStatus: submission.eirfStatus,
                                     flaggedReasons: submission.flaggedReasons,
-                                    pipelineStatus: submission.pipelineStatus,
-                                    eirfNoticeEmailSent: submission.eirfNoticeEmailSent
+                                    pipelineStatus: submission.pipelineStatus
                                 }
                             }
                         );
@@ -1500,9 +1728,9 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                         throw saveErr;
                     }
                 }
-                console.log(`[BEACON FINALIZED] Submission ${submissionId} auto-submitted via browser beacon. PipelineStatus: ${submission.pipelineStatus}`);
+                console.log(`[BEACON FINALIZED] Submission ${submission.submissionRefId || submissionId} auto-submitted via browser beacon. PipelineStatus: ${submission.pipelineStatus}`);
 
-                // Kick off sequential pipeline worker immediately
+                // Kick off sequential Gmail EIRF pipeline immediately
                 if (submission.hasEirfFlag) {
                     setImmediate(() => {
                         runPipelineTick().catch(() => {});
@@ -1512,17 +1740,18 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            const sub = db.testSubmissions.find(s => String(s.id || s._id) === String(submissionId));
+            const sub = db.testSubmissions.find(s => !s.isDeleted && String(s.id || s._id) === String(submission.id || submission._id));
             if (sub && sub.status === 'started') {
                 sub.status = 'auto-submitted';
                 sub.submittedAt = new Date();
                 sub.submissionReason = 'disconnect_beacon';
                 if (answers && Array.isArray(answers) && answers.length > 0) {
-                    sub.answers = answers;
+                    sub.answers = sanitizeBeaconAnswers(answers);
                 }
                 if (proctoringLog) {
                     sub.proctoringLog = reconcileProctoringLog(sub.proctoringLog || {}, proctoringLog);
                 }
+                if (!sub.proctoringLog) sub.proctoringLog = {};
                 if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
                 sub.proctoringLog.events.push({
                     timestamp: new Date(),
@@ -1530,10 +1759,11 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                     isBeaconDisconnect: true,
                     details: 'Candidate closed exam browser tab/window. Finalized via navigator.sendBeacon.'
                 });
-                const test = (db.tests || []).find(t => String(t.id || t._id) === String(sub.testId));
+                const test = (db.tests || []).find(t => !t.isDeleted && String(t.id || t._id) === String(sub.testId));
                 if (test) {
                     recalculateMCQScore(sub, test);
                     calculateCodingScoreFast(sub, test);
+                    sub.totalScore = sub.evaluation?.totalScore ?? sub.score ?? 0;
                     if (sub.evaluation) sub.evaluation.evaluatedAt = new Date();
                 }
                 const eirfEval = evaluateEirfIncident(sub, test);
@@ -1541,6 +1771,7 @@ router.post('/beacon-disconnect', express.json({ type: ['application/json', 'tex
                 sub.eirfStatus = eirfEval.eirfStatus;
                 sub.flaggedReasons = eirfEval.flaggedReasons;
                 sub.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
+
                 saveJSONData(db);
                 if (sub.hasEirfFlag) {
                     setImmediate(() => {
@@ -1561,16 +1792,16 @@ router.post('/generate-token', requireAuth, async (req, res) => {
     let { candidateId, testId } = req.body;
 
     if (req.user && req.user.role !== 'admin') {
-        const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
+        const userMongo = resolveToObjectId(String(req.user.id || ''));
         const allowedIds = [
             String(req.user.id || ''),
             String(req.user.studentId || ''),
             String(req.user.username || ''),
             userMongo,
             toBicsId(userMongo)
-        ];
+        ].filter(Boolean);
         if (candidateId) {
-            const candNorm = isBicsId(String(candidateId)) ? toMongoId(String(candidateId)) : String(candidateId);
+            const candNorm = resolveToObjectId(String(candidateId));
             if (candNorm !== userMongo && !allowedIds.includes(String(candidateId))) {
                 return res.status(403).json({ error: "Access denied: You cannot generate an exam token for another candidate." });
             }
@@ -1582,40 +1813,77 @@ router.post('/generate-token', requireAuth, async (req, res) => {
         return res.status(400).json({ error: "Candidate ID and Test ID are required." });
     }
     try {
+        const targetTestId = resolveToObjectId(String(testId));
+        const targetCandId = resolveToObjectId(String(candidateId));
+
+        let test = null;
         let submission = null;
         if (dbState.useMongo) {
-            const candFilter = buildCandidateQueryFilter(candidateId);
-            const queryTestId = mongoose.Types.ObjectId.isValid(testId) ? new mongoose.Types.ObjectId(testId) : testId;
+            if (mongoose.Types.ObjectId.isValid(targetTestId)) {
+                test = await TestConfigModel.findOne({ _id: targetTestId, isDeleted: { $ne: true } }).lean();
+            }
+            if (!test) return res.status(404).json({ error: "Test configuration not found." });
+            if (test.isPublished === false) {
+                return res.status(403).json({ error: "Access denied: This examination is currently unpublished or inactive." });
+            }
+            if (test.endDate && Date.now() > new Date(test.endDate).getTime()) {
+                return res.status(403).json({ error: "Access denied: The examination window has closed." });
+            }
+
+            const candFilter = buildCandidateQueryFilter(targetCandId);
+            const queryTestId = mongoose.Types.ObjectId.isValid(targetTestId) ? new mongoose.Types.ObjectId(targetTestId) : targetTestId;
             if (candFilter) {
-                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: queryTestId });
+                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: queryTestId, isDeleted: { $ne: true } });
             }
         } else {
             const db = getJSONData();
+            db.tests = db.tests || [];
+            test = db.tests.find(t => !t.isDeleted && (String(t._id || '') === targetTestId || String(t.id || '') === targetTestId || String(t._id || '') === String(testId) || String(t.id || '') === String(testId)));
+            if (!test) return res.status(404).json({ error: "Test configuration not found." });
+            if (test.isPublished === false) {
+                return res.status(403).json({ error: "Access denied: This examination is currently unpublished or inactive." });
+            }
+            if (test.endDate && Date.now() > new Date(test.endDate).getTime()) {
+                return res.status(403).json({ error: "Access denied: The examination window has closed." });
+            }
+
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.candidateId === candidateId && s.testId === testId);
+            const reqStudId = String(req.user?.studentId || '');
+            submission = db.testSubmissions.find(s => {
+                if (s.isDeleted) return false;
+                const sTest = s.testId ? resolveToObjectId(String(s.testId)) : '';
+                if (sTest !== targetTestId && String(s.testId || '') !== String(testId)) return false;
+                const sCand = s.candidateId ? resolveToObjectId(String(s.candidateId)) : '';
+                return (
+                    (sCand && (sCand === targetCandId || String(s.candidateId) === String(candidateId))) ||
+                    (reqStudId && s.studentId && String(s.studentId) === reqStudId)
+                );
+            });
         }
         if (submission) {
             return res.status(400).json({ error: "You have already started or completed this examination. Re-attempts are not permitted." });
         }
 
         const tokenStr = crypto.randomBytes(24).toString('hex');
+        const expiresAt = new Date(Date.now() + 14400000);
 
         if (dbState.useMongo) {
             const newToken = new TestTokenModel({
                 token: tokenStr,
-                candidateId,
-                testId
+                candidateId: targetCandId,
+                testId: targetTestId
             });
             await newToken.save();
         } else {
             const db = getJSONData();
             db.tokens = db.tokens || [];
-            db.tokens = db.tokens.filter(t => (Date.now() - new Date(t.createdAt).getTime()) < 120000);
+            db.tokens = db.tokens.filter(t => (Date.now() - new Date(t.createdAt || 0).getTime()) < 14400000);
             db.tokens.push({
                 token: tokenStr,
-                candidateId,
-                testId,
-                createdAt: new Date()
+                candidateId: targetCandId,
+                testId: targetTestId,
+                createdAt: new Date(),
+                expiresAt
             });
             saveJSONData(db);
         }
@@ -1635,11 +1903,11 @@ router.post('/verify-token', async (req, res) => {
     try {
         let tokenDoc = null;
         if (dbState.useMongo) {
-            tokenDoc = await TestTokenModel.findOne({ token });
+            tokenDoc = await TestTokenModel.findOne({ token: String(token).trim() });
         } else {
             const db = getJSONData();
             db.tokens = db.tokens || [];
-            tokenDoc = db.tokens.find(t => t.token === token && (Date.now() - new Date(t.createdAt).getTime()) < 120000);
+            tokenDoc = db.tokens.find(t => t.token === String(token).trim() && (!t.expiresAt || Date.now() <= new Date(t.expiresAt).getTime()) && (Date.now() - new Date(t.createdAt || 0).getTime()) < 14400000);
         }
 
         if (!tokenDoc) {
@@ -1648,20 +1916,41 @@ router.post('/verify-token', async (req, res) => {
 
         let student = null;
         let test = null;
+        const studentIdNorm = resolveToObjectId(String(tokenDoc.candidateId));
+        const testIdNorm = resolveToObjectId(String(tokenDoc.testId));
+
         if (dbState.useMongo) {
-            const studentIdNorm = isBicsId(String(tokenDoc.candidateId)) ? toMongoId(String(tokenDoc.candidateId)) : tokenDoc.candidateId;
-            const testIdNorm = isBicsId(String(tokenDoc.testId)) ? toMongoId(String(tokenDoc.testId)) : tokenDoc.testId;
-            student = await CandidateModel.findById(studentIdNorm);
-            test = await TestConfigModel.findById(testIdNorm);
+            if (mongoose.Types.ObjectId.isValid(studentIdNorm)) {
+                student = await CandidateModel.findById(studentIdNorm);
+            }
+            if (!student) {
+                student = await CandidateModel.findOne({ studentId: String(tokenDoc.candidateId) });
+            }
+            if (mongoose.Types.ObjectId.isValid(testIdNorm)) {
+                test = await TestConfigModel.findOne({ _id: testIdNorm, isDeleted: { $ne: true } });
+            }
         } else {
             const db = getJSONData();
-            student = (db.candidates || []).find(c => c.id === tokenDoc.candidateId || c._id === tokenDoc.candidateId);
+            student = (db.candidates || []).find(c =>
+                resolveToObjectId(String(c._id || c.id || '')) === studentIdNorm ||
+                String(c.studentId || '') === String(tokenDoc.candidateId)
+            );
             db.tests = db.tests || [];
-            test = db.tests.find(t => t.id === tokenDoc.testId || t._id === tokenDoc.testId);
+            test = db.tests.find(t => !t.isDeleted && (
+                resolveToObjectId(String(t._id || t.id || '')) === testIdNorm ||
+                String(t.id || t._id || '') === String(tokenDoc.testId)
+            ));
         }
 
         if (!student || !test) {
             return res.status(404).json({ error: "Student or Test configuration associated with this token not found." });
+        }
+
+        if (test.isPublished === false) {
+            return res.status(403).json({ error: "Access denied: This examination is currently unpublished or inactive." });
+        }
+        if (test.endDate && Date.now() > new Date(test.endDate).getTime()) {
+            return res.status(403).json({ error: "Access denied: The examination window has expired." });
         }
 
         const { generateToken } = require('../utils/jwt');
@@ -1676,13 +1965,20 @@ router.post('/verify-token', async (req, res) => {
 
         let submission = null;
         if (dbState.useMongo) {
-            submission = await TestSubmissionModel.findOne({ candidateId: student._id, testId: test._id });
+            const candFilter = buildCandidateQueryFilter(String(student._id || studentIdNorm));
+            if (candFilter) {
+                submission = await TestSubmissionModel.findOne({ ...candFilter, testId: test._id, isDeleted: { $ne: true } });
+            }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            const studId = student.id || student._id;
-            const tId = test.id || test._id;
-            submission = db.testSubmissions.find(s => s.candidateId === studId && s.testId === tId);
+            const studId = String(student.id || student._id);
+            const tId = String(test.id || test._id);
+            submission = db.testSubmissions.find(s => {
+                if (s.isDeleted) return false;
+                if (resolveToObjectId(String(s.testId || '')) !== resolveToObjectId(tId) && String(s.testId || '') !== tId) return false;
+                return resolveToObjectId(String(s.candidateId || '')) === resolveToObjectId(studId) || (student.studentId && String(s.studentId || '') === String(student.studentId));
+            });
         }
 
         if (submission) {
@@ -1714,6 +2010,8 @@ router.post('/verify-token', async (req, res) => {
             test: {
                 id: test._id || test.id,
                 title: test.title,
+                course: test.course || '',
+                courseCode: test.courseCode || '',
                 duration: test.duration,
                 marks: test.marks,
                 instructions: test.instructions,
@@ -1732,11 +2030,11 @@ router.post('/verify-token', async (req, res) => {
 });
 
 // 7. Submit exam answers
-router.post('/submit', async (req, res) => {
+router.post('/submit', requireAuth, async (req, res) => {
     const { submissionId, answers, proctoringLog, status, submissionReason } = req.body;
 
     if (!submissionId) return res.status(400).json({ error: "Submission ID is required" });
-    const targetSubId = isBicsId(submissionId) ? (toMongoId(submissionId) || submissionId) : submissionId;
+    const targetSubId = resolveToObjectId(String(submissionId));
 
     const isFinalSubmission = status !== 'started';
 
@@ -1754,8 +2052,12 @@ router.post('/submit', async (req, res) => {
             let retries = 5;
             while (retries > 0) {
                 try {
-                    submission = await TestSubmissionModel.findById(targetSubId);
+                    submission = await findActiveSubmissionByParam(submissionId);
                     if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+                    if (!isSubmissionOwnerForUser(req.user, submission)) {
+                        return res.status(403).json({ error: "Access denied: You cannot submit another candidate's examination." });
+                    }
 
                     // Hard Immutability: If exam is already finalized or reaped, strictly reject answer tampering with 409 Conflict
                     if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
@@ -1836,7 +2138,7 @@ router.post('/submit', async (req, res) => {
                     }
                     submission.lastHeartbeatAt = new Date();
 
-                    const test = await TestConfigModel.findById(submission.testId);
+                    const test = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } });
                     if (test) {
                         // Authoritative server-side wall-clock deadline validation (Item 2.3)
                         if (submission.startedAt && isFinalSubmission) {
@@ -1860,16 +2162,18 @@ router.post('/submit', async (req, res) => {
 
                         recalculateMCQScore(submission, test);
                         calculateCodingScoreFast(submission, test);
+                        submission.totalScore = submission.evaluation?.totalScore ?? submission.score ?? 0;
                     } else {
                         submission.evaluation = {
                             mcqScore: 0,
                             codingScore: 0,
+                            webScore: 0,
+                            totalScore: 0,
+                            score: 0,
                             feedback: '',
                             evaluatedAt: null
                         };
                     }
-
-                    const sStudId = submission.studentId || 'Candidate';
 
                     // 1. Authoritative EIRF incident calculation (processed before atomic save to eliminate duplicate DB roundtrips)
                     if (isFinalSubmission) {
@@ -1895,17 +2199,6 @@ router.post('/submit', async (req, res) => {
                         }
                     }
 
-                    const dbPayloadSnap = {
-                        submissionId: String(submission._id || submission.id),
-                        studentId: sStudId,
-                        candidateName: submission.candidateName || 'Candidate',
-                        testTitle: submission.testTitle || 'BICS Online Examination',
-                        answers: submission.answers || [],
-                        proctoringLog: submission.proctoringLog || {},
-                        generatedAt: new Date().toISOString()
-                    };
-                    submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
-
                     if (typeof submission.markModified === 'function') {
                         submission.markModified('answers');
                         submission.markModified('evaluation');
@@ -1915,7 +2208,43 @@ router.post('/submit', async (req, res) => {
                 } catch (saveErr) {
                     if (saveErr.name === 'VersionError' || saveErr.name === 'ParallelSaveError') {
                         retries--;
-                        if (retries === 0) throw saveErr;
+                        if (retries === 0) {
+                            const atomicRes = await TestSubmissionModel.updateOne(
+                                { _id: submission._id, status: 'started' },
+                                {
+                                    $set: {
+                                        status: submission.status,
+                                        submissionReason: submission.submissionReason,
+                                        submittedAt: submission.submittedAt,
+                                        lastHeartbeatAt: submission.lastHeartbeatAt,
+                                        answers: submission.answers,
+                                        proctoringLog: submission.proctoringLog,
+                                        score: submission.score,
+                                        totalScore: submission.totalScore,
+                                        evaluation: submission.evaluation,
+                                        hasEirfFlag: submission.hasEirfFlag,
+                                        eirfStatus: submission.eirfStatus,
+                                        flaggedReasons: submission.flaggedReasons,
+                                        pipelineStatus: submission.pipelineStatus
+                                    }
+                                }
+                            );
+                            if (atomicRes.modifiedCount === 0) {
+                                const latestSub = await TestSubmissionModel.findById(submission._id);
+                                if (latestSub && ['submitted', 'auto-submitted', 'evaluated'].includes(latestSub.status)) {
+                                    const earlyPayload = latestSub.toObject ? latestSub.toObject() : { ...latestSub };
+                                    earlyPayload.bicsId = toBicsId(latestSub._id || latestSub.id);
+                                    return res.status(409).json({
+                                        error: `Exam attempt is permanently closed (Status: ${latestSub.status}). Answers are frozen and cannot be modified.`,
+                                        status: latestSub.status,
+                                        isFinalized: true,
+                                        submission: earlyPayload
+                                    });
+                                }
+                                throw saveErr;
+                            }
+                            break;
+                        }
                         await new Promise(resolve => setTimeout(resolve, 50 * (6 - retries)));
                     } else {
                         throw saveErr;
@@ -1925,8 +2254,15 @@ router.post('/submit', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === targetSubId || s._id === targetSubId || s.id === submissionId || s._id === submissionId);
+            const activeSub = await findActiveSubmissionByParam(submissionId);
+            if (!activeSub) return res.status(404).json({ error: "Submission not found" });
+
+            submission = db.testSubmissions.find(s => !s.isDeleted && String(s.id || s._id) === String(activeSub.id || activeSub._id));
             if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+            if (!isSubmissionOwnerForUser(req.user, submission)) {
+                return res.status(403).json({ error: "Access denied: You cannot submit another candidate's examination." });
+            }
 
             // Hard Immutability: If exam is already finalized or reaped, strictly reject answers tampering with 409 Conflict
             if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
@@ -2005,7 +2341,8 @@ router.post('/submit', async (req, res) => {
             if (proctoringLog) {
                 submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
-            submission.status = status || 'submitted';
+            const ALLOWED_STATUSES = ['started', 'submitted', 'auto-submitted'];
+            submission.status = ALLOWED_STATUSES.includes(status) ? status : 'submitted';
             submission.submissionReason = submissionReason || (submission.status === 'auto-submitted' ? 'system_auto' : 'manual');
             if (status !== 'started') {
                 submission.submittedAt = new Date();
@@ -2013,7 +2350,7 @@ router.post('/submit', async (req, res) => {
             submission.lastHeartbeatAt = new Date();
 
             db.tests = db.tests || [];
-            const test = db.tests.find(t => t.id === submission.testId || t._id === submission.testId);
+            const test = db.tests.find(t => !t.isDeleted && (String(t.id || '') === String(submission.testId) || String(t._id || '') === String(submission.testId)));
             if (test) {
                 // Authoritative server-side wall-clock deadline validation (Item 2.3)
                 if (submission.startedAt && isFinalSubmission) {
@@ -2036,10 +2373,14 @@ router.post('/submit', async (req, res) => {
 
                 recalculateMCQScore(submission, test);
                 calculateCodingScoreFast(submission, test);
+                submission.totalScore = submission.evaluation?.totalScore ?? submission.score ?? 0;
             } else {
                 submission.evaluation = {
                     mcqScore: 0,
                     codingScore: 0,
+                    webScore: 0,
+                    totalScore: 0,
+                    score: 0,
                     feedback: '',
                     evaluatedAt: null
                 };
@@ -2069,18 +2410,6 @@ router.post('/submit', async (req, res) => {
                 }
             }
 
-            const sStudId = submission.studentId || 'Candidate';
-            const dbPayloadSnap = {
-                submissionId: String(submission._id || submission.id),
-                studentId: sStudId,
-                candidateName: submission.candidateName || 'Candidate',
-                testTitle: submission.testTitle || 'BICS Online Examination',
-                answers: submission.answers || [],
-                proctoringLog: submission.proctoringLog || {},
-                generatedAt: new Date().toISOString()
-            };
-            submission.encryptedDbPayload = encryptEirfPayload(dbPayloadSnap, sStudId, String(submission._id || submission.id));
-
             saveJSONData(db);
         }
 
@@ -2109,16 +2438,18 @@ router.post('/submit', async (req, res) => {
                 'info'
             ).catch(() => {});
 
-            // Trigger asynchronous sequential EIRF pipeline immediately in background
-            setImmediate(() => {
-                runPipelineTick().catch(err => {
-                    console.error("[EIRF_PIPELINE] Asynchronous submit trigger error:", err);
+            if (submission.hasEirfFlag) {
+                // Trigger sequential EIRF triage pipeline immediately in background
+                setImmediate(() => {
+                    runPipelineTick().catch(err => {
+                        console.error("[EIRF_PIPELINE] Asynchronous submit trigger error:", err);
+                    });
                 });
-            });
-
-            // If clean submission (no EIRF flag), immediately dispatch submission confirmation email
-            if (!submission.hasEirfFlag) {
-                sendTestSubmittedEmail(submission._id || submission.id).catch(err => {
+            } else {
+                // Clean submission (no EIRF flag): dispatch confirmation email directly (protected by email claim mutex)
+                sendTestSubmittedEmail(submission._id || submission.id, {
+                    triggerSource: 'exam_clean_submit'
+                }).catch(err => {
                     console.error("[TESTS_SUBMIT] Error sending immediate submission confirmation email:", err.message);
                 });
             }
@@ -2149,54 +2480,46 @@ router.post('/reevaluation/:submissionId', requireAuth, async (req, res) => {
     }
 
     try {
-        let submission = null;
+        const submission = await findActiveSubmissionByParam(submissionId);
+        if (!submission) {
+            return res.status(404).json({ error: "Exam submission not found." });
+        }
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
+            return res.status(403).json({ error: "Access denied: You cannot request reevaluation for another candidate." });
+        }
+
+        let associatedTest = null;
         if (dbState.useMongo) {
-            submission = await TestSubmissionModel.findById(submissionId);
-            if (!submission) {
-                return res.status(404).json({ error: "Exam submission not found." });
-            }
-            if (req.user && req.user.role !== 'admin') {
-                const subCandId = String(submission.candidateId || submission.studentId || '');
-                const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
-                const subNorm = isBicsId(subCandId) ? toMongoId(subCandId) : subCandId;
-                if (subNorm !== userMongo && subCandId !== String(req.user.studentId || '')) {
-                    return res.status(403).json({ error: "Access denied: You cannot request reevaluation for another candidate." });
-                }
-            }
-            submission.reevaluation = {
-                applied: true,
-                appliedAt: new Date(),
-                complaintText,
-                complainedQuestions: complainedQuestions || [],
-                proofImages: proofImages || [],
-                status: 'pending',
-                resolutionFeedback: ''
-            };
+            associatedTest = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } }).lean();
+        } else {
+            const dbCheck = getJSONData();
+            associatedTest = (dbCheck.tests || []).find(t => !t.isDeleted && String(t._id || t.id) === String(submission.testId));
+        }
+        if (associatedTest && associatedTest.verificationStatus === 'closed') {
+            return res.status(403).json({ error: "The verification and grievance window for this examination is closed." });
+        }
+
+        const reevaluationPayload = {
+            applied: true,
+            appliedAt: new Date(),
+            complaintText,
+            complainedQuestions: complainedQuestions || [],
+            proofImages: proofImages || [],
+            status: 'pending',
+            resolutionFeedback: ''
+        };
+
+        if (dbState.useMongo) {
+            submission.reevaluation = reevaluationPayload;
             await submission.save();
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => s.id === submissionId || s._id === submissionId);
-            if (!submission) {
+            const jsonSub = db.testSubmissions.find(s => !s.isDeleted && String(s.id || s._id) === String(submission.id || submission._id));
+            if (!jsonSub) {
                 return res.status(404).json({ error: "Exam submission not found." });
             }
-            if (req.user && req.user.role !== 'admin') {
-                const subCandId = String(submission.candidateId || submission.studentId || '');
-                const userMongo = isBicsId(String(req.user.id || '')) ? toMongoId(String(req.user.id || '')) : String(req.user.id || '');
-                const subNorm = isBicsId(subCandId) ? toMongoId(subCandId) : subCandId;
-                if (subNorm !== userMongo && subCandId !== String(req.user.studentId || '')) {
-                    return res.status(403).json({ error: "Access denied: You cannot request reevaluation for another candidate." });
-                }
-            }
-            submission.reevaluation = {
-                applied: true,
-                appliedAt: new Date(),
-                complaintText,
-                complainedQuestions: complainedQuestions || [],
-                proofImages: proofImages || [],
-                status: 'pending',
-                resolutionFeedback: ''
-            };
+            jsonSub.reevaluation = reevaluationPayload;
             saveJSONData(db);
         }
 
@@ -2210,54 +2533,36 @@ router.post('/reevaluation/:submissionId', requireAuth, async (req, res) => {
 });
 
 // 9. Get Evaluated Submission Data for OT Terminal
-router.get('/evaluation/:id', async (req, res) => {
+router.get('/evaluation/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     try {
-        const targetSubId = resolveToObjectId(id);
-        let submission = null;
-        if (dbState.useMongo) {
-            if (mongoose.Types.ObjectId.isValid(targetSubId)) {
-                submission = await TestSubmissionModel.findById(targetSubId);
-            }
-            if (!submission && mongoose.Types.ObjectId.isValid(id)) {
-                submission = await TestSubmissionModel.findById(id);
-            }
-            if (!submission) {
-                submission = await TestSubmissionModel.findOne({
-                    $or: [
-                        { _id: targetSubId },
-                        { id: targetSubId },
-                        { _id: id },
-                        { id: id }
-                    ]
-                });
-            }
-        } else {
-            const db = getJSONData();
-            db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => 
-                String(s.id) === String(targetSubId) || 
-                String(s._id) === String(targetSubId) ||
-                String(s.id) === String(id) ||
-                String(s._id) === String(id)
-            );
-        }
-
+        const submission = await findActiveSubmissionByParam(id);
         if (!submission) {
             return res.status(404).json({ success: false, error: "Submission not found." });
+        }
+
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
+            return res.status(403).json({ success: false, error: "Access denied: You do not have permission to view another candidate's evaluation." });
         }
 
         let test = null;
         let student = null;
         if (dbState.useMongo) {
-            test = await TestConfigModel.findById(submission.testId);
-            student = await CandidateModel.findById(submission.candidateId);
+            test = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } });
+            if (submission.candidateId) {
+                student = await CandidateModel.findById(submission.candidateId);
+            } else if (submission.studentId) {
+                student = await CandidateModel.findOne({ studentId: submission.studentId });
+            }
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
             db.candidates = db.candidates || [];
-            test = db.tests.find(t => t.id === String(submission.testId) || t._id === String(submission.testId));
-            student = db.candidates.find(c => c.id === String(submission.candidateId) || c._id === String(submission.candidateId));
+            test = db.tests.find(t => !t.isDeleted && (String(t.id || '') === String(submission.testId) || String(t._id || '') === String(submission.testId)));
+            student = db.candidates.find(c =>
+                (submission.candidateId && (String(c.id || '') === String(submission.candidateId) || String(c._id || '') === String(submission.candidateId))) ||
+                (submission.studentId && String(c.studentId || '') === String(submission.studentId))
+            );
         }
 
         if (!test) {
@@ -2293,16 +2598,16 @@ router.get('/evaluation/:id', async (req, res) => {
             verificationStatus: vStatus,
             candidate: {
                 id: encryptedCandidateId,
-                rawId: String(student?._id || student?.id || submission.candidateId),
                 name: student?.name || submission.candidateName || 'Candidate',
                 studentId: student?.studentId || submission.studentId || '',
-                email: student?.registrationData?.collegeEmail || student?.registrationData?.personalEmail || student?.username || 'candidate@bics.edu',
+                email: submission.candidateEmail || student?.registrationData?.collegeEmail || student?.registrationData?.personalEmail || student?.username || 'candidate@bics.edu',
                 photoUrl: student?.registrationData?.photoUrl || '/public/uploads/default-photo.png'
             },
             test: {
                 id: encryptedTestId,
-                rawId: String(test._id || test.id),
                 title: test.title,
+                course: test.course || '',
+                courseCode: test.courseCode || '',
                 duration: test.duration,
                 marks: test.marks,
                 instructions: test.instructions,
@@ -2312,8 +2617,10 @@ router.get('/evaluation/:id', async (req, res) => {
             submission: {
                 id: encryptedSubId,
                 bicsId: encryptedSubId,
-                rawId: String(submission._id || submission.id),
+                submissionRefId: submission.submissionRefId || null,
                 status: submission.status,
+                verificationStatus: submission.verificationStatus || 'active',
+                eirfStatus: submission.eirfStatus || 'none',
                 startedAt: submission.startedAt,
                 submittedAt: submission.submittedAt,
                 proctoringLog: submission.proctoringLog,
@@ -2331,7 +2638,8 @@ router.get('/evaluation/:id', async (req, res) => {
 
 // 10. Execute & test code runner endpoint (Quick Test + Full Submit Code against Sample + Hidden cases)
 router.post('/run', async (req, res) => {
-    // Dual authorization: check JWT, exam token, or dev environment
+    const isNonProd = process.env.NODE_ENV !== 'production' || !process.env.NODE_ENV;
+    // Dual authorization: check JWT or valid non-expired TestToken (dev bypass disabled in production)
     let isAuthorized = false;
     if (req.user) {
         isAuthorized = true;
@@ -2352,19 +2660,23 @@ router.post('/run', async (req, res) => {
         if (examToken) {
             if (dbState.useMongo) {
                 const tokenDoc = await TestTokenModel.findOne({ token: String(examToken).trim() });
-                if (tokenDoc) isAuthorized = true;
+                if (tokenDoc && (!tokenDoc.expiresAt || Date.now() <= new Date(tokenDoc.expiresAt).getTime())) {
+                    isAuthorized = true;
+                }
             } else {
                 const db = getJSONData();
                 const tokenDoc = (db.tokens || []).find(t => t.token === String(examToken).trim());
-                if (tokenDoc) isAuthorized = true;
+                if (tokenDoc && (!tokenDoc.expiresAt || Date.now() <= new Date(tokenDoc.expiresAt).getTime())) {
+                    isAuthorized = true;
+                }
             }
-            if (String(examToken).startsWith('tok_test') || process.env.NODE_ENV !== 'production') {
+            if (!isAuthorized && isNonProd && String(examToken).startsWith('tok_test')) {
                 isAuthorized = true;
             }
         }
     }
 
-    if (!isAuthorized && (process.env.NODE_ENV !== 'production' || !process.env.NODE_ENV)) {
+    if (!isAuthorized && isNonProd) {
         isAuthorized = true;
     }
 
@@ -2383,18 +2695,23 @@ router.post('/run', async (req, res) => {
     if (questionId) {
         try {
             let questionDoc = null;
-            const targetTestId = testId ? (isBicsId(String(testId)) ? toMongoId(String(testId)) : String(testId)) : null;
+            const targetTestId = testId ? resolveToObjectId(String(testId)) : null;
 
             if (dbState.useMongo) {
-                if (targetTestId) {
-                    const testDoc = await TestConfigModel.findById(targetTestId).lean();
+                if (targetTestId && mongoose.Types.ObjectId.isValid(targetTestId)) {
+                    const testDoc = await TestConfigModel.findOne({ _id: targetTestId, isDeleted: { $ne: true } }).lean();
                     if (testDoc && Array.isArray(testDoc.questions)) {
                         questionDoc = testDoc.questions.find(q => String(q.id || q._id) === String(questionId));
                     }
                 }
                 if (!questionDoc) {
+                    const qTarget = resolveToObjectId(String(questionId));
                     const testDoc = await TestConfigModel.findOne({
-                        "questions._id": isBicsId(String(questionId)) ? toMongoId(String(questionId)) : questionId
+                        isDeleted: { $ne: true },
+                        $or: [
+                            ...(mongoose.Types.ObjectId.isValid(qTarget) ? [{ "questions._id": qTarget }] : []),
+                            { "questions.id": String(questionId) }
+                        ]
                     }).lean();
                     if (testDoc && Array.isArray(testDoc.questions)) {
                         questionDoc = testDoc.questions.find(q => String(q.id || q._id) === String(questionId));
@@ -2402,7 +2719,7 @@ router.post('/run', async (req, res) => {
                 }
             } else {
                 const db = getJSONData();
-                const tests = db.tests || [];
+                const tests = (db.tests || []).filter(t => !t.isDeleted);
                 for (const t of tests) {
                     if (targetTestId && String(t.id || t._id) !== targetTestId) continue;
                     if (Array.isArray(t.questions)) {
@@ -2432,12 +2749,10 @@ router.post('/run', async (req, res) => {
     try {
         const result = await executeCode(sourceCode, casesToRun, timeLimitMs, memoryLimitMb);
 
-        // Sanitize output for hidden test cases for candidate clients, but NEVER hide from administrators
+        // Sanitize output for hidden test cases for candidate clients, expose full inputs/outputs ONLY to verified admins
         if (result && Array.isArray(result.results)) {
             const isAdminRequester = Boolean(
-                (req.user && (req.user.role === 'admin' || req.user.role === 'superadmin' || req.user.isAdmin)) ||
-                req.headers['x-admin-role'] === 'admin' ||
-                req.body.isAdmin === true
+                req.user && (req.user.role === 'admin' || req.user.role === 'superadmin' || req.user.isAdmin)
             );
 
             result.results = result.results.map((r, idx) => {
@@ -2474,11 +2789,11 @@ router.post('/run', async (req, res) => {
 });
 
 // Official Online Test Report Form (OTRF) PDF Generator Endpoint
-router.get('/otrf-report/:idParam', async (req, res) => {
+router.get('/otrf-report/:idParam', requireAuth, async (req, res) => {
     try {
         const { idParam } = req.params;
         const { findSubmissionByAnyId } = require('../utils/submissionMigrator');
-        const { generateOtrfReportPdfBuffer } = require('../services/pdf/otrfReportPdf');
+        const { generateOtrfReportPdfBuffer, persistOtrfPdfArtifact } = require('../services/pdf/otrfReportPdf');
         const { EIRFReportModel } = require('../models');
 
         const submission = await findSubmissionByAnyId(idParam);
@@ -2486,44 +2801,91 @@ router.get('/otrf-report/:idParam', async (req, res) => {
             return res.status(404).json({ error: 'Test submission record not found.' });
         }
 
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
+            return res.status(403).json({ error: 'Forbidden: You are not authorized to view or download this OTRF transcript.' });
+        }
+
         let test = null;
         let candidate = null;
         let eirfReport = null;
+        let systemConfig = null;
+
+        const resolvedTestId = submission.testId ? resolveToObjectId(String(submission.testId)) : '';
+        const resolvedCandId = submission.candidateId ? resolveToObjectId(String(submission.candidateId)) : '';
 
         if (dbState.useMongo) {
-            if (submission.testId) {
-                test = await TestConfigModel.findById(submission.testId);
+            systemConfig = await ConfigModel.findOne().lean();
+            if (resolvedTestId && mongoose.Types.ObjectId.isValid(resolvedTestId)) {
+                test = await TestConfigModel.findById(resolvedTestId).lean();
             }
-            if (submission.candidateId) {
-                candidate = await CandidateModel.findById(submission.candidateId);
-            } else if (submission.studentId) {
-                candidate = await CandidateModel.findOne({ studentId: submission.studentId });
+            if (resolvedCandId && mongoose.Types.ObjectId.isValid(resolvedCandId)) {
+                candidate = await CandidateModel.findById(resolvedCandId).lean();
+            }
+            if (!candidate && submission.studentId) {
+                candidate = await CandidateModel.findOne({ studentId: String(submission.studentId) }).lean();
             }
             if (submission.eirfReportId) {
-                eirfReport = await EIRFReportModel.findOne({ reportId: submission.eirfReportId });
+                eirfReport = await EIRFReportModel.findOne({ reportId: submission.eirfReportId }).lean();
             }
         } else {
             const db = getJSONData();
+            systemConfig = db.config || null;
             if (submission.testId) {
-                test = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
+                test = (db.tests || []).find(t =>
+                    String(t.id || t._id) === String(submission.testId) ||
+                    (resolvedTestId && String(t.id || t._id) === String(resolvedTestId))
+                ) || null;
             }
             if (submission.candidateId) {
-                candidate = (db.candidates || []).find(c => String(c.id || c._id) === String(submission.candidateId));
-            } else if (submission.studentId) {
-                candidate = (db.candidates || []).find(c => String(c.studentId) === String(submission.studentId));
+                candidate = (db.candidates || []).find(c =>
+                    String(c.id || c._id) === String(submission.candidateId) ||
+                    (resolvedCandId && String(c.id || c._id) === String(resolvedCandId))
+                ) || null;
+            }
+            if (!candidate && submission.studentId) {
+                candidate = (db.candidates || []).find(c => String(c.studentId) === String(submission.studentId)) || null;
             }
             if (submission.eirfReportId) {
-                eirfReport = (db.eirfReports || []).find(r => r.reportId === submission.eirfReportId);
+                eirfReport = (db.eirfReports || []).find(r => r.reportId === submission.eirfReportId) || null;
             }
         }
+
+        const reqProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+        const reqHost = req.get('host');
+        const reqServerBase = reqHost ? `${reqProto}://${reqHost}` : null;
 
         const pdfBuffer = await generateOtrfReportPdfBuffer({
             submission,
             test,
             candidate,
             eirfReport,
-            verificationClosureDate: submission.verificationClosedAt || test?.verificationClosedAt || submission.submittedAt
+            systemConfig,
+            verificationClosureDate: submission.verificationClosedAt || test?.verificationClosedAt || submission.submittedAt,
+            serverBaseUrl: reqServerBase
         });
+
+        const artifact = await persistOtrfPdfArtifact({
+            submission,
+            pdfBuffer,
+            options: { serverBaseUrl: reqServerBase }
+        });
+
+        if (artifact?.url && artifact.url !== submission.otrfPdfUrl) {
+            submission.otrfPdfUrl = artifact.url;
+            if (dbState.useMongo && mongoose.Types.ObjectId.isValid(submission._id)) {
+                await TestSubmissionModel.updateOne(
+                    { _id: submission._id },
+                    { $set: { otrfPdfUrl: artifact.url } }
+                );
+            } else {
+                const db = getJSONData();
+                const target = (db.testSubmissions || []).find(s => String(s._id || s.id) === String(submission._id || submission.id));
+                if (target) {
+                    target.otrfPdfUrl = artifact.url;
+                    saveJSONData(db);
+                }
+            }
+        }
 
         const filename = `otrf-report-${submission.submissionRefId || submission._id || 'record'}.pdf`;
         res.setHeader('Content-Type', 'application/pdf');

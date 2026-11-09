@@ -9,7 +9,6 @@ const DEFAULT_ACADEMIC_COURSES = [
     { code: "R526CS03L", name: "Basics of Web Development Lab", type: "lab" }
 ];
 
-const API_ACCESS_SECRET = process.env.API_ACCESS_SECRET || 'bics_secret_key_2026';
 const SECRET_KEY = process.env.SECRET_KEY || 'bics_portal_secure_secret_key_2026';
 const GOOGLE_CLASSROOM_WEBHOOK_KEY = process.env.GOOGLE_CLASSROOM_WEBHOOK_KEY || "bics_classroom_secret_key_2026";
 
@@ -48,7 +47,6 @@ const buildCandidateQueryFilter = (candidateIdInput) => {
 
 module.exports = {
     DEFAULT_ACADEMIC_COURSES,
-    API_ACCESS_SECRET,
     SECRET_KEY,
     GOOGLE_CLASSROOM_WEBHOOK_KEY,
     generateObjectionId,

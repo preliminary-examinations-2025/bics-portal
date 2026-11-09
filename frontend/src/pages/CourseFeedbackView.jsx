@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle, AlertCircle, ArrowLeft, ArrowRight, Save, Send, X, MessageSquare } from 'lucide-react';
 
 // Theory Course Evaluation Rubric (10 Dimensions)
@@ -1039,8 +1040,12 @@ export default function CourseFeedbackView({
         </div>
       )}
 
-      {/* 1. CUSTOM VALIDATION ERROR MODAL — LISTS REMAINING QUESTIONS ON A NEW LINE */}
-      {validationModal.isOpen && (
+      {/* Portal-rendered Feedback Modals */}
+      {(() => {
+        const modalsMarkup = (
+          <>
+            {/* 1. CUSTOM VALIDATION ERROR MODAL — LISTS REMAINING QUESTIONS ON A NEW LINE */}
+            {validationModal.isOpen && (
         <div style={{
           position: 'fixed',
           top: 0,
@@ -1535,6 +1540,10 @@ export default function CourseFeedbackView({
           </div>
         </div>
       )}
+          </>
+        );
+        return typeof document !== 'undefined' ? createPortal(modalsMarkup, document.body) : modalsMarkup;
+      })()}
     </div>
   );
 }

@@ -43,6 +43,7 @@ const TestConfigSchema = new mongoose.Schema({
     title: String,
     course: { type: String, default: '' }, // Academic course name (e.g. "Programming Fundamentals with C++ Lab")
     courseCode: { type: String, default: '' }, // Academic course code (e.g. "R526CS02L")
+    academicTerm: { type: String, default: '' },
     marks: Number,
     instructions: String,
     duration: Number, // in minutes
@@ -52,6 +53,7 @@ const TestConfigSchema = new mongoose.Schema({
     answersReleased: { type: Boolean, default: false }, // Admin release toggle for answer sheets (legacy)
     enableAiEvaluation: { type: Boolean, default: false }, // Toggle for autonomous AI evaluation of web coding questions
     verificationStatus: { type: String, enum: ['not_released', 'released', 'closed'], default: 'not_released' }, // 3-state verification status
+    verificationClosedAt: Date,
     isPublished: { type: Boolean, default: false }, // Admin display/publish toggle for student visibility
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,

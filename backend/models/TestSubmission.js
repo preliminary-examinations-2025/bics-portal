@@ -12,11 +12,15 @@ const AnswerSchema = new mongoose.Schema({
     submittedJs: String, // for Web Coding (JS)
     isSavedByUser: { type: Boolean, default: false },
     score: { type: Number, default: 0 }, // Active / latest score updated by admin
+    maxPoints: { type: Number, default: 0 }, // Configured question points snapshot
     initialScore: { type: Number, default: null }, // First assigned marks (locked)
     isObjected: { type: Boolean, default: false }, // Whether an objection was raised
     scoreAfterObjection: { type: Number, default: null }, // Marks after objection resolution
+    resolvedMarks: { type: Number, default: null },
     isObjectionResolved: { type: Boolean, default: false },
     isManuallyGraded: { type: Boolean, default: false },
+    isBonusAwarded: { type: Boolean, default: false },
+    pendingEvaluation: { type: Boolean, default: false },
     testCaseResults: [{
         testCaseIndex: Number,
         status: String,
@@ -54,23 +58,35 @@ const AnswerSchema = new mongoose.Schema({
 const TestSubmissionSchema = new mongoose.Schema({
     candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate' },
     candidateName: String,
+    candidateEmail: { type: String, default: '' },
     studentId: String,
     submissionRefId: { type: String, unique: true, sparse: true, index: true }, // Unique 12-digit numeric reference ID
     testId: { type: mongoose.Schema.Types.ObjectId, ref: 'TestConfigV2' },
     testTitle: String,
+    durationMinutes: Number,
     startedAt: { type: Date, default: Date.now },
     submittedAt: Date,
     lastHeartbeatAt: { type: Date, default: Date.now },
     status: { type: String, default: 'started' }, // 'started', 'submitted', 'auto-submitted', 'evaluated'
+    verificationStatus: { type: String, enum: ['active', 'annulled', 'pending_eirf'], default: 'active' },
+    verificationClosedAt: Date,
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
     restoreToken: String,
+    otrfPdfUrl: { type: String, default: '' },
     proctoringLog: {
         fullscreenExits: { type: Number, default: 0 },
         tabSwitches: { type: Number, default: 0 },
         inspectAttempts: { type: Number, default: 0 },
         clipboardAttempts: { type: Number, default: 0 },
         webcamStatus: { type: String, default: 'active' },
+        _lastExitTime: Number,
+        _lastTabTime: Number,
+        serverOfflineGaps: [{
+            gapSeconds: Number,
+            downtimeSeconds: Number,
+            timestamp: { type: Date, default: Date.now }
+        }],
         events: [{
             timestamp: { type: Date, default: Date.now },
             startTime: Date,
@@ -152,15 +168,28 @@ const TestSubmissionSchema = new mongoose.Schema({
     }],
     eirfToken: { type: String, index: true },
     eirfExpiresAt: { type: Date, index: true },
+    eirfReportId: { type: String, default: '' },
+    eirfProofUrl: { type: String, default: '' },
+    eirfNoticeEmailSent: { type: Boolean, default: false },
     pipelineRetries: { type: Number, default: 0 },
     lastPipelineError: { type: String, default: null },
     submissionReason: { type: String, default: 'manual' },
+    score: { type: Number },
+    totalScore: { type: Number },
+    course: { type: String },
+    courseCode: { type: String },
     /** @deprecated Superseded by direct client IndexedDB & server submission payload. Physical payload downloads deprecated. */
     encryptedDbPayload: { type: String, default: '' },
     answers: [AnswerSchema],
     evaluation: {
         mcqScore: { type: Number, default: 0 },
         codingScore: { type: Number, default: 0 },
+        webScore: { type: Number, default: 0 },
+        totalScore: { type: Number, default: 0 },
+        score: { type: Number, default: 0 },
+        maxScore: Number,
+        percentage: Number,
+        adminRemarks: { type: String, default: '' },
         feedback: { type: String, default: '' },
         evaluatedAt: Date
     },
@@ -200,8 +229,15 @@ const TestSubmissionSchema = new mongoose.Schema({
         eirfApprovedAt: { type: Date, default: null },
         eirfRejected: { type: Boolean, default: false },
         eirfRejectedAt: { type: Date, default: null },
+        verdict: { type: Boolean, default: false },
+        verdictAt: { type: Date, default: null },
         otrfSent: { type: Boolean, default: false },
-        otrfSentAt: { type: Date, default: null }
+        otrfSentAt: { type: Date, default: null },
+        lastTransport: { type: String, default: '' },
+        lastMessageId: { type: String, default: '' },
+        lastAttemptAt: { type: Date, default: null },
+        lastAttemptType: { type: String, default: '' },
+        lastError: { type: String, default: '' }
     }
 });
 

@@ -39,9 +39,11 @@ import AdminAttendance from './pages/admin/AdminAttendance';
 import AdminCounterfoilView from './pages/admin/AdminCounterfoilView';
 import AdminMarksLedger from './pages/admin/AdminMarksLedger';
 import AdminDatabaseViewer from './pages/admin/AdminDatabaseViewer';
+import AdminEmails from './pages/admin/AdminEmails';
 import AdminKataManager from './pages/admin/AdminKataManager';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { API_BASE, getAuthToken, setAuthToken, clearAuthToken, safeReadJson } from './api/client';
 import { 
   Menu, X, Bell, User, Lock, LogOut, ChevronDown, ChevronRight, 
   Upload, FileText, CheckCircle, AlertTriangle, HelpCircle, Calendar, ShieldAlert,
@@ -52,76 +54,91 @@ import {
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
-const API_BASE = import.meta.env.VITE_API_BASE || (() => {
-  const isLocal = window.location.hostname === 'localhost' || 
-                  window.location.hostname === '127.0.0.1' || 
-                  window.location.hostname.startsWith('192.168.') || 
-                  window.location.hostname.startsWith('10.') || 
-                  window.location.hostname.startsWith('172.');
-  return isLocal ? `http://127.0.0.1:5000/api` : `${window.location.origin}/api`;
-})();
+const isStudentRole = (role) => role === 'student' || role === 'candidate';
 
-const API_ACCESS_SECRET = import.meta.env.VITE_API_ACCESS_SECRET || '';
+class PortalErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
 
-// Automatically attach apiSecret query parameter and Bearer JWT token to all backend API requests
-if (typeof window !== 'undefined' && window.fetch && !window.__bics_fetch_patched) {
-  window.__bics_fetch_patched = true;
-  const originalFetch = window.fetch;
-  window.fetch = function(resource, init) {
-    const secret = API_ACCESS_SECRET || 
-                   localStorage.getItem('portal_api_secret') || 
-                   window.__BICS_API_SECRET__ || 
-                   'qwertty';
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
 
-    let urlString = '';
-    if (typeof resource === 'string') {
-      urlString = resource;
-    } else if (resource && typeof resource.url === 'string') {
-      urlString = resource.url;
+  componentDidCatch(error, errorInfo) {
+    console.error('[PORTAL_ERROR_BOUNDARY]: Uncaught render error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9', padding: '24px' }}>
+          <div className="cf-card" style={{ maxWidth: '520px', width: '100%', padding: '28px', margin: 0, textAlign: 'center', border: '1px solid #cbd5e1', backgroundColor: '#ffffff' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '14px', color: '#d97706' }}>
+              <AlertTriangle size={40} />
+            </div>
+            <h2 style={{ fontSize: '13pt', color: '#002147', margin: '0 0 10px 0', fontWeight: 'bold' }}>
+              Portal Recovery Mode
+            </h2>
+            <p style={{ fontSize: '9.5pt', color: '#475569', lineHeight: '1.6', marginBottom: '20px' }}>
+              An unexpected display issue occurred while loading this page. Your session data is safe.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="cf-btn-primary"
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  window.location.href = '/main/home';
+                }}
+              >
+                Return to Home
+              </button>
+              <button
+                type="button"
+                className="cf-btn-secondary"
+                onClick={() => window.location.reload()}
+              >
+                Reload Page
+              </button>
+            </div>
+          </div>
+        </div>
+      );
     }
+    return this.props.children;
+  }
+}
 
-    const isExternal = urlString.includes('tfhub.dev') || 
-                       urlString.includes('googleapis.com') || 
-                       urlString.includes('jsdelivr.net') || 
-                       urlString.includes('unpkg.com') ||
-                       urlString.includes('cloudinary.com');
-
-    const isBackendApi = (urlString.startsWith('/api') || 
-                          urlString.includes('/api/') || 
-                          (typeof API_BASE !== 'undefined' && API_BASE && urlString.startsWith(API_BASE)) ||
-                          urlString.startsWith(window.location.origin) ||
-                          (!urlString.startsWith('http://') && !urlString.startsWith('https://'))) && !isExternal;
-
-    let targetUrl = urlString;
-    if (secret && isBackendApi && !urlString.includes('apiSecret=') && !urlString.includes('apiKey=')) {
-      const separator = urlString.includes('?') ? '&' : '?';
-      targetUrl = `${urlString}${separator}apiSecret=${encodeURIComponent(secret)}`;
-    }
-
-    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token');
-    if (isBackendApi && token) {
-      let reqInit = init ? { ...init } : {};
-      let headersObj = new Headers(reqInit.headers || (resource instanceof Request ? resource.headers : {}));
-      if (!headersObj.has('Authorization')) {
-        headersObj.set('Authorization', `Bearer ${token}`);
-      }
-      reqInit.headers = headersObj;
-      if (typeof resource === 'string') {
-        return originalFetch.call(this, targetUrl, reqInit);
-      } else if (resource && typeof resource === 'object') {
-        return originalFetch.call(this, new Request(targetUrl, reqInit), reqInit);
-      }
-    }
-
-    if (targetUrl !== urlString) {
-      if (typeof resource === 'string') {
-        return originalFetch.call(this, targetUrl, init);
-      } else if (resource && typeof resource === 'object') {
-        return originalFetch.call(this, new Request(targetUrl, resource), init);
-      }
-    }
-    return originalFetch.call(this, resource, init);
-  };
+function PortalDataStateCard({ title = 'Synchronizing Portal Data', loading = false, error = '', message = 'Loading required portal data...', onRetry }) {
+  return (
+    <div className="cf-card">
+      <div className="cf-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <RefreshCw size={15} className={loading ? 'spin-smooth' : ''} style={{ color: '#3b5998' }} />
+        <span>{title}</span>
+      </div>
+      {error ? (
+        <div className="cf-alert cf-alert-error" style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
+            <AlertTriangle size={16} />
+            <span>Connection Issue</span>
+          </div>
+          <p style={{ margin: 0, fontSize: '9.5pt', lineHeight: '1.5' }}>{error}</p>
+          {typeof onRetry === 'function' && (
+            <button type="button" className="cf-btn-primary" onClick={onRetry} disabled={loading}>
+              {loading ? 'Reconnecting...' : 'Retry Connection'}
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '22px 12px', color: '#475569', fontSize: '9.5pt' }}>
+          <Loader2 size={18} className="spinner" style={{ color: '#3b5998', flexShrink: 0 }} />
+          <span>{message}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const COURSES_LIST = [
@@ -196,6 +213,7 @@ const PATH_TO_VIEW_MAP = {
   '/admin/counterfoil': 'admin_counterfoil',
   '/admin/marks-ledger': 'admin_marks_ledger',
   '/admin/database': 'admin_database',
+  '/admin/emails': 'admin_emails',
   '/admin/kata': 'admin_kata'
 };
 
@@ -281,7 +299,7 @@ function sanitizeRedirectTarget(target) {
   return trimmed;
 }
 
-export default function App() {
+function PortalApp() {
   const toLocalISOString = (dateOrStr) => {
     if (!dateOrStr) return '';
     const date = new Date(dateOrStr);
@@ -297,15 +315,11 @@ export default function App() {
   if (typeof window !== 'undefined') {
     const isClean = window.location.search.includes('clean=1') || window.location.pathname.includes('/logout');
     if (isClean) {
+      clearAuthToken();
       try {
         localStorage.removeItem('bics_session');
         sessionStorage.removeItem('bics_session');
-        localStorage.removeItem('bics_auth_token');
-        sessionStorage.removeItem('bics_auth_token');
-        localStorage.removeItem('token');
-        sessionStorage.removeItem('token');
         localStorage.removeItem('kata_handle');
-        localStorage.removeItem('bics_token_expiry');
         sessionStorage.removeItem('bics_redirect_url');
         localStorage.removeItem('bics_redirect_url');
       } catch (e) {}
@@ -317,23 +331,21 @@ export default function App() {
       const isClean = typeof window !== 'undefined' && (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout'));
       if (isClean) return null;
 
-      const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+      const token = getAuthToken();
       if (!token) return null;
 
       const expMs = parseJwtExp(token);
       if (expMs && Date.now() >= expMs) {
+        clearAuthToken();
         localStorage.removeItem('bics_session');
         sessionStorage.removeItem('bics_session');
-        localStorage.removeItem('bics_auth_token');
-        sessionStorage.removeItem('bics_auth_token');
-        localStorage.removeItem('bics_token_expiry');
         return null;
       }
 
       const stored = localStorage.getItem('bics_session');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (!parsed.expiry || Date.now() < parsed.expiry) {
+        if (parsed?.user && (!parsed.expiry || Date.now() < parsed.expiry)) {
           return parsed.user;
         } else {
           localStorage.removeItem('bics_session');
@@ -343,7 +355,7 @@ export default function App() {
       const temp = sessionStorage.getItem('bics_session');
       if (temp) {
         const parsed = JSON.parse(temp);
-        return parsed.user;
+        if (parsed?.user) return parsed.user;
       }
 
       // Synchronously decode user from valid token so user is never null on frame 0
@@ -355,14 +367,28 @@ export default function App() {
     return null;
   });
   const [studentProfile, setStudentProfile] = useState(null); // Full candidate details
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
   const [ledgerQrData, setLedgerQrData] = useState(null);
   const [systemConfig, setSystemConfig] = useState(null);
+  const [configLoading, setConfigLoading] = useState(true);
+  const [configError, setConfigError] = useState('');
+  const [activeTestsLoading, setActiveTestsLoading] = useState(false);
+  const [activeTestsError, setActiveTestsError] = useState('');
+  const [submittedTestsLoading, setSubmittedTestsLoading] = useState(false);
+  const [submittedTestsError, setSubmittedTestsError] = useState('');
   
-  // Navigation states
+  // Navigation & recovery refs
   const location = useLocation();
   const navigate = useNavigate();
   const isRedirectingRef = useRef(false);
   const isLoggingOutRef = useRef(false);
+  const redirectSafetyTimerRef = useRef(null);
+  const enterTestSafetyTimerRef = useRef(null);
+  const lastFetchedUserIdRef = useRef(null);
+  const lastWakeSyncAtRef = useRef(0);
+  const lastSessionVerifyAtRef = useRef(0);
+  const wakeSyncRef = useRef(null);
 
   const [view, setViewState] = useState(() => {
     const isClean = typeof window !== 'undefined' && (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout'));
@@ -414,6 +440,7 @@ export default function App() {
     admin_counterfoil: '/admin/counterfoil',
     admin_marks_ledger: '/admin/marks-ledger',
     admin_database: '/admin/database',
+    admin_emails: '/admin/emails',
     admin_kata: '/admin/kata'
   };
 
@@ -436,15 +463,20 @@ export default function App() {
     if (targetView === 'login') return true;
     if (targetView === 'changepassword') return true;
     if (role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
-    if (role === 'student') {
+    if (isStudentRole(role)) {
       return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     return false;
   };
 
   const handlePostLoginRedirect = (userObj, token) => {
+    if (redirectSafetyTimerRef.current) {
+      clearTimeout(redirectSafetyTimerRef.current);
+      redirectSafetyTimerRef.current = null;
+    }
+
     let targetRedirect = null;
     try {
       targetRedirect = sessionStorage.getItem('bics_redirect_url') || localStorage.getItem('bics_redirect_url');
@@ -470,6 +502,7 @@ export default function App() {
       setTimeout(() => {
         isRedirectingRef.current = false;
         setAuthLoading(false);
+        setLoadingMessage('');
       }, 300);
       return;
     }
@@ -487,6 +520,7 @@ export default function App() {
       setTimeout(() => {
         isRedirectingRef.current = false;
         setAuthLoading(false);
+        setLoadingMessage('');
       }, 300);
       return;
     }
@@ -515,6 +549,7 @@ export default function App() {
         setTimeout(() => {
           isRedirectingRef.current = false;
           setAuthLoading(false);
+          setLoadingMessage('');
         }, 300);
         return;
       }
@@ -528,6 +563,7 @@ export default function App() {
         sessionStorage.removeItem('bics_redirect_url');
         localStorage.removeItem('bics_redirect_url');
       } catch (e) {}
+      isRedirectingRef.current = true;
       setLoadingMessage("Opening Athenaeum...");
 
       let wsPath = cleanRedirect;
@@ -548,12 +584,17 @@ export default function App() {
         wsPath = dummyUrl.pathname + (dummyUrl.search ? dummyUrl.search : '') + dummyUrl.hash;
       } catch (e) {}
 
-      const authToken = token || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+      const authToken = token || getAuthToken() || '';
       let finalWsUrl = isLocal ? `http://localhost:5175${wsPath}` : wsPath;
       if (authToken) {
         const sep = finalWsUrl.includes('?') ? '&' : '?';
         finalWsUrl = `${finalWsUrl}${sep}authToken=${encodeURIComponent(authToken)}`;
       }
+      redirectSafetyTimerRef.current = setTimeout(() => {
+        isRedirectingRef.current = false;
+        setAuthLoading(false);
+        setLoadingMessage('');
+      }, 10000);
       window.location.replace(finalWsUrl);
       return;
     }
@@ -564,6 +605,7 @@ export default function App() {
         sessionStorage.removeItem('bics_redirect_url');
         localStorage.removeItem('bics_redirect_url');
       } catch (e) {}
+      isRedirectingRef.current = true;
       setLoadingMessage("Opening Assessment Portal...");
 
       const termIdx = cleanRedirect.includes('/assessment') ? cleanRedirect.indexOf('/assessment') : cleanRedirect.indexOf('/terminal');
@@ -574,12 +616,17 @@ export default function App() {
         termPath = dummyUrl.pathname + (dummyUrl.search ? dummyUrl.search : '') + dummyUrl.hash;
       } catch (e) {}
 
-      const authToken = token || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || '';
+      const authToken = token || getAuthToken() || '';
       let finalTermUrl = isLocal ? `http://localhost:5174${termPath}` : termPath;
       if (authToken) {
         const sep = finalTermUrl.includes('?') ? '&' : '?';
         finalTermUrl = `${finalTermUrl}${sep}authToken=${encodeURIComponent(authToken)}`;
       }
+      redirectSafetyTimerRef.current = setTimeout(() => {
+        isRedirectingRef.current = false;
+        setAuthLoading(false);
+        setLoadingMessage('');
+      }, 10000);
       window.location.replace(finalTermUrl);
       return;
     }
@@ -628,6 +675,7 @@ export default function App() {
       setTimeout(() => {
         isRedirectingRef.current = false;
         setAuthLoading(false);
+        setLoadingMessage('');
       }, 300);
       return;
     }
@@ -640,6 +688,7 @@ export default function App() {
     setTimeout(() => {
       isRedirectingRef.current = false;
       setAuthLoading(false);
+      setLoadingMessage('');
     }, 300);
   };
 
@@ -735,7 +784,7 @@ export default function App() {
         const rawParam = searchParams.get('redirect') || searchParams.get('returnUrl') || sessionStorage.getItem('bics_redirect_url');
         const redirectParam = sanitizeRedirectTarget(rawParam);
         if (redirectParam) {
-          handlePostLoginRedirect(user, localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token'));
+          handlePostLoginRedirect(user, getAuthToken());
           return;
         }
 
@@ -778,18 +827,37 @@ export default function App() {
   // 1. Cross-portal logout broadcast channel & window message listener
   useEffect(() => {
     const handleLogoutEvent = () => {
+      clearAuthToken();
+      if (redirectSafetyTimerRef.current) {
+        clearTimeout(redirectSafetyTimerRef.current);
+        redirectSafetyTimerRef.current = null;
+      }
+      if (enterTestSafetyTimerRef.current) {
+        clearTimeout(enterTestSafetyTimerRef.current);
+        enterTestSafetyTimerRef.current = null;
+      }
+      isRedirectingRef.current = false;
+      isLoggingOutRef.current = false;
+      lastFetchedUserIdRef.current = null;
+      setAuthLoading(false);
+      setLoadingMessage('');
+      setEnteringTestId(null);
       setUser(null);
       setStudentProfile(null);
-      localStorage.removeItem('bics_session');
-      sessionStorage.removeItem('bics_session');
-      localStorage.removeItem('bics_auth_token');
-      sessionStorage.removeItem('bics_auth_token');
-      localStorage.removeItem('token');
-      sessionStorage.removeItem('token');
-      localStorage.removeItem('kata_handle');
-      localStorage.removeItem('bics_token_expiry');
-      sessionStorage.removeItem('bics_redirect_url');
-      localStorage.removeItem('bics_redirect_url');
+      setProfileError('');
+      setActiveStudentTests([]);
+      setSubmittedTestsList([]);
+      setStudentSubmissions([]);
+      setStudentObjectionsList([]);
+      setStudentTickets([]);
+      setLedgerQrData(null);
+      try {
+        localStorage.removeItem('bics_session');
+        sessionStorage.removeItem('bics_session');
+        localStorage.removeItem('kata_handle');
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
       setViewState('login');
       navigate('/login', { replace: true });
     };
@@ -830,67 +898,121 @@ export default function App() {
     }
   }, []);
 
-  // 2. Active session verification with backend on startup to eliminate stale session bounces
-  useEffect(() => {
+  const verifySessionWithBackend = async () => {
+    if (typeof window === 'undefined') return;
     if (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout')) {
       return;
     }
 
-    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token');
+    const token = getAuthToken();
     if (!token) return;
 
     const expMs = parseJwtExp(token);
     if (expMs && Date.now() >= expMs) {
       console.warn('[Session] Stored JWT expired by exp claim. Purging session.');
-      localStorage.removeItem('bics_session');
-      sessionStorage.removeItem('bics_session');
-      localStorage.removeItem('bics_auth_token');
-      sessionStorage.removeItem('bics_auth_token');
-      localStorage.removeItem('token');
-      sessionStorage.removeItem('token');
-      localStorage.removeItem('bics_token_expiry');
+      clearAuthToken();
+      try {
+        localStorage.removeItem('bics_session');
+        sessionStorage.removeItem('bics_session');
+      } catch (e) {}
       setUser(null);
       return;
     }
 
-    let isMounted = true;
-    fetch(`${API_BASE}/verify-session`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (!isMounted) return;
-        if (!data || !data.valid) {
-          console.warn('[Session] Backend reported session is invalid or revoked. Clearing credentials.');
-          localStorage.removeItem('bics_session');
-          sessionStorage.removeItem('bics_session');
-          localStorage.removeItem('bics_auth_token');
-          sessionStorage.removeItem('bics_auth_token');
-          localStorage.removeItem('token');
-          sessionStorage.removeItem('token');
-          localStorage.removeItem('bics_token_expiry');
-          setUser(null);
-          setViewState('login');
-          navigate('/login', { replace: true });
-        } else if (data.user) {
-          setUser(prev => prev ? { ...prev, ...data.user } : data.user);
+    lastSessionVerifyAtRef.current = Date.now();
+    try {
+      const res = await fetch(`${API_BASE}/verify-session`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      })
-      .catch(err => {
-        console.warn('[Session] verify-session error:', err);
       });
 
-    return () => {
-      isMounted = false;
-    };
+      // Only purge credentials on authoritative 401/403 or explicit ok { valid: false }
+      if (res.status === 401 || res.status === 403) {
+        console.warn('[Session] Backend rejected session token with status', res.status);
+        clearAuthToken();
+        try {
+          localStorage.removeItem('bics_session');
+          sessionStorage.removeItem('bics_session');
+        } catch (e) {}
+        setUser(null);
+        setStudentProfile(null);
+        setViewState('login');
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (!res.ok) {
+        console.warn('[Session] Transient verify-session server status:', res.status);
+        return;
+      }
+
+      const data = await safeReadJson(res);
+      if (!data) {
+        console.warn('[Session] Non-JSON verify-session response received; preserving local session.');
+        return;
+      }
+
+      if (data.valid === false) {
+        console.warn('[Session] Backend reported session is invalid or revoked. Clearing credentials.');
+        clearAuthToken();
+        try {
+          localStorage.removeItem('bics_session');
+          sessionStorage.removeItem('bics_session');
+        } catch (e) {}
+        setUser(null);
+        setStudentProfile(null);
+        setViewState('login');
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (data.valid && data.user) {
+        setUser(prev => {
+          if (!prev) return data.user;
+          const nextId = data.user.id || prev.id;
+          const nextRole = data.user.role || prev.role;
+          const nextUsername = data.user.username || prev.username;
+          const nextStudentId = data.user.studentId || prev.studentId;
+          const nextName = (prev.name && prev.name !== 'Student' && data.user.name === nextUsername)
+            ? prev.name
+            : (data.user.name || prev.name);
+
+          if (
+            prev.id === nextId &&
+            prev.role === nextRole &&
+            prev.username === nextUsername &&
+            prev.studentId === nextStudentId &&
+            prev.name === nextName
+          ) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            ...data.user,
+            id: nextId,
+            role: nextRole,
+            username: nextUsername,
+            studentId: nextStudentId,
+            name: nextName
+          };
+        });
+      }
+    } catch (err) {
+      console.warn('[Session] verify-session error:', err);
+    }
+  };
+
+  // 2. Active session verification with backend on startup
+  useEffect(() => {
+    verifySessionWithBackend();
   }, []);
 
   // 3. Proactive expiration timer: Sign out portal automatically when JWT expires
   useEffect(() => {
     if (!user) return;
-    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+    const token = getAuthToken();
     const expMs = parseJwtExp(token);
     if (expMs) {
       const remaining = expMs - Date.now();
@@ -923,12 +1045,62 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Browser bfcache (pageshow) + tab visibility/online wake recovery
   useEffect(() => {
     const handlePageShow = (event) => {
+      if (redirectSafetyTimerRef.current) {
+        clearTimeout(redirectSafetyTimerRef.current);
+        redirectSafetyTimerRef.current = null;
+      }
+      if (enterTestSafetyTimerRef.current) {
+        clearTimeout(enterTestSafetyTimerRef.current);
+        enterTestSafetyTimerRef.current = null;
+      }
+      isRedirectingRef.current = false;
       setEnteringTestId(null);
+      setAuthLoading(false);
+      setLoadingMessage('');
+
+      if (event?.persisted && typeof wakeSyncRef.current === 'function') {
+        wakeSyncRef.current(true);
+      }
     };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && typeof wakeSyncRef.current === 'function') {
+        wakeSyncRef.current(false);
+      }
+    };
+
+    const handleOnline = () => {
+      if (typeof wakeSyncRef.current === 'function') {
+        wakeSyncRef.current(true);
+      }
+    };
+
+    const handlePageHide = () => {
+      if (redirectSafetyTimerRef.current) {
+        clearTimeout(redirectSafetyTimerRef.current);
+        redirectSafetyTimerRef.current = null;
+      }
+      if (enterTestSafetyTimerRef.current) {
+        clearTimeout(enterTestSafetyTimerRef.current);
+        enterTestSafetyTimerRef.current = null;
+      }
+    };
+
     window.addEventListener('pageshow', handlePageShow);
-    return () => window.removeEventListener('pageshow', handlePageShow);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (redirectSafetyTimerRef.current) clearTimeout(redirectSafetyTimerRef.current);
+      if (enterTestSafetyTimerRef.current) clearTimeout(enterTestSafetyTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -1028,6 +1200,15 @@ export default function App() {
   const [sendingVerificationCode, setSendingVerificationCode] = useState(false);
   const [verifyingCode, setVerifyingCode] = useState(false);
   const [verificationCodeSent, setVerificationCodeSent] = useState(false);
+  const [verificationCooldown, setVerificationCooldown] = useState(0);
+
+  useEffect(() => {
+    if (verificationCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setVerificationCooldown(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [verificationCooldown]);
 
   // Change Password Security state variables
   const [changePasswordCaptchaCode, setChangePasswordCaptchaCode] = useState('');
@@ -1269,12 +1450,12 @@ export default function App() {
   const [adminTimetableNotice, setAdminTimetableNotice] = useState('');
   const [adminExamType, setAdminExamType] = useState('midsem');
   const [adminTimetable, setAdminTimetable] = useState([
-    { code: "R526CS01T", course: "Introduction to Computer Science", date: '11/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
-    { code: "R526CS02T", course: "Programming Fundamentals with C++", date: '12/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
-    { code: "R526CS03T", course: "Basics of Web Development", date: '13/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
-    { code: "R526CS04T", course: "Mathematical Thinking", date: '14/09/2026', time: '03:15 PM to 04:45 PM', marks: 100 },
-    { code: "R526CS02L", course: "Programming Fundamentals with C++ Lab", date: '15/09/2026', time: '02:00 PM to 05:00 PM', marks: 50 },
-    { code: "R526CS03L", course: "Basics of Web Development Lab", date: '16/09/2026', time: '02:00 PM to 05:00 PM', marks: 50 }
+    { code: "R526CS01T", course: "Introduction to Computer Science", date: '2026-09-11', time: '03:15 PM to 04:45 PM', marks: 100, mode: 'Online Proctored', reportTime: '02:45 PM' },
+    { code: "R526CS02T", course: "Programming Fundamentals with C++", date: '2026-09-12', time: '03:15 PM to 04:45 PM', marks: 100, mode: 'Online Proctored', reportTime: '02:45 PM' },
+    { code: "R526CS03T", course: "Basics of Web Development", date: '2026-09-13', time: '03:15 PM to 04:45 PM', marks: 100, mode: 'Online Proctored', reportTime: '02:45 PM' },
+    { code: "R526CS04T", course: "Mathematical Thinking", date: '2026-09-14', time: '03:15 PM to 04:45 PM', marks: 100, mode: 'Online Proctored', reportTime: '02:45 PM' },
+    { code: "R526CS02L", course: "Programming Fundamentals with C++ Lab", date: '2026-09-15', time: '02:00 PM to 05:00 PM', marks: 50, mode: 'Computer Lab', reportTime: '01:30 PM' },
+    { code: "R526CS03L", course: "Basics of Web Development Lab", date: '2026-09-16', time: '02:00 PM to 05:00 PM', marks: 50, mode: 'Computer Lab', reportTime: '01:30 PM' }
   ]);
   const [adminClassTests, setAdminClassTests] = useState([]);
 
@@ -1358,13 +1539,13 @@ export default function App() {
       if (severity && severity !== 'ALL') q.set('severity', severity);
       if (search) q.set('search', search);
 
-      const token = localStorage.getItem('token');
+      const token = getAuthToken();
       const headers = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const res = await fetch(`${API_BASE}/admin/system-logs?${q.toString()}`, { headers });
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeReadJson(res);
         if (Array.isArray(data)) {
           setSystemLogs(data);
           setSystemLogsMeta({
@@ -1454,7 +1635,7 @@ export default function App() {
   const [submissionsLoading, setSubmissionsLoading] = useState(true);
 
   const fetchStudentSubmissions = async (paramStudentId) => {
-    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+    const token = getAuthToken();
     if (isLoggingOutRef.current || !token) {
       setSubmissionsLoading(false);
       return;
@@ -1474,8 +1655,10 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/student/submissions/${studentId}`);
       if (res.ok) {
-        const data = await res.json();
-        setStudentSubmissions(Array.isArray(data) ? data : []);
+        const data = await safeReadJson(res);
+        if (Array.isArray(data)) {
+          setStudentSubmissions(data);
+        }
       }
       
       if (isLoggingOutRef.current) return;
@@ -1484,8 +1667,10 @@ export default function App() {
       const semType = systemConfig?.examType === 'endsem' ? 'end' : 'mid';
       const qrRes = await fetch(`${API_BASE}/candidate/ledger-qr-data/${studentId}?type=${semType}`);
       if (qrRes.ok) {
-        const qrData = await qrRes.json();
-        setLedgerQrData(qrData);
+        const qrData = await safeReadJson(qrRes);
+        if (qrData) {
+          setLedgerQrData(qrData);
+        }
       }
     } catch (e) {
       if (!isLoggingOutRef.current) {
@@ -1607,6 +1792,9 @@ export default function App() {
   const [adminReevalStatus, setAdminReevalStatus] = useState('pending');
   const [adminReevalResolutionFeedback, setAdminReevalResolutionFeedback] = useState('');
   const [adminGradingAnswers, setAdminGradingAnswers] = useState({});
+  const [adminManuallyEditedScores, setAdminManuallyEditedScores] = useState({});
+  const adminManuallyEditedScoresRef = useRef({});
+  const lastVerifiedSubmissionIdRef = useRef(null);
 
   // Admin Exam configuration states
   const [adminTests, setAdminTests] = useState([]);
@@ -1661,11 +1849,12 @@ export default function App() {
     success: ''
   });
 
-  // Admin Recycle Bin States
+  // Admin Recycle Bin & Unified Email Center States
   const [recycleBinItems, setRecycleBinItems] = useState([]);
   const [recycleBinLoading, setRecycleBinLoading] = useState(false);
   const [recycleBinError, setRecycleBinError] = useState('');
   const [recycleBinSuccess, setRecycleBinSuccess] = useState('');
+  const [adminEmailPendingCount, setAdminEmailPendingCount] = useState(0);
 
   // Student exam workspace draft state variables
   // Digital Submission Tracker States
@@ -1999,10 +2188,12 @@ int main() {
   const fetchVideoLectures = async () => {
     try {
       const res = await fetch(`${API_BASE}/video-lectures`);
-      const data = await res.json();
-      setVideoLectures(data);
-      if (data.length > 0 && !selectedLecture) {
-        setSelectedLecture(data[0]);
+      const data = await safeReadJson(res);
+      if (res.ok && Array.isArray(data)) {
+        setVideoLectures(data);
+        if (data.length > 0 && !selectedLecture) {
+          setSelectedLecture(data[0]);
+        }
       }
     } catch (e) {
       console.error("Error fetching video lectures:", e);
@@ -2012,8 +2203,10 @@ int main() {
   const fetchCourseMaterials = async () => {
     try {
       const res = await fetch(`${API_BASE}/course-materials`);
-      const data = await res.json();
-      setCourseMaterials(data);
+      const data = await safeReadJson(res);
+      if (res.ok && Array.isArray(data)) {
+        setCourseMaterials(data);
+      }
     } catch (e) {
       console.error("Error fetching course materials:", e);
     }
@@ -2125,33 +2318,57 @@ int main() {
 
   // ONLINE TEST MODULE HELPER FUNCTIONS
   const fetchStudentActiveTests = async () => {
+    setActiveTestsLoading(true);
+    setActiveTestsError('');
     try {
-      const candId = user ? (user.id || user._id) : '';
-      const res = await fetch(`${API_BASE}/tests/active?id=${candId}`);
-      const data = await res.json();
-      setActiveStudentTests(Array.isArray(data) ? data : []);
+      const candId = user ? (user.id || user._id || '') : '';
+      const res = await fetch(`${API_BASE}/tests/active?id=${encodeURIComponent(candId)}`);
+      const data = await safeReadJson(res);
+      if (!res.ok || !Array.isArray(data)) {
+        setActiveTestsError(
+          (data && data.error) || 'Unable to synchronize online examinations right now. Please try again.'
+        );
+        return;
+      }
+      setActiveStudentTests(data);
     } catch (e) {
       console.error("Error fetching active student tests:", e);
-      setActiveStudentTests([]);
+      setActiveTestsError('Connection to examination server timed out or failed. Please retry.');
+    } finally {
+      setActiveTestsLoading(false);
     }
   };
 
   const fetchAdminTests = async () => {
     try {
       const res = await fetch(`${API_BASE}/admin/tests`);
-      const data = await res.json();
-      setAdminTests(Array.isArray(data) ? data : []);
+      const data = await safeReadJson(res);
+      if (res.ok && Array.isArray(data)) {
+        setAdminTests(data);
+      }
     } catch (e) {
       console.error("Error fetching admin tests:", e);
-      setAdminTests([]);
     }
   };
 
   const fetchSubmittedTestsList = async (candidateId) => {
+    const targetId = candidateId || user?.id || user?._id || '';
+    if (!targetId) {
+      setSubmittedTestsLoading(false);
+      return;
+    }
+    setSubmittedTestsLoading(true);
+    setSubmittedTestsError('');
     try {
-      const res = await fetch(`${API_BASE}/tests/submitted?id=${candidateId}`);
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
+      const res = await fetch(`${API_BASE}/tests/submitted?id=${encodeURIComponent(targetId)}`);
+      const data = await safeReadJson(res);
+      if (!res.ok || !Array.isArray(data)) {
+        setSubmittedTestsError(
+          (data && data.error) || 'Unable to retrieve submitted answer sheets right now. Please try again.'
+        );
+        return;
+      }
+      const list = [...data];
       const getTime = (st) => {
         const sub = st?.submission || {};
         const dateVal = sub.submittedAt || sub.createdAt || sub.startedAt || st?.startDate || st?.endDate;
@@ -2173,7 +2390,9 @@ int main() {
       }
     } catch (e) {
       console.error("Failed to retrieve candidate submitted tests:", e);
-      setSubmittedTestsList([]);
+      setSubmittedTestsError('Connection to verification server failed or timed out. Please retry.');
+    } finally {
+      setSubmittedTestsLoading(false);
     }
   };
 
@@ -2186,7 +2405,7 @@ int main() {
     formData.append('imageFile', file);
     
     try {
-      const res = await fetch(`${API_BASE}/admin/upload-image`, {
+      const res = await fetch(`${API_BASE}/tests/upload-proof`, {
         method: 'POST',
         body: formData
       });
@@ -2272,14 +2491,14 @@ int main() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          candidateId: user.id || user._id,
+          candidateId: user?.id || user?._id,
           testId: testId
         })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      const data = await safeReadJson(res);
+      if (!res.ok || !data?.success || !data?.token) {
         setEnteringTestId(null);
-        showModalAlert("Access Denied", data.error || "Failed to generate exam access token.");
+        showModalAlert("Access Denied", (data && data.error) || "Failed to generate exam access token.");
         return;
       }
  
@@ -2287,14 +2506,25 @@ int main() {
       const otBaseUrl = window.location.origin.includes('localhost')
         ? 'http://localhost:5174/assessment'
         : `${window.location.origin}/assessment`;
-      const userToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+      const userToken = getAuthToken() || '';
       const authParam = userToken ? `&authToken=${encodeURIComponent(userToken)}` : '';
       const examUrl = `${otBaseUrl}/test?token=${data.token}${authParam}`;
       
+      if (enterTestSafetyTimerRef.current) {
+        clearTimeout(enterTestSafetyTimerRef.current);
+      }
+      enterTestSafetyTimerRef.current = setTimeout(() => {
+        setEnteringTestId(null);
+      }, 10000);
+
       setTimeout(() => {
         window.location.href = examUrl;
       }, 1200);
     } catch (err) {
+      if (enterTestSafetyTimerRef.current) {
+        clearTimeout(enterTestSafetyTimerRef.current);
+        enterTestSafetyTimerRef.current = null;
+      }
       setEnteringTestId(null);
       console.error(err);
       showModalAlert("Connection Failed", "Unable to establish secure tunnel to Exam portal.");
@@ -2625,7 +2855,7 @@ int main() {
 
     // Automatically calculate total coding score from individual fields
     const totalCodingScore = Object.entries(adminGradingAnswers).reduce((sum, [qId, score]) => {
-      const ans = selectedExamSubmission.answers?.find(a => a.questionId === qId);
+      const ans = selectedExamSubmission.answers?.find(a => String(a.questionId) === String(qId));
       return (ans && (ans.type === 'coding' || ans.type === 'web')) ? sum + Number(score || 0) : sum;
     }, 0);
 
@@ -2654,9 +2884,11 @@ int main() {
         });
       }
 
+      const wasManuallyEdited = Boolean(adminManuallyEditedScoresRef.current[String(ans.questionId)] || adminManuallyEditedScores[String(ans.questionId)]);
       return {
         ...ans,
         score: adminGradingAnswers[ans.questionId] !== undefined ? Number(adminGradingAnswers[ans.questionId]) : ans.score,
+        isManuallyGraded: Boolean(ans.isManuallyGraded || wasManuallyEdited),
         testCaseResults: updatedTestCaseResults || ans.testCaseResults,
         rawResults: evalRes ? (evalRes.results || null) : ans.rawResults,
         compileError: evalRes ? (evalRes.compileError || null) : (ans.compileError || null),
@@ -2685,6 +2917,8 @@ int main() {
         setSelectedExamSubmission(null);
         setAdminGradingCodingScore(0);
         setAdminGradingFeedback('');
+        setAdminManuallyEditedScores({});
+        adminManuallyEditedScoresRef.current = {};
       } else {
         showModalAlert("Evaluation Error", data.error || "Failed to save candidate evaluation.");
       }
@@ -2694,8 +2928,15 @@ int main() {
     }
   };
 
-  const runAdminCodeVerification = async (questionId, sourceCode, testCases) => {
+  const markQuestionManuallyEdited = (qId) => {
+    const key = String(qId);
+    adminManuallyEditedScoresRef.current = { ...adminManuallyEditedScoresRef.current, [key]: true };
+    setAdminManuallyEditedScores(prev => ({ ...prev, [key]: true }));
+  };
+
+  const runAdminCodeVerification = async (questionId, sourceCode, testCases, options = {}) => {
     if (!sourceCode || !testCases || testCases.length === 0) return;
+    const { autoUpdateScore = true } = options;
     
     setCodingEvaluationResults(prev => ({
       ...prev,
@@ -2703,19 +2944,18 @@ int main() {
     }));
     
     try {
-      const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
+      const token = getAuthToken();
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      headers['X-Admin-Role'] = 'admin';
 
       const res = await fetch(`${API_BASE}/tests/run`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ sourceCode, testCases, isAdmin: true })
+        body: JSON.stringify({ sourceCode, testCases })
       });
-      const data = await res.json();
+      const data = await safeReadJson(res);
       
-      if (res.ok) {
+      if (res.ok && data) {
         const resultsList = data.results || [];
         setCodingEvaluationResults(prev => ({
           ...prev,
@@ -2735,11 +2975,13 @@ int main() {
           }
         });
 
-        // Update score in grading form
-        setAdminGradingAnswers(prev => ({
-          ...prev,
-          [questionId]: autoPoints
-        }));
+        // Update score only if admin has not manually overridden / resolved an objection
+        if (autoUpdateScore && !adminManuallyEditedScoresRef.current[String(questionId)]) {
+          setAdminGradingAnswers(prev => ({
+            ...prev,
+            [questionId]: autoPoints
+          }));
+        }
       } else {
         setCodingEvaluationResults(prev => ({
           ...prev,
@@ -2767,18 +3009,33 @@ int main() {
 
   useEffect(() => {
     if (!selectedExamSubmission) {
+      lastVerifiedSubmissionIdRef.current = null;
       setCodingEvaluationResults({});
+      setAdminManuallyEditedScores({});
+      adminManuallyEditedScoresRef.current = {};
       return;
     }
-    
+
+    const subKey = String(selectedExamSubmission.id || selectedExamSubmission._id || '');
+    if (subKey && lastVerifiedSubmissionIdRef.current === subKey) {
+      return;
+    }
+
     const testConfig = adminTests.find(t => (t.id || t._id) === selectedExamSubmission.testId);
     if (!testConfig) return;
-    
+
+    lastVerifiedSubmissionIdRef.current = subKey;
     selectedExamSubmission.answers?.forEach(ans => {
       if (ans.type === 'coding') {
+        const alreadyEvaluated = Boolean(
+          ans.isManuallyGraded ||
+          ans.isObjectionResolved ||
+          (Array.isArray(ans.testCaseResults) && ans.testCaseResults.length > 0)
+        );
+        if (alreadyEvaluated) return;
         const questionConfig = testConfig.questions?.find(q => String(q.id || q._id) === String(ans.questionId));
         if (questionConfig && ans.submittedCode) {
-          runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig.testCases);
+          runAdminCodeVerification(ans.questionId, ans.submittedCode, questionConfig.testCases, { autoUpdateScore: true });
         }
       }
     });
@@ -2788,90 +3045,130 @@ int main() {
     fetchConfig();
     generateCaptcha();
 
-    // Session restoration
-    const token = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token');
-    if (!token) {
-      localStorage.removeItem('bics_session');
-      sessionStorage.removeItem('bics_session');
+    const token = getAuthToken();
+    const expMs = parseJwtExp(token);
+    if (!token || (expMs && Date.now() >= expMs)) {
+      clearAuthToken();
+      try {
+        localStorage.removeItem('bics_session');
+        sessionStorage.removeItem('bics_session');
+      } catch (e) {}
       setUser(null);
-    } else {
+      return;
+    }
+
+    let resolvedUser = null;
+    try {
       const stored = localStorage.getItem('bics_session');
       if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Date.now() < parsed.expiry) {
-            setUser(parsed.user);
-            if (view === 'login') {
-              handlePostLoginRedirect(parsed.user, token);
-            }
-          } else {
-            localStorage.removeItem('bics_session');
-            localStorage.removeItem('bics_auth_token');
-            setUser(null);
-          }
-        } catch (e) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.user && (!parsed.expiry || Date.now() < parsed.expiry)) {
+          resolvedUser = parsed.user;
+        } else {
           localStorage.removeItem('bics_session');
-          localStorage.removeItem('bics_auth_token');
-          setUser(null);
-        }
-      } else {
-        const temp = sessionStorage.getItem('bics_session');
-        if (temp) {
-          try {
-            const parsed = JSON.parse(temp);
-            setUser(parsed.user);
-            if (view === 'login') {
-              handlePostLoginRedirect(parsed.user, token);
-            }
-          } catch (e) {}
+          clearAuthToken();
         }
       }
+    } catch (e) {
+      try { localStorage.removeItem('bics_session'); } catch (_) {}
+      clearAuthToken();
+    }
+
+    if (!resolvedUser) {
+      try {
+        const temp = sessionStorage.getItem('bics_session');
+        if (temp) {
+          const parsed = JSON.parse(temp);
+          if (parsed?.user) resolvedUser = parsed.user;
+        }
+      } catch (e) {}
+    }
+
+    if (!resolvedUser) {
+      resolvedUser = parseJwtUser(token);
+    }
+
+    if (resolvedUser) {
+      setUser(resolvedUser);
+      const pathname = window.location.pathname || '';
+      const searchParams = new URLSearchParams(window.location.search || '');
+      const hasRedirectTarget = Boolean(
+        searchParams.get('redirect') ||
+        searchParams.get('returnUrl') ||
+        sessionStorage.getItem('bics_redirect_url')
+      );
+      const isLoginOrRoot =
+        pathname === '/' ||
+        pathname === '/main' ||
+        pathname === '/main/' ||
+        pathname === '/login' ||
+        pathname === '/main/login';
+      if (isLoginOrRoot || hasRedirectTarget) {
+        handlePostLoginRedirect(resolvedUser, token);
+      }
+    } else {
+      setUser(null);
     }
   }, []);
 
   // Listen for session expiry event from API client interceptor
   useEffect(() => {
     const handleAuthExpired = () => {
+      if (redirectSafetyTimerRef.current) {
+        clearTimeout(redirectSafetyTimerRef.current);
+        redirectSafetyTimerRef.current = null;
+      }
+      if (enterTestSafetyTimerRef.current) {
+        clearTimeout(enterTestSafetyTimerRef.current);
+        enterTestSafetyTimerRef.current = null;
+      }
+      isRedirectingRef.current = false;
+      isLoggingOutRef.current = false;
+      lastFetchedUserIdRef.current = null;
+      setAuthLoading(false);
+      setLoadingMessage('');
+      setEnteringTestId(null);
       setUser(null);
       setStudentProfile(null);
-      setView('login');
+      setActiveStudentTests([]);
+      setSubmittedTestsList([]);
+      setStudentSubmissions([]);
+      setStudentObjectionsList([]);
+      setStudentTickets([]);
+      setLedgerQrData(null);
+      setViewState('login');
+      navigate('/login', { replace: true });
     };
     window.addEventListener('bics_auth_expired', handleAuthExpired);
     return () => window.removeEventListener('bics_auth_expired', handleAuthExpired);
-  }, []);
-
-  useEffect(() => {
-    if (user) {
-      fetchVideoLectures();
-      fetchCourseMaterials();
-      if (user.role === 'admin') {
-        fetchCandidates();
-        fetchAdminTests();
-        fetchAdminSubmissions();
-      } else {
-        fetchStudentProfile();
-        fetchStudentActiveTests();
-        fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || "STU1001");
-      }
-    }
-  }, [user, view]);
+  }, [navigate]);
 
   // Short-polling active student tests status when view === 'tests'
   useEffect(() => {
-    if (view !== 'tests' || !user || user.role === 'admin') return;
+    if (view !== 'tests' || !user || !isStudentRole(user.role)) return;
     
     const interval = setInterval(() => {
       fetchStudentActiveTests();
     }, 5000);
     
     return () => clearInterval(interval);
-  }, [view, user]);
+  }, [view, user?.id, user?.role]);
 
   useEffect(() => {
     if (systemConfig) {
       setAdminTimetableNotice(systemConfig.timetableNotice || '');
       if (systemConfig.timetable && systemConfig.timetable.length > 0) {
-        setAdminTimetable(systemConfig.timetable);
+        const normalizedSlots = systemConfig.timetable.map((slot) => {
+          const codeStr = String(slot?.code || '').trim();
+          const courseStr = String(slot?.course || slot?.name || '').trim();
+          const isLab = /(?:L|P)$/i.test(codeStr) || /\blab\b/i.test(courseStr);
+          return {
+            ...slot,
+            mode: (typeof slot?.mode === 'string' && slot.mode.trim()) ? slot.mode.trim() : (isLab ? 'Computer Lab' : 'Online Proctored'),
+            reportTime: (typeof slot?.reportTime === 'string' && slot.reportTime.trim()) ? slot.reportTime.trim() : (isLab ? '01:30 PM' : '09:30 AM')
+          };
+        });
+        setAdminTimetable(normalizedSlots);
       }
       if (systemConfig.classTests) {
         setAdminClassTests(systemConfig.classTests);
@@ -2966,32 +3263,55 @@ int main() {
   }, [selectedQuestionIndex, activeExam, examAnswers]);
 
   const fetchConfig = async () => {
+    setConfigLoading(true);
+    setConfigError('');
     try {
       const res = await fetch(`${API_BASE}/config`);
-      const data = await res.json();
-      if (data) {
-        setSystemConfig(prev => ({ ...(prev || {}), ...data }));
+      const data = await safeReadJson(res);
+      if (!res.ok || !data || data.error) {
+        setConfigError(
+          (data && data.error) || 'Unable to reach the BICS server. It may be waking up — please retry.'
+        );
+        return null;
       }
+      setSystemConfig(prev => ({ ...(prev || {}), ...data }));
+      return data;
     } catch (e) {
-      console.error(e);
+      console.error('Error fetching system config:', e);
+      setConfigError('Connection to BICS server failed or timed out. Please check your network and retry.');
+      return null;
+    } finally {
+      setConfigLoading(false);
     }
   };
 
   const fetchCandidates = async () => {
     try {
       const res = await fetch(`${API_BASE}/admin/candidates`);
-      const data = await res.json();
-      setCandidatesList(data);
+      const data = await safeReadJson(res);
+      if (res.ok && Array.isArray(data)) {
+        setCandidatesList(data);
+      }
     } catch (e) {
       console.error(e);
     }
   };
 
   const fetchStudentProfile = async () => {
-    if (!user || user.role !== 'student') return;
+    if (!user || !isStudentRole(user.role)) return null;
+    const targetUserId = user.id || user._id || user.username;
+    if (!targetUserId) return null;
+    setProfileLoading(true);
+    setProfileError('');
     try {
-      const res = await fetch(`${API_BASE}/candidate/profile/${user.id}`);
-      const data = await res.json();
+      const res = await fetch(`${API_BASE}/candidate/profile/${encodeURIComponent(targetUserId)}`);
+      const data = await safeReadJson(res);
+      if (!res.ok || !data || data.error || (!data._id && !data.id && !data.studentId)) {
+        setProfileError(
+          (data && data.error) || 'Unable to load your candidate profile right now. Please retry.'
+        );
+        return null;
+      }
       setStudentProfile(data);
       if (data.studentId) {
         fetchStudentSubmissions(data.studentId);
@@ -3013,14 +3333,22 @@ int main() {
           collegeEmail: data.registrationData.collegeEmail || ''
         });
       }
+      return data;
     } catch (e) {
-      console.error(e);
+      console.error('Error fetching student profile:', e);
+      setProfileError('Connection to candidate profile service failed or timed out. Please retry.');
+      return null;
+    } finally {
+      setProfileLoading(false);
     }
   };
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setLoginError('');
+    isLoggingOutRef.current = false;
+    isRedirectingRef.current = false;
+    lastFetchedUserIdRef.current = null;
 
     if (captchaInput.toUpperCase() !== captchaCode) {
       setLoginError("Incorrect CAPTCHA. Please try again.");
@@ -3035,18 +3363,21 @@ int main() {
       const res = await fetch(`${API_BASE}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...loginCreds, rememberMe })
+        body: JSON.stringify({ ...loginCreds, rememberMe }),
+        timeoutMs: 30000,
+        retry: false
       });
-      const data = await res.json();
+      const data = await safeReadJson(res);
       
       setTimeout(() => {
-        if (data.success) {
+        if (res.ok && data && data.success) {
           setLoginCreds({ username: '', password: '' });
+          const resolvedRole = data.role || 'student';
           let userObj = null;
-          if (data.role === 'admin') {
-            userObj = { id: 'admin', role: 'admin', name: data.name };
+          if (resolvedRole === 'admin') {
+            userObj = { id: 'admin', role: 'admin', name: data.name || 'Administrator' };
           } else {
-            userObj = { id: data.id, role: 'student', name: 'Student' };
+            userObj = { id: data.id, role: resolvedRole, name: data.name || 'Student' };
           }
 
           // Store session: exact server JWT exp timestamp
@@ -3058,48 +3389,64 @@ int main() {
           };
 
           if (data.token) {
-            localStorage.setItem('bics_auth_token', data.token);
-            if (jwtExp) {
-              localStorage.setItem('bics_token_expiry', String(jwtExp));
-            }
-            if (rememberMe) {
-              sessionStorage.removeItem('bics_auth_token');
-            } else {
-              sessionStorage.setItem('bics_auth_token', data.token);
-            }
+            setAuthToken(data.token, rememberMe);
+            try {
+              if (jwtExp) {
+                localStorage.setItem('bics_token_expiry', String(jwtExp));
+              }
+            } catch (_) {}
           }
 
-          localStorage.setItem('bics_session', JSON.stringify(sessionData));
-          if (rememberMe) {
-            sessionStorage.removeItem('bics_session');
-          } else {
-            sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
-          }
+          try {
+            localStorage.setItem('bics_session', JSON.stringify(sessionData));
+            if (rememberMe) {
+              sessionStorage.removeItem('bics_session');
+            } else {
+              sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
+            }
+          } catch (_) {}
 
           setUser(userObj);
           handlePostLoginRedirect(userObj, data.token);
         } else {
           setAuthLoading(false);
-          setLoginError(data.error);
+          setLoadingMessage('');
+          setLoginError(
+            (data && data.error) ||
+            (res.status >= 502
+              ? 'Server is waking up or temporarily unavailable. Please wait a moment and try again.'
+              : 'Invalid credentials or login rejected.')
+          );
           generateCaptcha();
         }
-      }, 700);
+      }, 450);
     } catch (err) {
       setAuthLoading(false);
-      setLoginError("Login connection failed.");
+      setLoadingMessage('');
+      setLoginError(err?.name === 'AbortError'
+        ? 'Login request timed out while waking server. Please try again.'
+        : 'Login connection failed. Please check your network and retry.');
       generateCaptcha();
     }
   };
 
   const handleLogout = () => {
     isLoggingOutRef.current = true;
+    if (redirectSafetyTimerRef.current) {
+      clearTimeout(redirectSafetyTimerRef.current);
+      redirectSafetyTimerRef.current = null;
+    }
+    if (enterTestSafetyTimerRef.current) {
+      clearTimeout(enterTestSafetyTimerRef.current);
+      enterTestSafetyTimerRef.current = null;
+    }
     setFeedbackAnswers({});
     setActiveCourseFeedbackIdx(0);
     setFeedbackSuccess('');
     setAuthLoading(true);
     setLoadingMessage("Signing out & clearing session cache...");
     
-    const currentToken = localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+    const currentToken = getAuthToken() || '';
     if (user || currentToken) {
       fetch(`${API_BASE}/logout`, {
         method: 'POST',
@@ -3147,25 +3494,38 @@ int main() {
     }
     
     setTimeout(() => {
+      isLoggingOutRef.current = false;
+      isRedirectingRef.current = false;
+      lastFetchedUserIdRef.current = null;
       setAuthLoading(false);
+      setLoadingMessage('');
+      setEnteringTestId(null);
       setUser(null);
       setStudentProfile(null);
+      setProfileError('');
+      setActiveStudentTests([]);
+      setSubmittedTestsList([]);
+      setStudentSubmissions([]);
+      setStudentObjectionsList([]);
+      setStudentTickets([]);
+      setLedgerQrData(null);
       setFeedbackAnswers({});
       setActiveCourseFeedbackIdx(0);
       setFeedbackSuccess('');
-      setView('login');
+      setAdminEmailPendingCount(0);
+      setVerificationCooldown(0);
+      setChangePasswordCooldown(0);
       setIsMobileSidebarOpen(false);
-      localStorage.removeItem('bics_session');
-      sessionStorage.removeItem('bics_session');
-      localStorage.removeItem('bics_auth_token');
-      sessionStorage.removeItem('bics_auth_token');
-      localStorage.removeItem('token');
-      sessionStorage.removeItem('token');
-      localStorage.removeItem('kata_handle');
-      localStorage.removeItem('bics_token_expiry');
-      sessionStorage.removeItem('bics_redirect_url');
-      localStorage.removeItem('bics_redirect_url');
+      clearAuthToken();
+      try {
+        localStorage.removeItem('bics_session');
+        sessionStorage.removeItem('bics_session');
+        localStorage.removeItem('kata_handle');
+        sessionStorage.removeItem('bics_redirect_url');
+        localStorage.removeItem('bics_redirect_url');
+      } catch (e) {}
       setShowLogoutModal(false);
+      setViewState('login');
       navigate('/login', { replace: true });
     }, 900);
   };
@@ -3354,14 +3714,14 @@ int main() {
 
   const handleTimetableCellChange = (index, field, value) => {
     const list = [...adminTimetable];
-    list[index][field] = value;
+    list[index] = { ...list[index], [field]: value };
     setAdminTimetable(list);
   };
 
   const handleAddTimetableRow = () => {
     setAdminTimetable([
       ...adminTimetable,
-      { code: "CS-10X", course: "Custom Course Name", date: "", time: "", marks: 50 }
+      { code: "CS-10X", course: "Custom Course Name", date: "", time: "", mode: "Online Proctored", reportTime: "09:30 AM", marks: 50 }
     ]);
   };
 
@@ -3439,6 +3799,18 @@ int main() {
     }
   };
 
+  const fetchAdminEmailSummary = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/emails?limit=1`);
+      if (res.ok) {
+        const data = await res.json();
+        setAdminEmailPendingCount(Number(data?.summary?.needsAttention || 0));
+      }
+    } catch (err) {
+      console.error("Failed to fetch admin email summary:", err);
+    }
+  };
+
   const fetchRecycleBinItems = async () => {
     setRecycleBinLoading(true);
     setRecycleBinError('');
@@ -3459,15 +3831,103 @@ int main() {
     }
   };
 
-  // Synchronize data fetching whenever active view or user session updates
-  useEffect(() => {
-    if (!user) return;
-    const userId = user.id || user._id;
+  wakeSyncRef.current = async (force = false) => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const now = Date.now();
+    const hasMissingCoreData =
+      !systemConfig ||
+      !!configError ||
+      (user && isStudentRole(user.role) && (!studentProfile || !!profileError));
 
-    if (user.role === 'student') {
-      fetchStudentProfile();
+    if (!force && !hasMissingCoreData && now - lastWakeSyncAtRef.current < 30000) {
+      return;
+    }
+    lastWakeSyncAtRef.current = now;
+
+    if (!systemConfig || configError || force) {
+      fetchConfig();
+    }
+
+    const activeToken = getAuthToken();
+    if (!user || !activeToken) return;
+
+    if (force || now - lastSessionVerifyAtRef.current > 60000) {
+      await verifySessionWithBackend();
+    }
+
+    const uid = user.id || user._id;
+    if (isStudentRole(user.role)) {
+      if (!studentProfile || profileError || force || view === 'hallticket' || view === 'register' || view === 'info') {
+        fetchStudentProfile();
+      }
+      if (view === 'tests' || view === 'onlinetest') {
+        fetchStudentActiveTests();
+      } else if (view === 'verification' && uid) {
+        fetchSubmittedTestsList(uid);
+      } else if (view === 'submissions') {
+        fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || uid);
+      } else if (view === 'objections') {
+        fetchStudentObjections(uid);
+      } else if (view === 'contact' && uid) {
+        fetchStudentTickets(uid);
+      }
+    } else if (user.role === 'admin') {
+      if (view === 'admin') {
+        fetchConfig();
+      } else if (view === 'admin_candidates') {
+        fetchCandidates();
+      } else if (view === 'admin_tests') {
+        fetchAdminTests();
+      } else if (view === 'admin_emails') {
+        fetchAdminEmailSummary();
+      } else if (view === 'admin_submissions') {
+        fetchAdminSubmissions();
+      } else if (view === 'admin_objections') {
+        fetchAdminObjections();
+      }
+    }
+  };
+
+  // Synchronize data fetching whenever active view or user identity/role changes
+  useEffect(() => {
+    if (!user) {
+      lastFetchedUserIdRef.current = null;
+      return;
+    }
+    const userId = user.id || user._id;
+    const userKey = `${user.role || ''}:${userId || ''}`;
+    const isInitialUserHydration = lastFetchedUserIdRef.current !== userKey;
+    if (isInitialUserHydration) {
+      lastFetchedUserIdRef.current = userKey;
+    }
+
+    if (!systemConfig && view !== 'announcements' && view !== 'admin') {
+      fetchConfig();
+    }
+
+    if (isStudentRole(user.role)) {
+      if (isInitialUserHydration) {
+        fetchStudentProfile();
+        fetchStudentObjections(userId);
+      } else if (!studentProfile && view !== 'register' && view !== 'info' && view !== 'hallticket') {
+        fetchStudentProfile();
+      }
 
       switch (view) {
+        case 'announcements':
+          fetchConfig();
+          break;
+        case 'register':
+        case 'info':
+        case 'hallticket':
+        case 'midsem':
+        case 'endsem':
+        case 'exit':
+          if (!isInitialUserHydration) fetchStudentProfile();
+          break;
+        case 'schedule':
+          fetchConfig();
+          break;
         case 'verification':
           if (userId) fetchSubmittedTestsList(userId);
           break;
@@ -3484,35 +3944,56 @@ int main() {
         case 'submissions':
           fetchStudentSubmissions(studentProfile?.studentId || user?.studentId || user?.username || userId);
           break;
+        case 'objections':
+          if (!isInitialUserHydration) fetchStudentObjections(userId);
+          break;
         case 'contact':
           if (userId) fetchStudentTickets(userId);
-          break;
-        case 'announcements':
-          fetchConfig();
           break;
         default:
           break;
       }
     } else if (user.role === 'admin') {
+      if (isInitialUserHydration) {
+        fetchConfig();
+        fetchCandidates();
+        fetchAdminTests();
+        fetchAdminSubmissions();
+        fetchAdminEmailSummary();
+        fetchAdminObjections();
+        fetchRecycleBinItems();
+        fetchVideoLectures();
+        fetchCourseMaterials();
+      }
+
       switch (view) {
         case 'admin':
-          fetchConfig();
+        case 'admin_counterfoil':
+          if (!isInitialUserHydration) fetchConfig();
           break;
         case 'admin_candidates':
-          fetchCandidates();
+          if (!isInitialUserHydration) fetchCandidates();
           break;
         case 'admin_attendance':
-          fetchAdminTests();
+          if (!isInitialUserHydration) {
+            fetchCandidates();
+            fetchAdminTests();
+          }
           break;
         case 'admin_coursework':
-          fetchVideoLectures();
-          fetchCourseMaterials();
+          if (!isInitialUserHydration) {
+            fetchVideoLectures();
+            fetchCourseMaterials();
+          }
           break;
         case 'admin_tests':
-          fetchAdminTests();
+          if (!isInitialUserHydration) fetchAdminTests();
           break;
         case 'admin_logs':
           fetchSystemLogs();
+          break;
+        case 'admin_emails':
+          if (!isInitialUserHydration) fetchAdminEmailSummary();
           break;
         case 'admin_proctoring':
           fetchLiveSubmissions();
@@ -3521,19 +4002,19 @@ int main() {
           fetchAdminTickets();
           break;
         case 'admin_submissions':
-          fetchAdminSubmissions();
+          if (!isInitialUserHydration) fetchAdminSubmissions();
           break;
         case 'admin_objections':
-          fetchAdminObjections();
+          if (!isInitialUserHydration) fetchAdminObjections();
           break;
         case 'admin_recyclebin':
-          fetchRecycleBinItems();
+          if (!isInitialUserHydration) fetchRecycleBinItems();
           break;
         default:
           break;
       }
     }
-  }, [view, user]);
+  }, [view, user?.id, user?.role]);
 
   const handleRestoreRecycleItem = async (itemId) => {
     try {
@@ -3624,7 +4105,7 @@ int main() {
     }
 
     // Email verification validation for student
-    if (user.role === 'student' && !changePasswordEmailCode.trim()) {
+    if (isStudentRole(user.role) && !changePasswordEmailCode.trim()) {
       setPwdError("Please request and enter your email verification code.");
       return;
     }
@@ -3642,7 +4123,7 @@ int main() {
           role: user.role,
           id: user.role === 'admin' ? 'admin' : user.id,
           newPassword: pwdForm.newPassword,
-          code: user.role === 'student' ? changePasswordEmailCode : undefined
+          code: isStudentRole(user.role) ? changePasswordEmailCode : undefined
         })
       });
       const data = await res.json();
@@ -3663,19 +4144,25 @@ int main() {
   };
 
   const handleSendVerificationCode = async () => {
+    if (verificationCooldown > 0 || sendingVerificationCode) return;
     setSendingVerificationCode(true);
     setVerificationError('');
     setVerificationSuccess('');
     try {
       const res = await fetch(`${API_BASE}/candidate/send-verification-code/${studentProfile.id || studentProfile._id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purpose: 'Hall Ticket Verification' })
       });
       const data = await res.json();
       if (res.ok) {
         setVerificationCodeSent(true);
+        setVerificationCooldown(typeof data.cooldownSec === 'number' ? data.cooldownSec : 60);
         setVerificationSuccess("Verification code sent successfully! Please check your registered email inbox/spam folder.");
       } else {
+        if (typeof data.waitSec === 'number') {
+          setVerificationCooldown(data.waitSec);
+        }
         setVerificationError(data.error || "Failed to send verification code.");
       }
     } catch (err) {
@@ -3708,6 +4195,7 @@ int main() {
         setVerificationSuccess("Email verified successfully! Unlocking your Hall Ticket...");
         setVerificationEmailCode('');
         setVerificationCodeSent(false);
+        setVerificationCooldown(0);
         fetchStudentProfile();
       } else {
         setVerificationError(data.error || "Verification failed. Invalid or expired code.");
@@ -3728,15 +4216,16 @@ int main() {
     try {
       const res = await fetch(`${API_BASE}/candidate/send-verification-code/${user.id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purpose: 'Password Reset' })
       });
       const data = await res.json();
       if (res.ok) {
         setChangePasswordCodeSent(true);
-        setChangePasswordCooldown(data.cooldownSec || 60);
+        setChangePasswordCooldown(typeof data.cooldownSec === 'number' ? data.cooldownSec : 60);
         setPwdMessage("Verification code sent to your registered email address.");
       } else {
-        if (data.waitSec) {
+        if (typeof data.waitSec === 'number') {
           setChangePasswordCooldown(data.waitSec);
         }
         setPwdError(data.error || "Failed to send verification code.");
@@ -3966,10 +4455,10 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
     
-    if (user.role === 'student' || user.role === 'candidate') {
+    if (isStudentRole(user.role)) {
       return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     
@@ -4045,8 +4534,10 @@ int main() {
           adminObjectionsList={adminObjectionsList}
           studentObjectionsList={studentObjectionsList}
           recycleBinItems={recycleBinItems}
+          adminEmailPendingCount={adminEmailPendingCount}
           fetchCandidates={fetchCandidates}
           fetchSystemLogs={fetchSystemLogs}
+          fetchAdminEmailSummary={fetchAdminEmailSummary}
           fetchLiveSubmissions={fetchLiveSubmissions}
           fetchAdminTickets={fetchAdminTickets}
           fetchAdminSubmissions={fetchAdminSubmissions}
@@ -4091,6 +4582,9 @@ int main() {
           ) : user && (view === 'not_found' || !isViewAllowed()) ? (
             <HomeDashboard
               systemConfig={systemConfig}
+              configLoading={configLoading}
+              configError={configError}
+              onRetryConfig={fetchConfig}
             />
           ) : (
             <div key={view} className="portal-view-transition">
@@ -4109,37 +4603,73 @@ int main() {
                 />
               )}
 
-              {view === 'announcements' && systemConfig && (
+              {view === 'announcements' && (
                 <HomeDashboard
                   systemConfig={systemConfig}
+                  configLoading={configLoading}
+                  configError={configError}
+                  onRetryConfig={fetchConfig}
                 />
               )}
 
-              {view === 'register' && studentProfile && systemConfig && (
-                <StudentRegistration
-                  studentProfile={studentProfile}
-                  systemConfig={systemConfig}
-                  regError={regError}
-                  regSuccess={regSuccess}
-                  regForm={regForm}
-                  setRegForm={setRegForm}
-                  handleStudentRegistrationSubmit={handleStudentRegistrationSubmit}
-                  handlePhotoChange={handlePhotoChange}
-                  handleSigChange={handleSigChange}
-                  handleUndertakingChange={handleUndertakingChange}
-                />
+              {view === 'register' && (
+                studentProfile && systemConfig ? (
+                  <StudentRegistration
+                    studentProfile={studentProfile}
+                    systemConfig={systemConfig}
+                    regError={regError}
+                    regSuccess={regSuccess}
+                    regForm={regForm}
+                    setRegForm={setRegForm}
+                    handleStudentRegistrationSubmit={handleStudentRegistrationSubmit}
+                    handlePhotoChange={handlePhotoChange}
+                    handleSigChange={handleSigChange}
+                    handleUndertakingChange={handleUndertakingChange}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Course Registration"
+                    loading={profileLoading || configLoading}
+                    error={profileError || configError}
+                    message="Loading course registration settings and candidate profile..."
+                    onRetry={() => {
+                      if (!systemConfig || configError) fetchConfig();
+                      if (!studentProfile || profileError) fetchStudentProfile();
+                    }}
+                  />
+                )
               )}
 
-              {view === 'info' && studentProfile && (
-                <StudentInfo
-                  studentProfile={studentProfile}
-                />
+              {view === 'info' && (
+                studentProfile ? (
+                  <StudentInfo
+                    studentProfile={studentProfile}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Candidate Information"
+                    loading={profileLoading}
+                    error={profileError}
+                    message="Loading candidate profile details..."
+                    onRetry={fetchStudentProfile}
+                  />
+                )
               )}
 
-              {view === 'schedule' && systemConfig && (
-                <ExaminationScheduleView
-                  systemConfig={systemConfig}
-                />
+              {view === 'schedule' && (
+                systemConfig ? (
+                  <ExaminationScheduleView
+                    systemConfig={systemConfig}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Examination Schedule"
+                    loading={configLoading}
+                    error={configError}
+                    message="Synchronizing examination timetable and schedule..."
+                    onRetry={fetchConfig}
+                  />
+                )
               )}
 
               {view === 'lectures' && (
@@ -4191,6 +4721,9 @@ int main() {
                   currentTime={currentTime}
                   enteringTestId={enteringTestId}
                   handleStartExam={handleStartExam}
+                  activeTestsLoading={activeTestsLoading}
+                  activeTestsError={activeTestsError}
+                  onRetryTests={fetchStudentActiveTests}
                 />
               )}
 
@@ -4213,34 +4746,51 @@ int main() {
                 />
               )}
 
-              {view === 'hallticket' && studentProfile && systemConfig && (
-                <HallTicketView
-                  studentProfile={studentProfile}
-                  systemConfig={systemConfig}
-                  consentSuccess={consentSuccess}
-                  consentChecked={consentChecked}
-                  setConsentChecked={setConsentChecked}
-                  handleSignConsent={handleSignConsent}
-                  setView={setView}
-                  fetchStudentProfile={fetchStudentProfile}
-                  user={user}
-                  fetchStudentSubmissions={fetchStudentSubmissions}
-                  verificationSuccess={verificationSuccess}
-                  verificationError={verificationError}
-                  verificationCodeSent={verificationCodeSent}
-                  sendingVerificationCode={sendingVerificationCode}
-                  handleSendVerificationCode={handleSendVerificationCode}
-                  handleVerifyCode={handleVerifyCode}
-                  verificationEmailCode={verificationEmailCode}
-                  setVerificationEmailCode={setVerificationEmailCode}
-                  verifyingCode={verifyingCode}
-                />
+              {view === 'hallticket' && (
+                studentProfile && systemConfig ? (
+                  <HallTicketView
+                    studentProfile={studentProfile}
+                    systemConfig={systemConfig}
+                    consentSuccess={consentSuccess}
+                    consentChecked={consentChecked}
+                    setConsentChecked={setConsentChecked}
+                    handleSignConsent={handleSignConsent}
+                    setView={setView}
+                    fetchStudentProfile={fetchStudentProfile}
+                    user={user}
+                    fetchStudentSubmissions={fetchStudentSubmissions}
+                    verificationSuccess={verificationSuccess}
+                    verificationError={verificationError}
+                    verificationCodeSent={verificationCodeSent}
+                    sendingVerificationCode={sendingVerificationCode}
+                    verificationCooldown={verificationCooldown}
+                    handleSendVerificationCode={handleSendVerificationCode}
+                    handleVerifyCode={handleVerifyCode}
+                    verificationEmailCode={verificationEmailCode}
+                    setVerificationEmailCode={setVerificationEmailCode}
+                    verifyingCode={verifyingCode}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Official Hall Ticket Dispatch"
+                    loading={profileLoading || configLoading}
+                    error={profileError || configError}
+                    message="Loading candidate eligibility and portal examination configuration..."
+                    onRetry={() => {
+                      if (!systemConfig || configError) fetchConfig();
+                      if (!studentProfile || profileError) fetchStudentProfile();
+                    }}
+                  />
+                )
               )}
 
               {view === 'verification' && (
                 <SubmissionsVerificationView
                   view={view}
                   submittedTestsList={submittedTestsList}
+                  submittedTestsLoading={submittedTestsLoading}
+                  submittedTestsError={submittedTestsError}
+                  onRetrySubmittedTests={() => fetchSubmittedTestsList(user?.id || user?._id)}
                 />
               )}
 
@@ -4261,61 +4811,97 @@ int main() {
                 />
               )}
 
-              {view === 'contact' && studentProfile && (
-                <SupportTicketView
-                  studentProfile={studentProfile}
-                  user={user}
-                  contactSubView={contactSubView}
-                  setContactSubView={setContactSubView}
-                  contactSuccess={contactSuccess}
-                  setContactSuccess={setContactSuccess}
-                  contactError={contactError}
-                  setContactError={setContactError}
-                  fetchStudentTickets={fetchStudentTickets}
-                  studentTickets={studentTickets}
-                  contactCategory={contactCategory}
-                  setContactCategory={setContactCategory}
-                  contactSubject={contactSubject}
-                  setContactSubject={setContactSubject}
-                  contactMessage={contactMessage}
-                  setContactMessage={setContactMessage}
-                  isSubmittingContact={isSubmittingContact}
-                  setIsSubmittingContact={setIsSubmittingContact}
-                />
+              {view === 'contact' && (
+                studentProfile ? (
+                  <SupportTicketView
+                    studentProfile={studentProfile}
+                    user={user}
+                    contactSubView={contactSubView}
+                    setContactSubView={setContactSubView}
+                    contactSuccess={contactSuccess}
+                    setContactSuccess={setContactSuccess}
+                    contactError={contactError}
+                    setContactError={setContactError}
+                    fetchStudentTickets={fetchStudentTickets}
+                    studentTickets={studentTickets}
+                    contactCategory={contactCategory}
+                    setContactCategory={setContactCategory}
+                    contactSubject={contactSubject}
+                    setContactSubject={setContactSubject}
+                    contactMessage={contactMessage}
+                    setContactMessage={setContactMessage}
+                    isSubmittingContact={isSubmittingContact}
+                    setIsSubmittingContact={setIsSubmittingContact}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Support & Helpdesk"
+                    loading={profileLoading}
+                    error={profileError}
+                    message="Loading candidate support desk..."
+                    onRetry={fetchStudentProfile}
+                  />
+                )
               )}
 
-              {(view === 'midsem' || view === 'endsem') && studentProfile && systemConfig && (
-                <CourseFeedbackView
-                  key={`course_feedback_${studentProfile?._id || user?.id}_${view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid')}`}
-                  feedbackType={view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid')}
-                  studentProfile={studentProfile}
-                  systemConfig={systemConfig}
-                  setView={setView}
-                  user={user}
-                  COURSES_LIST={COURSES_LIST}
-                  feedbackAnswers={feedbackAnswers}
-                  setFeedbackAnswers={setFeedbackAnswers}
-                  activeCourseFeedbackIdx={activeCourseFeedbackIdx}
-                  setActiveCourseFeedbackIdx={setActiveCourseFeedbackIdx}
-                  feedbackSuccess={feedbackSuccess}
-                  handleFeedbackSubmit={handleFeedbackSubmit}
-                  handleFeedbackValueChange={handleFeedbackValueChange}
-                />
+              {(view === 'midsem' || view === 'endsem') && (
+                studentProfile && systemConfig ? (
+                  <CourseFeedbackView
+                    key={`course_feedback_${studentProfile?._id || user?.id}_${view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid')}`}
+                    feedbackType={view === 'endsem' ? 'end' : (feedbackType === 'end' ? 'end' : 'mid')}
+                    studentProfile={studentProfile}
+                    systemConfig={systemConfig}
+                    setView={setView}
+                    user={user}
+                    COURSES_LIST={COURSES_LIST}
+                    feedbackAnswers={feedbackAnswers}
+                    setFeedbackAnswers={setFeedbackAnswers}
+                    activeCourseFeedbackIdx={activeCourseFeedbackIdx}
+                    setActiveCourseFeedbackIdx={setActiveCourseFeedbackIdx}
+                    feedbackSuccess={feedbackSuccess}
+                    handleFeedbackSubmit={handleFeedbackSubmit}
+                    handleFeedbackValueChange={handleFeedbackValueChange}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Course Feedback"
+                    loading={profileLoading || configLoading}
+                    error={profileError || configError}
+                    message="Loading course feedback configuration..."
+                    onRetry={() => {
+                      if (!systemConfig || configError) fetchConfig();
+                      if (!studentProfile || profileError) fetchStudentProfile();
+                    }}
+                  />
+                )
               )}
 
               {view === 'conduct' && (
                 <StudentCoC />
               )}
 
-              {view === 'exit' && studentProfile && systemConfig && (
-                <ExitFormView
-                  systemConfig={systemConfig}
-                  studentProfile={studentProfile}
-                  exitSuccess={exitSuccess}
-                  exitAnswers={exitAnswers}
-                  setExitAnswers={setExitAnswers}
-                  handleExitSubmit={handleExitSubmit}
-                />
+              {view === 'exit' && (
+                studentProfile && systemConfig ? (
+                  <ExitFormView
+                    systemConfig={systemConfig}
+                    studentProfile={studentProfile}
+                    exitSuccess={exitSuccess}
+                    exitAnswers={exitAnswers}
+                    setExitAnswers={setExitAnswers}
+                    handleExitSubmit={handleExitSubmit}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Exit Feedback Form"
+                    loading={profileLoading || configLoading}
+                    error={profileError || configError}
+                    message="Loading exit feedback form..."
+                    onRetry={() => {
+                      if (!systemConfig || configError) fetchConfig();
+                      if (!studentProfile || profileError) fetchStudentProfile();
+                    }}
+                  />
+                )
               )}
 
               {view === 'changepassword' && user?.role !== 'admin' && (
@@ -4340,134 +4926,179 @@ int main() {
                 />
               )}
 
-              {view === 'admin' && systemConfig && (
-                <AdminDashboard
-                  systemConfig={systemConfig}
-                  adminMessage={adminMessage}
-                  adminError={adminError}
-                  handleToggleSetting={handleToggleSetting}
-                  handleAddAnnouncement={handleAddAnnouncement}
-                  newAnnouncement={newAnnouncement}
-                  setNewAnnouncement={setNewAnnouncement}
-                  adminExamType={adminExamType}
-                  handleUpdateExamType={handleUpdateExamType}
-                  handleUpdateTimetableNotice={handleUpdateTimetableNotice}
-                  adminTimetableNotice={adminTimetableNotice}
-                  setAdminTimetableNotice={setAdminTimetableNotice}
-                  handleSaveExamTimetable={handleSaveExamTimetable}
-                  handleAddTimetableRow={handleAddTimetableRow}
-                  adminTimetable={adminTimetable}
-                  handleTimetableCellChange={handleTimetableCellChange}
-                  handleRemoveTimetableRow={handleRemoveTimetableRow}
-                  handleAddClassTestRow={handleAddClassTestRow}
-                  handleSaveClassTests={handleSaveClassTests}
-                  adminClassTests={adminClassTests}
-                  handleClassTestCellChange={handleClassTestCellChange}
-                  handleRemoveClassTestRow={handleRemoveClassTestRow}
-                />
+              {view === 'admin' && (
+                systemConfig ? (
+                  <AdminDashboard
+                    systemConfig={systemConfig}
+                    adminMessage={adminMessage}
+                    adminError={adminError}
+                    handleToggleSetting={handleToggleSetting}
+                    handleAddAnnouncement={handleAddAnnouncement}
+                    newAnnouncement={newAnnouncement}
+                    setNewAnnouncement={setNewAnnouncement}
+                    adminExamType={adminExamType}
+                    handleUpdateExamType={handleUpdateExamType}
+                    handleUpdateTimetableNotice={handleUpdateTimetableNotice}
+                    adminTimetableNotice={adminTimetableNotice}
+                    setAdminTimetableNotice={setAdminTimetableNotice}
+                    handleSaveExamTimetable={handleSaveExamTimetable}
+                    handleAddTimetableRow={handleAddTimetableRow}
+                    adminTimetable={adminTimetable}
+                    handleTimetableCellChange={handleTimetableCellChange}
+                    handleRemoveTimetableRow={handleRemoveTimetableRow}
+                    handleAddClassTestRow={handleAddClassTestRow}
+                    handleSaveClassTests={handleSaveClassTests}
+                    adminClassTests={adminClassTests}
+                    handleClassTestCellChange={handleClassTestCellChange}
+                    handleRemoveClassTestRow={handleRemoveClassTestRow}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Administrator Control Panel"
+                    loading={configLoading}
+                    error={configError}
+                    message="Synchronizing administrator dashboard settings..."
+                    onRetry={fetchConfig}
+                  />
+                )
               )}
 
-              {view === 'admin_candidates' && systemConfig && (
-                <AdminCandidates
-                  systemConfig={systemConfig}
-                  adminMessage={adminMessage}
-                  adminError={adminError}
-                  handleRegisterCandidateByAdmin={handleRegisterCandidateByAdmin}
-                  newCandidate={newCandidate}
-                  setNewCandidate={setNewCandidate}
-                  candidatesList={candidatesList}
-                  handleToggleEligibility={handleToggleEligibility}
-                  setSelectedCandidate={setSelectedCandidate}
-                />
+              {view === 'admin_candidates' && (
+                systemConfig ? (
+                  <AdminCandidates
+                    systemConfig={systemConfig}
+                    adminMessage={adminMessage}
+                    adminError={adminError}
+                    handleRegisterCandidateByAdmin={handleRegisterCandidateByAdmin}
+                    newCandidate={newCandidate}
+                    setNewCandidate={setNewCandidate}
+                    candidatesList={candidatesList}
+                    handleToggleEligibility={handleToggleEligibility}
+                    setSelectedCandidate={setSelectedCandidate}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Candidate Registry"
+                    loading={configLoading}
+                    error={configError}
+                    message="Loading portal configuration..."
+                    onRetry={fetchConfig}
+                  />
+                )
               )}
 
-              {view === 'admin_coursework' && systemConfig && (
-                <AdminCoursework
-                  systemConfig={systemConfig}
-                  adminMessage={adminMessage}
-                  adminError={adminError}
-                  courseworkSuccess={courseworkSuccess}
-                  courseworkError={courseworkError}
-                  handleAddLecture={handleAddLecture}
-                  newLecture={newLecture}
-                  setNewLecture={setNewLecture}
-                  videoLectures={videoLectures}
-                  handleDeleteLecture={handleDeleteLecture}
-                  handleAddMaterial={handleAddMaterial}
-                  newMaterial={newMaterial}
-                  setNewMaterial={setNewMaterial}
-                  setMaterialFile={setMaterialFile}
-                  courseMaterials={courseMaterials}
-                  handleDeleteMaterial={handleDeleteMaterial}
-                />
+              {view === 'admin_coursework' && (
+                systemConfig ? (
+                  <AdminCoursework
+                    systemConfig={systemConfig}
+                    adminMessage={adminMessage}
+                    adminError={adminError}
+                    courseworkSuccess={courseworkSuccess}
+                    courseworkError={courseworkError}
+                    handleAddLecture={handleAddLecture}
+                    newLecture={newLecture}
+                    setNewLecture={setNewLecture}
+                    videoLectures={videoLectures}
+                    handleDeleteLecture={handleDeleteLecture}
+                    handleAddMaterial={handleAddMaterial}
+                    newMaterial={newMaterial}
+                    setNewMaterial={setNewMaterial}
+                    setMaterialFile={setMaterialFile}
+                    courseMaterials={courseMaterials}
+                    handleDeleteMaterial={handleDeleteMaterial}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Coursework Management"
+                    loading={configLoading}
+                    error={configError}
+                    message="Loading portal configuration..."
+                    onRetry={fetchConfig}
+                  />
+                )
               )}
 
-              {view === 'admin_tests' && systemConfig && (
-                <AdminTests
-                  showModalAlert={showModalAlert}
-                  showModalConfirm={showModalConfirm}
-                  systemConfig={systemConfig}
-                  handleToggleSetting={handleToggleSetting}
-                  adminMessage={adminMessage}
-                  adminError={adminError}
-                  adminTests={adminTests}
-                  fetchExamSubmissions={fetchExamSubmissions}
-                  fetchAdminTests={fetchAdminTests}
-                  fetchStudentActiveTests={fetchStudentActiveTests}
-                  handleCreateTest={handleCreateTest}
-                  handleEditTest={handleEditTest}
-                  handleDeleteTest={handleDeleteTest}
-                  showTestCreator={showTestCreator}
-                  setShowTestCreator={setShowTestCreator}
-                  creatorStep={creatorStep}
-                  setCreatorStep={setCreatorStep}
-                  editingQuestionIdx={editingQuestionIdx}
-                  setEditingQuestionIdx={setEditingQuestionIdx}
-                  editingTestConfigId={editingTestConfigId}
-                  setEditingTestConfigId={setEditingTestConfigId}
-                  newExamTitle={newExamTitle}
-                  setNewExamTitle={setNewExamTitle}
-                  newExamCourse={newExamCourse}
-                  setNewExamCourse={setNewExamCourse}
-                  newExamCourseCode={newExamCourseCode}
-                  setNewExamCourseCode={setNewExamCourseCode}
-                  newExamMarks={newExamMarks}
-                  setNewExamMarks={setNewExamMarks}
-                  newExamInstructions={newExamInstructions}
-                  setNewExamInstructions={setNewExamInstructions}
-                  newExamDuration={newExamDuration}
-                  setNewExamDuration={setNewExamDuration}
-                  newExamStart={newExamStart}
-                  setNewExamStart={setNewExamStart}
-                  newExamEnd={newExamEnd}
-                  setNewExamEnd={setNewExamEnd}
-                  newExamQuestions={newExamQuestions}
-                  setNewExamQuestions={setNewExamQuestions}
-                  newExamEnableAiEvaluation={newExamEnableAiEvaluation}
-                  setNewExamEnableAiEvaluation={setNewExamEnableAiEvaluation}
-                  imageUploadingIdx={imageUploadingIdx}
-                  handleUploadQuestionImage={handleUploadQuestionImage}
-                  adminExamSubmissions={adminExamSubmissions}
-                  selectedExamSubmission={selectedExamSubmission}
-                  setSelectedExamSubmission={setSelectedExamSubmission}
-                  adminGradingCodingScore={adminGradingCodingScore}
-                  setAdminGradingCodingScore={setAdminGradingCodingScore}
-                  adminGradingFeedback={adminGradingFeedback}
-                  setAdminGradingFeedback={setAdminGradingFeedback}
-                  adminGradingAnswers={adminGradingAnswers}
-                  setAdminGradingAnswers={setAdminGradingAnswers}
-                  codingEvaluationResults={codingEvaluationResults}
-                  setCodingEvaluationResults={setCodingEvaluationResults}
-                  handleSaveEvaluation={handleSaveEvaluation}
-                  setAdminReevalStatus={setAdminReevalStatus}
-                  setAdminReevalResolutionFeedback={setAdminReevalResolutionFeedback}
-                  adminReevalStatus={adminReevalStatus}
-                  adminReevalResolutionFeedback={adminReevalResolutionFeedback}
-                  adminActiveWebTabs={adminActiveWebTabs}
-                  setAdminActiveWebTabs={setAdminActiveWebTabs}
-                  runAdminCodeVerification={runAdminCodeVerification}
-                  view={view}
-                />
+              {view === 'admin_tests' && (
+                systemConfig ? (
+                  <AdminTests
+                    showModalAlert={showModalAlert}
+                    showModalConfirm={showModalConfirm}
+                    systemConfig={systemConfig}
+                    handleToggleSetting={handleToggleSetting}
+                    adminMessage={adminMessage}
+                    adminError={adminError}
+                    adminTests={adminTests}
+                    fetchExamSubmissions={fetchExamSubmissions}
+                    fetchAdminTests={fetchAdminTests}
+                    fetchStudentActiveTests={fetchStudentActiveTests}
+                    handleCreateTest={handleCreateTest}
+                    handleEditTest={handleEditTest}
+                    handleDeleteTest={handleDeleteTest}
+                    showTestCreator={showTestCreator}
+                    setShowTestCreator={setShowTestCreator}
+                    creatorStep={creatorStep}
+                    setCreatorStep={setCreatorStep}
+                    editingQuestionIdx={editingQuestionIdx}
+                    setEditingQuestionIdx={setEditingQuestionIdx}
+                    editingTestConfigId={editingTestConfigId}
+                    setEditingTestConfigId={setEditingTestConfigId}
+                    newExamTitle={newExamTitle}
+                    setNewExamTitle={setNewExamTitle}
+                    newExamCourse={newExamCourse}
+                    setNewExamCourse={setNewExamCourse}
+                    newExamCourseCode={newExamCourseCode}
+                    setNewExamCourseCode={setNewExamCourseCode}
+                    newExamMarks={newExamMarks}
+                    setNewExamMarks={setNewExamMarks}
+                    newExamInstructions={newExamInstructions}
+                    setNewExamInstructions={setNewExamInstructions}
+                    newExamDuration={newExamDuration}
+                    setNewExamDuration={setNewExamDuration}
+                    newExamStart={newExamStart}
+                    setNewExamStart={setNewExamStart}
+                    newExamEnd={newExamEnd}
+                    setNewExamEnd={setNewExamEnd}
+                    newExamQuestions={newExamQuestions}
+                    setNewExamQuestions={setNewExamQuestions}
+                    newExamEnableAiEvaluation={newExamEnableAiEvaluation}
+                    setNewExamEnableAiEvaluation={setNewExamEnableAiEvaluation}
+                    imageUploadingIdx={imageUploadingIdx}
+                    handleUploadQuestionImage={handleUploadQuestionImage}
+                    adminExamSubmissions={adminExamSubmissions}
+                    selectedExamSubmission={selectedExamSubmission}
+                    setSelectedExamSubmission={setSelectedExamSubmission}
+                    adminGradingCodingScore={adminGradingCodingScore}
+                    setAdminGradingCodingScore={setAdminGradingCodingScore}
+                    adminGradingFeedback={adminGradingFeedback}
+                    setAdminGradingFeedback={setAdminGradingFeedback}
+                    adminGradingAnswers={adminGradingAnswers}
+                    setAdminGradingAnswers={setAdminGradingAnswers}
+                    codingEvaluationResults={codingEvaluationResults}
+                    setCodingEvaluationResults={setCodingEvaluationResults}
+                    handleSaveEvaluation={handleSaveEvaluation}
+                    setAdminReevalStatus={setAdminReevalStatus}
+                    setAdminReevalResolutionFeedback={setAdminReevalResolutionFeedback}
+                    adminReevalStatus={adminReevalStatus}
+                    adminReevalResolutionFeedback={adminReevalResolutionFeedback}
+                    adminActiveWebTabs={adminActiveWebTabs}
+                    setAdminActiveWebTabs={setAdminActiveWebTabs}
+                    runAdminCodeVerification={runAdminCodeVerification}
+                    markQuestionManuallyEdited={markQuestionManuallyEdited}
+                    resetManualEditedFlags={() => {
+                      adminManuallyEditedScoresRef.current = {};
+                      setAdminManuallyEditedScores({});
+                    }}
+                    view={view}
+                  />
+                ) : (
+                  <PortalDataStateCard
+                    title="Online Test Administration"
+                    loading={configLoading}
+                    error={configError}
+                    message="Loading portal examination configuration..."
+                    onRetry={fetchConfig}
+                  />
+                )
               )}
 
               {view === 'admin_logs' && (
@@ -4487,6 +5118,13 @@ int main() {
                   logSearch={logSearch}
                   setLogSearch={setLogSearch}
                   logPage={logPage}
+                />
+              )}
+
+              {view === 'admin_emails' && (
+                <AdminEmails
+                  API_BASE={API_BASE}
+                  onEmailActionComplete={fetchAdminEmailSummary}
                 />
               )}
 
@@ -4557,9 +5195,7 @@ int main() {
               )}
 
               {view === 'admin_marks_ledger' && (
-                <AdminMarksLedger
-                  apiSecret={API_ACCESS_SECRET}
-                />
+                <AdminMarksLedger />
               )}
 
               {view === 'admin_objections' && (
@@ -4632,7 +5268,7 @@ int main() {
               {view === 'admin_kata' && (
                 <AdminKataManager
                   API_BASE={API_BASE}
-                  token={localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || ''}
+                  token={getAuthToken() || ''}
                 />
               )}
             </div>
@@ -4699,8 +5335,8 @@ int main() {
             zIndex: 1000
           }}>
             <div className="cf-card" style={{ width: '80%', maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto', padding: '20px', border: '1px solid #b9c9fe', boxShadow: 'none', backgroundColor: '#fff' }}>
-              <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Candidate File: {selectedCandidate.name} ({selectedCandidate.studentId})</span>
+              <div className="cf-card-title" style={{ marginTop: '-20px', marginLeft: '-20px', marginRight: '-20px', marginBottom: '20px', display: 'flex', alignItems: 'center' }}>
+                <span style={{ marginRight: 'auto' }}>Candidate File: {selectedCandidate.name} ({selectedCandidate.studentId})</span>
                 <button className="cf-btn-secondary" style={{ padding: '2px 8px', border: 'none' }} onClick={() => setSelectedCandidate(null)}></button>
               </div>
 
@@ -5035,6 +5671,14 @@ int main() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <PortalErrorBoundary>
+      <PortalApp />
+    </PortalErrorBoundary>
   );
 }
 

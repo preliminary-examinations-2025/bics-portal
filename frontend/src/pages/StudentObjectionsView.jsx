@@ -228,7 +228,7 @@ export default function StudentObjectionsView({ user, studentObjectionsList = []
                         {obj.objectionId || `OBJ-${idx + 1}`}
                       </span>
                       <h4 style={{ fontSize: '11pt', color: '#002147', fontWeight: 'bold', margin: 0 }}>
-                        {obj.testTitle || 'Examination Test'} — Question #{obj.questionIndex + 1}
+                        {obj.testTitle || 'Examination Test'} — {q?.title || obj.qTitle || `Question #${(obj.questionIndex || 0) + 1}`}
                       </h4>
                     </div>
 

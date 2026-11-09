@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<title>Verification Code | BICS</title>
+<!--
+  Subject line:
+  Security Verification Code ({{purpose}}) | BICS Preliminary Examinations 2026
+
+  Placeholders to merge before sending:
+  {{candidate_name}}, {{student_id}}, {{purpose}}, {{verification_code}},
+  {{requested_at}}, {{expires_at}}, {{expires_minutes}}
+-->
+<style type="text/css">
+  body, table, td, p, a, div { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { -ms-interpolation-mode: bicubic; }
+
+  @media only screen and (max-width: 600px) {
+    .outer-padding {
+      padding: 12px 6px !important;
+    }
+    .email-container {
+      width: 100% !important;
+      max-width: 100% !important;
+      border-radius: 4px !important;
+    }
+    .content-cell {
+      padding-left: 16px !important;
+      padding-right: 16px !important;
+    }
+    .header-cell {
+      padding: 24px 16px 18px 16px !important;
+    }
+    .header-title {
+      font-size: 14.5px !important;
+      line-height: 1.35 !important;
+      letter-spacing: 0.3px !important;
+    }
+    .header-subtitle {
+      font-size: 11.5px !important;
+    }
+    .otp-code-text {
+      font-size: 28px !important;
+      letter-spacing: 6px !important;
+    }
+    .mobile-stack td {
+      display: block !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
+    .mobile-stack .details-label {
+      padding: 10px 14px 2px 14px !important;
+      border-bottom: none !important;
+      font-size: 11.5px !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.6px !important;
+      color: #8392A5 !important;
+    }
+    .mobile-stack .details-value {
+      padding: 2px 14px 12px 14px !important;
+      font-size: 14.5px !important;
+      border-bottom: 1px solid #E8ECF1 !important;
+    }
+    .details-table tr:last-child .details-value {
+      border-bottom: none !important;
+    }
+    .note-cell {
+      padding: 12px 14px !important;
+      font-size: 13px !important;
+      line-height: 1.55 !important;
+    }
+    .signoff-cell {
+      padding: 20px 16px 24px 16px !important;
+    }
+    .footer-cell {
+      padding: 14px 16px !important;
+      font-size: 11.5px !important;
+    }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background:#F5F7FA;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    Your BICS verification code for {{purpose}} is {{verification_code}} (valid for {{expires_minutes}} minutes).
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F7FA;">
+    <tr>
+      <td align="center" class="outer-padding" style="padding:32px 12px;">
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-container" style="width:100%;max-width:680px;margin:0 auto;background:#FFFFFF;border:1px solid #E3E8EF;border-radius:6px;">
+
+          <!-- Header -->
+          <tr>
+            <td align="center" class="header-cell" style="padding:36px 32px 22px 32px;background:#FFFFFF;border-bottom:1px solid #E8ECF1;border-radius:6px 6px 0 0;">
+              <img src="https://cdn.jsdelivr.net/gh/preliminary-examinations-2025/bics-portal@main/frontend/public/bics_logo.png" width="84" height="auto" alt="BICS Preliminary Examinations 2026" style="display:block;border:0;outline:none;text-decoration:none;width:84px;max-width:84px;height:auto;margin:0 auto 16px auto;">
+              <div class="header-title" style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:17px;line-height:1.4;font-weight:bold;color:#4A6076;letter-spacing:0.6px;">BASIC INTRODUCTORY COMPUTER SCIENCE COURSE</div>
+              <div class="header-subtitle" style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:13px;color:#8190A0;padding-top:4px;">Conducted by Preliminary Examinations 2026</div>
+            </td>
+          </tr>
+
+          <!-- Status -->
+          <tr>
+            <td align="center" style="padding:28px 24px 4px 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="background:#F2F5F9;border:1px solid #E1E8F0;border-radius:16px;padding:6px 18px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.2px;color:#5B7288;">SECURITY VERIFICATION CODE</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td class="content-cell" style="padding:22px 32px 4px 32px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:15px;line-height:1.7;color:#3A4654;">
+              <p style="margin:0 0 14px 0;">Dear {{candidate_name}},</p>
+              <p style="margin:0;">We received a security verification request for <strong>{{purpose}}</strong> on your BICS Portal account. Use the one-time 6-digit verification code below to authorize this action.</p>
+            </td>
+          </tr>
+
+          <!-- OTP Box -->
+          <tr>
+            <td class="content-cell" align="center" style="padding:22px 32px 6px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F9FC;border:1px solid #DCE4EE;border-radius:6px;">
+                <tr>
+                  <td align="center" style="padding:22px 16px;">
+                    <div style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:11.5px;font-weight:bold;letter-spacing:1.4px;color:#6B7B8C;padding-bottom:10px;">ONE-TIME VERIFICATION CODE</div>
+                    <div class="otp-code-text" style="font-family:'Courier New',Courier,monospace;font-size:34px;line-height:1.2;font-weight:bold;letter-spacing:10px;color:#2F3B48;padding-left:6px;">{{verification_code}}</div>
+                    <div style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12.5px;color:#6B7785;padding-top:10px;">Valid for <strong>{{expires_minutes}} minutes</strong> (until {{expires_at}})</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Details -->
+          <tr>
+            <td class="content-cell" style="padding:18px 32px 4px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="details-table" style="border:1px solid #E8ECF1;border-radius:4px;border-collapse:separate;border-spacing:0;">
+                <tr>
+                  <td colspan="2" style="background:#F2F5F9;padding:11px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.2px;color:#6B7B8C;">REQUEST DETAILS</td>
+                </tr>
+                <tr class="mobile-stack">
+                  <td width="38%" class="details-label" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Candidate ID</td>
+                  <td class="details-value" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#2F3B48;font-weight:bold;">{{student_id}}</td>
+                </tr>
+                <tr class="mobile-stack">
+                  <td width="38%" class="details-label" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Purpose</td>
+                  <td class="details-value" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#2F3B48;font-weight:bold;">{{purpose}}</td>
+                </tr>
+                <tr class="mobile-stack">
+                  <td width="38%" class="details-label" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Requested At</td>
+                  <td class="details-value" style="padding:12px 18px;border-bottom:1px solid #E8ECF1;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#2F3B48;font-weight:bold;">{{requested_at}}</td>
+                </tr>
+                <tr class="mobile-stack">
+                  <td width="38%" class="details-label" style="padding:12px 18px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#6B7785;">Expires At</td>
+                  <td class="details-value" style="padding:12px 18px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;color:#A84030;font-weight:bold;">{{expires_at}}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Security Note -->
+          <tr>
+            <td class="content-cell" style="padding:20px 32px 4px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td class="note-cell" style="background:#F9FAFC;border-left:3px solid #C9D6E4;padding:12px 16px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:13.5px;line-height:1.65;color:#5A6676;">
+                    <div style="font-size:12px;font-weight:bold;letter-spacing:1.2px;color:#6B7B8C;padding-bottom:4px;">SECURITY NOTICE</div>
+                    For your security, do not share this verification code with anyone. BICS administrators and faculty will never ask you for this code. If you did not request this action, please secure your account or contact the Department of Examination immediately.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Sign-off -->
+          <tr>
+            <td class="content-cell signoff-cell" style="padding:22px 32px 32px 32px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:#3A4654;">
+              <p style="margin:0 0 4px 0;">Regards,</p>
+              <p style="margin:0;font-weight:bold;color:#4A6076;">Department of Examination</p>
+              <p style="margin:0;font-size:14px;color:#8190A0;">BICS (Basic Introductory Computer Science Course)</p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" class="footer-cell" style="background:#F7F9FC;border-top:1px solid #E8ECF1;border-radius:0 0 6px 6px;padding:16px 24px;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#98A3AF;">
+              This is an automated message. Please do not reply to this email.<br>
+              &copy; BICS Preliminary Examinations 2026 &nbsp;|&nbsp; Department of Examination
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

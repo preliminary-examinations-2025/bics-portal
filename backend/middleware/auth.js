@@ -189,14 +189,8 @@ const isWhitelisted = (urlPath, method = 'GET') => {
         fullPath.startsWith('/api/webhooks/') || fullPath.includes('/webhooks/') ||
         fullPath === '/api/login' || fullPath === '/api/admin/login' || fullPath === '/api/logout' ||
         fullPath === '/api/candidate/login' ||
-        fullPath.startsWith('/api/candidate/send-verification-code') ||
-        fullPath.startsWith('/api/candidate/verify-code') ||
         fullPath === '/api/config' || fullPath === '/api/system-config' ||
         fullPath === '/api/tests/verify-token' ||
-        fullPath.startsWith('/api/tests/submission-verification') ||
-        fullPath.startsWith('/api/tests/evaluation') ||
-        fullPath === '/api/test/eirf/public-key' ||
-        fullPath.startsWith('/api/test/eirf/verdict-pdf') ||
         fullPath === '/api/tests/beacon-disconnect' ||
         fullPath === '/api/log-client-error' ||
         fullPath.startsWith('/api/kata/')
@@ -209,9 +203,30 @@ const isWhitelisted = (urlPath, method = 'GET') => {
  * 2. Whitelists strictly minimal, public, rate-limited Tier 1 endpoints.
  * 3. Requires valid authentication for all student (Tier 3) and admin (Tier 4) routes.
  */
+const isOtDualAuthPath = (fullPath, method = 'GET') => {
+    const cleanMethod = String(method || 'GET').toUpperCase();
+    return (
+        fullPath.includes('/api/tests/start') ||
+        fullPath.includes('/api/tests/draft') ||
+        fullPath.includes('/api/tests/precheck') ||
+        fullPath.includes('/api/tests/biometrics/') ||
+        fullPath.includes('/api/tests/proctoring') ||
+        fullPath.includes('/api/tests/heartbeat') ||
+        fullPath.includes('/api/tests/run') ||
+        fullPath.includes('/api/tests/submit') ||
+        fullPath.includes('/api/tests/submitted') ||
+        fullPath.includes('/api/tests/objection') ||
+        fullPath.includes('/api/tests/reevaluation') ||
+        fullPath.includes('/api/tests/upload-proof') ||
+        fullPath.includes('/api/test/eirf') ||
+        (cleanMethod === 'GET' && /^\/api\/tests\/[a-z0-9-]+$/i.test(fullPath) && fullPath !== '/api/tests/active' && fullPath !== '/api/tests/submitted')
+    );
+};
+
 const authorizeApiRequest = async (req, res, next) => {
     const fullPath = (req.originalUrl || req.path).split('?')[0].toLowerCase();
     const relativePath = req.path.toLowerCase();
+    const supportsOtDualAuth = isOtDualAuthPath(fullPath, req.method);
 
     // 1. Process Authorization Bearer token or query authToken/token for direct browser downloads
     const authHeader = req.headers['authorization'];
@@ -236,7 +251,8 @@ const authorizeApiRequest = async (req, res, next) => {
                     const db = getJSONData();
                     tokenDoc = (db.tokens || []).find(t => t.token === bearerToken.trim());
                 }
-                if (tokenDoc) {
+                const isNotExpired = tokenDoc && (!tokenDoc.expiresAt || Date.now() <= new Date(tokenDoc.expiresAt).getTime());
+                if (isNotExpired) {
                     req.user = {
                         id: String(tokenDoc.candidateId),
                         role: 'candidate',
@@ -256,6 +272,9 @@ const authorizeApiRequest = async (req, res, next) => {
                         username: 'dev_candidate'
                     };
                     req.isExamTokenAuth = true;
+                } else if (supportsOtDualAuth && (req.headers['x-exam-token'] || req.headers['x-eirf-token'] || req.query?.token || req.body?.token)) {
+                    // Allow fallthrough to x-exam-token / x-eirf-token verification when a stale portal Bearer JWT accompanies a fresh exam token
+                    req.user = null;
                 } else {
                     return res.status(401).json({
                         success: false,
@@ -277,17 +296,7 @@ const authorizeApiRequest = async (req, res, next) => {
     }
 
     // 2.1 Dual Authentication for Online Examination Routes (supports active TestToken session)
-    if (!req.user && (
-        fullPath.includes('/api/tests/start') || 
-        fullPath.includes('/api/tests/draft') ||
-        fullPath.includes('/api/tests/biometrics/continuity') ||
-        fullPath.includes('/api/tests/proctoring') || 
-        fullPath.includes('/api/tests/heartbeat') || 
-        fullPath.includes('/api/tests/run') || 
-        fullPath.includes('/api/tests/submit') ||
-        fullPath.includes('/api/tests/submitted') ||
-        fullPath.includes('/api/test/eirf')
-    )) {
+    if (!req.user && supportsOtDualAuth) {
         const examToken = req.headers['x-exam-token'] || req.query.token || (req.body && req.body.token);
         if (examToken && typeof examToken === 'string') {
             try {
@@ -300,7 +309,8 @@ const authorizeApiRequest = async (req, res, next) => {
                     const db = getJSONData();
                     tokenDoc = (db.tokens || []).find(t => t.token === examToken.trim());
                 }
-                if (tokenDoc) {
+                const isNotExpired = tokenDoc && (!tokenDoc.expiresAt || Date.now() <= new Date(tokenDoc.expiresAt).getTime());
+                if (isNotExpired) {
                     req.user = {
                         id: String(tokenDoc.candidateId),
                         role: 'candidate',
@@ -325,34 +335,6 @@ const authorizeApiRequest = async (req, res, next) => {
             }
         }
 
-        // Resilient fallback for liveness heartbeat pings on active examination sessions
-        if (!req.user && fullPath.includes('/api/tests/heartbeat/')) {
-            const parts = fullPath.split('/');
-            const subId = parts[parts.length - 1];
-            if (subId && subId.length >= 8) {
-                try {
-                    const { TestSubmissionModel } = require('../models');
-                    const { dbState, getJSONData } = require('../config/db');
-                    let activeSub = null;
-                    if (dbState.useMongo) {
-                        activeSub = await TestSubmissionModel.findById(subId).select('candidateId studentId status').lean();
-                    } else {
-                        const db = getJSONData();
-                        activeSub = (db.testSubmissions || []).find(s => String(s.id || s._id) === String(subId));
-                    }
-                    if (activeSub && activeSub.status === 'started') {
-                        req.user = {
-                            id: String(activeSub.candidateId || activeSub.studentId),
-                            role: 'candidate',
-                            studentId: String(activeSub.studentId || activeSub.candidateId),
-                            username: 'candidate'
-                        };
-                        req.isExamTokenAuth = true;
-                    }
-                } catch (_) {}
-            }
-        }
-
         // 2.2 Token Authorization for EIRF Endpoints (Validates 45-minute magic link token on TestSubmissionModel)
         if (!req.user && fullPath.includes('/api/test/eirf')) {
             const eirfToken = req.headers['x-eirf-token'] || req.query.token || (req.body && req.body.token);
@@ -363,16 +345,36 @@ const authorizeApiRequest = async (req, res, next) => {
                     const cleanToken = eirfToken.trim();
                     let subDoc = null;
                     if (dbState.useMongo) {
-                        subDoc = await TestSubmissionModel.findOne({ eirfToken: cleanToken }).select('candidateId studentId candidateName eirfExpiresAt pipelineStatus').lean();
+                        subDoc = await TestSubmissionModel.findOne({ eirfToken: cleanToken, isDeleted: { $ne: true } }).select('candidateId studentId candidateName eirfExpiresAt pipelineStatus eirfStatus').lean();
                     } else {
                         const db = getJSONData();
-                        subDoc = (db.testSubmissions || []).find(s => s.eirfToken === cleanToken);
+                        subDoc = (db.testSubmissions || []).find(s => !s.isDeleted && s.eirfToken === cleanToken);
                     }
 
                     if (subDoc) {
                         const isExpired = (subDoc.eirfExpiresAt && Date.now() > new Date(subDoc.eirfExpiresAt).getTime()) || subDoc.pipelineStatus === 'EXPIRED';
+                        const isDetailsGet = String(req.method || 'GET').toUpperCase() === 'GET' && fullPath.includes('/api/test/eirf/details');
                         if (isExpired) {
                             req.isEirfExpired = true;
+                            if (isDetailsGet) {
+                                // Let GET /details verify whether a filed EIRFReport receipt already exists for read-only display
+                                req.user = {
+                                    id: String(subDoc.candidateId || subDoc.studentId),
+                                    role: 'candidate',
+                                    studentId: String(subDoc.studentId || subDoc.candidateId),
+                                    username: subDoc.candidateName || 'candidate',
+                                    eirfSubmissionId: String(subDoc._id || subDoc.id),
+                                    eirfToken: cleanToken,
+                                    eirfExpired: true
+                                };
+                                req.isEirfTokenAuth = true;
+                            } else {
+                                return res.status(410).json({
+                                    success: false,
+                                    isExpired: true,
+                                    error: 'This Emergency Incident Report Form (EIRF) filing window has expired (45-minute statutory limit exceeded).'
+                                });
+                            }
                         } else {
                             req.user = {
                                 id: String(subDoc.candidateId || subDoc.studentId),
@@ -392,9 +394,15 @@ const authorizeApiRequest = async (req, res, next) => {
         }
     }
 
-    // 3. Admin perimeter check: strictly require role === 'admin'
+    // 3. Admin perimeter check: require authentication (401) and strict admin role (403)
     if (fullPath.includes('/admin/') || fullPath.endsWith('/admin')) {
-        if (!req.user || req.user.role !== 'admin') {
+        if (!req.user) {
+            return res.status(401).json({
+                success: false,
+                error: "401 Unauthorized: Authentication required. Please sign in to access this resource."
+            });
+        }
+        if (req.user.role !== 'admin') {
             return res.status(403).json({
                 success: false,
                 error: "403 Forbidden: Administrator credentials required. Access denied."
@@ -405,16 +413,6 @@ const authorizeApiRequest = async (req, res, next) => {
 
     // 4. If user is authenticated (Student or Admin), allow request to proceed to route-level checks
     if (req.user) {
-        return next();
-    }
-
-    // 5. Legacy API access secret check for non-admin automated scripts
-    const secret = process.env.API_ACCESS_SECRET;
-    const clientSecret = req.query.apiSecret || 
-                         req.query.apiKey || 
-                         req.headers['x-portal-api-key'];
-
-    if (secret && clientSecret && clientSecret === secret) {
         return next();
     }
 

@@ -14,6 +14,7 @@ export const QuestionPalette = ({
   onNavigate,
   showQuestionPalette,
   setShowQuestionPalette,
+  draftQIdx,
   draftMCQ,
   draftCode,
   draftLanguage,
@@ -23,7 +24,9 @@ export const QuestionPalette = ({
 }) => {
   const isQuestionAnswered = (q, qIdx) => {
     const ans = examAnswers[qIdx];
-    const isCurrent = qIdx === selectedQuestionIndex;
+    const isCurrent =
+      qIdx === selectedQuestionIndex &&
+      (draftQIdx === undefined || draftQIdx === selectedQuestionIndex);
     const drafts = isCurrent ? {
       draftMCQ,
       draftCode,

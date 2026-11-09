@@ -11,10 +11,57 @@ const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { upload } = require('../middleware/upload');
 const { formatCloudinaryMediaUrl, uploadToCloudinary } = require('../config/cloudinary');
 const { logSystemAction } = require('../utils/logger');
-const { sendVerificationEmail } = require('../utils/email');
+const { sendVerificationCodeEmail, extractValidCandidateEmail } = require('../services/gmailEmailService');
+const { resolveToObjectId } = require('../utils/bicsId');
 const { hashPassword } = require('../utils/password');
 const { requireAuth, requireAdmin, requireOwnerOrAdmin } = require('../middleware/auth');
 const { streamHallTicketPdf } = require('../services/pdf/hallTicketPdf');
+
+const inFlightOtpSends = new Set();
+
+async function findCandidateRecordByParam(rawId) {
+    const raw = String(rawId || '').trim();
+    if (!raw) return null;
+    const resolved = String(resolveToObjectId(raw) || raw);
+    if (dbState.useMongo) {
+        if (mongoose.Types.ObjectId.isValid(resolved)) {
+            const byId = await CandidateModel.findById(resolved);
+            if (byId) return byId;
+        }
+        return await CandidateModel.findOne({ $or: [{ studentId: raw }, { username: raw }] });
+    }
+    const db = getJSONData();
+    return (db.candidates || []).find(c =>
+        String(c._id) === resolved ||
+        String(c.id) === resolved ||
+        String(c._id) === raw ||
+        String(c.id) === raw ||
+        String(c.studentId) === raw ||
+        String(c.username) === raw
+    ) || null;
+}
+
+function timingSafeCodeMatch(stored, provided) {
+    if (typeof stored !== 'string' || typeof provided !== 'string') return false;
+    const a = Buffer.from(stored.trim(), 'utf8');
+    const b = Buffer.from(provided.trim(), 'utf8');
+    if (a.length === 0 || a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
+
+async function persistCandidateRecordJson(student) {
+    const db = getJSONData();
+    const targetId = String(student._id || student.id || '');
+    const candIdx = (db.candidates || []).findIndex(c =>
+        String(c._id) === targetId ||
+        String(c.id) === targetId ||
+        (student.studentId && String(c.studentId) === String(student.studentId))
+    );
+    if (candIdx !== -1) {
+        db.candidates[candIdx] = student;
+        saveJSONData(db);
+    }
+}
 
 const sanitizeCandidate = (c) => {
     if (!c) return c;
@@ -74,8 +121,10 @@ router.post('/admin/register-candidate', requireAdmin, async (req, res) => {
         const exists = (db.candidates || []).some(c => c.username === username || c.studentId === studentId);
         if (exists) return res.status(400).json({ error: "Candidate Username or Student ID already exists" });
 
+        const newCandId = new mongoose.Types.ObjectId().toString();
         const newCand = {
-            id: Date.now().toString(),
+            _id: newCandId,
+            id: newCandId,
             studentId, name, username, password: hashedPassword,
             eligible: !!eligible,
             signedConsent: false,
@@ -128,7 +177,7 @@ router.post('/admin/set-eligibility/:id', requireAdmin, async (req, res) => {
         }
     } else {
         const db = getJSONData();
-        const cand = (db.candidates || []).find(c => c.id === id);
+        const cand = (db.candidates || []).find(c => String(c.id || c._id || '') === String(id));
         if (!cand) return res.status(404).json({ error: "Candidate not found" });
         cand.eligible = !!eligible;
         saveJSONData(db);
@@ -150,7 +199,7 @@ router.get('/candidate/profile/:id', requireAuth, requireOwnerOrAdmin('id'), asy
         }
     } else {
         const db = getJSONData();
-        const cand = (db.candidates || []).find(c => c.id === id);
+        const cand = (db.candidates || []).find(c => String(c.id || c._id || '') === String(id));
         if (!cand) return res.status(404).json({ error: "Profile not found" });
         const { password, ...safeData } = cand;
         return res.json(sanitizeCandidate(safeData));
@@ -216,7 +265,7 @@ router.post('/candidate/complete-registration/:id', requireAuth, requireOwnerOrA
             return res.json({ success: true, profile: cand });
         } else {
             const db = getJSONData();
-            const cand = (db.candidates || []).find(c => c.id === id);
+            const cand = (db.candidates || []).find(c => String(c.id || c._id || '') === String(id));
             cand.registrationData = registrationData;
             cand.registeredCourses = parsedCourses;
             cand.registrationSubmitted = true;
@@ -519,25 +568,30 @@ router.post('/candidate/upload-ledger/:id', requireAuth, requireOwnerOrAdmin('id
     }
 });
 
-// Send Email Verification Code
-router.post('/candidate/send-verification-code/:id', async (req, res) => {
+// Send Email Verification Code (Authenticated owner or admin)
+router.post('/candidate/send-verification-code/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
-    
-    try {
-        let student;
-        if (dbState.useMongo) {
-            student = await CandidateModel.findById(id);
-        } else {
-            const db = getJSONData();
-            student = (db.candidates || []).find(c => c.id === id || c._id === id);
-        }
+    const rawPurpose = typeof req.body?.purpose === 'string' ? req.body.purpose.trim() : '';
+    const purpose = rawPurpose ? rawPurpose.slice(0, 64) : 'Identity Verification';
+    let lockKey = '';
 
+    try {
+        const student = await findCandidateRecordByParam(id);
         if (!student) return res.status(404).json({ error: "Candidate not found." });
 
-        const studentEmail = student.registrationData?.personalEmail || student.personalEmail;
+        const studentEmail = extractValidCandidateEmail(student);
         if (!studentEmail) {
-            return res.status(400).json({ error: "No email registered for this candidate. Please contact support." });
+            return res.status(400).json({ error: "No valid email registered for this candidate. Please contact support." });
         }
+
+        lockKey = String(student._id || student.id || id);
+        if (inFlightOtpSends.has(lockKey)) {
+            return res.status(429).json({
+                error: "A verification code request is already in progress. Please wait a moment.",
+                waitSec: 5
+            });
+        }
+        inFlightOtpSends.add(lockKey);
 
         // 60-Second Cooldown Check
         const now = Date.now();
@@ -552,123 +606,137 @@ router.post('/candidate/send-verification-code/:id', async (req, res) => {
             });
         }
 
+        // Snapshot previous OTP state for atomic rollback on email dispatch failure
+        const prevState = {
+            verificationCode: student.verificationCode || '',
+            verificationCodeExpires: student.verificationCodeExpires || null,
+            verificationAttempts: student.verificationAttempts || 0,
+            lastVerificationCodeSentAt: student.lastVerificationCodeSentAt || null
+        };
+
         // Cryptographically secure 6-digit code
         const code = crypto.randomInt(100000, 1000000).toString();
         const expires = new Date(now + 10 * 60 * 1000);
 
+        student.verificationCode = code;
+        student.verificationCodeExpires = expires;
+        student.verificationAttempts = 0;
+        student.lastVerificationCodeSentAt = new Date(now);
         if (dbState.useMongo) {
-            student.verificationCode = code;
-            student.verificationCodeExpires = expires;
-            student.verificationAttempts = 0;
-            student.lastVerificationCodeSentAt = new Date(now);
             await student.save();
         } else {
-            student.verificationCode = code;
-            student.verificationCodeExpires = expires;
-            student.verificationAttempts = 0;
-            student.lastVerificationCodeSentAt = new Date(now);
-            const db = getJSONData();
-            const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-            if (candIdx !== -1) {
-                db.candidates[candIdx] = student;
-                saveJSONData(db);
-            }
+            await persistCandidateRecordJson(student);
         }
 
-        await sendVerificationEmail(studentEmail, student.name || 'Candidate', code);
-        return res.json({ 
-            success: true, 
+        const mailRes = await sendVerificationCodeEmail({
+            candidateId: lockKey,
+            studentId: student.studentId || '',
+            to: studentEmail,
+            fullName: student.name || student.registrationData?.preferredName || 'Candidate',
+            code,
+            purpose,
+            expiresMinutes: 10,
+            requestedAt: new Date(now),
+            expiresAt: expires,
+            triggerSource: 'candidate_request'
+        });
+
+        if (!mailRes || !mailRes.success) {
+            // Rollback OTP & 60s cooldown so candidate is never locked out when email fails
+            student.verificationCode = prevState.verificationCode;
+            student.verificationCodeExpires = prevState.verificationCodeExpires;
+            student.verificationAttempts = prevState.verificationAttempts;
+            student.lastVerificationCodeSentAt = prevState.lastVerificationCodeSentAt;
+            if (dbState.useMongo) {
+                await student.save();
+            } else {
+                await persistCandidateRecordJson(student);
+            }
+            return res.status(502).json({
+                success: false,
+                waitSec: 0,
+                cooldownSec: 0,
+                error: mailRes?.error || mailRes?.reason || "Failed to send verification code email. Please try again."
+            });
+        }
+
+        return res.json({
+            success: true,
             cooldownSec: 60,
-            message: "Verification code sent to your email." 
+            message: "Verification code sent to your email."
         });
     } catch (err) {
         console.error("Failed to send verification code:", err);
         return res.status(500).json({ error: "Failed to send verification code. Please try again." });
+    } finally {
+        if (lockKey) inFlightOtpSends.delete(lockKey);
     }
 });
 
-// Verify Code
-router.post('/candidate/verify-code/:id', async (req, res) => {
+// Verify Code (Authenticated owner or admin)
+router.post('/candidate/verify-code/:id', requireAuth, requireOwnerOrAdmin('id'), async (req, res) => {
     const { id } = req.params;
-    const { code, type } = req.body;
+    const { code, type } = req.body || {};
 
-    if (!code) return res.status(400).json({ error: "Verification code is required." });
+    if (typeof code !== 'string' || !code.trim()) {
+        return res.status(400).json({ error: "Verification code is required." });
+    }
 
     try {
-        let student;
-        if (dbState.useMongo) {
-            student = await CandidateModel.findById(id);
-        } else {
-            const db = getJSONData();
-            student = (db.candidates || []).find(c => c.id === id || c._id === id);
+        const student = await findCandidateRecordByParam(id);
+        if (!student) return res.status(404).json({ error: "Candidate not found." });
+
+        if (!student.verificationCode) {
+            return res.status(400).json({ error: "No active verification code found. Please request a new code." });
         }
 
-        if (!student) return res.status(404).json({ error: "Candidate not found." });
+        if (student.verificationCodeExpires && new Date() > new Date(student.verificationCodeExpires)) {
+            student.verificationCode = '';
+            student.verificationCodeExpires = null;
+            student.verificationAttempts = 0;
+            if (dbState.useMongo) {
+                await student.save();
+            } else {
+                await persistCandidateRecordJson(student);
+            }
+            return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+        }
 
         student.verificationAttempts = (student.verificationAttempts || 0) + 1;
 
-        if (!student.verificationCode || student.verificationCode !== code.trim()) {
+        if (!timingSafeCodeMatch(student.verificationCode, code)) {
             if (student.verificationAttempts >= 5) {
                 student.verificationCode = '';
                 student.verificationCodeExpires = null;
                 student.verificationAttempts = 0;
                 if (dbState.useMongo) await student.save();
-                else {
-                    const db = getJSONData();
-                    const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-                    if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
-                }
-                return res.status(429).json({ 
-                    error: "Maximum verification attempts (5) exceeded. Your code has been invalidated. Please request a new code." 
+                else await persistCandidateRecordJson(student);
+                return res.status(429).json({
+                    error: "Maximum verification attempts (5) exceeded. Your code has been invalidated. Please request a new code."
                 });
             }
 
             if (dbState.useMongo) await student.save();
-            else {
-                const db = getJSONData();
-                const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-                if (candIdx !== -1) { db.candidates[candIdx] = student; saveJSONData(db); }
-            }
+            else await persistCandidateRecordJson(student);
 
             const remainingAttempts = 5 - student.verificationAttempts;
-            return res.status(400).json({ 
-                error: `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.` 
+            return res.status(400).json({
+                error: `Invalid verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.`
             });
         }
 
-        if (new Date() > new Date(student.verificationCodeExpires)) {
-            student.verificationCode = '';
-            student.verificationCodeExpires = null;
-            student.verificationAttempts = 0;
-            if (dbState.useMongo) await student.save();
-            return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+        student.verificationCode = '';
+        student.verificationCodeExpires = null;
+        student.verificationAttempts = 0;
+        if (type === 'mid') {
+            student.midSemEmailVerified = true;
+        } else if (type === 'end') {
+            student.endSemEmailVerified = true;
         }
-
         if (dbState.useMongo) {
-            student.verificationCode = '';
-            student.verificationCodeExpires = null;
-            student.verificationAttempts = 0;
-            if (type === 'mid') {
-                student.midSemEmailVerified = true;
-            } else if (type === 'end') {
-                student.endSemEmailVerified = true;
-            }
             await student.save();
         } else {
-            student.verificationCode = '';
-            student.verificationCodeExpires = null;
-            student.verificationAttempts = 0;
-            if (type === 'mid') {
-                student.midSemEmailVerified = true;
-            } else if (type === 'end') {
-                student.endSemEmailVerified = true;
-            }
-            const db = getJSONData();
-            const candIdx = (db.candidates || []).findIndex(c => c.id === id || c._id === id);
-            if (candIdx !== -1) {
-                db.candidates[candIdx] = student;
-                saveJSONData(db);
-            }
+            await persistCandidateRecordJson(student);
         }
 
         await logSystemAction(student.name || 'candidate', 'EMAIL_VERIFIED', `Candidate verified email successfully for ${type || 'action'}`, 'info');
@@ -734,7 +802,8 @@ router.get('/candidate/generate-hallticket/:id', requireAuth, requireOwnerOrAdmi
             candidate: student,
             examType: type,
             ticketNumber: hallTicketNumber,
-            systemConfig
+            systemConfig,
+            inline: req.query?.inline === '1' || req.query?.inline === 'true'
         });
 
     } catch (err) {

@@ -110,7 +110,8 @@ function evaluateEirfIncident(submission, testConfig = {}) {
             'TAB_SWITCH', 
             'TAB_RETURNED', 
             'INSPECT_ATTEMPT', 
-            'DEVTOOLS_SHORTCUT'
+            'DEVTOOLS_SHORTCUT',
+            'DEVTOOLS_OPENED'
         ].some(t => evType.includes(t));
 
         if (isMajor) {

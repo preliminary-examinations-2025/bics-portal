@@ -2,6 +2,17 @@ const fs = require('fs');
 const path = require('path');
 const { exec, spawn } = require('child_process');
 
+const normalizeProgramOutput = (str) => {
+    if (!str || typeof str !== 'string') return '';
+    return str
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map(line => line.trimEnd())
+        .join('\n')
+        .trim();
+};
+
 // 1. In-memory detection cache
 let gppChecked = null;
 let dockerChecked = { available: null, lastChecked: 0 };
@@ -199,8 +210,8 @@ const runInDocker = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                                 return runResolve({ status: 'Runtime Error', stdout: '', stderr: stderr || runErr.message, executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                             }
 
-                            const cleanExpected = (tc.output || tc.expectedOutput || '').trim().replace(/\r\n/g, '\n');
-                            const cleanActual = (stdout || '').trim().replace(/\r\n/g, '\n');
+                            const cleanExpected = normalizeProgramOutput(tc.output || tc.expectedOutput || '');
+                            const cleanActual = normalizeProgramOutput(stdout || '');
                             const isCorrect = cleanActual === cleanExpected;
 
                             runResolve({
@@ -320,19 +331,8 @@ const runLocalGuardedProcess = async (sourceCode, testCases, timeLimitMs = 2000,
                                 return runResolve({ status: 'Runtime Error', stdout: '', stderr: runStderr || runErr.message, executionTimeMs, memoryUsedKb: dynamicMemoryKb });
                             }
 
-                            const normalizeOutput = (str) => {
-                                if (!str || typeof str !== 'string') return '';
-                                return str
-                                    .replace(/\r\n/g, '\n')
-                                    .replace(/\r/g, '\n')
-                                    .split('\n')
-                                    .map(line => line.trimEnd())
-                                    .join('\n')
-                                    .trim();
-                            };
-
-                            const cleanExpected = normalizeOutput(tc.output || tc.expectedOutput || '');
-                            const cleanActual = normalizeOutput(runStdout || '');
+                            const cleanExpected = normalizeProgramOutput(tc.output || tc.expectedOutput || '');
+                            const cleanActual = normalizeProgramOutput(runStdout || '');
                             const isCorrect = cleanActual === cleanExpected;
 
                             runResolve({
@@ -395,7 +395,9 @@ const JUDGE0_KEY = process.env.JUDGE0_API_KEY;
 
 const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimitMb = 128) => {
     try {
-        const promises = testCases.map(async (tc) => {
+        const promises = testCases.map(async (tc, i) => {
+            const tcId = tc.testcaseId || tc.testCaseId || tc.id || tc._id || (20260101 + i);
+            const objId = tc.id || tc._id || tc.testcaseId || (20260101 + i);
             const body = {
                 source_code: sourceCode,
                 language_id: 54, // C++ (GCC 9.2.0)
@@ -431,14 +433,16 @@ const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                 }
 
                 const expected = (tc.output || tc.expectedOutput || '');
-                const cleanExpected = expected.trim().replace(/\r\n/g, '\n');
-                const cleanActual = (data.stdout || '').trim().replace(/\r\n/g, '\n');
+                const cleanExpected = normalizeProgramOutput(expected);
+                const cleanActual = normalizeProgramOutput(data.stdout || '');
                 const isCorrect = cleanActual === cleanExpected;
                 
                 const execTimeMs = data.time ? Number((Number(data.time) * 1000).toFixed(3)) : 0;
                 const memKb = data.memory ? Number(data.memory) : 0;
 
                 return {
+                    testcaseId: tcId,
+                    id: objId,
                     input: tc.input,
                     expectedOutput: expected,
                     actualOutput: data.stdout || "",
@@ -449,6 +453,8 @@ const runOnJudge0 = async (sourceCode, testCases, timeLimitMs = 2000, memoryLimi
                 };
             }
             return {
+                testcaseId: tcId,
+                id: objId,
                 input: tc.input,
                 expectedOutput: tc.output || tc.expectedOutput,
                 actualOutput: "",

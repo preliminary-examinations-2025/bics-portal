@@ -4,19 +4,25 @@
  */
 
 const http = require('http');
+const fs = require('fs');
+const { DB_FILE } = require('../config/db');
 
-const PORT = 5001; // Run test server on separate port to avoid conflicts
+const PORT = 5001; // Run test server on isolated IPC pipe
+process.env.NODE_ENV = 'test';
 process.env.PORT = PORT;
 process.env.JWT_SECRET = 'test_audit_jwt_secret_hex_9c915b721d2c4abaa5c49c279dd23f68';
 process.env.ADMIN_USER = 'admin';
 process.env.ADMIN_PASS = 'admin123';
-process.env.API_ACCESS_SECRET = 'qwertty';
+process.env.API_ACCESS_SECRET = 'qwertty'; // Kept in env only to prove auth middleware rejects deprecated apiSecret
 
-// Helper for making HTTP requests in tests
+const pipePath = process.platform === 'win32'
+    ? `\\\\.\\pipe\\bics_sec_audit_${process.pid}_${Date.now()}`
+    : `/tmp/bics_sec_audit_${process.pid}_${Date.now()}.sock`;
+
+// Helper for making HTTP requests in tests over IPC named pipe
 function request(method, path, body = null, headers = {}) {
     return new Promise((resolve, reject) => {
-        const parsedUrl = new URL(path, `http://127.0.0.1:${PORT}`);
-        const reqHeaders = { ...headers };
+        const reqHeaders = { Host: `127.0.0.1:${PORT}`, ...headers };
         let payload = null;
 
         if (body) {
@@ -25,7 +31,9 @@ function request(method, path, body = null, headers = {}) {
             reqHeaders['Content-Length'] = Buffer.byteLength(payload);
         }
 
-        const req = http.request(parsedUrl, {
+        const req = http.request({
+            socketPath: pipePath,
+            path,
             method,
             headers: reqHeaders
         }, (res) => {
@@ -57,17 +65,20 @@ async function runSecurityAudit() {
     console.log('   STARTING BICS SECURITY PENETRATION AUDIT        ');
     console.log('====================================================\n');
 
-    // Boot backend server on PORT
+    const dbBackup = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf8') : null;
+
+    // Boot backend server on IPC pipe
     const app = require('../server');
     let server;
     await new Promise((resolve) => {
-        server = http.createServer(app).listen(PORT, '127.0.0.1', () => {
-            console.log(`[TEST HARNESS] Audit server listening on port ${PORT}\n`);
+        server = http.createServer(app).listen(pipePath, () => {
+            console.log(`[TEST HARNESS] Audit server listening on ${pipePath}\n`);
             resolve();
         });
     });
 
     const results = [];
+    let runtimeError = null;
     const assertTest = (name, condition, details = '') => {
         if (condition) {
             console.log(`[PASS] ${name}`);
@@ -83,9 +94,12 @@ async function runSecurityAudit() {
         const resT01 = await request('GET', '/api/admin/tests');
         assertTest('T-01: Direct unauthenticated request to /api/admin/tests returns 401', resT01.status === 401, `Got status ${resT01.status}`);
 
-        // T-02: Shared secret spoofing: GET /api/admin/tests?apiSecret=qwertty
+        // T-02: Shared secret spoofing: GET /api/admin/tests?apiSecret=qwertty & GET /api/tests/active?apiSecret=qwertty
         const resT02 = await request('GET', '/api/admin/tests?apiSecret=qwertty');
-        assertTest('T-02: Shared secret spoofing (?apiSecret=qwertty) is rejected on admin endpoints', resT02.status === 401, `Got status ${resT02.status}`);
+        assertTest('T-02a: Shared secret spoofing (?apiSecret=qwertty) is rejected on admin endpoints', resT02.status === 401, `Got status ${resT02.status}`);
+
+        const resT02b = await request('GET', '/api/tests/active?apiSecret=qwertty');
+        assertTest('T-02b: Shared secret spoofing (?apiSecret=qwertty) is rejected on student endpoints', resT02b.status === 401, `Got status ${resT02b.status}`);
 
         // T-04: NoSQL injection attempt on /api/login: {"username": "admin", "password": {"$ne": ""}}
         const resT04 = await request('POST', '/api/login', {
@@ -127,7 +141,6 @@ async function runSecurityAudit() {
             password: testCandidatePassword
         });
         const studentToken = resStudentLogin.body?.token;
-        const studentId = resStudentLogin.body?.id || resStudentLogin.body?.studentId;
         assertTest('T-08a: Student login succeeds and returns JWT', resStudentLogin.status === 200 && !!studentToken, `Status ${resStudentLogin.status}`);
 
         // T-03: Privilege escalation: Student JWT attempting GET /api/admin/tests
@@ -150,11 +163,23 @@ async function runSecurityAudit() {
         const hasPlaintextPassword = candidateDocs.some(d => d.password && d.password !== '[PROTECTED HASH]' && !d.password.startsWith('$2'));
         assertTest('T-06: Database Viewer masks sensitive candidate password fields', !hasPlaintextPassword, `Password found: ${JSON.stringify(candidateDocs[0]?.password)}`);
 
+    } catch (err) {
+        runtimeError = err;
+        console.error('Audit execution error:', err);
     } finally {
-        server.close();
+        if (dbBackup !== null) {
+            try { fs.writeFileSync(DB_FILE, dbBackup, 'utf8'); } catch (_) {}
+        }
+        try {
+            const { stopSubmissionReaper } = require('../workers/submissionReaper');
+            const { stopEirfPipelineWorker } = require('../workers/eirfPipelineWorker');
+            stopSubmissionReaper();
+            stopEirfPipelineWorker();
+        } catch (_) {}
+        if (server) server.close();
         console.log('\n====================================================');
-        const allPassed = results.every(r => r.passed);
-        console.log(`AUDIT RESULT: ${allPassed ? 'ALL TESTS PASSED (100%)' : 'SOME TESTS FAILED'}`);
+        const allPassed = !runtimeError && results.length >= 11 && results.every(r => r.passed);
+        console.log(`AUDIT RESULT: ${allPassed ? `ALL ${results.length} TESTS PASSED (100%)` : 'SOME TESTS FAILED'}`);
         console.log('====================================================\n');
         process.exit(allPassed ? 0 : 1);
     }

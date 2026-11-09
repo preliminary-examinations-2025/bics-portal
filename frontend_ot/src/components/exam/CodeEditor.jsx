@@ -8,7 +8,7 @@ import {
 import { RichText } from '../common/RichText';
 import { CandidateWatermark } from '../common/CandidateWatermark';
 import { DEFAULT_TEMPLATES } from '../../config/constants';
-import { injectLoopGuards } from '../../utils/codeSandboxGuard';
+import { resolveWebQuestionDrafts, buildWebPreviewSrcDoc } from '../../utils/webPreviewBuilder';
 
 // Available languages in dropdown (C++ enabled, others disabled per requirements)
 const AVAILABLE_LANGUAGES = [
@@ -101,7 +101,6 @@ export const CodeEditor = ({
   onClipboardAttempt
 }) => {
   const currentQuestion = test?.questions?.[selectedQuestionIndex];
-  if (!currentQuestion) return null;
 
   // Splitter & UI state
   const [editorHeightPercent, setEditorHeightPercent] = useState(55);
@@ -170,6 +169,24 @@ export const CodeEditor = ({
     };
   }, [isDraggingVertical]);
 
+  if (!currentQuestion) return null;
+
+  const activeAns = examAnswers?.[selectedQuestionIndex];
+  const resolvedWeb = currentQuestion.type === 'web'
+    ? resolveWebQuestionDrafts({
+        question: currentQuestion,
+        answer: activeAns,
+        selectedQuestionIndex,
+        draftQIdx,
+        draftHtml,
+        draftCss,
+        draftJs
+      })
+    : { html: '', css: '', js: '', isCurrent: false };
+  const webPreviewSrcDoc = currentQuestion.type === 'web'
+    ? buildWebPreviewSrcDoc(resolvedWeb)
+    : '';
+
   const handleEditorMount = (editor, monaco) => {
     // Intercept keyboard shortcuts in Monaco's internal event loop
     editor.onKeyDown((e) => {
@@ -218,6 +235,7 @@ export const CodeEditor = ({
 
     const isMulti = Boolean(currentQuestion?.type === 'mcc' || currentQuestion?.isMultiChoice === true || (Array.isArray(currentQuestion?.correctOptionIndices) && currentQuestion.correctOptionIndices.length > 1));
     const emptyVal = isMulti ? [] : null;
+    if (typeof setDraftQIdx === 'function') setDraftQIdx(selectedQuestionIndex);
     setDraftMCQ(emptyVal);
     if (examAnswers && setExamAnswers) {
       const updated = [...examAnswers];
@@ -257,11 +275,14 @@ export const CodeEditor = ({
       : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]));
 
     try {
-      const rawStoredAuth = (typeof localStorage !== 'undefined' ? localStorage.getItem('bics_auth_token') : null);
+      const rawStoredAuth = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : null) ||
+                            (typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('bics_ot_auth_token') || sessionStorage.getItem('bics_auth_token')) : null) ||
+                            (typeof localStorage !== 'undefined' ? localStorage.getItem('bics_auth_token') : null);
       const isValidJwt = rawStoredAuth && typeof rawStoredAuth === 'string' && rawStoredAuth.split('.').length === 3;
       const authHeaderVal = isValidJwt ? `Bearer ${rawStoredAuth}` : '';
 
-      const examToken = (typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('bics_exam_token') || sessionStorage.getItem('token')) : '') || '';
+      const examToken = (typeof window !== 'undefined' ? window.__BICS_EXAM_TOKEN__ : null) ||
+                        (typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('bics_exam_token') || sessionStorage.getItem('token')) : '') || '';
 
       const res = await fetch('/api/tests/run', {
         method: 'POST',
@@ -423,6 +444,7 @@ export const CodeEditor = ({
           : (draftMCQ === null || draftMCQ === undefined);
 
         const handleOptionToggle = (oIdx) => {
+          if (typeof setDraftQIdx === 'function') setDraftQIdx(selectedQuestionIndex);
           if (isMultiChoice) {
             const current = Array.isArray(draftMCQ) ? [...draftMCQ] : (draftMCQ !== null && draftMCQ !== undefined ? [draftMCQ] : []);
             const pos = current.indexOf(oIdx);
@@ -895,14 +917,23 @@ export const CodeEditor = ({
                       setIsResetRotating(true);
                       setTimeout(() => setIsResetRotating(false), 600);
                       if (currentQuestion.type === 'coding') {
-                        setDraftCode(currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage] || '');
+                        const starterCode = currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage] || '';
+                        setDraftQIdx(selectedQuestionIndex);
+                        setDraftCode(starterCode);
                         if (typeof handleCodeReset === 'function') {
                           handleCodeReset(selectedQuestionIndex, 'coding');
                         }
                       } else {
-                        if (webActiveTab === 'html') setDraftHtml(currentQuestion.initialHtml || currentQuestion.initialCode?.html || '');
-                        if (webActiveTab === 'css') setDraftCss(currentQuestion.initialCss || currentQuestion.initialCode?.css || '');
-                        if (webActiveTab === 'js') setDraftJs(currentQuestion.initialJs || currentQuestion.initialCode?.js || '');
+                        const starterHtml = currentQuestion.initialHtml || currentQuestion.initialCode?.html || '';
+                        const starterCss = currentQuestion.initialCss || currentQuestion.initialCode?.css || '';
+                        const starterJs = currentQuestion.initialJs || currentQuestion.initialCode?.js || '';
+                        const nextHtml = webActiveTab === 'html' ? starterHtml : resolvedWeb.html;
+                        const nextCss = webActiveTab === 'css' ? starterCss : resolvedWeb.css;
+                        const nextJs = webActiveTab === 'js' ? starterJs : resolvedWeb.js;
+                        setDraftQIdx(selectedQuestionIndex);
+                        setDraftHtml(nextHtml);
+                        setDraftCss(nextCss);
+                        setDraftJs(nextJs);
                         if (typeof handleCodeReset === 'function') {
                           handleCodeReset(selectedQuestionIndex, 'web');
                         }
@@ -1049,10 +1080,10 @@ export const CodeEditor = ({
               {currentQuestion.type === 'coding' ? (
                 <Editor
                   height="100%"
-                  language={draftLanguage}
+                  language={draftQIdx === selectedQuestionIndex ? draftLanguage : (activeAns?.selectedLanguage || 'cpp')}
                   theme="vs-light"
                   onMount={handleEditorMount}
-                  value={draftQIdx === selectedQuestionIndex ? draftCode : (examAnswers[selectedQuestionIndex]?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[draftLanguage]))}
+                  value={draftQIdx === selectedQuestionIndex ? draftCode : (activeAns?.submittedCode ?? (currentQuestion.initialTemplate || DEFAULT_TEMPLATES[activeAns?.selectedLanguage || draftLanguage] || ''))}
                   onChange={(value) => {
                     setDraftQIdx(selectedQuestionIndex);
                     setDraftCode(value || '');
@@ -1089,18 +1120,24 @@ export const CodeEditor = ({
                   language={webActiveTab === 'js' ? 'javascript' : webActiveTab}
                   theme="vs-light"
                   onMount={handleEditorMount}
-                  value={(() => {
-                    const isCurrent = (draftQIdx === selectedQuestionIndex);
-                    const activeAns = examAnswers[selectedQuestionIndex];
-                    if (webActiveTab === 'html') return isCurrent ? draftHtml : (activeAns?.submittedHtml ?? (currentQuestion.initialHtml || currentQuestion.initialCode?.html || ''));
-                    if (webActiveTab === 'css') return isCurrent ? draftCss : (activeAns?.submittedCss ?? (currentQuestion.initialCss || currentQuestion.initialCode?.css || ''));
-                    return isCurrent ? draftJs : (activeAns?.submittedJs ?? (currentQuestion.initialJs || currentQuestion.initialCode?.js || ''));
-                  })()}
+                  value={
+                    webActiveTab === 'html'
+                      ? resolvedWeb.html
+                      : webActiveTab === 'css'
+                        ? resolvedWeb.css
+                        : resolvedWeb.js
+                  }
                   onChange={(value) => {
+                    const nextVal = value || '';
+                    if (draftQIdx !== selectedQuestionIndex) {
+                      if (webActiveTab !== 'html') setDraftHtml(resolvedWeb.html);
+                      if (webActiveTab !== 'css') setDraftCss(resolvedWeb.css);
+                      if (webActiveTab !== 'js') setDraftJs(resolvedWeb.js);
+                    }
                     setDraftQIdx(selectedQuestionIndex);
-                    if (webActiveTab === 'html') setDraftHtml(value || '');
-                    if (webActiveTab === 'css') setDraftCss(value || '');
-                    if (webActiveTab === 'js') setDraftJs(value || '');
+                    if (webActiveTab === 'html') setDraftHtml(nextVal);
+                    if (webActiveTab === 'css') setDraftCss(nextVal);
+                    if (webActiveTab === 'js') setDraftJs(nextVal);
                   }}
                   loading={<div style={{ padding: '20px', fontSize: '9pt', color: '#64748b', fontFamily: 'monospace' }}>Loading Monaco Web Editor...</div>}
                   options={{
@@ -1222,7 +1259,7 @@ export const CodeEditor = ({
                         backgroundColor: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#ffffff' : 'transparent',
                         color: (consoleTab === 'testcase' || consoleTab === 'preview') ? '#1e293b' : '#64748b',
                         cursor: 'pointer',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
+                        boxShadow: (consoleTab === 'testcase' || consoleTab === 'preview') ? '0 1px 2px rgba(0,0,0,0.06)' : 'none'
                       }}
                     >
                       Live Preview
@@ -1239,7 +1276,8 @@ export const CodeEditor = ({
                         border: 'none',
                         backgroundColor: consoleTab === 'result' ? '#ffffff' : 'transparent',
                         color: consoleTab === 'result' ? '#1e293b' : '#64748b',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        boxShadow: consoleTab === 'result' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none'
                       }}
                     >
                       Console Logs
@@ -1249,7 +1287,19 @@ export const CodeEditor = ({
               </div>
 
               {/* Console Body */}
-              <div className="ot-console-pane" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', backgroundColor: '#ffffff', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+              <div
+                className="ot-console-pane"
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: currentQuestion.type === 'web' ? 'flex' : 'block',
+                  flexDirection: currentQuestion.type === 'web' ? 'column' : undefined,
+                  overflowY: currentQuestion.type === 'web' && (consoleTab === 'testcase' || consoleTab === 'preview') ? 'hidden' : 'auto',
+                  padding: '12px 16px',
+                  backgroundColor: '#ffffff',
+                  fontFamily: "'Plus Jakarta Sans', sans-serif"
+                }}
+              >
                 {currentQuestion.type === 'coding' ? (
                   consoleTab === 'testcase' ? (
                     /* ========================================================== */
@@ -1554,32 +1604,13 @@ export const CodeEditor = ({
                 ) : (
                   /* Web Live Preview / Console Logs */
                   (consoleTab === 'testcase' || consoleTab === 'preview') ? (
-                    <div style={{ width: '100%', height: '100%', minHeight: '140px', backgroundColor: '#ffffff', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div style={{ flex: 1, width: '100%', height: '100%', minHeight: '140px', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px', overflow: 'hidden' }}>
                       <iframe
+                        key={`web_preview_q_${selectedQuestionIndex}_${currentQuestion.id || currentQuestion._id || ''}`}
+                        id="web-sandbox-preview"
                         title="Web Live Preview"
-                        srcDoc={`
-                          <!DOCTYPE html>
-                          <html>
-                            <head>
-                              <meta charset="utf-8">
-                              <style>
-                                body { margin: 0; font-family: system-ui, sans-serif; }
-                                ${draftCss}
-                              </style>
-                            </head>
-                            <body>
-                              ${draftHtml}
-                              <script>
-                                try {
-                                  ${injectLoopGuards(draftJs || '')}
-                                } catch (err) {
-                                  console.error(err);
-                                }
-                              <\/script>
-                            </body>
-                          </html>
-                        `}
-                        style={{ width: '100%', height: '100%', border: 'none' }}
+                        srcDoc={webPreviewSrcDoc}
+                        style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
                         sandbox="allow-scripts allow-modals"
                       />
                     </div>

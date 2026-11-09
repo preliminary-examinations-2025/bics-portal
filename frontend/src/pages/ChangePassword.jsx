@@ -37,7 +37,7 @@ export default function ChangePassword({
       {pwdMessage && <div className="cf-alert cf-alert-success">{pwdMessage}</div>}
       {pwdError && <div className="cf-alert cf-alert-error">{pwdError}</div>}
       <form onSubmit={handleChangePassword}>
-        {user?.role === 'student' && (
+        {(user?.role === 'student' || user?.role === 'candidate') && (
           <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
             <div style={{ fontSize: '9pt', color: '#475569', marginBottom: '8px' }}>
               To change your password, you must verify your identity.

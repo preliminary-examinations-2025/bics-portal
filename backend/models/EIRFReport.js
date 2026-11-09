@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const EIRFReportSchema = new mongoose.Schema({
     reportId: { type: String, required: true, unique: true },
     submissionId: { type: String, required: true, index: true },
+    bicsId: { type: String, default: '' },
+    submissionRefId: { type: String, default: '', index: true },
     candidateId: { type: String, required: true },
     studentId: { type: String, required: true },
     candidateName: { type: String, default: 'Candidate' },
@@ -19,14 +21,21 @@ const EIRFReportSchema = new mongoose.Schema({
     technicalContext: {
         browser: String,
         os: String,
+        platform: String,
         networkType: String,
-        openedApp: String
+        openedApp: String,
+        ip: String,
+        screenResolution: String,
+        viewportSize: String,
+        hardwareConcurrency: mongoose.Schema.Types.Mixed,
+        submittedAt: Date,
+        baselinePhotoUrl: String
     },
     additionalAnswers: mongoose.Schema.Types.Mixed,
     formAnswers: mongoose.Schema.Types.Mixed,
     uploadedProofUrl: { type: String, default: '' },
     
-    // Official Verdict & Artifacts
+    // Official Verdict & Artifacts (Verdict PDF is email-only / Admin JWT-only; no public pdfUrl)
     pdfUrl: { type: String, default: '' },
     pdfCloudinaryPublicId: { type: String, default: '' },
     digitalHash: { type: String, default: '' },
@@ -36,7 +45,7 @@ const EIRFReportSchema = new mongoose.Schema({
     remediationAction: { type: String, default: '' },
     reviewerName: { type: String, default: '' },
     reviewerTitle: { type: String, default: '' },
-    pipelineStatus: { type: String, default: '' },
+    pipelineStatus: { type: String, default: 'UNDER_REVIEW' },
     scheduledCleanupAt: { type: Date },
     pdfDeletedFromCloudinary: { type: Boolean, default: false },
     
@@ -49,7 +58,7 @@ const EIRFReportSchema = new mongoose.Schema({
     payloadUrl: String,
     /** @deprecated Snapshot from legacy physical .eirf file */
     decryptedPayloadSnapshot: mongoose.Schema.Types.Mixed,
-    verificationStatus: { type: String, enum: ['VERIFIED_MATCH', 'DISCREPANCY_FLAGGED', 'PAYLOAD_MISSING', 'DECRYPTION_FAILED'], default: 'VERIFIED_MATCH' },
+    verificationStatus: { type: String, enum: ['TELEMETRY_VERIFIED', 'VERIFIED_MATCH', 'DISCREPANCY_FLAGGED', 'PAYLOAD_MISSING', 'DECRYPTION_FAILED'], default: 'TELEMETRY_VERIFIED' },
     verificationDetails: {
         answersMatch: Boolean,
         clientHashMatch: Boolean,
@@ -60,6 +69,7 @@ const EIRFReportSchema = new mongoose.Schema({
     status: { type: String, enum: ['pending_review', 'approved', 'rejected', 'expired'], default: 'pending_review' },
     adminRemarks: { type: String, default: '' },
     submittedAt: { type: Date, default: Date.now },
+    filedAt: { type: Date, default: Date.now },
     expiresAt: Date,
     reviewedAt: Date,
     reviewedBy: String,
@@ -67,7 +77,12 @@ const EIRFReportSchema = new mongoose.Schema({
         approved: { type: Boolean, default: false },
         approvedAt: { type: Date, default: null },
         rejected: { type: Boolean, default: false },
-        rejectedAt: { type: Date, default: null }
+        rejectedAt: { type: Date, default: null },
+        lastTransport: { type: String, default: '' },
+        lastMessageId: { type: String, default: '' },
+        lastAttemptAt: { type: Date, default: null },
+        lastAttemptType: { type: String, default: '' },
+        lastError: { type: String, default: '' }
     }
 }, { versionKey: false, timestamps: true });
 

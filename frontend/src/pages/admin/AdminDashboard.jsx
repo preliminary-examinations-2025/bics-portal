@@ -151,6 +151,14 @@ export default function AdminDashboard({
             </button>
           </div>
           
+          <datalist id="bics-exam-modes">
+            <option value="Online Mode (Proctored)" />
+            <option value="Online Proctored" />
+            <option value="Online Terminal" />
+            <option value="Computer Lab" />
+            <option value="Offline Examination" />
+          </datalist>
+
           <div className="cf-table-container" style={{ marginBottom: '15px' }}>
             <table className="cf-table">
               <thead>
@@ -159,6 +167,8 @@ export default function AdminDashboard({
                   <th>Course Name</th>
                   <th>Exam Date</th>
                   <th>Time Duration Slot</th>
+                  <th>Mode</th>
+                  <th>Report Time</th>
                   <th>Total Marks</th>
                   <th>Actions</th>
                 </tr>
@@ -166,7 +176,7 @@ export default function AdminDashboard({
               <tbody>
                 {adminTimetable.length === 0 ? (
                   <tr>
-                    <td colSpan="6" style={{ textAlign: 'center', color: '#64748b' }}>No exam slots added yet. Click Add Course Slot to start.</td>
+                    <td colSpan="8" style={{ textAlign: 'center', color: '#64748b' }}>No exam slots added yet. Click Add Course Slot to start.</td>
                   </tr>
                 ) : (
                   adminTimetable.map((t, idx) => (
@@ -175,16 +185,22 @@ export default function AdminDashboard({
                         <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.code || ''} onChange={e => handleTimetableCellChange(idx, 'code', e.target.value)} placeholder="e.g. CS-101" />
                       </td>
                       <td>
-                        <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.course} onChange={e => handleTimetableCellChange(idx, 'course', e.target.value)} placeholder="e.g. C++ Programming" />
+                        <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.course || ''} onChange={e => handleTimetableCellChange(idx, 'course', e.target.value)} placeholder="e.g. C++ Programming" />
                       </td>
                       <td>
-                        <input type="date" className="cf-input" style={{ width: '100%' }} required value={t.date} onChange={e => handleTimetableCellChange(idx, 'date', e.target.value)} />
+                        <input type="date" className="cf-input" style={{ width: '100%' }} required value={t.date || ''} onChange={e => handleTimetableCellChange(idx, 'date', e.target.value)} />
                       </td>
                       <td>
-                        <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.time} onChange={e => handleTimetableCellChange(idx, 'time', e.target.value)} placeholder="e.g. 10:00 AM - 01:00 PM" />
+                        <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.time || ''} onChange={e => handleTimetableCellChange(idx, 'time', e.target.value)} placeholder="e.g. 10:00 AM - 01:00 PM" />
                       </td>
                       <td>
-                        <input type="number" className="cf-input" style={{ width: '100%' }} required value={t.marks !== undefined ? t.marks : 50} onChange={e => handleTimetableCellChange(idx, 'marks', parseInt(e.target.value) || 0)} />
+                        <input type="text" list="bics-exam-modes" className="cf-input" style={{ width: '100%' }} required value={t.mode || ''} onChange={e => handleTimetableCellChange(idx, 'mode', e.target.value)} placeholder="e.g. Online Mode (Proctored)" />
+                      </td>
+                      <td>
+                        <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.reportTime || ''} onChange={e => handleTimetableCellChange(idx, 'reportTime', e.target.value)} placeholder="e.g. 09:30 AM" />
+                      </td>
+                      <td>
+                        <input type="number" className="cf-input" style={{ width: '100%' }} required value={t.marks !== undefined ? t.marks : 50} onChange={e => handleTimetableCellChange(idx, 'marks', parseInt(e.target.value, 10) || 0)} />
                       </td>
                       <td>
                         <button type="button" className="cf-btn-primary" style={{ color: '#ef4444', borderColor: '#ef4444', backgroundColor: '#fff', padding: '4px 10px', fontSize: '8.5pt', margin: 0 }} onClick={() => handleRemoveTimetableRow(idx)}>

@@ -18,6 +18,7 @@ const { WorkerLogModel, WorkerLogSchema } = require('./WorkerLog');
 const { KataQuestionBankModel, KataQuestionBankSchema } = require('./KataQuestionBank');
 const { KataContestModel, KataContestSchema } = require('./KataContest');
 const { KataSubmissionModel, KataSubmissionSchema } = require('./KataSubmission');
+const { EmailLogModel, EmailLogSchema, EMAIL_TYPES, EMAIL_STATUSES } = require('./EmailLog');
 
 module.exports = {
     CandidateModel,
@@ -64,6 +65,10 @@ module.exports = {
     KataContestModel,
     KataContestSchema,
     KataSubmissionModel,
-    KataSubmissionSchema
+    KataSubmissionSchema,
+    EmailLogModel,
+    EmailLogSchema,
+    EMAIL_TYPES,
+    EMAIL_STATUSES
 };
 

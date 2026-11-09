@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { API_ACCESS_SECRET } = require('../config/constants');
+const { SECRET_KEY } = require('../config/constants');
 const rsaKeyManager = require('./rsaKeyManager');
 
 /**
@@ -80,7 +80,7 @@ function decryptEirfPayload(encryptedJsonStr, studentId, submissionId) {
             console.warn("Decrypting legacy Version 1.0 EIRF payload...");
             const { iv, authTag, data } = parsed;
             const key = crypto.pbkdf2Sync(
-                String(submissionId) + API_ACCESS_SECRET + String(studentId), 
+                String(submissionId) + SECRET_KEY + String(studentId), 
                 'bics_salt_2026', 
                 100000, 
                 32, 

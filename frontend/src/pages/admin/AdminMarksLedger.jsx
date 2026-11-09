@@ -170,7 +170,7 @@ function calculateLiveStudentEntry(m, courseType) {
   };
 }
 
-export default function AdminMarksLedger({ apiSecret = '' }) {
+export default function AdminMarksLedger() {
   const [courses, setCourses] = useState([]);
   const [selectedCourseCode, setSelectedCourseCode] = useState('R526CS01T');
   const [activeTab, setActiveTab] = useState('ta'); // 'ta', 'mst', 'ese', 'consolidated', 'master'

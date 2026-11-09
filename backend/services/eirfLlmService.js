@@ -110,7 +110,7 @@ function sanitizeTelemetry(submission) {
         totalOfflineSec += dSec;
         offlineGapsCount++;
         if (dSec > maxOfflineSec) maxOfflineSec = dSec;
-        const startStr = formatISTTimeString(gap.gapStart);
+        const startStr = formatISTTimeString(gap.gapStart || gap.timestamp);
         anonymizedTimeline.push({
             time: startStr,
             event: 'SERVER_DETECTED_DISCONNECT_GAP',
@@ -120,7 +120,7 @@ function sanitizeTelemetry(submission) {
     });
 
     // Hardware & System Environment extraction (no PII)
-    const techContext = submission.technicalContext || {};
+    const techContext = submission.technicalContext || submission.securityMetadata || {};
     const answers = Array.isArray(submission.answers) ? submission.answers : [];
 
     const sessionAlias = 'EXAM-SESSION-' + crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -135,7 +135,7 @@ function sanitizeTelemetry(submission) {
             submissionTrigger: submission.submissionReason || 'manual'
         },
         clientSystemContext: {
-            os: techContext.os || 'Windows / macOS Standard Client',
+            os: techContext.os || techContext.osDetails?.osVersion || techContext.operatingSystem || techContext.platform || 'Windows / macOS Standard Client',
             browser: techContext.browser || 'Chromium Desktop Browser',
             screenResolution: techContext.screenResolution || '1920x1080',
             viewportSize: techContext.viewportSize || '1920x950',

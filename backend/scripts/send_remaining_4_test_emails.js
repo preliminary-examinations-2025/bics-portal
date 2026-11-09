@@ -42,7 +42,7 @@ async function main() {
         academic_term: '2026-2027 (Term I)',
         incident_type: 'Proctoring Anomaly: Telemetry Hardware Glitch',
         eirf_expires_at: formatISTDate(new Date(Date.now() + 45 * 60000)),
-        eirf_link: 'https://portal.bics.edu/eirf/file?token=eirf_live_auth_9c915b721d2c4aba'
+        eirf_link: 'https://bicsportal.netlify.app/assessment/evaluation/eirf/a1b2c3-d4e5-f6g7-h8i9j0?token=eirf_live_auth_9c915b721d2c4aba'
     };
     const res1 = await sendGmailRestEmail({
         to: targetEmail,
@@ -138,8 +138,6 @@ async function main() {
         reviewed_by: 'Academic Integrity Board Panel',
         reviewed_at: formatISTDate(new Date()),
         hardcopy_deadline: formatISTDate(new Date(Date.now() + 48 * 3600000)),
-        appeal_deadline: formatISTDate(new Date(Date.now() + 48 * 3600000)),
-        appeal_link: 'https://portal.bics.edu/appeals/new?ref=SUB-2026-BICS-88219',
         digital_hash: 'SHA256:A1C3E5F7B9D2E4F6A8C0B2D4E6F8A0C2E4F6A8B0C2D4E6F8A0B2C4D6E8F0A2C4',
         admin_remarks: 'Dual screen synchronization corroborated concurrent browser session during Section 2.'
     };

@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Flag, RefreshCw, Loader2, CheckCircle, Paperclip, FileText, Search } from 'lucide-react';
 import RichText from '../../components/RichText';
 import Editor from '@monaco-editor/react';
+import { API_BASE } from '../../config';
+import { resolveMediaOrBackendUrl } from '../../utils/media';
 
 export default function AdminObjections({
   fetchAdminObjections,
@@ -254,20 +257,21 @@ export default function AdminObjections({
       </div>
 
       {/* Objection Resolution Modal */}
-      {adminObjectionModal.isOpen && adminObjectionModal.objection && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.75)',
-          zIndex: 10000,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '20px'
-        }}>
+      {adminObjectionModal.isOpen && adminObjectionModal.objection && (() => {
+        const modalMarkup = (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            zIndex: 99999,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '20px'
+          }}>
           <div style={{
             backgroundColor: '#ffffff',
             borderRadius: '8px',
@@ -333,7 +337,7 @@ export default function AdminObjections({
                     {adminObjectionModal.objection.attachments.map((att, aIdx) => (
                       <a
                         key={aIdx}
-                        href={att}
+                        href={resolveMediaOrBackendUrl(att, API_BASE)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{
@@ -371,7 +375,14 @@ export default function AdminObjections({
                                  (typeof ans?.submittedJs === 'string' && ans.submittedJs.trim() !== '');
 
               const isWeb = q?.type === 'web' || ans?.type === 'web' || q?.playgroundLanguage === 'web' || hasWebCode;
-              const isMcq = q?.type === 'mcq' || ans?.type === 'mcq' || ans?.selectedOptionIndex !== undefined || (Array.isArray(q?.options) && q.options.length > 0);
+              const isMulti = Boolean(
+                q?.type === 'mcc' ||
+                ans?.type === 'mcc' ||
+                q?.isMultiChoice === true ||
+                (Array.isArray(q?.correctOptionIndices) && q.correctOptionIndices.length > 1) ||
+                (Array.isArray(ans?.selectedOptionIndices) && ans.selectedOptionIndices.length > 1)
+              );
+              const isMcq = isMulti || q?.type === 'mcq' || q?.type === 'scc' || ans?.type === 'mcq' || ans?.type === 'scc' || ans?.selectedOptionIndex !== undefined || (Array.isArray(ans?.selectedOptionIndices) && ans.selectedOptionIndices.length > 0) || (Array.isArray(q?.options) && q.options.length > 0);
 
               const qType = isWeb ? 'web' : (isMcq ? 'mcq' : 'coding');
 
@@ -400,54 +411,68 @@ export default function AdminObjections({
                       </div>
                     )}
 
-                    {/* MCQ Options List */}
+                    {/* MCQ / SCC / MCC Options List */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {(q?.options || (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? ['Option A', 'Option B', 'Option C', 'Option D'] : [])).map((opt, optIdx) => {
-                        const isCandidateChoice = ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined && Number(ans.selectedOptionIndex) === optIdx;
-                        const isOfficialCorrect = q?.correctOptionIndex !== null && q?.correctOptionIndex !== undefined && Number(q?.correctOptionIndex) === optIdx;
-
-                        let borderColor = '#e2e8f0';
-                        let bgColor = '#ffffff';
-                        let badge = null;
-
-                        if (isCandidateChoice && isOfficialCorrect) {
-                          borderColor = '#22c55e';
-                          bgColor = '#f0fdf4';
-                          badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>Your Choice (Correct)</span>;
-                        } else if (isCandidateChoice && !isOfficialCorrect) {
-                          borderColor = '#ef4444';
-                          bgColor = '#fef2f2';
-                          badge = <span style={{ color: '#991b1b', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '4px' }}>Your Selection (Incorrect)</span>;
-                        } else if (isOfficialCorrect) {
-                          borderColor = '#22c55e';
-                          bgColor = '#f0fdf4';
-                          badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key</span>;
-                        }
-
-                        return (
-                          <div
-                            key={optIdx}
-                            style={{
-                              border: `2px solid ${borderColor}`,
-                              backgroundColor: bgColor,
-                              borderRadius: '6px',
-                              padding: '10px 14px',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              gap: '12px'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '9pt' }}>
-                              <span style={{ fontWeight: 'bold', color: '#64748b', width: '20px' }}>
-                                {String.fromCharCode(65 + optIdx)}.
-                              </span>
-                              <RichText text={opt} style={{ fontSize: '9pt', color: '#334155' }} />
-                            </div>
-                            {badge}
-                          </div>
+                      {(() => {
+                        const opts = q?.options || (ans.selectedOptionIndex !== undefined && ans.selectedOptionIndex !== null ? ['Option A', 'Option B', 'Option C', 'Option D'] : []);
+                        const selectedSet = new Set(
+                          Array.isArray(ans.selectedOptionIndices) && ans.selectedOptionIndices.length > 0
+                            ? ans.selectedOptionIndices.map(Number)
+                            : (ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined ? [Number(ans.selectedOptionIndex)] : [])
                         );
-                      })}
+                        const correctSet = new Set(
+                          Array.isArray(q?.correctOptionIndices) && q.correctOptionIndices.length > 0
+                            ? q.correctOptionIndices.map(Number)
+                            : (q?.correctOptionIndex !== null && q?.correctOptionIndex !== undefined ? [Number(q.correctOptionIndex)] : [])
+                        );
+
+                        return opts.map((opt, optIdx) => {
+                          const isCandidateChoice = selectedSet.has(optIdx);
+                          const isOfficialCorrect = correctSet.has(optIdx);
+
+                          let borderColor = '#e2e8f0';
+                          let bgColor = '#ffffff';
+                          let badge = null;
+
+                          if (isCandidateChoice && isOfficialCorrect) {
+                            borderColor = '#22c55e';
+                            bgColor = '#f0fdf4';
+                            badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>Your Choice (Correct)</span>;
+                          } else if (isCandidateChoice && !isOfficialCorrect) {
+                            borderColor = '#ef4444';
+                            bgColor = '#fef2f2';
+                            badge = <span style={{ color: '#991b1b', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '4px' }}>Your Selection (Incorrect)</span>;
+                          } else if (isOfficialCorrect) {
+                            borderColor = '#22c55e';
+                            bgColor = '#f0fdf4';
+                            badge = <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '8pt', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '4px' }}>★ Official Answer Key{isMulti ? ' (Missed)' : ''}</span>;
+                          }
+
+                          return (
+                            <div
+                              key={optIdx}
+                              style={{
+                                border: `2px solid ${borderColor}`,
+                                backgroundColor: bgColor,
+                                borderRadius: '6px',
+                                padding: '10px 14px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: '12px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '9pt' }}>
+                                <span style={{ fontWeight: 'bold', color: '#64748b', width: '20px' }}>
+                                  {String.fromCharCode(65 + optIdx)}.
+                                </span>
+                                <RichText text={opt} style={{ fontSize: '9pt', color: '#334155' }} />
+                              </div>
+                              {badge}
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
 
                     {/* Official Solution Explanation */}
@@ -802,7 +827,9 @@ export default function AdminObjections({
             </form>
           </div>
         </div>
-      )}
+        );
+        return typeof document !== 'undefined' ? createPortal(modalMarkup, document.body) : modalMarkup;
+      })()}
     </div>
   );
 }

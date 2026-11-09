@@ -53,17 +53,24 @@ router.post('/set-verification-status/:id', async (req, res) => {
             }
             test.verificationStatus = status;
             test.answersReleased = isReleased;
+            if (status === 'closed') {
+                test.verificationClosedAt = new Date();
+            }
             await test.save();
             await logSystemAction('admin', 'VERIFICATION_STATUS_CHANGE', `Set verificationStatus for test "${test.title}" (${id}) to ${status}`, 'info');
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            const test = db.tests.find(t => t.id === id || t._id === id);
+            const targetId = resolveToObjectId(String(id));
+            const test = db.tests.find(t => !t.isDeleted && (String(t.id || t._id) === targetId || String(t.id || t._id) === String(id)));
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
             test.verificationStatus = status;
             test.answersReleased = isReleased;
+            if (status === 'closed') {
+                test.verificationClosedAt = new Date();
+            }
             saveJSONData(db);
             await logSystemAction('admin', 'VERIFICATION_STATUS_CHANGE', `Set verificationStatus for test "${test.title}" (${id}) to ${status}`, 'info');
         }
@@ -102,6 +109,9 @@ router.post('/toggle-release/:id', async (req, res) => {
                 else test.verificationStatus = 'not_released';
             }
             test.answersReleased = (test.verificationStatus === 'released');
+            if (test.verificationStatus === 'closed') {
+                test.verificationClosedAt = new Date();
+            }
             await test.save();
             verificationStatus = test.verificationStatus;
             answersReleased = test.answersReleased;
@@ -109,7 +119,8 @@ router.post('/toggle-release/:id', async (req, res) => {
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            const test = db.tests.find(t => t.id === id || t._id === id);
+            const targetId = resolveToObjectId(String(id));
+            const test = db.tests.find(t => !t.isDeleted && (String(t.id || t._id) === targetId || String(t.id || t._id) === String(id)));
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
@@ -121,6 +132,9 @@ router.post('/toggle-release/:id', async (req, res) => {
                 else test.verificationStatus = 'not_released';
             }
             test.answersReleased = (test.verificationStatus === 'released');
+            if (test.verificationStatus === 'closed') {
+                test.verificationClosedAt = new Date();
+            }
             verificationStatus = test.verificationStatus;
             answersReleased = test.answersReleased;
             saveJSONData(db);
@@ -158,7 +172,8 @@ router.post('/toggle-publish/:id', async (req, res) => {
         } else {
             const db = getJSONData();
             db.tests = db.tests || [];
-            const test = db.tests.find(t => t.id === id || t._id === id);
+            const targetId = resolveToObjectId(String(id));
+            const test = db.tests.find(t => !t.isDeleted && (String(t.id || t._id) === targetId || String(t.id || t._id) === String(id)));
             if (!test) {
                 return res.status(404).json({ success: false, error: "Test configuration not found." });
             }
@@ -233,7 +248,8 @@ router.post('/', async (req, res) => {
         });
 
         let savedTest = null;
-        const testId = _id || (id && mongoose.Types.ObjectId.isValid(id.toString()) ? id : null);
+        const rawEditId = _id || id;
+        const testId = rawEditId ? resolveToObjectId(rawEditId.toString()) : null;
         if (dbState.useMongo) {
             if (testId) {
                 savedTest = await findTestConfig(testId);
@@ -256,11 +272,11 @@ router.post('/', async (req, res) => {
                     title, 
                     course: course || '',
                     courseCode: courseCode || '',
-                    marks, 
-                    instructions, 
-                    duration, 
-                    startDate, 
-                    endDate, 
+                    marks: Number(marks || 0), 
+                    instructions: instructions || '', 
+                    duration: Number(duration || 60), 
+                    startDate: new Date(startDate), 
+                    endDate: new Date(endDate), 
                     questions: normalizedQuestions, 
                     isPublished: isPublished || false,
                     enableAiEvaluation: Boolean(enableAiEvaluation || false)
@@ -271,7 +287,7 @@ router.post('/', async (req, res) => {
             const db = getJSONData();
             db.tests = db.tests || [];
             if (testId) {
-                const idx = db.tests.findIndex(t => t.id === testId || t._id === testId);
+                const idx = db.tests.findIndex(t => !t.isDeleted && (String(t.id || t._id) === String(testId) || String(t.id || t._id) === String(rawEditId)));
                 if (idx !== -1) {
                     db.tests[idx] = {
                         ...db.tests[idx],
@@ -291,9 +307,10 @@ router.post('/', async (req, res) => {
                 }
             }
             if (!savedTest) {
+                const newTestMongoId = new mongoose.Types.ObjectId().toString();
                 savedTest = {
-                    id: Date.now().toString(),
-                    _id: Date.now().toString(),
+                    id: newTestMongoId,
+                    _id: newTestMongoId,
                     title,
                     course: course || '',
                     courseCode: courseCode || '',
@@ -364,14 +381,15 @@ router.delete('/:id', async (req, res) => {
             db.testSubmissions = db.testSubmissions || [];
             db.recycleBin = db.recycleBin || [];
 
-            const testIdx = db.tests.findIndex(t => t.id === id || t._id === id);
+            const targetDelId = resolveToObjectId(String(id));
+            const testIdx = db.tests.findIndex(t => !t.isDeleted && (String(t.id || t._id) === targetDelId || String(t.id || t._id) === String(id)));
             if (testIdx !== -1) {
                 const test = db.tests[testIdx];
                 test.isDeleted = true;
                 test.deletedAt = deletedAt;
                 test.deletedBy = deletedBy;
 
-                const subDocs = db.testSubmissions.filter(s => s.testId === id || s.testId === test._id || s.testTitle === test.title);
+                const subDocs = db.testSubmissions.filter(s => String(s.testId) === String(id) || String(s.testId) === targetDelId || String(s.testId) === String(test._id) || s.testTitle === test.title);
                 subDocs.forEach(s => {
                     s.isDeleted = true;
                     s.deletedAt = deletedAt;
@@ -544,42 +562,49 @@ router.get('/submissions/:testId', async (req, res) => {
                 subs = await TestSubmissionModel.find({ testId: String(testId), isDeleted: { $ne: true } }).sort({ startedAt: -1 });
             }
 
-            const allTests = await TestConfigModel.find({});
+            const allTests = await TestConfigModel.find({ isDeleted: { $ne: true } });
             for (let sub of subs) {
                 try {
+                    const hasManualOrObjection = (sub.answers || []).some(a => a.isManuallyGraded || a.isObjectionResolved);
+                    const isLockedZero = sub.verificationStatus === 'annulled' || sub.eirfStatus === 'rejected';
+                    const isAlreadyEvaluated = Boolean(sub.evaluation?.evaluatedAt);
                     const matchingTest = allTests.find(t => String(t._id || t.id) === String(sub.testId));
-                    if (matchingTest) {
+
+                    if (matchingTest && !isAlreadyEvaluated && !hasManualOrObjection && !isLockedZero) {
                         calculateSubmissionScore(sub, matchingTest);
-                        if (typeof sub.markModified === 'function') {
-                            sub.markModified('answers');
-                            sub.markModified('evaluation');
-                            await sub.save().catch(e => console.warn("[Submission Auto-sync] notice:", e.message));
-                        }
+                    } else if (isLockedZero && Number(sub.totalScore || sub.score || 0) !== 0) {
+                        calculateSubmissionScore(sub, matchingTest || { marks: 100, questions: [] });
                     }
                 } catch (err) {
-                    console.error("Score recalculation warning:", err);
+                    console.error("Score reconciliation notice:", err);
                 }
             }
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            if (!testId || testId === 'all') {
+            const resolvedTestId = (testId && testId !== 'all') ? resolveToObjectId(String(testId)) : testId;
+            if (!resolvedTestId || resolvedTestId === 'all') {
                 subs = db.testSubmissions.filter(s => !s.isDeleted);
             } else {
-                subs = db.testSubmissions.filter(s => String(s.testId) === String(testId) && !s.isDeleted);
+                subs = db.testSubmissions.filter(s => (String(s.testId) === String(resolvedTestId) || String(s.testId) === String(testId)) && !s.isDeleted);
             }
-            const allTests = db.tests || [];
+            const allTests = (db.tests || []).filter(t => !t.isDeleted);
             subs.forEach(sub => {
+                const hasManualOrObjection = (sub.answers || []).some(a => a.isManuallyGraded || a.isObjectionResolved);
+                const isLockedZero = sub.verificationStatus === 'annulled' || sub.eirfStatus === 'rejected';
+                const isAlreadyEvaluated = Boolean(sub.evaluation?.evaluatedAt);
                 const matchingTest = allTests.find(t => String(t.id || t._id) === String(sub.testId));
-                if (matchingTest) {
+
+                if (matchingTest && !isAlreadyEvaluated && !hasManualOrObjection && !isLockedZero) {
                     try {
                         calculateSubmissionScore(sub, matchingTest);
                     } catch (err) {
-                        console.error("Score recalculation warning:", err);
+                        console.error("Score reconciliation notice:", err);
                     }
+                } else if (isLockedZero && Number(sub.totalScore || sub.score || 0) !== 0) {
+                    calculateSubmissionScore(sub, matchingTest || { marks: 100, questions: [] });
                 }
             });
-            saveJSONData(db);
         }
 
         const finalSubs = (subs || []).map(sub => {
@@ -604,17 +629,24 @@ router.get('/submissions/:testId', async (req, res) => {
 router.post('/evaluate/:submissionId', async (req, res) => {
     const { submissionId } = req.params;
     const { feedback, reevaluationStatus, resolutionFeedback, answers } = req.body;
+    const resolvedSubId = resolveToObjectId(String(submissionId || ''));
 
     try {
         let submission = null;
         let test = null;
 
         if (dbState.useMongo) {
-            if (mongoose.Types.ObjectId.isValid(submissionId)) {
-                submission = await TestSubmissionModel.findById(submissionId);
+            if (/^\d{12}$/.test(String(submissionId).trim())) {
+                submission = await TestSubmissionModel.findOne({ submissionRefId: String(submissionId).trim(), isDeleted: { $ne: true } });
+            }
+            if (!submission && mongoose.Types.ObjectId.isValid(resolvedSubId)) {
+                submission = await TestSubmissionModel.findOne({ _id: resolvedSubId, isDeleted: { $ne: true } });
             }
             if (!submission) {
-                submission = await TestSubmissionModel.findOne({ id: submissionId });
+                submission = await TestSubmissionModel.findOne({
+                    $or: [{ id: submissionId }, { id: resolvedSubId }, { submissionRefId: submissionId }],
+                    isDeleted: { $ne: true }
+                });
             }
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
@@ -627,11 +659,22 @@ router.post('/evaluate/:submissionId', async (req, res) => {
                 answers.forEach(item => {
                     const existingAns = (submission.answers || []).find(a => String(a.questionId) === String(item.questionId));
                     if (existingAns) {
+                        const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
+                        const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
                         if (item.score !== undefined && !isNaN(item.score)) {
-                            const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
-                            const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
-                            existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
-                            existingAns.isManuallyGraded = true;
+                            const incomingScore = Math.max(0, Math.min(Number(item.score), maxPts));
+                            const currentScore = Number(existingAns.score || 0);
+                            const scoreChanged = incomingScore !== currentScore;
+
+                            if (!existingAns.isObjectionResolved || scoreChanged || item.isManuallyGraded === true) {
+                                if (item.isManuallyGraded === true || scoreChanged) {
+                                    existingAns.score = incomingScore;
+                                    existingAns.isManuallyGraded = true;
+                                } else if (item.isManuallyGraded === false) {
+                                    existingAns.score = incomingScore;
+                                    existingAns.isManuallyGraded = false;
+                                }
+                            }
                         }
                         if (Array.isArray(item.testCaseResults)) {
                             existingAns.testCaseResults = item.testCaseResults.map((tc, tcIdx) => ({
@@ -685,20 +728,36 @@ router.post('/evaluate/:submissionId', async (req, res) => {
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
-            submission = db.testSubmissions.find(s => String(s.id || s._id) === String(submissionId));
+            submission = db.testSubmissions.find(s => !s.isDeleted && (
+                String(s.submissionRefId || '') === String(submissionId) ||
+                String(s.id || s._id) === String(resolvedSubId) ||
+                String(s.id || s._id) === String(submissionId) ||
+                (isBicsId(submissionId) && toBicsId(s._id || s.id) === submissionId)
+            ));
             if (!submission) return res.status(404).json({ error: "Submission not found" });
 
-            test = (db.tests || []).find(t => String(t.id || t._id) === String(submission.testId));
+            test = (db.tests || []).find(t => !t.isDeleted && String(t.id || t._id) === String(submission.testId));
 
             if (answers && Array.isArray(answers)) {
                 answers.forEach(item => {
                     const existingAns = (submission.answers || []).find(a => String(a.questionId) === String(item.questionId));
                     if (existingAns) {
+                        const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
+                        const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
                         if (item.score !== undefined && !isNaN(item.score)) {
-                            const quest = test?.questions?.find(q => String(q.id || q._id) === String(item.questionId));
-                            const maxPts = Number(quest?.points || existingAns.maxPoints || 100);
-                            existingAns.score = Math.max(0, Math.min(Number(item.score), maxPts));
-                            existingAns.isManuallyGraded = true;
+                            const incomingScore = Math.max(0, Math.min(Number(item.score), maxPts));
+                            const currentScore = Number(existingAns.score || 0);
+                            const scoreChanged = incomingScore !== currentScore;
+
+                            if (!existingAns.isObjectionResolved || scoreChanged || item.isManuallyGraded === true) {
+                                if (item.isManuallyGraded === true || scoreChanged) {
+                                    existingAns.score = incomingScore;
+                                    existingAns.isManuallyGraded = true;
+                                } else if (item.isManuallyGraded === false) {
+                                    existingAns.score = incomingScore;
+                                    existingAns.isManuallyGraded = false;
+                                }
+                            }
                         }
                         if (Array.isArray(item.testCaseResults)) {
                             existingAns.testCaseResults = item.testCaseResults.map((tc, tcIdx) => ({
@@ -756,16 +815,20 @@ router.post('/evaluate/:submissionId', async (req, res) => {
 // 9. Bulk Re-evaluate Submissions for a Test Configuration
 router.post('/reevaluate-all/:testId', async (req, res) => {
     const { testId } = req.params;
+    const resolvedTestId = resolveToObjectId(String(testId || ''));
     try {
         let test = null;
         let subs = [];
         let updatedCount = 0;
 
         if (dbState.useMongo) {
-            test = await TestConfigModel.findById(testId);
+            test = await findTestConfig(resolvedTestId);
             if (!test) return res.status(404).json({ success: false, error: "Test configuration not found." });
 
-            subs = await TestSubmissionModel.find({ testId: testId });
+            subs = await TestSubmissionModel.find({
+                $or: [{ testId: test._id }, { testId: String(test._id) }, { testId: String(testId) }],
+                isDeleted: { $ne: true }
+            });
             for (let sub of subs) {
                 calculateSubmissionScore(sub, test);
                 sub.markModified('answers');
@@ -777,10 +840,10 @@ router.post('/reevaluate-all/:testId', async (req, res) => {
             const db = getJSONData();
             db.tests = db.tests || [];
             db.testSubmissions = db.testSubmissions || [];
-            test = db.tests.find(t => String(t.id || t._id) === String(testId));
+            test = db.tests.find(t => !t.isDeleted && (String(t.id || t._id) === String(resolvedTestId) || String(t.id || t._id) === String(testId)));
             if (!test) return res.status(404).json({ success: false, error: "Test configuration not found." });
 
-            subs = db.testSubmissions.filter(s => String(s.testId) === String(testId));
+            subs = db.testSubmissions.filter(s => !s.isDeleted && (String(s.testId) === String(test.id || test._id) || String(s.testId) === String(resolvedTestId) || String(s.testId) === String(testId)));
             subs.forEach(sub => {
                 calculateSubmissionScore(sub, test);
                 updatedCount++;
