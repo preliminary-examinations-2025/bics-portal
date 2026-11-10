@@ -127,89 +127,102 @@ export function VerificationReviewView({
         ))}
       </div>
 
-      {/* Sticky Top Header Bar */}
+      {/* Sticky Top Header Bar — 2-row layout:
+           Row 1: Logo+Title (left) | Score+Badge (center, flex-1 centered) | spacer (right, same width as logo block)
+           Row 2: empty (left+center) | Name + action buttons (right-aligned)  */}
       <header style={{
         position: 'sticky',
         top: 0,
         zIndex: 1000,
         backgroundColor: '#ffffff',
         color: '#0f172a',
-        padding: '12px 28px',
         borderBottom: '1px solid #e2e8f0',
         boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+        padding: '10px 28px 0 28px',
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '15px'
+        flexDirection: 'column',
+        gap: '0'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <img 
-            src="/bics_logo.png" 
-            onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }} 
-            alt="BICS Logo" 
-            style={{ height: '36px', width: '36px', objectFit: 'contain' }} 
-          />
-          <div>
-            <div style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f172a', letterSpacing: '0.2px' }}>
-              BICS Examination Portal
-            </div>
-            <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
-              Evaluated Candidate Script &amp; Assessment Evaluation • {test?.title || 'Academic Assessment'}
-            </div>
-          </div>
-        </div>
-
-        {/* Center Score & Verification Status */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            backgroundColor: '#f8fafc',
-            border: '1px solid #e2e8f0',
-            padding: '6px 14px',
-            borderRadius: '6px',
-            textAlign: 'center'
-          }}>
-            <div style={{ fontSize: '7pt', textTransform: 'uppercase', color: '#64748b', fontWeight: 'bold', letterSpacing: '0.5px' }}>Overall Score</div>
-            <div style={{ fontSize: '12.5pt', fontWeight: 'bold', color: '#0f172a' }}>
-              {totalScored} <span style={{ fontSize: '9pt', color: '#64748b', fontWeight: 'normal' }}>/ {totalMax} Marks ({percentage}%)</span>
+        {/* Row 1: Logo | Score+Badge centered | invisible spacer */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {/* Left: Logo + Portal title */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1' }}>
+            <img
+              src="/bics_logo.png"
+              onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }}
+              alt="BICS Logo"
+              style={{ height: '36px', width: '36px', objectFit: 'contain' }}
+            />
+            <div>
+              <div style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f172a', letterSpacing: '0.2px' }}>
+                BICS Examination Portal
+              </div>
+              <div style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                Evaluated Candidate Script &amp; Assessment Evaluation • {test?.title || 'Academic Assessment'}
+              </div>
             </div>
           </div>
 
-          {test?.verificationStatus === 'closed' ? (
+          {/* Center: Score & Verification badge — absolutely centered via flex */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '0 0 auto' }}>
             <div style={{
-              backgroundColor: '#f1f5f9',
-              border: '1px solid #cbd5e1',
-              color: '#475569',
-              padding: '6px 12px',
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              padding: '6px 14px',
               borderRadius: '6px',
-              fontSize: '8.5pt',
-              fontWeight: 'bold',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px'
+              textAlign: 'center'
             }}>
-              <Lock size={15} /> Verification Closed
+              <div style={{ fontSize: '7pt', textTransform: 'uppercase', color: '#64748b', fontWeight: 'bold', letterSpacing: '0.5px' }}>Overall Score</div>
+              <div style={{ fontSize: '12.5pt', fontWeight: 'bold', color: '#0f172a' }}>
+                {totalScored} <span style={{ fontSize: '9pt', color: '#64748b', fontWeight: 'normal' }}>/ {totalMax} Marks ({percentage}%)</span>
+              </div>
             </div>
-          ) : (
-            <div style={{
-              backgroundColor: '#ecfdf5',
-              border: '1px solid #a7f3d0',
-              color: '#047857',
-              padding: '6px 12px',
-              borderRadius: '6px',
-              fontSize: '8.5pt',
-              fontWeight: 'bold',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}>
-              <ShieldCheck size={16} /> Verification Active
-            </div>
-          )}
+
+            {test?.verificationStatus === 'closed' ? (
+              <div style={{
+                backgroundColor: '#f1f5f9',
+                border: '1px solid #cbd5e1',
+                color: '#475569',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '8.5pt',
+                fontWeight: 'bold',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <Lock size={15} /> Verification Closed
+              </div>
+            ) : (
+              <div style={{
+                backgroundColor: '#ecfdf5',
+                border: '1px solid #a7f3d0',
+                color: '#047857',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '8.5pt',
+                fontWeight: 'bold',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <ShieldCheck size={16} /> Verification Active
+              </div>
+            )}
+          </div>
+
+          {/* Right spacer — matches left logo block width to keep center group truly centered */}
+          <div style={{ flex: '1' }} />
         </div>
 
-        {/* Right Profile & Return Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Row 2: Name + action buttons — right-aligned */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '8px 0 10px 0'
+        }}>
           <div style={{ textAlign: 'right', fontSize: '8.5pt' }}>
             <div style={{ fontWeight: 'bold', color: '#0f172a' }}>{candidate?.name || 'Candidate'}</div>
             <div style={{ color: '#64748b' }}>ID: {candidate?.studentId || 'N/A'}</div>
