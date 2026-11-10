@@ -703,7 +703,8 @@ router.post('/precheck', requireAuth, async (req, res) => {
 const activeBiometricChallenges = new Map();
 
 // 2.6 Server-Issued Active Biometric Challenge (Phase 2)
-router.get('/biometrics/challenge', requireAuth, (req, res) => {
+// Uses authenticateToken (soft auth) — candidate may not have exam token yet at biometric gate stage
+router.get('/biometrics/challenge', authenticateToken, (req, res) => {
     const CHALLENGE_ACTIONS = [
         { action: 'TURN_LEFT', instruction: 'Slowly turn your head slightly to the left', targetDurationMs: 1200 },
         { action: 'TURN_RIGHT', instruction: 'Slowly turn your head slightly to the right', targetDurationMs: 1200 },

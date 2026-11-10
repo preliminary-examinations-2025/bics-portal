@@ -1,4 +1,16 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+
+// Client-side fallback challenge pool — used only if server challenge fetch fails
+const FALLBACK_CHALLENGE_ACTIONS = [
+  { action: 'TURN_LEFT',     instruction: 'Slowly turn your head slightly to the left' },
+  { action: 'TURN_RIGHT',    instruction: 'Slowly turn your head slightly to the right' },
+  { action: 'TILT_HEAD',     instruction: 'Tilt your head slightly to one side' },
+  { action: 'MOVE_HEAD_DOWN', instruction: 'Slowly move or nod your head slightly downwards' },
+];
+function pickFallbackChallenge() {
+  const picked = FALLBACK_CHALLENGE_ACTIONS[Math.floor(Math.random() * FALLBACK_CHALLENGE_ACTIONS.length)];
+  return [{ step: 1, action: picked.action, instruction: picked.instruction }];
+}
 import { 
   ShieldCheck, Camera, Mic, Maximize2, CheckCircle2, AlertTriangle, 
   Volume2, Eye, Laptop, ArrowRight, ArrowLeft, XCircle, Info, RefreshCw, Check, Sparkles, Lock, Clock, Loader2
@@ -357,7 +369,7 @@ export function BiometricCheckView({
                       baselinePoseRef.current = { yaw: avgYaw, tilt: avgTilt, pitch: avgPitch, centerY: avgCenterY };
                       const challengesList = (Array.isArray(serverChallenge?.challenges) && serverChallenge.challenges.length > 0)
                         ? serverChallenge.challenges
-                        : [{ step: 1, action: serverChallenge?.action || 'TURN_LEFT', instruction: serverChallenge?.instruction || 'Slowly turn your head slightly to the left' }];
+                        : pickFallbackChallenge();
                       const activeIdx = currentChallengeIndexRef.current;
                       const currentStepObj = challengesList[activeIdx] || challengesList[0];
                       const activeInstruction = currentStepObj?.instruction || 'Slowly turn your head slightly';
@@ -372,7 +384,7 @@ export function BiometricCheckView({
                     // Step 2: Measure real differential delta from the user's neutral baseline
                     const challengesList = (Array.isArray(serverChallenge?.challenges) && serverChallenge.challenges.length > 0)
                       ? serverChallenge.challenges
-                      : [{ step: 1, action: serverChallenge?.action || 'TURN_LEFT', instruction: serverChallenge?.instruction || 'Slowly turn your head slightly to the left' }];
+                      : pickFallbackChallenge();
                     const activeIdx = currentChallengeIndexRef.current;
                     const currentStepObj = challengesList[activeIdx] || challengesList[0];
                     const action = currentStepObj?.action || 'TURN_LEFT';
@@ -677,8 +689,8 @@ export function BiometricCheckView({
               allCompleted: challengeFulfilled || livenessProgress >= 100,
               completedChallenges: Array.isArray(serverChallenge?.challenges) && serverChallenge.challenges.length > 0
                 ? serverChallenge.challenges.map(c => c.action)
-                : [serverChallenge?.action || 'TURN_LEFT'],
-              action: serverChallenge?.action || serverChallenge?.challenges?.[0]?.action || 'TURN_LEFT'
+                : pickFallbackChallenge().map(c => c.action),
+              action: serverChallenge?.action || serverChallenge?.challenges?.[0]?.action || pickFallbackChallenge()[0].action
             }
           })
         });
