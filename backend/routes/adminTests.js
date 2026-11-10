@@ -562,23 +562,8 @@ router.get('/submissions/:testId', async (req, res) => {
                 subs = await TestSubmissionModel.find({ testId: String(testId), isDeleted: { $ne: true } }).sort({ startedAt: -1 });
             }
 
-            const allTests = await TestConfigModel.find({ isDeleted: { $ne: true } });
-            for (let sub of subs) {
-                try {
-                    const hasManualOrObjection = (sub.answers || []).some(a => a.isManuallyGraded || a.isObjectionResolved);
-                    const isLockedZero = sub.verificationStatus === 'annulled' || sub.eirfStatus === 'rejected';
-                    const isAlreadyEvaluated = Boolean(sub.evaluation?.evaluatedAt);
-                    const matchingTest = allTests.find(t => String(t._id || t.id) === String(sub.testId));
-
-                    if (matchingTest && !isAlreadyEvaluated && !hasManualOrObjection && !isLockedZero) {
-                        calculateSubmissionScore(sub, matchingTest);
-                    } else if (isLockedZero && Number(sub.totalScore || sub.score || 0) !== 0) {
-                        calculateSubmissionScore(sub, matchingTest || { marks: 100, questions: [] });
-                    }
-                } catch (err) {
-                    console.error("Score reconciliation notice:", err);
-                }
-            }
+            // Scores are NOT recalculated here — this is a read-only fetch of persisted DB state.
+            // On-demand recalculation is available exclusively via the admin "Recalculate Scores" action.
         } else {
             const db = getJSONData();
             db.testSubmissions = db.testSubmissions || [];
@@ -588,23 +573,8 @@ router.get('/submissions/:testId', async (req, res) => {
             } else {
                 subs = db.testSubmissions.filter(s => (String(s.testId) === String(resolvedTestId) || String(s.testId) === String(testId)) && !s.isDeleted);
             }
-            const allTests = (db.tests || []).filter(t => !t.isDeleted);
-            subs.forEach(sub => {
-                const hasManualOrObjection = (sub.answers || []).some(a => a.isManuallyGraded || a.isObjectionResolved);
-                const isLockedZero = sub.verificationStatus === 'annulled' || sub.eirfStatus === 'rejected';
-                const isAlreadyEvaluated = Boolean(sub.evaluation?.evaluatedAt);
-                const matchingTest = allTests.find(t => String(t.id || t._id) === String(sub.testId));
-
-                if (matchingTest && !isAlreadyEvaluated && !hasManualOrObjection && !isLockedZero) {
-                    try {
-                        calculateSubmissionScore(sub, matchingTest);
-                    } catch (err) {
-                        console.error("Score reconciliation notice:", err);
-                    }
-                } else if (isLockedZero && Number(sub.totalScore || sub.score || 0) !== 0) {
-                    calculateSubmissionScore(sub, matchingTest || { marks: 100, questions: [] });
-                }
-            });
+            // Scores are NOT recalculated here — read-only fetch of persisted DB state.
+            // On-demand recalculation is available exclusively via the admin "Recalculate Scores" action.
         }
 
         const finalSubs = (subs || []).map(sub => {
