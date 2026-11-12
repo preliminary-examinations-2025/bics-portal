@@ -1182,13 +1182,7 @@ function AppContent() {
       if (urlAuthToken) {
         sessionStorage.setItem('bics_ot_auth_token', urlAuthToken);
         if (typeof window !== 'undefined') window.__BICS_OT_AUTH_TOKEN__ = urlAuthToken;
-        if (window.history && window.history.replaceState) {
-          const cleanParams = new URLSearchParams(window.location.search);
-          cleanParams.delete('authToken');
-          cleanParams.delete('jwt');
-          const cleanQuery = cleanParams.toString();
-          window.history.replaceState({}, document.title, `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash || ''}`);
-        }
+        // Do NOT strip authToken from URL — preserve it for page refreshes and debugging
       }
       if (parsedToken) {
         sessionStorage.setItem('bics_exam_token', parsedToken);

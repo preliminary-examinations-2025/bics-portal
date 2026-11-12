@@ -346,7 +346,17 @@ function PortalApp() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed?.user && (!parsed.expiry || Date.now() < parsed.expiry)) {
-          return parsed.user;
+          // Cross-validate: session role must match the JWT decoded role
+          // Prevents stale admin sessions from leaking when a new user logs in
+          const derivedForCheck = parseJwtUser(token);
+          if (derivedForCheck && parsed.user.role !== derivedForCheck.role) {
+            // Role mismatch — stale session. Clear it and fall through to JWT decode.
+            localStorage.removeItem('bics_session');
+            localStorage.removeItem('bics_auth_token');
+            sessionStorage.removeItem('bics_session');
+          } else {
+            return parsed.user;
+          }
         } else {
           localStorage.removeItem('bics_session');
           localStorage.removeItem('bics_auth_token');
@@ -355,7 +365,14 @@ function PortalApp() {
       const temp = sessionStorage.getItem('bics_session');
       if (temp) {
         const parsed = JSON.parse(temp);
-        if (parsed?.user) return parsed.user;
+        if (parsed?.user) {
+          const derivedForCheck = parseJwtUser(token);
+          if (derivedForCheck && parsed.user.role !== derivedForCheck.role) {
+            sessionStorage.removeItem('bics_session');
+          } else {
+            return parsed.user;
+          }
+        }
       }
 
       // Synchronously decode user from valid token so user is never null on frame 0
