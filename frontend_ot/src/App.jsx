@@ -1183,6 +1183,36 @@ function AppContent() {
         sessionStorage.setItem('bics_ot_auth_token', urlAuthToken);
         if (typeof window !== 'undefined') window.__BICS_OT_AUTH_TOKEN__ = urlAuthToken;
         // Do NOT strip authToken from URL — preserve it for page refreshes and debugging
+
+        // Since main portal and OT share the same origin (bicsportal.netlify.app),
+        // they share localStorage. If localStorage has a DIFFERENT user's token
+        // (e.g. a stale admin session), clear it so the main portal doesn't show
+        // the wrong dashboard when the user navigates back.
+        try {
+          const lsToken = localStorage.getItem('bics_auth_token');
+          if (lsToken && lsToken !== urlAuthToken) {
+            const decodeJwt = (t) => {
+              try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch { return null; }
+            };
+            const lsPayload = decodeJwt(lsToken);
+            const urlPayload = decodeJwt(urlAuthToken);
+            // Different user or role in localStorage — evict the stale session
+            if (lsPayload && urlPayload && (lsPayload.role !== urlPayload.role || lsPayload.id !== urlPayload.id)) {
+              localStorage.removeItem('bics_auth_token');
+              localStorage.removeItem('bics_session');
+              localStorage.removeItem('bics_token_expiry');
+              sessionStorage.removeItem('bics_session');
+              // Notify any open main portal tab to re-read its auth state
+              try {
+                if (typeof BroadcastChannel !== 'undefined') {
+                  const ch = new BroadcastChannel('bics_auth_sync');
+                  ch.postMessage({ type: 'BICS_SESSION_EVICTED' });
+                  ch.close();
+                }
+              } catch {}
+            }
+          }
+        } catch {}
       }
       if (parsedToken) {
         sessionStorage.setItem('bics_exam_token', parsedToken);

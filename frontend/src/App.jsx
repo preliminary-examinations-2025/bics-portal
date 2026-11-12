@@ -894,6 +894,24 @@ function PortalApp() {
           if (e.data?.type === 'BICS_LOGOUT') {
             handleLogoutEvent();
           }
+          // OT terminal evicted a stale session (e.g. admin token lingering while student is in OT)
+          // Re-read auth state from storage — if nothing valid remains, show login
+          if (e.data?.type === 'BICS_SESSION_EVICTED') {
+            const freshToken = getAuthToken();
+            if (!freshToken) {
+              handleLogoutEvent();
+            } else {
+              // A valid token still exists (the new user's) — re-derive user from it
+              try {
+                const derived = parseJwtUser(freshToken);
+                if (derived) {
+                  setUser(derived);
+                  const defaultView = derived.role === 'admin' ? 'admin' : 'announcements';
+                  setViewState(defaultView);
+                }
+              } catch {}
+            }
+          }
         };
       }
     } catch (e) {}
