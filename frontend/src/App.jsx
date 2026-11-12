@@ -3385,7 +3385,7 @@ int main() {
     isRedirectingRef.current = false;
     lastFetchedUserIdRef.current = null;
 
-    if (captchaInput.toUpperCase() !== captchaCode) {
+    if (captchaInput !== captchaCode) {
       setLoginError("Incorrect CAPTCHA. Please try again.");
       generateCaptcha();
       return;
@@ -4133,7 +4133,7 @@ int main() {
     }
 
     // Captcha validation
-    if (changePasswordCaptchaInput.toUpperCase() !== changePasswordCaptchaCode) {
+    if (changePasswordCaptchaInput !== changePasswordCaptchaCode) {
       setPwdError("Captcha incorrect. Please try again.");
       generateChangePasswordCaptcha();
       return;
