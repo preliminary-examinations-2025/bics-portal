@@ -52,13 +52,7 @@ if (typeof window !== 'undefined') {
       sessionStorage.setItem('bics_exam_token', urlExamToken);
       window.__BICS_EXAM_TOKEN__ = urlExamToken;
     }
-    if (urlAuth && window.history && window.history.replaceState) {
-      params.delete('authToken');
-      params.delete('jwt');
-      const cleanedQuery = params.toString();
-      const cleanedUrl = `${window.location.pathname}${cleanedQuery ? `?${cleanedQuery}` : ''}${window.location.hash || ''}`;
-      window.history.replaceState({}, document.title, cleanedUrl);
-    }
+    // Explicitly preserve authToken, jwt, and token in the URL across page loads and refreshes
   } catch (_) {}
 }
 

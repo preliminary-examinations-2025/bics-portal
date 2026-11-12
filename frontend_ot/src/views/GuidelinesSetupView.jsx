@@ -60,7 +60,7 @@ export function GuidelinesSetupView({
   const canStartTest = prepCompleted && isFullscreen;
 
   return (
-    <div style={{ padding: '20px', backgroundColor: '#f8fafc', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <div style={{ padding: '20px', backgroundColor: '#f8fafc', minHeight: '100%', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', boxSizing: 'border-box' }}>
       
       {/* Main Outerbox Container (Exact Codeforces / BICS Card) */}
       <div className="cf-card" style={{ maxWidth: '1020px', width: '100%', margin: '0 auto', padding: '15px' }}>

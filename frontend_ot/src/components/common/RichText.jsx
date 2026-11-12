@@ -158,6 +158,35 @@ export const RichText = React.memo(function RichText({ text, style, className })
       return resultLines.join('');
     };
 
+    // Parse markdown tables (| col | col | rows) before paragraph splitting
+    formatted = formatted.replace(
+      /((?:(?:\|[^\n]+\|[ \t]*)\n?)+)/g,
+      (block) => {
+        const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) return block;
+        const isSep = (l) => /^\|[\s\-:|]+\|$/.test(l);
+        if (!isSep(lines[1])) return block;
+        const parseRow = (l) => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+        const headers = parseRow(lines[0]);
+        const alignLine = parseRow(lines[1]);
+        const align = alignLine.map(a => {
+          if (/^:-+:$/.test(a)) return 'center';
+          if (/^-+:$/.test(a)) return 'right';
+          return 'left';
+        });
+        const bodyRows = lines.slice(2).map(parseRow);
+        const thCells = headers.map((h, i) =>
+          `<th style="padding: 8px 14px; border: 1px solid #cbd5e1; background: #e8eef7; color: #002147; font-size: 8.5pt; font-weight: 700; text-align: ${align[i] || 'left'}; white-space: nowrap;">${h}</th>`
+        ).join('');
+        const bodyHtml = bodyRows.map(row =>
+          `<tr>${row.map((c, i) =>
+            `<td style="padding: 6px 14px; border: 1px solid #e2e8f0; font-size: 8.5pt; color: #334155; text-align: ${align[i] || 'left'};">${c}</td>`
+          ).join('')}</tr>`
+        ).join('');
+        return `\n\n%%TABLEBLOCK%%<div style="overflow-x: auto; margin: 12px 0;"><table style="border-collapse: collapse; width: 100%; font-family: inherit; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff;"><thead><tr>${thCells}</tr></thead><tbody>${bodyHtml}</tbody></table></div>%%ENDTABLEBLOCK%%\n\n`;
+      }
+    );
+
     // Split by double newlines into clean paragraphs
     const rawParagraphs = formatted.split(/\n\s*\n/);
     const htmlChunks = [];
@@ -165,6 +194,12 @@ export const RichText = React.memo(function RichText({ text, style, className })
     rawParagraphs.forEach((p) => {
       const trimmed = p.trim();
       if (!trimmed) return;
+
+      if (trimmed.startsWith('%%TABLEBLOCK%%') && trimmed.endsWith('%%ENDTABLEBLOCK%%')) {
+        const tableHtml = trimmed.replace(/^%%TABLEBLOCK%%/, '').replace(/%%ENDTABLEBLOCK%%$/, '');
+        htmlChunks.push(tableHtml);
+        return;
+      }
 
       if (trimmed === '%%HORIZONTALRULE%%' || /^(?:---|___|\*\*\*)\s*$/.test(trimmed)) {
         htmlChunks.push('<hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;" />');
