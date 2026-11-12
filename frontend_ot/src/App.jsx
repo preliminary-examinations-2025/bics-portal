@@ -154,6 +154,14 @@ const RichText = React.memo(function RichText({ text, style, className }) {
       return `<code style="font-family: 'Roboto Mono', Consolas, monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 90%; border: 1px solid #cbd5e1; color: #002147; font-weight: 600;">${tag}</code>`;
     });
 
+    // Horizontal rules --- → <hr>
+    formatted = formatted.replace(/^[ \t]*-{3,}[ \t]*$/gm, '\n\n%%HRBLOCK%%\n\n');
+
+    // Markdown headings ## → styled heading
+    formatted = formatted.replace(/^#{1,2}\s+(.+)$/gm, (m, heading) => {
+      return `\n\n%%HEADINGBLOCK%%${heading.trim()}%%ENDHEADINGBLOCK%%\n\n`;
+    });
+
     // Convert section headers (Input, Output, Note, Constraints, etc.)
     formatted = formatted.replace(/^(?:#{1,6}\s+)?(?:&lt;h[1-6]&gt;)?(?:<strong>)?(Input|Output|Note|Notes|Constraints|Interaction|Sample Input|Sample Output|Explanation|Additional Requirements|Question):?(?:<\/strong>)?(?:&lt;\/h[1-6]&gt;)?$/gim, (m, title) => {
       return `%%SECTIONTITLE%%${title}%%ENDSECTIONTITLE%%`;
@@ -206,6 +214,35 @@ const RichText = React.memo(function RichText({ text, style, className }) {
       return resultLines.join('');
     };
 
+    // Parse markdown tables (| col | col | rows) before paragraph splitting
+    formatted = formatted.replace(
+      /((?:(?:\|[^\n]+\|[ \t]*)\n)+)/g,
+      (block) => {
+        const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) return block;
+        const isSep = (l) => /^\|[\s\-:|]+\|$/.test(l);
+        if (!isSep(lines[1])) return block;
+        const parseRow = (l) => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+        const headers = parseRow(lines[0]);
+        const alignLine = parseRow(lines[1]);
+        const align = alignLine.map(a => {
+          if (/^:-+:$/.test(a)) return 'center';
+          if (/^-+:$/.test(a)) return 'right';
+          return 'left';
+        });
+        const bodyRows = lines.slice(2).map(parseRow);
+        const thCells = headers.map((h, i) =>
+          `<th style="padding:6px 12px;border:1px solid #cbd5e1;background:#e8eef7;color:#002147;font-size:8.5pt;text-align:${align[i]||'left'};white-space:nowrap;">${h}</th>`
+        ).join('');
+        const bodyHtml = bodyRows.map(row =>
+          `<tr>${row.map((c, i) =>
+            `<td style="padding:5px 12px;border:1px solid #e2e8f0;font-size:8.5pt;color:#334155;text-align:${align[i]||'left'};">${c}</td>`
+          ).join('')}</tr>`
+        ).join('');
+        return `\n\n%%TABLEBLOCK%%<div style="overflow-x:auto;margin:10px 0;"><table style="border-collapse:collapse;width:100%;font-family:inherit;"><thead><tr>${thCells}</tr></thead><tbody>${bodyHtml}</tbody></table></div>%%ENDTABLEBLOCK%%\n\n`;
+      }
+    );
+
     // Split by double newlines into clean paragraphs
     const rawParagraphs = formatted.split(/\n\s*\n/);
     const htmlChunks = [];
@@ -213,6 +250,26 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     rawParagraphs.forEach((p) => {
       const trimmed = p.trim();
       if (!trimmed) return;
+
+      // Table blocks — emit raw HTML directly
+      if (trimmed.startsWith('%%TABLEBLOCK%%') && trimmed.endsWith('%%ENDTABLEBLOCK%%')) {
+        const tableHtml = trimmed.replace(/^%%TABLEBLOCK%%/, '').replace(/%%ENDTABLEBLOCK%%$/, '');
+        htmlChunks.push(tableHtml);
+        return;
+      }
+
+      // Horizontal rule
+      if (trimmed === '%%HRBLOCK%%') {
+        htmlChunks.push(`<hr style="border:none;border-top:1px solid #cbd5e1;margin:14px 0;" />`);
+        return;
+      }
+
+      // Heading blocks (## ...)
+      if (trimmed.startsWith('%%HEADINGBLOCK%%') && trimmed.endsWith('%%ENDHEADINGBLOCK%%')) {
+        const headingText = trimmed.replace(/^%%HEADINGBLOCK%%/, '').replace(/%%ENDHEADINGBLOCK%%$/, '');
+        htmlChunks.push(`<div style="font-weight:700;font-size:10pt;color:#002147;margin:14px 0 6px 0;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">${headingText}</div>`);
+        return;
+      }
 
       if (trimmed.includes('%%SECTIONTITLE%%')) {
         const parts = trimmed.split(/(%%SECTIONTITLE%%.*?%%ENDSECTIONTITLE%%)/g);
