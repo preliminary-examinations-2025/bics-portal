@@ -90,6 +90,20 @@ export function GuidelinesSetupView({
             animation: cfFadeSlideIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
             transition: all 0.4s ease;
           }
+          .bics-instructions-scroll::-webkit-scrollbar {
+            width: 6px;
+          }
+          .bics-instructions-scroll::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 3px;
+          }
+          .bics-instructions-scroll::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+          }
+          .bics-instructions-scroll::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+          }
         `}</style>
 
         {!prepCompleted ? (
@@ -182,7 +196,22 @@ export function GuidelinesSetupView({
               <FileText size={15} style={{ color: '#3b5998' }} /> About this test &amp; Specific Instructions:
             </h4>
 
-            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', padding: '12px 14px', borderRadius: '3px', fontSize: '8.5pt', color: '#334155', lineHeight: '1.65' }}>
+            <div 
+              className="bics-instructions-scroll"
+              style={{ 
+                backgroundColor: '#f8fafc', 
+                border: '1px solid #cbd5e1', 
+                padding: '12px 14px', 
+                borderRadius: '3px', 
+                fontSize: '8.5pt', 
+                color: '#334155', 
+                lineHeight: '1.65',
+                maxHeight: '280px',
+                overflowY: 'auto',
+                scrollbarWidth: 'thin',
+                scrollbarColor: '#94a3b8 #f1f5f9'
+              }}
+            >
               <RichText 
                 text={
                   test?.instructions && test.instructions.trim().length > 0
