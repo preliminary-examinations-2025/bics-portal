@@ -79,19 +79,19 @@ async function callOpenRouterDirectApiWithFallback(promptText, systemInstruction
 
 /**
  * Call Gemini Direct API to generate content with fallback
- * Primary: verified available Gemini models (gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-flash-8b, gemini-1.5-pro)
+ * Primary: verified available Gemini models (gemini-2.5-flash, gemini-2.5-flash-lite, gemini-3.5-flash, gemini-3.1-flash-lite)
  * Secondary: Groq API fallback
  * Tertiary: OpenRouter API fallback
  */
-async function callGeminiDirectApi(promptText, systemInstruction = '', model = 'gemini-1.5-flash') {
+async function callGeminiDirectApi(promptText, systemInstruction = '', model = 'gemini-2.5-flash') {
     const apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY;
     if (!apiKey) {
         console.log('[KataAiEvaluator] GEMINI_API_KEY not configured, routing to Groq fallback');
         return await callGroqDirectApiWithFallback(promptText, systemInstruction);
     }
 
-    const verifiedModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
-    const targetModel = verifiedModels.includes(model) ? model : 'gemini-1.5-flash';
+    const verifiedModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+    const targetModel = verifiedModels.includes(model) ? model : 'gemini-2.5-flash';
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
     
@@ -136,10 +136,10 @@ async function callGeminiDirectApi(promptText, systemInstruction = '', model = '
     } catch (err) {
         console.warn(`[KataAiEvaluator] Gemini ${targetModel} failed (${err.message}). Trying secondary Gemini model...`);
         
-        // Try secondary real Gemini model if primary was gemini-1.5-flash
-        if (targetModel === 'gemini-1.5-flash') {
+        // Try secondary real Gemini model if primary was gemini-2.5-flash
+        if (targetModel === 'gemini-2.5-flash') {
             try {
-                return await callGeminiDirectApi(promptText, systemInstruction, 'gemini-2.0-flash');
+                return await callGeminiDirectApi(promptText, systemInstruction, 'gemini-2.5-flash-lite');
             } catch (secErr) {
                 console.warn('[KataAiEvaluator] Gemini secondary model fallback also failed:', secErr.message);
             }
@@ -356,7 +356,7 @@ Evaluate this submission rigorously according to the 100% rubric. Return percent
             console.warn('[KataAiEvaluator] Groq evaluation failed for virtual submission, falling back:', callErr.message);
             // Fallback to Gemini if Groq fails
             try {
-                const geminiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-1.5-flash');
+                const geminiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-2.5-flash');
                 modelUsed = geminiRes.model;
                 parsedResult = JSON.parse(geminiRes.text);
             } catch (geminiErr) {
@@ -524,9 +524,9 @@ ${submission.code}
 Evaluate this submission rigorously according to the 100% rubric. Return percentageScore (0-100), dimensionScores, verdict, and confidential feedback justifying the marks.`;
 
         let parsedResult;
-        let modelUsed = 'gemini-1.5-flash';
+        let modelUsed = 'gemini-2.5-flash';
         try {
-            const apiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-1.5-flash');
+            const apiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-2.5-flash');
             modelUsed = apiRes.model;
             parsedResult = JSON.parse(apiRes.text);
         } catch (callErr) {
@@ -643,7 +643,7 @@ Analyze the code for AI-generation likelihood and plagiarism score (0-100%).`;
 
         let text;
         try {
-            const apiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-1.5-flash');
+            const apiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-2.5-flash');
             text = apiRes.text;
         } catch (apiErr) {
             console.warn(`[KataAiEvaluator] Shin plagiarism check API offline/quota exceeded (${apiErr.message}), applying safe heuristic pass`);
@@ -770,9 +770,9 @@ ${submission.code}
 Evaluate this solution rigorously according to the 100% rubric. Return percentageScore (0-100), dimensionScores, verdict, confidential feedback justifying the marks, and audit for plagiarism.`;
 
         let parsed;
-        let modelUsed = 'gemini-1.5-flash';
+        let modelUsed = 'gemini-2.5-flash';
         try {
-            const apiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-1.5-flash');
+            const apiRes = await callGeminiDirectApi(userPrompt, systemPrompt, 'gemini-2.5-flash');
             modelUsed = apiRes.model;
             parsed = JSON.parse(apiRes.text);
         } catch (apiErr) {

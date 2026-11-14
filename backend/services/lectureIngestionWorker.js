@@ -372,10 +372,10 @@ async function getLectureDurationMinutes(lecture, yId, realMeta) {
 
 // Prioritized Direct Gemini Models (Officially verified available Google Gemini models)
 const GEMINI_DIRECT_MODELS = [
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', timeoutMs: 25000 },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', timeoutMs: 25000 },
-    { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash 8B', timeoutMs: 20000 },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', timeoutMs: 25000 }
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', timeoutMs: 25000 },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', timeoutMs: 25000 },
+    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', timeoutMs: 25000 },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', timeoutMs: 25000 }
 ];
 
 const modelQuotaCooldownMap = new Map();
