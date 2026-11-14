@@ -26,17 +26,27 @@ export const RichText = React.memo(function RichText({ text, style, className })
         .replace(/'/g, "&#39;");
     };
 
-    // Extract markdown images BEFORE HTML escaping: ![alt](url)
-    formatted = formatted.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
-      const placeholder = `%%IMAGEBLOCK${placeholderIndex++}%%`;
+    // Extract markdown images BEFORE HTML escaping: ![alt](url) or [](image_url) or [alt](image_url)
+    formatted = formatted.replace(/!?\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
       const cleanSrc = (src || '').trim();
-      const isSafeUrl = /^(https?:\/\/|\/|data:image\/)/i.test(cleanSrc);
-      imageBlocks.push({
-        placeholder,
-        alt: escapeHtml(alt || 'Question Image'),
-        src: isSafeUrl ? escapeHtml(cleanSrc) : 'about:blank'
-      });
-      return placeholder;
+      const isImage = match.startsWith('!') ||
+        /\.(?:png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(cleanSrc) ||
+        /\/images\//i.test(cleanSrc) ||
+        /\/drive\/images\//i.test(cleanSrc) ||
+        /^data:image\//i.test(cleanSrc) ||
+        !alt.trim();
+
+      if (isImage) {
+        const placeholder = `%%IMAGEBLOCK${placeholderIndex++}%%`;
+        const isSafeUrl = /^(https?:\/\/|\/|data:image\/)/i.test(cleanSrc);
+        imageBlocks.push({
+          placeholder,
+          alt: match.startsWith('!') ? escapeHtml((alt || '').trim()) : '',
+          src: isSafeUrl ? escapeHtml(cleanSrc) : 'about:blank'
+        });
+        return placeholder;
+      }
+      return match;
     });
 
     // Temporarily extract triple-backtick code blocks
@@ -206,6 +216,11 @@ export const RichText = React.memo(function RichText({ text, style, className })
         return;
       }
 
+      if (/^%%IMAGEBLOCK\d+%%$/.test(trimmed)) {
+        htmlChunks.push(trimmed);
+        return;
+      }
+
       if (trimmed.includes('%%SECTIONTITLE%%') || trimmed.includes('%%HORIZONTALRULE%%')) {
         const parts = trimmed.split(/(%%SECTIONTITLE%%.*?%%ENDSECTIONTITLE%%|%%HORIZONTALRULE%%)/g);
         parts.forEach(part => {
@@ -231,7 +246,8 @@ export const RichText = React.memo(function RichText({ text, style, className })
 
     // Restore Image Blocks into styled centered cards
     imageBlocks.forEach(({ placeholder, alt, src }) => {
-      const imgHtml = `<div style="margin: 14px 0; text-align: center; border: 1px solid #bae6fd; border-radius: 6px; padding: 10px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);"><img src="${src}" alt="${alt}" style="max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 4px; display: inline-block;" /><div style="font-size: 8pt; color: #64748b; margin-top: 6px; font-style: italic;">${alt}</div></div>`;
+      const captionHtml = alt ? `<div style="font-size: 8pt; color: #64748b; margin-top: 6px; font-style: italic; text-align: center;">${alt}</div>` : '';
+      const imgHtml = `<div style="margin: 8px auto; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;"><img src="${src}" alt="${alt}" style="max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto; box-shadow: 0 1px 3px rgba(0,0,0,0.06);" />${captionHtml}</div>`;
       resultHtml = resultHtml.replace(placeholder, imgHtml);
     });
 

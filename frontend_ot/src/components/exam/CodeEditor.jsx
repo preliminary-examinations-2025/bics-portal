@@ -622,6 +622,8 @@ export const CodeEditor = ({
                     <RichText
                       text={opt}
                       style={{
+                        flex: 1,
+                        width: '100%',
                         fontSize: '9.5pt',
                         fontWeight: 400,
                         color: isSelected ? '#1e3a8a' : '#333'

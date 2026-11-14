@@ -7,6 +7,7 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     if (!raw) return '';
 
     const mathBlocks = [];
+    const imageBlocks = [];
     let formatted = raw;
 
     let placeholderIndex = 0;
@@ -20,6 +21,29 @@ const RichText = React.memo(function RichText({ text, style, className }) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
     };
+
+    // Extract markdown images BEFORE HTML escaping: ![alt](url) or [](image_url) or [alt](image_url)
+    formatted = formatted.replace(/!?\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
+      const cleanSrc = (src || '').trim();
+      const isImage = match.startsWith('!') ||
+        /\.(?:png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(cleanSrc) ||
+        /\/images\//i.test(cleanSrc) ||
+        /\/drive\/images\//i.test(cleanSrc) ||
+        /^data:image\//i.test(cleanSrc) ||
+        !alt.trim();
+
+      if (isImage) {
+        const placeholder = `%%IMAGEBLOCK${placeholderIndex++}%%`;
+        const isSafeUrl = /^(https?:\/\/|\/|data:image\/)/i.test(cleanSrc);
+        imageBlocks.push({
+          placeholder,
+          alt: match.startsWith('!') ? escapeHtml((alt || '').trim()) : '',
+          src: isSafeUrl ? escapeHtml(cleanSrc) : 'about:blank'
+        });
+        return placeholder;
+      }
+      return match;
+    });
 
     // Temporarily extract double-dollar display math blocks with HTML escaping
     formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match, mathContent) => {
@@ -62,6 +86,13 @@ const RichText = React.memo(function RichText({ text, style, className }) {
     formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
     formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
     formatted = formatted.replace(/`(.*?)`/g, '<code style="font-family: monospace; background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 90%;">$1</code>');
+
+    // Restore Image Blocks into styled centered cards
+    imageBlocks.forEach(({ placeholder, alt, src }) => {
+      const captionHtml = alt ? `<div style="font-size: 8pt; color: #64748b; margin-top: 6px; font-style: italic; text-align: center;">${alt}</div>` : '';
+      const imgHtml = `<div style="margin: 8px auto; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;"><img src="${src}" alt="${alt}" style="max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto; box-shadow: 0 1px 3px rgba(0,0,0,0.06);" />${captionHtml}</div>`;
+      formatted = formatted.replace(placeholder, imgHtml);
+    });
 
     // Restore safely escaped LaTeX formulas back inside placeholders
     mathBlocks.forEach(({ placeholder, content }) => {
