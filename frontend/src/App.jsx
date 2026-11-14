@@ -41,6 +41,7 @@ import AdminMarksLedger from './pages/admin/AdminMarksLedger';
 import AdminDatabaseViewer from './pages/admin/AdminDatabaseViewer';
 import AdminEmails from './pages/admin/AdminEmails';
 import AdminKataManager from './pages/admin/AdminKataManager';
+import AdminMediaDrive from './pages/admin/AdminMediaDrive';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE, getAuthToken, setAuthToken, clearAuthToken, safeReadJson } from './api/client';
@@ -214,6 +215,8 @@ const PATH_TO_VIEW_MAP = {
   '/admin/marks-ledger': 'admin_marks_ledger',
   '/admin/database': 'admin_database',
   '/admin/emails': 'admin_emails',
+  '/admin/media': 'admin_media',
+  '/main/admin/media': 'admin_media',
   '/admin/kata': 'admin_kata'
 };
 
@@ -458,6 +461,7 @@ function PortalApp() {
     admin_marks_ledger: '/admin/marks-ledger',
     admin_database: '/admin/database',
     admin_emails: '/admin/emails',
+    admin_media: '/admin/media',
     admin_kata: '/admin/kata'
   };
 
@@ -480,7 +484,7 @@ function PortalApp() {
     if (targetView === 'login') return true;
     if (targetView === 'changepassword') return true;
     if (role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_media', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
     if (isStudentRole(role)) {
       return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
@@ -4490,7 +4494,7 @@ int main() {
     if ((targetView === 'onlinetest' || targetView === 'onlinetest_setup') && !allowedTestAccess) return false;
     
     if (user.role === 'admin') {
-      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
+      return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_media', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
     
     if (isStudentRole(user.role)) {
@@ -5305,6 +5309,10 @@ int main() {
                   API_BASE={API_BASE}
                   token={getAuthToken() || ''}
                 />
+              )}
+
+              {view === 'admin_media' && (
+                <AdminMediaDrive />
               )}
             </div>
 

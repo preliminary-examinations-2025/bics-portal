@@ -532,31 +532,72 @@ export default function AdminMarksLedger() {
     const currentLinked = selectedTestIds[targetKey] || '';
     const availableTests = availableTestsByTarget[targetKey] || [];
     const isLinking = linkingTarget === targetKey;
+    const linkedTestObj = availableTests.find(t => String(t.id) === String(currentLinked));
 
     return (
-      <div key={targetKey} style={{ backgroundColor: '#ffffff', border: '1px solid #b9c9fe', borderRadius: '4px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <label style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#3b5998', display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <Zap size={13} style={{ color: '#3b5998' }} />
-            {meta.label} ({meta.maxMarks}m max)
+      <div 
+        key={targetKey} 
+        style={{ 
+          backgroundColor: currentLinked ? '#f8faff' : '#ffffff', 
+          border: `1px solid ${currentLinked ? '#93c5fd' : '#cbd5e1'}`, 
+          borderRadius: '6px', 
+          padding: '12px', 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '8px',
+          boxSizing: 'border-box',
+          minWidth: 0,
+          boxShadow: currentLinked ? '0 1px 3px rgba(37,99,235,0.06)' : 'none',
+          transition: 'all 0.15s ease'
+        }}
+      >
+        {/* Top Header: Label & Status Badge */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+            <Zap size={14} style={{ color: currentLinked ? '#2563eb' : '#64748b' }} />
+            <span>{meta.label}</span>
+            <span style={{ fontSize: '7.5pt', color: '#64748b', fontWeight: 'normal' }}>({meta.maxMarks}m max)</span>
           </label>
-          {currentLinked && (
-            <span style={{ fontSize: '7pt', fontWeight: 'bold', backgroundColor: '#f0f4fa', color: '#3b5998', border: '1px solid #b9c9fe', padding: '1px 6px', borderRadius: '3px' }}>
-              LINKED
+          {currentLinked ? (
+            <span style={{ fontSize: '7pt', fontWeight: 'bold', backgroundColor: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', padding: '1px 6px', borderRadius: '3px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+              <Check size={10} /> LINKED
+            </span>
+          ) : (
+            <span style={{ fontSize: '7pt', fontWeight: 'bold', backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0', padding: '1px 6px', borderRadius: '3px' }}>
+              NOT LINKED
             </span>
           )}
         </div>
 
-        <div style={{ fontSize: '7.5pt', color: '#64748b' }}>
+        {/* Component Description */}
+        <div style={{ fontSize: '7.5pt', color: '#64748b', lineHeight: '1.4' }}>
           {meta.desc}
+          {linkedTestObj && (
+            <div style={{ color: '#1d4ed8', fontWeight: '600', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ✓ Bound to: {linkedTestObj.title} ({linkedTestObj.marks}m)
+            </div>
+          )}
         </div>
 
-        <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+        {/* Dropdown Selector on its own dedicated full-width row */}
+        <div style={{ width: '100%', minWidth: 0 }}>
           <select
             value={currentLinked}
             onChange={(e) => setSelectedTestIds(prev => ({ ...prev, [targetKey]: e.target.value }))}
             disabled={ledgerData?.isLocked}
-            style={{ flex: 1, padding: '5px 8px', borderRadius: '4px', border: '1px solid #b9c9fe', fontSize: '8pt', backgroundColor: '#ffffff', color: '#333333' }}
+            style={{ 
+              width: '100%', 
+              minWidth: 0, 
+              boxSizing: 'border-box',
+              padding: '6px 10px', 
+              borderRadius: '4px', 
+              border: `1px solid ${currentLinked ? '#93c5fd' : '#cbd5e1'}`, 
+              fontSize: '8pt', 
+              backgroundColor: '#ffffff', 
+              color: '#1e293b',
+              fontWeight: currentLinked ? '600' : 'normal',
+              cursor: ledgerData?.isLocked ? 'not-allowed' : 'pointer'
+            }}
           >
             <option value="">-- No Test Linked --</option>
             {availableTests.map(t => (
@@ -565,7 +606,10 @@ export default function AdminMarksLedger() {
               </option>
             ))}
           </select>
+        </div>
 
+        {/* Dedicated 2-Button Action Bar (Link/Unlink + Sync Marks) */}
+        <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
           {currentLinked ? (
             <button
               type="button"
@@ -573,17 +617,23 @@ export default function AdminMarksLedger() {
               disabled={isLinking || ledgerData?.isLocked}
               title="Unlink Online Test"
               style={{
-                fontSize: '7.5pt',
-                padding: '4px 8px',
-                fontWeight: '500',
+                flex: 1,
+                minWidth: 0,
+                fontSize: '8pt',
+                padding: '6px 10px',
+                fontWeight: '600',
                 borderRadius: '4px',
-                backgroundColor: (isLinking || ledgerData?.isLocked) ? '#f8fafc' : '#fdf2f2',
-                color: (isLinking || ledgerData?.isLocked) ? '#94a3b8' : '#991b1b',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px',
+                backgroundColor: (isLinking || ledgerData?.isLocked) ? '#f8fafc' : '#fef2f2',
+                color: (isLinking || ledgerData?.isLocked) ? '#94a3b8' : '#dc2626',
                 border: `1px solid ${(isLinking || ledgerData?.isLocked) ? '#e2e8f0' : '#fecaca'}`,
                 cursor: (isLinking || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
               }}
             >
-              Unlink
+              Unlink Test
             </button>
           ) : (
             <button
@@ -592,20 +642,24 @@ export default function AdminMarksLedger() {
               disabled={isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked}
               title="Link Test and Auto-Sync"
               style={{
-                fontSize: '7.5pt',
-                padding: '4px 8px',
-                fontWeight: '500',
+                flex: 1,
+                minWidth: 0,
+                fontSize: '8pt',
+                padding: '6px 10px',
+                fontWeight: '600',
                 borderRadius: '4px',
-                backgroundColor: '#ffffff',
-                color: (isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? '#94a3b8' : '#3b5998',
-                border: `1px solid ${(isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? '#e2e8f0' : '#b9c9fe'}`,
-                cursor: (isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? 'not-allowed' : 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '3px'
+                justifyContent: 'center',
+                gap: '4px',
+                backgroundColor: (isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? '#f8fafc' : '#ffffff',
+                color: (isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? '#94a3b8' : '#2563eb',
+                border: `1px solid ${(isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? '#e2e8f0' : '#b9c9fe'}`,
+                cursor: (isLinking || !selectedTestIds[targetKey] || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
               }}
             >
-              <LinkIcon size={11} /> Link
+              <LinkIcon size={12} />
+              <span>{isLinking ? 'Linking...' : 'Link Test'}</span>
             </button>
           )}
 
@@ -615,17 +669,24 @@ export default function AdminMarksLedger() {
             disabled={isLinking || !currentLinked || ledgerData?.isLocked}
             title="Re-sync scores for this test"
             style={{
-              fontSize: '7.5pt',
-              padding: '4px 8px',
-              fontWeight: '500',
+              flex: 1,
+              minWidth: 0,
+              fontSize: '8pt',
+              padding: '6px 10px',
+              fontWeight: '600',
               borderRadius: '4px',
-              backgroundColor: (isLinking || !currentLinked || ledgerData?.isLocked) ? '#f8fafc' : '#f0f4fa',
-              color: (isLinking || !currentLinked || ledgerData?.isLocked) ? '#94a3b8' : '#3b5998',
-              border: `1px solid ${(isLinking || !currentLinked || ledgerData?.isLocked) ? '#e2e8f0' : '#b9c9fe'}`,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              backgroundColor: (isLinking || !currentLinked || ledgerData?.isLocked) ? '#f8fafc' : '#f0fdf4',
+              color: (isLinking || !currentLinked || ledgerData?.isLocked) ? '#94a3b8' : '#15803d',
+              border: `1px solid ${(isLinking || !currentLinked || ledgerData?.isLocked) ? '#e2e8f0' : '#bbf7d0'}`,
               cursor: (isLinking || !currentLinked || ledgerData?.isLocked) ? 'not-allowed' : 'pointer'
             }}
           >
-            {isLinking ? 'Syncing...' : 'Sync'}
+            <RefreshCw size={12} className={isLinking ? 'spin-smooth' : ''} />
+            <span>{isLinking ? 'Syncing...' : 'Sync Marks'}</span>
           </button>
         </div>
       </div>
@@ -742,12 +803,12 @@ export default function AdminMarksLedger() {
 
           {/* Universal Online Test Linkers Grid */}
           <div>
-            <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#3b5998', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <LinkIcon size={13} style={{ color: '#3b5998' }} />
-              Universal Online Test Linking Hub ({isTheory ? 'Theory: MST Quiz 1 & ESE Quiz 1' : 'Lab: Quiz 1, MST Online & ESE Online'}):
+            <div style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <LinkIcon size={14} style={{ color: '#2563eb' }} />
+              <span>Universal Online Test Linking Hub ({isTheory ? 'Theory: MST Quiz 1 & ESE Quiz 1' : 'Lab: Quiz 1, MST Online & ESE Online'}):</span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
               {isTheory ? (
                 <>
                   {renderOnlineTestLinker('mstQuiz1')}

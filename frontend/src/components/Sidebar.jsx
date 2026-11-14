@@ -4,7 +4,7 @@ import {
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
   GraduationCap, Key, LogOut, Wrench, Scale, Database, Code, Sparkles,
-  Award, Scroll, RotateCcw
+  Award, Scroll, RotateCcw, FolderArchive
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -123,6 +123,9 @@ export default function Sidebar({
 
             {/* 5. SYSTEM */}
             <div className="sidebar-category" style={{ borderTop: '1px solid #e2e8f0', marginTop: '6px', paddingTop: '10px' }}>System</div>
+            <button className={`sidebar-item ${view === 'admin_media' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_media'); setIsMobileSidebarOpen(false); }}>
+              <FolderArchive size={16} style={{ color: '#0284c7' }} /> Media Drive
+            </button>
             <button className={`sidebar-item ${view === 'admin_emails' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_emails'); setIsMobileSidebarOpen(false); fetchAdminEmailSummary && fetchAdminEmailSummary(); }}>
               <Mail size={16} style={{ color: '#2563eb' }} /> Email Center
               {adminEmailPendingCount > 0 && (

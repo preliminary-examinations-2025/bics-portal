@@ -71,3 +71,5 @@ test_*.js
 
 # Local OT Workbench
 ot_workbench/
+
+backend/scripts

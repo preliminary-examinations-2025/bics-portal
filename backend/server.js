@@ -41,6 +41,7 @@ const marksLedgerRouter = require('./routes/marksLedger');
 const ticketsRouter = require('./routes/tickets');
 const adminDbViewerRouter = require('./routes/adminDbViewer');
 const adminEmailsRouter = require('./routes/adminEmails');
+const adminMediaRouter = require('./routes/adminMedia');
 const kataRouter = require('./routes/kata');
 
 const app = express();
@@ -134,6 +135,7 @@ app.use('/api/admin/marks-ledger', marksLedgerRouter);
 app.use('/api', ticketsRouter);
 app.use('/api/admin/db', adminDbViewerRouter);
 app.use('/api/admin/emails', adminEmailsRouter);
+app.use('/api/admin/media', adminMediaRouter);
 app.use('/api/kata', kataRouter);
 
 // Global Technical Error Handling Middleware

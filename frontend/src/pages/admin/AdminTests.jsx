@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { ClipboardList, ShieldAlert, FileEdit, Plus, Loader2, Lock, Check, Upload, HelpCircle, GraduationCap, AlertTriangle, X, RefreshCw } from 'lucide-react';
+import { ClipboardList, ShieldAlert, FileEdit, Plus, Loader2, Lock, Check, Upload, HelpCircle, GraduationCap, AlertTriangle, X, RefreshCw, UploadCloud } from 'lucide-react';
 import RichText from '../../components/RichText';
 import Editor from '@monaco-editor/react';
 import { API_BASE } from '../../config';
@@ -897,7 +897,36 @@ export default function AdminTests({
                                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
                                     {curQ?.options?.map((opt, oIdx) => (
                                       <div key={oIdx} className="cf-input-group">
-                                        <label className="cf-label">Option {oIdx + 1}</label>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
+                                          <label className="cf-label" style={{ margin: 0 }}>Option {oIdx + 1}</label>
+                                          <label style={{ fontSize: '7.5pt', color: '#0284c7', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '3px', fontWeight: 'bold' }}>
+                                            <UploadCloud size={11} />
+                                            <span>Upload Image</span>
+                                            <input
+                                              type="file"
+                                              accept="image/*"
+                                              style={{ display: 'none' }}
+                                              onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) return;
+                                                const formData = new FormData();
+                                                formData.append('files', file);
+                                                try {
+                                                  const res = await fetch(`${API_BASE}/admin/media/upload`, { method: 'POST', body: formData });
+                                                  const data = await res.json();
+                                                  if (res.ok && data?.assets?.[0]?.markdownImage) {
+                                                    const mdTag = data.assets[0].markdownImage;
+                                                    const updated = [...newExamQuestions];
+                                                    const currentVal = updated[editingQuestionIdx].options[oIdx] || '';
+                                                    updated[editingQuestionIdx].options[oIdx] = currentVal ? `${currentVal} ${mdTag}` : mdTag;
+                                                    setNewExamQuestions(updated);
+                                                  }
+                                                } catch (_) {}
+                                                e.target.value = '';
+                                              }}
+                                            />
+                                          </label>
+                                        </div>
                                         <input
                                           type="text"
                                           className="cf-input"
