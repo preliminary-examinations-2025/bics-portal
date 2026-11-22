@@ -10,7 +10,7 @@
  * Eliminates hanging / stranded 'started' submissions and protects academic integrity.
  */
 
-const { TestSubmissionModel, TestConfigModel } = require('../models');
+const { TestSubmissionModel, TestConfigModel, ServerOutageIncidentModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { recalculateMCQScore, calculateCodingScoreFast } = require('../utils/scoreCalculator');
 const { evaluateEirfIncident } = require('../services/eirfEvaluator');
@@ -21,10 +21,28 @@ let isReaping = false;
 
 async function reapAbandonedSubmissions(maxIdleMs = 180000) {
     if (isReaping) return;
-    // Server Startup Protection: If server booted < 5 minutes ago, suppress reaping to allow
-    // reconnected clients to deliver heartbeats and cached submissions
+    // Server Startup & Global Outage Protection:
+    // If local server booted < 5 minutes ago, or any database-recorded server outage
+    // ended < 5 minutes ago, suppress reaping cluster-wide to allow reconnected clients
+    // to deliver heartbeats, offline syncs, and cached exam submissions.
     if (process.uptime() < 300) {
         return;
+    }
+
+    try {
+        if (dbState.useMongo) {
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+            const recentOutage = await ServerOutageIncidentModel.findOne({
+                outageEnd: { $gte: fiveMinutesAgo }
+            }).lean();
+
+            if (recentOutage) {
+                console.log(`[DEAD-MAN REAPER] Pausing reaping globally: Recent server outage incident (${recentOutage.cause}) ended at ${new Date(recentOutage.outageEnd).toLocaleTimeString()} (< 5m ago).`);
+                return;
+            }
+        }
+    } catch (outageErr) {
+        console.error('[DEAD-MAN REAPER] Failed to check recent outage incidents:', outageErr.message);
     }
     isReaping = true;
     const cutoffTime = new Date(Date.now() - maxIdleMs);

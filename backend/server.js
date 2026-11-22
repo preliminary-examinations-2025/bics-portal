@@ -42,8 +42,11 @@ const ticketsRouter = require('./routes/tickets');
 const adminDbViewerRouter = require('./routes/adminDbViewer');
 const adminEmailsRouter = require('./routes/adminEmails');
 const adminMediaRouter = require('./routes/adminMedia');
+const adminSystemHealthRouter = require('./routes/adminSystemHealth');
 const kataRouter = require('./routes/kata');
 const examAttendanceRouter = require('./routes/examAttendance');
+const { selectiveAuditMiddleware } = require('./middleware/selectiveAudit');
+const { startHealthLedgerWorker, recordGracefulShutdown } = require('./workers/healthLedgerWorker');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -114,6 +117,9 @@ app.use((req, res, next) => {
     next();
 });
 
+// Selective Fire-and-Forget Audit Middleware (Audits state mutations and >= 400 errors, excluding 401 & 404)
+app.use(selectiveAuditMiddleware);
+
 // API Access Secret Security Gate
 app.use('/api', authorizeApiRequest);
 
@@ -137,6 +143,7 @@ app.use('/api', ticketsRouter);
 app.use('/api/admin/db', adminDbViewerRouter);
 app.use('/api/admin/emails', adminEmailsRouter);
 app.use('/api/admin/media', adminMediaRouter);
+app.use('/api/admin', adminSystemHealthRouter);
 app.use('/api/kata', kataRouter);
 app.use('/api/attendance', examAttendanceRouter);
 
@@ -176,6 +183,23 @@ process.on('uncaughtException', (err) => {
     console.error('[SERVER SAFETY] Uncaught Exception:', err);
 });
 
+// Graceful container termination & deployment traps (records maintenance windows)
+process.on('SIGTERM', async () => {
+    console.log('[SERVER] SIGTERM received. Recording graceful deploy window...');
+    try {
+        await recordGracefulShutdown('sigterm_deploy');
+    } catch (_) {}
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('[SERVER] SIGINT received. Shutting down gracefully...');
+    try {
+        await recordGracefulShutdown('sigterm_deploy');
+    } catch (_) {}
+    process.exit(0);
+});
+
 // Start Express Server
 if (process.env.NODE_ENV !== 'test' && (process.env.NODE_ENV !== 'production' || !process.env.VERCEL)) {
     const server = app.listen(PORT, '0.0.0.0', () => {
@@ -195,6 +219,8 @@ if (process.env.NODE_ENV !== 'test' && (process.env.NODE_ENV !== 'production' ||
         startIngestionWorker();
         // Start dead-man's switch reaper worker for abandoned exam sessions
         startSubmissionReaper();
+        // Start persistent server health ledger & autonomous outage detector
+        startHealthLedgerWorker();
         // Start autonomous sequential EIRF pipeline worker
         startEirfPipelineWorker();
         // Start Kata weekly contests scheduler

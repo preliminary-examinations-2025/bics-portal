@@ -4,7 +4,7 @@ import {
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
   GraduationCap, Key, LogOut, Wrench, Scale, Database, Code, Sparkles,
-  Award, Scroll, RotateCcw, FolderArchive, QrCode
+  Award, Scroll, RotateCcw, FolderArchive, QrCode, Server
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -133,6 +133,9 @@ export default function Sidebar({
                   {adminEmailPendingCount}
                 </span>
               )}
+            </button>
+            <button className={`sidebar-item ${view === 'admin_system_health' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_system_health'); setIsMobileSidebarOpen(false); }}>
+              <Server size={16} style={{ color: '#16a34a' }} /> Infrastructure &amp; Outages
             </button>
             <button className={`sidebar-item ${view === 'admin_logs' ? 'active' : ''}`} style={{ justifyContent: 'flex-start', gap: '8px' }} onClick={() => { setView('admin_logs'); setIsMobileSidebarOpen(false); fetchSystemLogs && fetchSystemLogs(); }}>
               <Activity size={16} /> System Logs

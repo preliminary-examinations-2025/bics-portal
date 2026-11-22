@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel } = require('../models');
+const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel, ServerOutageIncidentModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
@@ -2209,12 +2209,45 @@ router.post('/submit', requireAuth, async (req, res) => {
                                     details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
                                 });
                             } else if (req.body.isOfflineSync) {
+                                let isVerifiedOutage = false;
+                                let matchingOutageId = null;
+                                try {
+                                    const offlineStart = req.body.lastCheckpointServerTime
+                                        ? new Date(Number(req.body.lastCheckpointServerTime))
+                                        : new Date(Date.now() - 300000);
+                                    const offlineEnd = new Date();
+
+                                    const matchingIncident = await ServerOutageIncidentModel.findOne({
+                                        $or: [
+                                            { outageStart: { $lte: offlineEnd }, outageEnd: { $gte: offlineStart } },
+                                            { outageStart: { $gte: offlineStart, $lte: offlineEnd } }
+                                        ]
+                                    }).lean();
+
+                                    if (matchingIncident) {
+                                        isVerifiedOutage = true;
+                                        matchingOutageId = matchingIncident._id;
+                                        console.log(`[OFFLINE VERIFICATION] Submission ${submissionId} offline window verified against ServerOutageIncident ${matchingIncident._id} (${matchingIncident.cause}).`);
+                                    }
+                                } catch (outageErr) {
+                                    console.error('[OFFLINE VERIFICATION] Error checking outage incidents:', outageErr.message);
+                                }
+
+                                submission.offlineSyncMetadata = {
+                                    wasSyncedOffline: true,
+                                    outageVerified: isVerifiedOutage,
+                                    outageIncidentId: matchingOutageId,
+                                    verifiedAt: new Date()
+                                };
+
                                 if (!submission.proctoringLog) submission.proctoringLog = {};
                                 if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
                                 submission.proctoringLog.events.push({
                                     timestamp: new Date(),
-                                    type: 'OFFLINE_SYNC_ACCEPTED',
-                                    details: `Cached examination payload accepted and verified against server-signed checkpoint.`
+                                    type: isVerifiedOutage ? 'SERVER_OUTAGE_VERIFIED' : 'OFFLINE_SYNC_ACCEPTED',
+                                    details: isVerifiedOutage
+                                        ? `Offline gap verified against infrastructure outage incident ${matchingOutageId}. Server-side outage confirmed.`
+                                        : `Cached examination payload accepted and verified against server-signed checkpoint.`
                                 });
                             }
                         }
@@ -2237,10 +2270,38 @@ router.post('/submit', requireAuth, async (req, res) => {
                     // 1. Authoritative EIRF incident calculation (processed before atomic save to eliminate duplicate DB roundtrips)
                     if (isFinalSubmission) {
                         const eirfEval = evaluateEirfIncident(submission, test);
-                        submission.hasEirfFlag = eirfEval.hasEirfFlag;
-                        submission.eirfStatus = eirfEval.eirfStatus;
-                        submission.flaggedReasons = eirfEval.flaggedReasons;
-                        submission.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
+                        
+                        // Targeted Network Waiver: If offline sync matched a verified server outage,
+                        // excuse only the network disconnect flag, while preserving all other integrity flags intact!
+                        if (submission.offlineSyncMetadata?.outageVerified) {
+                            const filteredReasons = (eirfEval.flaggedReasons || []).filter(r => !r.includes('network disconnection exceeded'));
+                            const wasNetworkOnlyFlag = (eirfEval.flaggedReasons || []).length > 0 && filteredReasons.length === 0;
+
+                            if (wasNetworkOnlyFlag) {
+                                submission.hasEirfFlag = false;
+                                submission.eirfStatus = 'cleared';
+                                submission.flaggedReasons = [];
+                                submission.pipelineStatus = 'CLEARED';
+                            } else {
+                                submission.hasEirfFlag = filteredReasons.length > 0;
+                                submission.eirfStatus = filteredReasons.length > 0 ? eirfEval.eirfStatus : 'cleared';
+                                submission.flaggedReasons = filteredReasons;
+                                submission.pipelineStatus = filteredReasons.length > 0 ? 'FLAGGED' : 'CLEARED';
+                            }
+
+                            if (!submission.proctoringLog) submission.proctoringLog = {};
+                            if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
+                            submission.proctoringLog.events.push({
+                                timestamp: new Date(),
+                                type: 'SERVER_OUTAGE_EXCUSED',
+                                details: `Network disconnect gap excused due to verified server outage (${submission.offlineSyncMetadata.outageIncidentId}). Non-network proctoring flags remain enforced.`
+                            });
+                        } else {
+                            submission.hasEirfFlag = eirfEval.hasEirfFlag;
+                            submission.eirfStatus = eirfEval.eirfStatus;
+                            submission.flaggedReasons = eirfEval.flaggedReasons;
+                            submission.pipelineStatus = eirfEval.hasEirfFlag ? 'FLAGGED' : 'CLEARED';
+                        }
 
                         // Explicitly append final submission proctoring event for compliance audit trail
                         if (!submission.proctoringLog) submission.proctoringLog = {};

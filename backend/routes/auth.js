@@ -560,8 +560,16 @@ router.post(
     }
 );
 
-// Health check endpoint
-router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+// Two-Tier Health check endpoint: Reports Node vitality and DB readiness
+router.get('/health', (req, res) => {
+    const isDbReady = dbState.isConnected && mongoose.connection.readyState === 1;
+    res.json({
+        status: isDbReady ? 'ok' : 'degraded_db',
+        serverTime: new Date().toISOString(),
+        uptimeSeconds: Math.round(process.uptime()),
+        database: isDbReady ? 'connected' : 'degraded'
+    });
+});
 
 router.normalizeTimetableRows = normalizeTimetableRows;
 module.exports = router;

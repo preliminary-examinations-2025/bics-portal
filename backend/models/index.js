@@ -20,6 +20,9 @@ const { KataContestModel, KataContestSchema } = require('./KataContest');
 const { KataSubmissionModel, KataSubmissionSchema } = require('./KataSubmission');
 const { EmailLogModel, EmailLogSchema, EMAIL_TYPES, EMAIL_STATUSES } = require('./EmailLog');
 const { MediaAssetModel, MediaAssetSchema } = require('./MediaAsset');
+const { ServerHealthLogModel, ServerHealthLogSchema } = require('./ServerHealthLog');
+const { ServerOutageIncidentModel, ServerOutageIncidentSchema } = require('./ServerOutageIncident');
+const { AuditLogModel, AuditLogSchema } = require('./AuditLog');
 
 module.exports = {
     CandidateModel,
@@ -72,6 +75,12 @@ module.exports = {
     EMAIL_TYPES,
     EMAIL_STATUSES,
     MediaAssetModel,
-    MediaAssetSchema
+    MediaAssetSchema,
+    ServerHealthLogModel,
+    ServerHealthLogSchema,
+    ServerOutageIncidentModel,
+    ServerOutageIncidentSchema,
+    AuditLogModel,
+    AuditLogSchema
 };
 
