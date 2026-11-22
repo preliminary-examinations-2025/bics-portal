@@ -55,8 +55,11 @@ function getPoliteSystemNotice(rawMessage = '', eventType = '') {
   if (type === 'FACE_MISSING' || text.includes('no face') || text.includes('visible to the webcam') || text.includes('face is not')) {
     return 'Your face is not clearly visible in the camera frame. Please position yourself facing the webcam.';
   }
-  if (type === 'NETWORK_OFFLINE' || text.includes('offline') || text.includes('network connection')) {
-    return 'Network connection was lost. Answers are cached locally and will sync once connectivity returns.';
+  if (type === 'SERVER_OFFLINE' || type === 'SERVER_SYNCING' || text.includes('server offline') || text.includes('server synchronizing') || text.includes('server is synchronizing') || text.includes('server busy')) {
+    return 'Server is synchronizing. Your answers are securely cached locally on this device.';
+  }
+  if (type === 'NETWORK_OFFLINE' || text.includes('network offline') || text.includes('network connection') || text.includes('offline')) {
+    return 'Network connection lost. Reconnecting... (120s grace period). Answers are cached locally.';
   }
   if (type === 'MINOR_WARNINGS_EXCEEDED' || text.includes('minor warnings')) {
     return 'Multiple system security notices have been logged for this session.';
@@ -95,7 +98,7 @@ function normalizeToast(raw, fallbackId = 'toast') {
     persistent = raw.persistent === true;
     body = getPoliteSystemNotice(raw.message || raw.body || '', raw.id || fallbackId);
   } else if (typeof raw === 'string') {
-    if (raw.startsWith('Proctor Reminder:') || raw.startsWith('Network Offline:')) {
+    if (raw.startsWith('Proctor Reminder:') || raw.startsWith('Network Offline:') || raw.toLowerCase().includes('offline') || raw.toLowerCase().includes('synchronizing')) {
       persistent = true;
     }
     body = getPoliteSystemNotice(raw, fallbackId);
@@ -207,9 +210,14 @@ export function ProctorToast({
     toastList = toasts.map((t, idx) => normalizeToast(t, t?.id || `toast_${idx}`)).filter(Boolean);
   } else if (toasts && typeof toasts === 'object') {
     toastList = Object.entries(toasts).map(([k, v]) => normalizeToast(v, k)).filter(Boolean);
-  } else if (message) {
+  }
+
+  // Include standalone message if not already represented in toastList
+  if (message) {
     const norm = normalizeToast(message, 'legacy_warning');
-    if (norm) toastList = [norm];
+    if (norm && !toastList.some(t => t.id === norm.id || t.body === norm.body)) {
+      toastList.push(norm);
+    }
   }
 
   // Ensure major violations FULLSCREEN_EXIT and TAB_SWITCH are never rendered as toasts (handled by modal)

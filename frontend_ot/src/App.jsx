@@ -3555,6 +3555,7 @@ function AppContent() {
           }
           setNetworkQuality(rtt >= 2000 ? 'fair' : 'good');
           setServerNotice('');
+          removeProctorToast('SERVER_OFFLINE');
           calibrateServerTime(data);
           // If server finalized submission due to timeout or proctor action, transition to finished
           if (data.status && data.status !== 'started') {
@@ -3565,10 +3566,19 @@ function AppContent() {
           // Server 5xx: Server is compiling or restarting; physical network is FINE
           setNetworkQuality(rtt >= 2000 ? 'fair' : 'good');
           setServerNotice('Server synchronizing — local auto-save active. Your exam continues uninterrupted.');
+          addProctorToast('SERVER_OFFLINE', {
+            id: 'SERVER_OFFLINE',
+            title: 'System Notice',
+            message: 'Server is synchronizing. Your answers are securely cached locally on this device.',
+            type: 'info',
+            persistent: true
+          });
           // Do NOT start disconnect countdown!
         } else {
           // 4xx or other HTTP reply: Network link is alive
           setNetworkQuality('good');
+          setServerNotice('');
+          removeProctorToast('SERVER_OFFLINE');
         }
       } catch (err) {
         // Request timed out or network error. Distinguish Client-Side vs Server-Side failure!
@@ -3584,6 +3594,13 @@ function AppContent() {
             // Candidate continues exam undisturbed. Local drafts are continuously saved.
             setNetworkQuality('fair');
             setServerNotice('Server offline — local auto-save active. Your exam continues uninterrupted.');
+            addProctorToast('SERVER_OFFLINE', {
+              id: 'SERVER_OFFLINE',
+              title: 'System Notice',
+              message: 'Server is synchronizing. Your answers are securely cached locally on this device.',
+              type: 'info',
+              persistent: true
+            });
             // Do NOT start disconnect countdown!
           } else {
             // Student cannot reach external internet; client network is cut off!
@@ -4162,9 +4179,18 @@ function AppContent() {
     }
     disconnectDeadlineRef.current = null;
     setDisconnectCountdown(null);
+    removeProctorToast('NETWORK_OFFLINE');
   };
 
   const startDisconnectCountdown = () => {
+    addProctorToast('NETWORK_OFFLINE', {
+      id: 'NETWORK_OFFLINE',
+      title: 'Network Notice',
+      message: 'Network connection lost. Reconnecting... (120s grace period). Answers are cached locally.',
+      type: 'warning',
+      persistent: true
+    });
+
     // If timer is already running with an active deadline, keep it ticking smoothly
     if (disconnectDeadlineRef.current && disconnectTimerRef.current) {
       return;
@@ -4616,6 +4642,13 @@ function AppContent() {
             onDismissProctorWarning={() => setWebcamProctorWarning('')}
             activeProctorToasts={activeProctorToasts}
             onDismissProctorToast={(id) => removeProctorToast(id)}
+            onNetworkDropToast={(msg) => addProctorToast('NETWORK_OFFLINE', {
+              id: 'NETWORK_OFFLINE',
+              title: 'Network Notice',
+              message: msg,
+              type: 'warning',
+              persistent: true
+            })}
             examVideoRef={examVideoRef}
             webcamStream={webcamStream}
             isSidebarOpen={isSidebarOpen}

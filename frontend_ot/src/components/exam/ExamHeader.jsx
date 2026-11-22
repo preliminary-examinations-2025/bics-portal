@@ -235,31 +235,6 @@ export const ExamHeader = ({
                 </span>
               )}
             </div>
-
-            {/* Server Health Notice: Quiet non-threatening badge when backend is offline/restarting */}
-            {serverNotice && (
-              <div
-                title={serverNotice}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  fontSize: '8pt',
-                  fontFamily: "'Plus Jakarta Sans', sans-serif",
-                  color: '#0369a1',
-                  backgroundColor: '#f0f9ff',
-                  border: '1px solid #bae6fd',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  marginLeft: '12px',
-                  flexShrink: 0,
-                  userSelect: 'none'
-                }}
-              >
-                <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#0284c7' }} />
-                <span>{serverNotice}</span>
-              </div>
-            )}
           </div>
         </div>
       </div>
