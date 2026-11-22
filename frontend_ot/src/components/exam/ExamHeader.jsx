@@ -254,8 +254,31 @@ export const ExamHeader = ({
               <span style={{ letterSpacing: '0.2px', fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 400 }}>{answeredCount}/{totalQuestions}</span>
             </div>
 
-            {/* 4-State WiFi Telemetry Badge with conditional 70s countdown timer on disconnect */}
+            {/* Cloud & WiFi Telemetry Badges with conditional countdown timer right of WiFi on disconnect */}
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginLeft: '16px', flexShrink: 0 }}>
+              {/* Cloud / Server Sync Telemetry Badge */}
+              <div
+                title={cloudMeta.title}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '6px',
+                  border: `1px solid ${cloudMeta.border}`,
+                  backgroundColor: cloudMeta.bg,
+                  color: cloudMeta.color,
+                  cursor: 'help',
+                  transition: 'all 0.2s ease',
+                  flexShrink: 0,
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                }}
+              >
+                {cloudMeta.icon}
+              </div>
+
+              {/* 4-State WiFi Telemetry Badge */}
               <div
                 title={wifiMeta.title}
                 style={{
@@ -278,7 +301,7 @@ export const ExamHeader = ({
                 {wifiMeta.icon}
               </div>
 
-              {/* 120s Countdown Timer: Only when network drops, styled in regular Plus Jakarta Sans */}
+              {/* 120s Countdown Timer: Displayed to the right of WiFi when network drops, styled in regular Plus Jakarta Sans */}
               {effectiveNetworkQuality === 'disconnected' && (
                 <span
                   title={`Connection is down. Reconnecting... Auto-submitting in ${currentCountdown}s`}
@@ -296,28 +319,6 @@ export const ExamHeader = ({
                   {currentCountdown}s
                 </span>
               )}
-
-              {/* Cloud / Server Sync Telemetry Badge */}
-              <div
-                title={cloudMeta.title}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '6px',
-                  border: `1px solid ${cloudMeta.border}`,
-                  backgroundColor: cloudMeta.bg,
-                  color: cloudMeta.color,
-                  cursor: 'help',
-                  transition: 'all 0.2s ease',
-                  flexShrink: 0,
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                }}
-              >
-                {cloudMeta.icon}
-              </div>
             </div>
           </div>
         </div>
