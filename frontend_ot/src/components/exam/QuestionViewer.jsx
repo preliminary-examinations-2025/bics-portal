@@ -249,15 +249,28 @@ export const QuestionViewer = ({
             justify-content: center !important;
             align-items: center !important;
             width: 100% !important;
-            margin: 14px 0 !important;
+            margin: 18px 0 !important;
+            padding: 6px 0 !important;
+            line-height: 2 !important;
             text-align: center !important;
+            overflow: visible !important;
+            scrollbar-width: none !important;
+          }
+          .cf-display-equation::-webkit-scrollbar,
+          .cf-display-equation .katex-display::-webkit-scrollbar {
+            display: none !important;
+            width: 0 !important;
+            height: 0 !important;
           }
           .cf-display-equation .katex-display {
             margin: 0 !important;
             text-align: center !important;
+            overflow: visible !important;
+            font-size: 1.22em !important;
           }
           .cf-display-equation .katex {
             text-align: center !important;
+            font-size: 1.2em !important;
           }
         `}</style>
         <div style={{ zIndex: 11, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>

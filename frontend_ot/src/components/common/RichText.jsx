@@ -188,8 +188,8 @@ export const RichText = React.memo(function RichText({ text, style, className })
           }
 
           resultLines.push(`
-            <div class="cf-display-equation" style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 14px 0; text-align: center; overflow-x: auto;">
-              <div style="display: inline-block; text-align: center; max-width: 100%;">
+            <div class="cf-display-equation" style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 18px 0; padding: 6px 0; line-height: 2; text-align: center; overflow: visible;">
+              <div style="display: inline-block; text-align: center; max-width: 100%; overflow: visible;">
                 ${mathLine}
               </div>
             </div>
@@ -337,15 +337,28 @@ export const RichText = React.memo(function RichText({ text, style, className })
           justify-content: center !important;
           align-items: center !important;
           width: 100% !important;
-          margin: 14px 0 !important;
+          margin: 18px 0 !important;
+          padding: 6px 0 !important;
+          line-height: 2 !important;
           text-align: center !important;
+          overflow: visible !important;
+          scrollbar-width: none !important;
+        }
+        .cf-display-equation::-webkit-scrollbar,
+        .cf-display-equation .katex-display::-webkit-scrollbar {
+          display: none !important;
+          width: 0 !important;
+          height: 0 !important;
         }
         .cf-display-equation .katex-display {
           margin: 0 !important;
           text-align: center !important;
+          overflow: visible !important;
+          font-size: 1.22em !important;
         }
         .cf-display-equation .katex {
           text-align: center !important;
+          font-size: 1.2em !important;
         }
       `}</style>
       <div
