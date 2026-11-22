@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, CheckCircle2, Wifi, WifiOff } from 'lucide-react';
+import { Clock, CheckCircle2, Wifi, WifiOff, Cloud, CloudOff } from 'lucide-react';
 import { formatTimer } from '../../config/constants';
 import { isQuestionAnswered } from '../../utils/examAnswerStatus';
 
@@ -81,6 +81,39 @@ export const ExamHeader = ({
   };
 
   const wifiMeta = getWifiMeta();
+
+  // Cloud / Server Sync Telemetry Visual Styles & Tooltips
+  const getCloudMeta = () => {
+    if (effectiveNetworkQuality === 'disconnected') {
+      return {
+        bg: '#f8fafc',
+        border: '#e2e8f0',
+        color: '#94a3b8',
+        icon: <CloudOff size={13} strokeWidth={2.2} />,
+        title: "Cloud sync paused — network offline (local auto-save active)"
+      };
+    }
+
+    if (serverNotice) {
+      return {
+        bg: '#f0f9ff',
+        border: '#bae6fd',
+        color: '#0284c7',
+        icon: <CloudOff size={13} strokeWidth={2.2} />,
+        title: "Server synchronizing — local auto-save active on this device"
+      };
+    }
+
+    return {
+      bg: '#f0fdf4',
+      border: '#bbf7d0',
+      color: '#16a34a',
+      icon: <Cloud size={13} strokeWidth={2.2} />,
+      title: "Cloud sync active (Server connected)"
+    };
+  };
+
+  const cloudMeta = getCloudMeta();
 
   return (
     <div
@@ -234,6 +267,28 @@ export const ExamHeader = ({
                   {currentCountdown}s
                 </span>
               )}
+
+              {/* Cloud / Server Sync Telemetry Badge */}
+              <div
+                title={cloudMeta.title}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '6px',
+                  border: `1px solid ${cloudMeta.border}`,
+                  backgroundColor: cloudMeta.bg,
+                  color: cloudMeta.color,
+                  cursor: 'help',
+                  transition: 'all 0.2s ease',
+                  flexShrink: 0,
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                }}
+              >
+                {cloudMeta.icon}
+              </div>
             </div>
           </div>
         </div>
