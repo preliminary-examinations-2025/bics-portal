@@ -19,8 +19,13 @@ const { runPipelineTick } = require('./eirfPipelineWorker');
 let reaperIntervalId = null;
 let isReaping = false;
 
-async function reapAbandonedSubmissions(maxIdleMs = 70000) {
+async function reapAbandonedSubmissions(maxIdleMs = 180000) {
     if (isReaping) return;
+    // Server Startup Protection: If server booted < 5 minutes ago, suppress reaping to allow
+    // reconnected clients to deliver heartbeats and cached submissions
+    if (process.uptime() < 300) {
+        return;
+    }
     isReaping = true;
     const cutoffTime = new Date(Date.now() - maxIdleMs);
 
@@ -51,6 +56,21 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
 
             for (const sub of abandonedSessions) {
                 try {
+                    // Fetch test config to check scheduled duration
+                    let testDoc = null;
+                    if (sub.testId) {
+                        testDoc = await TestConfigModel.findOne({ _id: sub.testId, isDeleted: { $ne: true } });
+                    }
+
+                    // Duration Guard: Never reap if the student's scheduled exam time has not elapsed + 15m buffer!
+                    const testDurationMs = ((testDoc?.duration || 60) * 60 * 1000);
+                    const startedAtMs = new Date(sub.startedAt || sub.createdAt || 0).getTime();
+                    const REAPER_POST_EXAM_BUFFER_MS = 15 * 60 * 1000;
+                    if (Date.now() < startedAtMs + testDurationMs + REAPER_POST_EXAM_BUFFER_MS) {
+                        // Candidate is still in their active exam duration window; do NOT reap!
+                        continue;
+                    }
+
                     const lastActivityTime = sub.lastHeartbeatAt || sub.startedAt || sub.createdAt || new Date(0);
                     const idleSeconds = Math.max(0, Math.round((Date.now() - new Date(lastActivityTime).getTime()) / 1000));
                     console.log(`[DEAD-MAN REAPER] Auto-finalizing abandoned session ${sub.submissionRefId || sub._id} (${sub.candidateName || sub.studentId}) - Inactive for ${idleSeconds}s.`);
@@ -69,15 +89,11 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                     });
 
                     // Evaluate marks if active test configuration exists
-                    let testDoc = null;
-                    if (sub.testId) {
-                        testDoc = await TestConfigModel.findOne({ _id: sub.testId, isDeleted: { $ne: true } });
-                        if (testDoc) {
-                            recalculateMCQScore(sub, testDoc);
-                            calculateCodingScoreFast(sub, testDoc);
-                            sub.totalScore = sub.evaluation?.totalScore ?? sub.score ?? 0;
-                            if (sub.evaluation) sub.evaluation.evaluatedAt = new Date();
-                        }
+                    if (testDoc) {
+                        recalculateMCQScore(sub, testDoc);
+                        calculateCodingScoreFast(sub, testDoc);
+                        sub.totalScore = sub.evaluation?.totalScore ?? sub.score ?? 0;
+                        if (sub.evaluation) sub.evaluation.evaluatedAt = new Date();
                     }
 
                     // Authoritative server-side EIRF incident evaluation
@@ -109,9 +125,19 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
 
             db.testSubmissions.forEach(sub => {
                 if (sub.status === 'started' && !sub.isDeleted) {
-                    const startT = new Date(sub.startedAt || 0).getTime();
-                    const hbT = new Date(sub.lastHeartbeatAt || sub.startedAt || 0).getTime();
+                    const testDoc = (db.tests || []).find(t => !t.isDeleted && String(t.id || t._id) === String(sub.testId));
+                    const testDurationMs = ((testDoc?.duration || 60) * 60 * 1000);
+                    const startedAtMs = new Date(sub.startedAt || sub.createdAt || 0).getTime();
+                    const REAPER_POST_EXAM_BUFFER_MS = 15 * 60 * 1000;
                     const now = Date.now();
+
+                    // Duration Guard: Never reap if the student's scheduled exam time has not elapsed + 15m buffer!
+                    if (now < startedAtMs + testDurationMs + REAPER_POST_EXAM_BUFFER_MS) {
+                        return;
+                    }
+
+                    const startT = startedAtMs;
+                    const hbT = new Date(sub.lastHeartbeatAt || sub.startedAt || 0).getTime();
 
                     if (now - startT > maxIdleMs && now - hbT > maxIdleMs) {
                         sub.status = 'auto-submitted';
@@ -122,10 +148,9 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
                         sub.proctoringLog.events.push({
                             timestamp: new Date(),
                             type: 'DISCONNECT_REAPED',
-                            details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 45s.'
+                            details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 180s after exam window.'
                         });
 
-                        const testDoc = (db.tests || []).find(t => !t.isDeleted && String(t.id || t._id) === String(sub.testId));
                         if (testDoc) {
                             recalculateMCQScore(sub, testDoc);
                             calculateCodingScoreFast(sub, testDoc);
@@ -157,7 +182,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 70000) {
     }
 }
 
-function startSubmissionReaper(intervalMs = 15000, maxIdleMs = 70000) {
+function startSubmissionReaper(intervalMs = 20000, maxIdleMs = 180000) {
     if (reaperIntervalId) return;
     console.log(`[DEAD-MAN REAPER] Dead-Man's Switch reaper worker initialized (Interval: ${intervalMs}ms, Max Idle: ${maxIdleMs}ms).`);
     

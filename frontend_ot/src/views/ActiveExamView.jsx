@@ -18,6 +18,7 @@ export const ActiveExamView = ({
   examTimeLeft,
   isOnline = true,
   networkQuality = 'good',
+  serverNotice = '',
   disconnectCountdown,
   submittingExam,
   handleManualSubmitExam,
@@ -226,6 +227,7 @@ export const ActiveExamView = ({
         examTimeLeft={examTimeLeft}
         isOnline={isOnline}
         networkQuality={networkQuality}
+        serverNotice={serverNotice}
         disconnectCountdown={disconnectCountdown}
         submittingExam={submittingExam}
         handleManualSubmitExam={handleManualSubmitExam}

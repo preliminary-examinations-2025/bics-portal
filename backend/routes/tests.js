@@ -1285,8 +1285,8 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
                     $set: { lastHeartbeatAt: now }
                 };
 
-                // Rule 3: Heartbeat gap >= 10s (missing >= 2 consecutive 5s pulses) confirms > 5s network disconnection
-                if (gapMs >= 10000) {
+                // Rule 3: Heartbeat gap >= 25s (missing >= 5 consecutive 5s pulses) confirms sustained network disconnection
+                if (gapMs >= 25000) {
                     const gapSeconds = Math.round(gapMs / 1000);
                     const downtimeSeconds = Math.max(0, gapSeconds - 5);
                     updateOps.$push = {
@@ -1321,14 +1321,21 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
                 remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
             }
 
+            const serverTimestamp = now.getTime();
+            const checkpointToken = crypto
+                .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                .update(`${existingSub._id || existingSub.id}:${serverTimestamp}:${sub.status}`)
+                .digest('hex');
+
             return res.json({ 
                 success: true, 
                 status: sub.status, 
-                serverTime: now.getTime(),
+                serverTime: serverTimestamp,
                 startedAt: sub.startedAt ? new Date(sub.startedAt).getTime() : null,
                 expiresAt: expiresAtMs,
                 remainingSeconds: remainingSeconds,
-                reaperGraceSeconds: 70
+                reaperGraceSeconds: 180,
+                checkpointToken
             });
         } else {
             const db = getJSONData();
@@ -1341,7 +1348,7 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
                 const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
                 sub.lastHeartbeatAt = now;
 
-                if (gapMs >= 10000) {
+                if (gapMs >= 25000) {
                     const gapSeconds = Math.round(gapMs / 1000);
                     const downtimeSeconds = Math.max(0, gapSeconds - 5);
                     if (!sub.proctoringLog) sub.proctoringLog = {};
@@ -1374,14 +1381,21 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
                 remainingSeconds = Math.max(0, Math.round((expiresAtMs - now.getTime()) / 1000));
             }
 
+            const serverTimestamp = now.getTime();
+            const checkpointToken = crypto
+                .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                .update(`${existingSub._id || existingSub.id}:${serverTimestamp}:${sub.status}`)
+                .digest('hex');
+
             return res.json({ 
                 success: true, 
                 status: sub.status, 
-                serverTime: now.getTime(),
+                serverTime: serverTimestamp,
                 startedAt: sub.startedAt ? new Date(sub.startedAt).getTime() : null,
                 expiresAt: expiresAtMs,
                 remainingSeconds: remainingSeconds,
-                reaperGraceSeconds: 70
+                reaperGraceSeconds: 180,
+                checkpointToken
             });
         }
     } catch (e) {
@@ -2061,15 +2075,25 @@ router.post('/submit', requireAuth, async (req, res) => {
                     }
 
                     // Hard Immutability: If exam is already finalized or reaped, strictly reject answer tampering with 409 Conflict
+                    // EXCEPTION: If submission was auto-submitted due to dead_man_reaper or disconnect_timeout,
+                    // reverse the reap and accept candidate's genuine cached submission!
+                    const isReapedByServer = submission.status === 'auto-submitted' && 
+                        (submission.submissionReason === 'dead_man_reaper' || submission.submissionReason === 'disconnect_timeout');
+
                     if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
-                        const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
-                        earlyPayload.bicsId = toBicsId(submission._id || submission.id);
-                        return res.status(409).json({ 
-                            error: `Exam attempt is permanently closed (Status: ${submission.status}). Answers are frozen and cannot be modified.`,
-                            status: submission.status,
-                            isFinalized: true,
-                            submission: earlyPayload 
-                        });
+                        if (isReapedByServer) {
+                            console.log(`[SUBMISSION REAP REVERSED] Accepting genuine cached submission for ${submissionId} previously marked as ${submission.submissionReason}`);
+                            submission.status = 'started';
+                        } else {
+                            const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                            earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                            return res.status(409).json({ 
+                                error: `Exam attempt is permanently closed (Status: ${submission.status}). Answers are frozen and cannot be modified.`,
+                                status: submission.status,
+                                isFinalized: true,
+                                submission: earlyPayload 
+                            });
+                        }
                     }
 
                     if (status === 'started') {
@@ -2143,9 +2167,30 @@ router.post('/submit', requireAuth, async (req, res) => {
                     if (test) {
                         // Authoritative server-side wall-clock deadline validation (Item 2.3)
                         if (submission.startedAt && isFinalSubmission) {
-                            const elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+                            let elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+
+                            // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
+                            if (req.body.isOfflineSync && req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
+                                const expectedToken = crypto
+                                    .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                                    .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
+                                    .digest('hex');
+
+                                if (expectedToken === req.body.lastCheckpointToken) {
+                                    const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
+                                    const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
+                                    const anchoredElapsedMs = verifiedCompletionTimeMs - new Date(submission.startedAt).getTime();
+                                    if (anchoredElapsedMs > 0) {
+                                        elapsedMs = anchoredElapsedMs;
+                                        console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(elapsedMs / 1000)}s elapsed.`);
+                                    }
+                                } else {
+                                    console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
+                                }
+                            }
+
                             const allowedDurationMs = (test.duration || 60) * 60 * 1000;
-                            const GRACE_PERIOD_MS = 120 * 1000; // 2 minutes network buffer
+                            const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
                             if (elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
                                 const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
                                 console.warn(`[EXAM DEADLINE EXCEEDED] Submission ${submissionId} submitted ${overtimeSec}s past deadline. Overriding status to auto-submitted.`);
@@ -2156,7 +2201,15 @@ router.post('/submit', requireAuth, async (req, res) => {
                                 submission.proctoringLog.events.push({
                                     timestamp: new Date(),
                                     type: 'OVERTIME_SUBMISSION',
-                                    details: `Submission received ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
+                                    details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
+                                });
+                            } else if (req.body.isOfflineSync) {
+                                if (!submission.proctoringLog) submission.proctoringLog = {};
+                                if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
+                                submission.proctoringLog.events.push({
+                                    timestamp: new Date(),
+                                    type: 'OFFLINE_SYNC_ACCEPTED',
+                                    details: `Cached examination payload accepted and verified against server-signed checkpoint.`
                                 });
                             }
                         }
@@ -2266,15 +2319,25 @@ router.post('/submit', requireAuth, async (req, res) => {
             }
 
             // Hard Immutability: If exam is already finalized or reaped, strictly reject answers tampering with 409 Conflict
+            // EXCEPTION: If submission was auto-submitted due to dead_man_reaper or disconnect_timeout,
+            // reverse the reap and accept candidate's genuine cached submission!
+            const isReapedByServer = submission.status === 'auto-submitted' && 
+                (submission.submissionReason === 'dead_man_reaper' || submission.submissionReason === 'disconnect_timeout');
+
             if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
-                const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
-                earlyPayload.bicsId = toBicsId(submission._id || submission.id);
-                return res.status(409).json({ 
-                    error: `Exam attempt is permanently closed (Status: ${submission.status}). Answers are frozen and cannot be modified.`,
-                    status: submission.status,
-                    isFinalized: true,
-                    submission: earlyPayload 
-                });
+                if (isReapedByServer) {
+                    console.log(`[SUBMISSION REAP REVERSED] Accepting genuine cached submission for ${submissionId} previously marked as ${submission.submissionReason}`);
+                    submission.status = 'started';
+                } else {
+                    const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                    earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                    return res.status(409).json({ 
+                        error: `Exam attempt is permanently closed (Status: ${submission.status}). Answers are frozen and cannot be modified.`,
+                        status: submission.status,
+                        isFinalized: true,
+                        submission: earlyPayload 
+                    });
+                }
             }
 
             if (status === 'started') {
@@ -2355,9 +2418,30 @@ router.post('/submit', requireAuth, async (req, res) => {
             if (test) {
                 // Authoritative server-side wall-clock deadline validation (Item 2.3)
                 if (submission.startedAt && isFinalSubmission) {
-                    const elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+                    let elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+
+                    // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
+                    if (req.body.isOfflineSync && req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
+                        const expectedToken = crypto
+                            .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                            .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
+                            .digest('hex');
+
+                        if (expectedToken === req.body.lastCheckpointToken) {
+                            const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
+                            const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
+                            const anchoredElapsedMs = verifiedCompletionTimeMs - new Date(submission.startedAt).getTime();
+                            if (anchoredElapsedMs > 0) {
+                                elapsedMs = anchoredElapsedMs;
+                                console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(elapsedMs / 1000)}s elapsed.`);
+                            }
+                        } else {
+                            console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
+                        }
+                    }
+
                     const allowedDurationMs = (test.duration || 60) * 60 * 1000;
-                    const GRACE_PERIOD_MS = 120 * 1000;
+                    const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
                     if (elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
                         const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
                         submission.status = 'auto-submitted';
@@ -2367,7 +2451,15 @@ router.post('/submit', requireAuth, async (req, res) => {
                         submission.proctoringLog.events.push({
                             timestamp: new Date(),
                             type: 'OVERTIME_SUBMISSION',
-                            details: `Submission received ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
+                            details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
+                        });
+                    } else if (req.body.isOfflineSync) {
+                        if (!submission.proctoringLog) submission.proctoringLog = {};
+                        if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
+                        submission.proctoringLog.events.push({
+                            timestamp: new Date(),
+                            type: 'OFFLINE_SYNC_ACCEPTED',
+                            details: `Cached examination payload accepted and verified against server-signed checkpoint.`
                         });
                     }
                 }

@@ -551,10 +551,46 @@ function AppContent() {
   const [syncStatus, setSyncStatus] = useState('');
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [networkQuality, setNetworkQuality] = useState('good'); // 'good' | 'fair' | 'poor' | 'disconnected'
+  const [serverNotice, setServerNotice] = useState('');
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const disconnectTimerRef = useRef(null);
   const disconnectDeadlineRef = useRef(null);
   const offlineStartMonotonicRef = useRef(null);
+  const consecutiveMissesRef = useRef(0);
+  const offlineDebounceTimerRef = useRef(null);
+  const lastCheckpointRef = useRef({ serverTime: null, checkpointToken: null, localMonotonic: null });
+  const inFlightHeartbeatRef = useRef(false);
+
+  // Probe global internet reachability independently of BICS backend
+  const checkGlobalInternetAccess = async () => {
+    if (!navigator.onLine) return false;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2000);
+      await fetch('https://www.gstatic.com/generate_204', {
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      return true;
+    } catch (_) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        await fetch('https://cloudflare.com/cdn-cgi/trace', {
+          mode: 'no-cors',
+          cache: 'no-store',
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  };
 
   // Authoritative Server Time Synchronization Engine
   const serverClockOffsetRef = useRef(0);
@@ -3481,33 +3517,88 @@ function AppContent() {
     if (!subId) return;
 
     const sendHeartbeat = async () => {
-      // Dual-layer connectivity check: If browser is offline, local loopback (localhost) pings
-      // must NOT falsely cancel the disconnect countdown!
-      if (!navigator.onLine || !isOnline) {
+      if (inFlightHeartbeatRef.current) return;
+      inFlightHeartbeatRef.current = true;
+
+      // If browser OS network adapter is severed, initiate client disconnect policy
+      if (!navigator.onLine) {
+        consecutiveMissesRef.current += 1;
+        setNetworkQuality('disconnected');
         startDisconnectCountdown();
+        inFlightHeartbeatRef.current = false;
         return;
       }
 
+      const startTime = performance.now();
       try {
         const res = await fetch(`${API_BASE}/tests/heartbeat/${subId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(4000)
+          signal: AbortSignal.timeout(10000) // 10-second timeout for Render cold-starts
         });
+
+        const rtt = performance.now() - startTime;
+
+        // ANY response (200..599) proves candidate's physical connection to server origin is intact!
+        consecutiveMissesRef.current = 0;
+        cancelDisconnectCountdown();
+
         if (res.ok) {
-          cancelDisconnectCountdown();
           const data = await res.json();
+          // Store cryptographic server-signed checkpoint for tamper-proof time anchoring
+          if (data.checkpointToken && typeof data.serverTime === 'number') {
+            lastCheckpointRef.current = {
+              serverTime: data.serverTime,
+              checkpointToken: data.checkpointToken,
+              localMonotonic: performance.now()
+            };
+          }
+          setNetworkQuality(rtt >= 2000 ? 'fair' : 'good');
+          setServerNotice('');
           calibrateServerTime(data);
           // If server finalized submission due to timeout or proctor action, transition to finished
           if (data.status && data.status !== 'started') {
             setFlow('finished');
             setFinishedStep(1);
           }
+        } else if (res.status >= 500) {
+          // Server 5xx: Server is compiling or restarting; physical network is FINE
+          setNetworkQuality(rtt >= 2000 ? 'fair' : 'good');
+          setServerNotice('Server synchronizing — local auto-save active. Your exam continues uninterrupted.');
+          // Do NOT start disconnect countdown!
         } else {
-          startDisconnectCountdown();
+          // 4xx or other HTTP reply: Network link is alive
+          setNetworkQuality('good');
         }
-      } catch (_) {
-        startDisconnectCountdown();
+      } catch (err) {
+        // Request timed out or network error. Distinguish Client-Side vs Server-Side failure!
+        if (!navigator.onLine) {
+          consecutiveMissesRef.current += 1;
+          setNetworkQuality('disconnected');
+          startDisconnectCountdown();
+        } else {
+          // Test global internet reachability
+          const hasGlobalInternet = await checkGlobalInternetAccess();
+          if (hasGlobalInternet) {
+            // Student has working internet; BICS backend is down/unreachable!
+            // Candidate continues exam undisturbed. Local drafts are continuously saved.
+            setNetworkQuality('fair');
+            setServerNotice('Server offline — local auto-save active. Your exam continues uninterrupted.');
+            // Do NOT start disconnect countdown!
+          } else {
+            // Student cannot reach external internet; client network is cut off!
+            consecutiveMissesRef.current += 1;
+            const misses = consecutiveMissesRef.current;
+            if (misses >= 2) {
+              setNetworkQuality('disconnected');
+              startDisconnectCountdown();
+            } else {
+              setNetworkQuality('poor');
+            }
+          }
+        }
+      } finally {
+        inFlightHeartbeatRef.current = false;
       }
     };
 
@@ -3887,6 +3978,29 @@ function AppContent() {
     const fullPLog = getProctoringLogPayload(warningsObj);
     const isActuallyOnline = Boolean(navigator.onLine && isOnline);
 
+    const elapsedSinceCheckpoint = (lastCheckpointRef.current?.localMonotonic && lastCheckpointRef.current?.serverTime)
+      ? Math.max(0, Math.round(performance.now() - lastCheckpointRef.current.localMonotonic))
+      : 0;
+    const serverAnchoredCompletionTime = (lastCheckpointRef.current?.serverTime)
+      ? new Date(lastCheckpointRef.current.serverTime + elapsedSinceCheckpoint).toISOString()
+      : new Date().toISOString();
+
+    const payload = {
+      submissionId: subId,
+      studentId: candidate?.studentId || submission?.studentId || '',
+      candidateName: candidate?.name || submission?.candidateName || 'Candidate',
+      testTitle: submission?.testTitle || test?.title || 'BICS Examination',
+      answers: finalAnswers,
+      proctoringLog: fullPLog,
+      status: statusVal,
+      submissionReason: reasonVal,
+      clientCompletedAt: serverAnchoredCompletionTime,
+      lastCheckpointToken: lastCheckpointRef.current?.checkpointToken || null,
+      lastCheckpointServerTime: lastCheckpointRef.current?.serverTime || null,
+      elapsedSinceCheckpointMs: elapsedSinceCheckpoint,
+      isOfflineSync: !isActuallyOnline || Boolean(serverNotice)
+    };
+
     // Offline / disconnect data is preserved in IndexedDB & localStorage without triggering file downloads
 
     if (!isActuallyOnline) {
@@ -3902,16 +4016,6 @@ function AppContent() {
       }
 
       const pendingSubmitKey = `bics_pending_submit_${subId}`;
-      const payload = {
-        submissionId: subId,
-        studentId: candidate?.studentId || submission?.studentId || '',
-        candidateName: candidate?.name || submission?.candidateName || 'Candidate',
-        testTitle: submission?.testTitle || test?.title || 'BICS Examination',
-        answers: finalAnswers,
-        proctoringLog: fullPLog,
-        status: statusVal,
-        submissionReason: reasonVal
-      };
 
       // 1. High-capacity IndexedDB persistence (Item 8)
       saveOfflineSubmission(payload).catch(() => {});
@@ -3947,13 +4051,7 @@ function AppContent() {
         const res = await fetch(`${API_BASE}/tests/submit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            submissionId: subId,
-            answers: finalAnswers,
-            proctoringLog: fullPLog,
-            status: statusVal,
-            submissionReason: reasonVal
-          })
+          body: JSON.stringify(payload)
         });
 
         const data = await res.json();
@@ -4033,17 +4131,8 @@ function AppContent() {
     // Only if all online submission attempts failed:
     console.error("Submission failed across all attempts, caching payload locally in IndexedDB:", submitErrorMsg);
     const pendingSubmitKey = `bics_pending_submit_${subId}`;
-    const payload = {
-      submissionId: subId,
-      studentId: candidate?.studentId || submission?.studentId || '',
-      candidateName: candidate?.name || submission?.candidateName || 'Candidate',
-      testTitle: submission?.testTitle || test?.title || 'BICS Examination',
-      answers: answersList,
-      proctoringLog: fullPLog,
-      status: statusVal,
-      hasEirfFlag: true,
-      eirfStatus: 'pending'
-    };
+    payload.hasEirfFlag = true;
+    payload.eirfStatus = 'pending';
 
     saveOfflineSubmission(payload).catch(() => {});
     try {
@@ -4082,11 +4171,12 @@ function AppContent() {
     }
 
     if (!disconnectDeadlineRef.current) {
-      disconnectDeadlineRef.current = Date.now() + 70000;
+      disconnectDeadlineRef.current = Date.now() + 120000; // Exactly 120 seconds
     }
 
     const initialSec = Math.max(0, Math.ceil((disconnectDeadlineRef.current - Date.now()) / 1000));
     setDisconnectCountdown(initialSec);
+    setNetworkQuality('disconnected');
 
     if (disconnectTimerRef.current) {
       clearInterval(disconnectTimerRef.current);
@@ -4108,7 +4198,7 @@ function AppContent() {
         disconnectTimerRef.current = null;
         disconnectDeadlineRef.current = null;
         setDisconnectCountdown(0);
-        console.warn("[Network Disconnect] 70 seconds elapsed without connection. Auto-finalizing exam.");
+        console.warn("[Network Disconnect] 120 seconds elapsed without connection. Auto-finalizing exam.");
         const finalAnswers = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
         finalizeExamSubmission(finalAnswers, proctoringWarnings, 'auto-submitted', 'disconnect_timeout');
       }
@@ -4127,7 +4217,13 @@ function AppContent() {
     const subId = submission.id || submission._id;
 
     const onOnline = () => {
+      if (offlineDebounceTimerRef.current) {
+        clearTimeout(offlineDebounceTimerRef.current);
+        offlineDebounceTimerRef.current = null;
+      }
       cancelDisconnectCountdown();
+      setNetworkQuality('good');
+      setWebcamProctorWarning('');
       if (offlineStartMonotonicRef.current !== null) {
         const durationSec = Math.round(((performance.now() - offlineStartMonotonicRef.current) / 1000) * 10) / 10;
         offlineStartMonotonicRef.current = null;
@@ -4207,8 +4303,16 @@ function AppContent() {
           const subId = submission._id || submission.id;
           saveOfflineDraft(`bics_draft_${test?.id}_${candidate?.id}_${subId}`, examAnswersRef.current || examAnswers).catch(() => {});
         }
-        setWebcamProctorWarning("Network Offline: Local auto-save active. Reconnecting... (70s grace period)");
-        startDisconnectCountdown();
+
+        // 3.5s debounce before declaring client offline
+        if (offlineDebounceTimerRef.current) clearTimeout(offlineDebounceTimerRef.current);
+        offlineDebounceTimerRef.current = setTimeout(() => {
+          if (!navigator.onLine) {
+            setNetworkQuality('disconnected');
+            setWebcamProctorWarning("Network Offline: Local auto-save active. Reconnecting... (120s grace period)");
+            startDisconnectCountdown();
+          }
+        }, 3500);
       }
     };
 
@@ -4503,6 +4607,8 @@ function AppContent() {
             candidate={candidate}
             examTimeLeft={examTimeLeft}
             isOnline={isOnline}
+            networkQuality={networkQuality}
+            serverNotice={serverNotice}
             disconnectCountdown={disconnectCountdown}
             submittingExam={submittingExam}
             handleManualSubmitExam={handleManualSubmitExam}

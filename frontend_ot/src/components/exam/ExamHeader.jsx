@@ -18,6 +18,7 @@ export const ExamHeader = ({
   examTimeLeft,
   isOnline = true,
   networkQuality = 'good',
+  serverNotice = '',
   disconnectCountdown,
   submittingExam,
   handleManualSubmitExam,
@@ -27,7 +28,7 @@ export const ExamHeader = ({
   // Authoritative countdown is passed from parent App orchestrator (disconnectCountdown)
   const isDisconnected = !isOnline || (disconnectCountdown !== null && disconnectCountdown !== undefined);
   const effectiveNetworkQuality = isDisconnected ? 'disconnected' : networkQuality;
-  const currentCountdown = (disconnectCountdown !== null && disconnectCountdown !== undefined) ? disconnectCountdown : 70;
+  const currentCountdown = (disconnectCountdown !== null && disconnectCountdown !== undefined) ? disconnectCountdown : 120;
 
   // Compute live answered questions count using standardized answer checker
   const totalQuestions = test?.questions?.length || 0;
@@ -216,7 +217,7 @@ export const ExamHeader = ({
                 {wifiMeta.icon}
               </div>
 
-              {/* 70s Countdown Timer: Only when network drops, styled in regular Plus Jakarta Sans */}
+              {/* 120s Countdown Timer: Only when network drops, styled in regular Plus Jakarta Sans */}
               {effectiveNetworkQuality === 'disconnected' && (
                 <span
                   title={`Connection is down. Reconnecting... Auto-submitting in ${currentCountdown}s`}
@@ -234,6 +235,31 @@ export const ExamHeader = ({
                 </span>
               )}
             </div>
+
+            {/* Server Health Notice: Quiet non-threatening badge when backend is offline/restarting */}
+            {serverNotice && (
+              <div
+                title={serverNotice}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  fontSize: '8pt',
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  color: '#0369a1',
+                  backgroundColor: '#f0f9ff',
+                  border: '1px solid #bae6fd',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  marginLeft: '12px',
+                  flexShrink: 0,
+                  userSelect: 'none'
+                }}
+              >
+                <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#0284c7' }} />
+                <span>{serverNotice}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
