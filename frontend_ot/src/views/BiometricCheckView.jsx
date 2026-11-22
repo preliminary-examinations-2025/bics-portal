@@ -63,17 +63,22 @@ export function BiometricCheckView({
   const audioAnimFrameRef = useRef(null);
   const speechRecognitionRef = useRef(null);
   const voiceFallbackTimerRef = useRef(null);
+  const voiceDebounceTimerRef = useRef(null);
   const voiceFallbackActiveRef = useRef(false);
   const isCalibratingVoiceRef = useRef(false);
   const latestDecibelsRef = useRef(0);
   const hasDetectedSpeechVolumeRef = useRef(false);
   const voiceCalibratedRef = useRef(Boolean(savedBiometrics?.voiceCalibrated));
+  const lastTranscriptRef = useRef('');
+  const matchedWordsMapRef = useRef({});
   const faceHistoryRef = useRef([]);
   // Differential Active Challenge State Machine Refs
   const neutralSamplesRef = useRef([]);
   const baselinePoseRef = useRef(null);
   const actionHeldCountRef = useRef(0);
   const unalignedFramesCountRef = useRef(0);
+  const challengeFulfilledRef = useRef(Boolean(savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified));
+  const livenessVerifiedRef = useRef(Boolean(savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified));
 
   // Model & Biometrics State (Preserved if returning from next steps)
   const [isModelLoaded, setIsModelLoaded] = useState(false);
@@ -87,16 +92,16 @@ export function BiometricCheckView({
   const [faceConfidence, setFaceConfidence] = useState(() => savedBiometrics?.faceConfidence || (savedBiometrics?.baselinePhoto ? 95 : 0));
   const [faceBox, setFaceBox] = useState(() => savedBiometrics?.faceBox || null);
   const [faceLandmarks, setFaceLandmarks] = useState(() => savedBiometrics?.faceLandmarks || null);
-  const [livenessProgress, setLivenessProgress] = useState(() => savedBiometrics?.baselinePhoto ? 100 : 0);
-  const [livenessVerified, setLivenessVerified] = useState(() => Boolean(savedBiometrics?.baselinePhoto));
+  const [livenessProgress, setLivenessProgress] = useState(() => (savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified) ? 100 : 0);
+  const [livenessVerified, setLivenessVerified] = useState(() => Boolean(savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified));
 
   // Phase 2 Server Challenge & Neural Face Match States
   const [serverChallenge, setServerChallenge] = useState(null);
   const [currentChallengeIndex, setCurrentChallengeIndex] = useState(0);
   const currentChallengeIndexRef = useRef(0);
   const isAdvancingChallengeRef = useRef(false);
-  const [challengeFulfilled, setChallengeFulfilled] = useState(() => Boolean(savedBiometrics?.baselinePhoto));
-  const [challengeProgress, setChallengeProgress] = useState(() => savedBiometrics?.baselinePhoto ? 100 : 0);
+  const [challengeFulfilled, setChallengeFulfilled] = useState(() => Boolean(savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified));
+  const [challengeProgress, setChallengeProgress] = useState(() => (savedBiometrics?.baselinePhoto || savedBiometrics?.livenessVerified) ? 100 : 0);
   const [isVerifyingBiometrics, setIsVerifyingBiometrics] = useState(false);
   const [biometricMatchResult, setBiometricMatchResult] = useState(() => savedBiometrics?.biometricResult || null);
   const [biometricRetryCount, setBiometricRetryCount] = useState(0);
@@ -261,12 +266,6 @@ export function BiometricCheckView({
     const detectFaceFrame = async (timestamp) => {
       if (cancelled) return;
 
-      // Speech check isolation: when voice oath is active, yield thread to Web Speech API
-      if (isCalibratingVoice) {
-        animId = requestAnimationFrame(detectFaceFrame);
-        return;
-      }
-
       // Smooth throttle detection to ~6-7 FPS (every 150ms) to ensure zero UI/video frame jitter
       if (timestamp - lastCheckTime > 150) {
         lastCheckTime = timestamp;
@@ -278,7 +277,7 @@ export function BiometricCheckView({
           try {
             // Micro-task yield before GPU inference so audio events and video decoder run smoothly
             await new Promise(resolve => setTimeout(resolve, 0));
-            if (cancelled || isCalibratingVoice) {
+            if (cancelled) {
               animId = requestAnimationFrame(detectFaceFrame);
               return;
             }
@@ -350,7 +349,7 @@ export function BiometricCheckView({
 
                 unalignedFramesCountRef.current = 0;
 
-                if (baselinePhoto || challengeFulfilled) {
+                if (baselinePhoto || challengeFulfilled || challengeFulfilledRef.current || livenessVerifiedRef.current) {
                   // Active challenge is already completed or baseline portrait is confirmed
                   drawFaceReticles(ctx, p, '#22c55e', `Live Face Confirmed (${Math.round(prob * 100)}%)`);
                   drawLandmarks(ctx, lm, '#22c55e');
@@ -505,6 +504,8 @@ export function BiometricCheckView({
                           isAdvancingChallengeRef.current = false;
                         }, 700);
                       } else {
+                        challengeFulfilledRef.current = true;
+                        livenessVerifiedRef.current = true;
                         setChallengeFulfilled(true);
                         setLivenessVerified(true);
                         setChallengeProgress(100);
@@ -522,7 +523,7 @@ export function BiometricCheckView({
                 }
               } else {
                 unalignedFramesCountRef.current += 1;
-                if (unalignedFramesCountRef.current > 8 && !challengeFulfilled) {
+                if (unalignedFramesCountRef.current > 8 && !challengeFulfilled && !challengeFulfilledRef.current) {
                   // Reset baseline calibration if candidate lost alignment for several frames
                   neutralSamplesRef.current = [];
                   baselinePoseRef.current = null;
@@ -557,7 +558,7 @@ export function BiometricCheckView({
       cancelled = true;
       if (animId) cancelAnimationFrame(animId);
     };
-  }, [webcamStream, baselinePhoto, blazefaceModelRef, isModelLoaded, isCalibratingVoice]);
+  }, [webcamStream, baselinePhoto, blazefaceModelRef, isModelLoaded]);
 
   // Canvas Drawing Helpers: Corner Reticles & Facial Landmarks
   const drawFaceReticles = (ctx, pred, color, label) => {
@@ -764,25 +765,37 @@ export function BiometricCheckView({
   const handleRetakePhoto = () => {
     setBaselinePhoto(null);
     setBiometricMatchResult(null);
-    setLivenessProgress(0);
-    setChallengeProgress(0);
-    setChallengeFulfilled(false);
-    setLivenessVerified(false);
-    setFaceCheckStatus('waiting');
-    neutralSamplesRef.current = [];
-    baselinePoseRef.current = null;
-    actionHeldCountRef.current = 0;
+    const wasLivenessPassed = livenessVerifiedRef.current || challengeFulfilledRef.current;
+    if (!wasLivenessPassed) {
+      setLivenessProgress(0);
+      setChallengeProgress(0);
+      setChallengeFulfilled(false);
+      setLivenessVerified(false);
+      neutralSamplesRef.current = [];
+      baselinePoseRef.current = null;
+      actionHeldCountRef.current = 0;
+      setFaceCheckStatus('waiting');
+      setFaceStatusMessage('Center your face directly in the guide to calibrate.');
+    } else {
+      // Retaining verified liveness: Candidate is alive; simply retaking photo for optimal similarity
+      setLivenessVerified(true);
+      setChallengeFulfilled(true);
+      setLivenessProgress(100);
+      setChallengeProgress(100);
+      setFaceCheckStatus('aligned');
+      setFaceStatusMessage('Liveness verified. Align face and click Capture Baseline Photo.');
+    }
     unalignedFramesCountRef.current = 0;
     if (onSaveBiometricsCache) {
       onSaveBiometricsCache({
         baselinePhoto: null,
-        livenessVerified: false,
-        biometricResult: null
+        biometricResult: null,
+        livenessVerified: wasLivenessPassed
       });
     }
   };
 
-  // 6. Web Audio API Decibel Meter & Live Waveform (Real Oscilloscope & Voice Lines)
+  // 6. Web Audio API Decibel Meter & Live Waveform (Original Frequency Bar Graph)
   useEffect(() => {
     let micStream = null;
     let localAudioCtx = null;
@@ -835,8 +848,8 @@ export function BiometricCheckView({
         if (stream && (typeof stream.getAudioTracks !== 'function' || stream.getAudioTracks().length > 0)) {
           try {
             analyser = localAudioCtx.createAnalyser();
-            analyser.fftSize = 512;
-            analyser.smoothingTimeConstant = 0.65;
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.5;
             analyserRef.current = analyser;
 
             const source = localAudioCtx.createMediaStreamSource(stream);
@@ -846,9 +859,8 @@ export function BiometricCheckView({
           }
         }
 
-        const bufferLength = analyser ? analyser.frequencyBinCount : 256;
-        const timeData = new Uint8Array(bufferLength);
-        const freqData = new Uint8Array(bufferLength);
+        const bufferLength = analyser ? analyser.frequencyBinCount : 128;
+        const dataArray = new Uint8Array(bufferLength);
 
         const drawVisualizer = () => {
           if (isCancelled) return;
@@ -860,94 +872,46 @@ export function BiometricCheckView({
           const canvas = audioCanvasRef.current;
           const ctx = canvas.getContext('2d');
           const width = canvas.width || 460;
-          const height = canvas.height || 40;
+          const height = canvas.height || 32;
 
-          let computedDb = 20;
+          let currentDb = 20;
 
-          if (analyser && localAudioCtx && localAudioCtx.state === 'running') {
-            analyser.getByteTimeDomainData(timeData);
-            analyser.getByteFrequencyData(freqData);
-
-            let sumSquares = 0;
-            let freqSum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-              const norm = (timeData[i] - 128) / 128.0;
-              sumSquares += norm * norm;
-              freqSum += freqData[i];
+          if (analyser && localAudioCtx) {
+            if (localAudioCtx.state === 'suspended') {
+              localAudioCtx.resume().catch(() => {});
             }
-            const rms = Math.sqrt(sumSquares / bufferLength);
-            const freqAvg = freqSum / bufferLength;
+            if (localAudioCtx.state === 'running') {
+              analyser.getByteFrequencyData(dataArray);
 
-            computedDb = Math.min(100, Math.round(20 + Math.max(rms * 140, (freqAvg / 255) * 65)));
-            latestDecibelsRef.current = computedDb;
-            setCurrentDecibels(computedDb);
+              let sum = 0;
+              for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+              }
+              const avg = sum / bufferLength;
+              currentDb = Math.min(100, Math.round(20 + (avg / 255) * 60));
+              latestDecibelsRef.current = currentDb;
+              setCurrentDecibels(currentDb);
 
-            // Flag genuine voice input if volume rises noticeably above ambient quiet
-            if (computedDb >= 36) {
-              hasDetectedSpeechVolumeRef.current = true;
+              if (currentDb >= 36) {
+                hasDetectedSpeechVolumeRef.current = true;
+              }
             }
           }
 
-          // 1. Sleek Dark Canvas Background
+          // Render sleek subtle original waveform
           ctx.clearRect(0, 0, width, height);
-          ctx.fillStyle = '#0f172a'; // Rich Slate-900
+          ctx.fillStyle = '#f8fafc';
           ctx.fillRect(0, 0, width, height);
 
-          // 2. Faint Center Guide Line
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(0, height / 2);
-          ctx.lineTo(width, height / 2);
-          ctx.stroke();
-
-          // 3. Dynamic Audio Frequency Bars (Background Equalizer)
-          const numBars = 36;
-          const barWidth = width / numBars;
-          for (let b = 0; b < numBars; b++) {
-            const fIdx = Math.floor(b * (bufferLength / numBars));
-            const val = freqData[fIdx] / 255;
-            const bHeight = Math.max(3, val * (height - 8));
-            ctx.fillStyle = computedDb > 38 ? 'rgba(56, 189, 248, 0.35)' : 'rgba(100, 116, 139, 0.22)';
-            ctx.fillRect(b * barWidth + 1, (height - bHeight) / 2, barWidth - 2, bHeight);
-          }
-
-          // 4. Primary Live Oscilloscope Waveform (Lines Representing Voice)
-          const isLoud = computedDb > 38;
-          ctx.lineWidth = isLoud ? 2.5 : 1.5;
-          ctx.strokeStyle = isLoud ? '#38bdf8' : (computedDb > 26 ? '#60a5fa' : '#94a3b8');
-          ctx.shadowColor = isLoud ? '#38bdf8' : 'transparent';
-          ctx.shadowBlur = isLoud ? 8 : 0;
-
-          ctx.beginPath();
-          const sliceWidth = width / bufferLength;
+          const barWidth = (width / bufferLength) * 2.5;
           let x = 0;
 
-          const now = Date.now();
           for (let i = 0; i < bufferLength; i++) {
-            let v = (timeData[i] - 128) / 128.0;
-            // When quiet or audio context suspended, provide subtle organic pulse so user sees active mic monitor
-            if (computedDb < 26) {
-              v += Math.sin((i / 10) + (now / 220)) * 0.08;
-            }
-            const y = (height / 2) + (v * (height / 2) * 0.85);
-
-            if (i === 0) {
-              ctx.moveTo(x, y);
-            } else {
-              ctx.lineTo(x, y);
-            }
-            x += sliceWidth;
+            const barHeight = (dataArray[i] / 255) * height * 0.9;
+            ctx.fillStyle = currentDb > 40 ? '#3b5998' : '#94a3b8';
+            ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
+            x += barWidth + 1;
           }
-          ctx.lineTo(width, height / 2);
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-
-          // 5. Small Live Status Badge in top right of canvas
-          ctx.fillStyle = computedDb > 35 ? '#22c55e' : '#64748b';
-          ctx.beginPath();
-          ctx.arc(width - 12, 10, 3, 0, Math.PI * 2);
-          ctx.fill();
 
           audioAnimFrameRef.current = requestAnimationFrame(drawVisualizer);
         };
@@ -983,76 +947,91 @@ export function BiometricCheckView({
     } catch (_) {}
   }, []);
 
+  const finalizeVoicePass = (transcript, score, matchedMap) => {
+    if (voiceCalibratedRef.current) return;
+    voiceCalibratedRef.current = true;
+    if (voiceDebounceTimerRef.current) {
+      clearTimeout(voiceDebounceTimerRef.current);
+      voiceDebounceTimerRef.current = null;
+    }
+    setSpeechRecognized(true);
+    setVoiceCalibrated(true);
+    setIsCalibratingVoice(false);
+    const floor = Math.max(25, latestDecibelsRef.current || currentDecibels);
+    setAmbientFloorDb(floor);
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch {}
+    }
+    if (voiceFallbackTimerRef.current) {
+      clearTimeout(voiceFallbackTimerRef.current);
+      voiceFallbackTimerRef.current = null;
+    }
+    if (onSaveBiometricsCache) {
+      onSaveBiometricsCache({
+        voiceCalibrated: true,
+        spokenTranscript: transcript,
+        phraseMatchScore: score,
+        matchedWordsMap: matchedMap,
+        ambientFloorDb: floor
+      });
+    }
+  };
+
   // 7. Speech Recognition Model: Token Matching & Verification of Spoken Phrase
   const evaluateSpokenPhrase = (rawTranscript) => {
+    lastTranscriptRef.current = rawTranscript || '';
     const norm = (rawTranscript || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const words = norm.split(' ').filter(Boolean);
 
-    // Core verification anchor groups (lenient and accent-friendly)
-    const hasConfirm = /confirm|verify|declare|affirm|certify|hereby|confirms|agree|agrees|yes|sure|accept/.test(norm);
-    const hasIdentity = /identity|myself|identification|attendance|details|name|student|candidate|id/.test(norm);
-    const hasExam = /examination|exam|test|assessment|examinations|session|paper/.test(norm);
+    // Candidate name matching: match any name component (>= 2 letters) in candidate's name
+    const nameParts = candidateName.toLowerCase().split(/\s+/).filter(p => p.length >= 2);
+    const hasName = nameParts.length > 0 ? nameParts.some(part => norm.includes(part)) : true;
 
-    // Candidate name matching
-    const firstName = candidateName.split(' ')[0].toLowerCase().trim();
-    const hasName = firstName.length > 2 ? norm.includes(firstName) : true;
+    // Anchor group regexes
+    const hasI = words.includes('i') || norm.startsWith('i ') || norm.includes(' i ');
+    const hasConfirm = /\b(confirm|confirms|confirmed|verify|declares|declare|affirm|certify|hereby)\b/.test(norm);
+    const hasMy = /\b(my|mine)\b/.test(norm);
+    const hasIdentity = /\b(identity|identities|identification|identi)\b/.test(norm);
+    const hasForThe = /\b(for\s+the|for|the)\b/.test(norm);
+    const hasExam = /\b(examination|exam|examinations|assessment|test)\b/.test(norm);
 
     // Check individual token presence for visual indicator chips
     const newMatched = {};
-    if (norm.includes('i')) newMatched['i'] = true;
+    if (hasI) newMatched['i'] = true;
     if (hasName) newMatched['name'] = true;
     if (hasConfirm) newMatched['confirm'] = true;
-    if (norm.includes('my') || norm.includes('mine')) newMatched['my'] = true;
+    if (hasMy) newMatched['my'] = true;
     if (hasIdentity) newMatched['identity'] = true;
-    if (norm.includes('for') || norm.includes('for the') || norm.includes('the')) newMatched['for_the'] = true;
+    if (hasForThe) newMatched['for_the'] = true;
     if (hasExam) newMatched['examination'] = true;
 
+    matchedWordsMapRef.current = newMatched;
     setMatchedWordsMap(newMatched);
 
-    // Calculate match score
+    // Exact proportional match score: strictly reflects the matched chips (no artificial bumps)
     const matchedTokensCount = Object.keys(newMatched).length;
-    let score = Math.round((matchedTokensCount / targetPhraseTokens.length) * 100);
-
-    // Boost score if major legal anchors are present
-    const anchorCount = (hasConfirm ? 1 : 0) + (hasIdentity ? 1 : 0) + (hasExam ? 1 : 0);
-    if (anchorCount >= 2) {
-      score = Math.max(score, 75);
-    }
-    if (anchorCount === 3) {
-      score = Math.max(score, 90);
-    }
-
+    const score = Math.min(100, Math.round((matchedTokensCount / targetPhraseTokens.length) * 100));
     setPhraseMatchScore(score);
 
-    // Authentic verification requirement:
-    // 1. Spoke at least 2 core anchors (or score >= 50%)
-    if (anchorCount >= 2 || score >= 50) {
-      voiceCalibratedRef.current = true;
-      setSpeechRecognized(true);
-      setVoiceCalibrated(true);
-      setIsCalibratingVoice(false);
-      const floor = Math.max(25, latestDecibelsRef.current || currentDecibels);
-      setAmbientFloorDb(floor);
-      if (speechRecognitionRef.current) {
-        try { speechRecognitionRef.current.stop(); } catch {}
-      }
-      if (voiceFallbackTimerRef.current) {
-        clearTimeout(voiceFallbackTimerRef.current);
-        voiceFallbackTimerRef.current = null;
-      }
-      if (onSaveBiometricsCache) {
-        onSaveBiometricsCache({
-          voiceCalibrated: true,
-          spokenTranscript: rawTranscript,
-          phraseMatchScore: score,
-          matchedWordsMap: newMatched,
-          ambientFloorDb: floor
-        });
-      }
+    // Completion criteria:
+    // If all or almost all words are spoken (>= 6 out of 7), pass immediately
+    if (matchedTokensCount >= 6) {
+      finalizeVoicePass(rawTranscript, score, newMatched);
+    } else if (matchedTokensCount >= 5 && hasConfirm && hasIdentity) {
+      // Substantial match (>= 71%): allow candidate 1.2s to finish speaking the last word before auto-completing
+      if (voiceDebounceTimerRef.current) clearTimeout(voiceDebounceTimerRef.current);
+      voiceDebounceTimerRef.current = setTimeout(() => {
+        finalizeVoicePass(lastTranscriptRef.current, score, newMatched);
+      }, 1200);
     }
   };
 
   useEffect(() => {
     return () => {
+      if (voiceDebounceTimerRef.current) {
+        clearTimeout(voiceDebounceTimerRef.current);
+        voiceDebounceTimerRef.current = null;
+      }
       if (voiceFallbackTimerRef.current) {
         clearTimeout(voiceFallbackTimerRef.current);
         voiceFallbackTimerRef.current = null;
@@ -1156,12 +1135,24 @@ export function BiometricCheckView({
           return;
         }
         console.warn("[PROCTOR_VOICE]: Speech recognition event notice:", errCode);
-        if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(errCode)) {
-          triggerVoiceFallback(`Microphone speech transcription restricted by browser policy (${errCode}). Verifying microphone input levels instead.`, true);
+        if (errCode === 'network') {
+          triggerVoiceFallback('Cloud speech recognition unreachable on this network. Switched to microphone hardware audio level verification.', true);
+        } else if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(errCode)) {
+          triggerVoiceFallback(`Microphone speech transcription restricted (${errCode}). Verifying microphone input levels instead.`, true);
+        } else {
+          triggerVoiceFallback(`Speech recognition notice (${errCode}). Switched to microphone audio verification.`, true);
         }
       };
 
       recognition.onend = () => {
+        // If candidate finished speaking and hit >= 5 matched tokens, finalize pass
+        const currentMatchedCount = Object.keys(matchedWordsMapRef.current || {}).length;
+        if (currentMatchedCount >= 5 && !voiceCalibratedRef.current) {
+          const finalScore = Math.min(100, Math.round((currentMatchedCount / targetPhraseTokens.length) * 100));
+          finalizeVoicePass(lastTranscriptRef.current, finalScore, matchedWordsMapRef.current);
+          return;
+        }
+
         // If candidate is still speaking/calibrating and hasn't finished, restart recognition smoothly
         if (isCalibratingVoiceRef.current && !voiceCalibratedRef.current && !voiceFallbackActiveRef.current) {
           try {
@@ -1278,6 +1269,21 @@ export function BiometricCheckView({
     isBiometricCleared &&
     voiceCalibrated &&
     gazeCalibrated
+  );
+
+  // 9b. Capture Readiness Flag
+  const canCapturePhoto = Boolean(
+    !isVerifyingBiometrics &&
+    webcamGranted &&
+    webcamStream && (
+      livenessVerified ||
+      challengeFulfilled ||
+      challengeFulfilledRef.current ||
+      livenessVerifiedRef.current ||
+      faceCheckStatus === 'verified' ||
+      faceCheckStatus === 'aligned' ||
+      faceConfidence >= 65
+    )
   );
 
   return (
@@ -1406,8 +1412,22 @@ export function BiometricCheckView({
                   <Camera size={15} style={{ color: '#3b5998' }} />
                   <span>1. Biometric Face Recognition &amp; Liveness</span>
                 </span>
-                <span style={{ fontSize: '8pt', fontWeight: 'bold', color: baselinePhoto ? '#16a34a' : faceCheckStatus === 'verified' ? '#16a34a' : faceCheckStatus === 'aligned' ? '#0284c7' : '#d97706' }}>
-                  {baselinePhoto ? '✓ Biometric Enrolled' : faceCheckStatus === 'verified' ? '✓ Live Face Confirmed' : faceCheckStatus === 'aligned' ? `Verifying (${livenessProgress}%)` : faceCheckStatus === 'no_face' ? 'No Face in Frame' : faceCheckStatus === 'multi_face' ? 'Single Person Permitted' : 'Awaiting Camera'}
+                <span style={{ fontSize: '8pt', fontWeight: 'bold', color: baselinePhoto ? '#16a34a' : (faceCheckStatus === 'verified' || livenessVerified || livenessVerifiedRef.current) ? '#16a34a' : faceCheckStatus === 'aligned' ? '#0284c7' : '#d97706' }}>
+                  {baselinePhoto 
+                    ? '✓ Biometric Enrolled' 
+                    : (faceCheckStatus === 'verified' || livenessVerified || livenessVerifiedRef.current) 
+                      ? '✓ Live Face Confirmed' 
+                      : faceCheckStatus === 'aligned' 
+                        ? `Verifying (${livenessProgress}%)` 
+                        : faceCheckStatus === 'unaligned'
+                          ? 'Align Face in Guide'
+                          : faceCheckStatus === 'no_face' 
+                            ? 'No Face Detected' 
+                            : faceCheckStatus === 'multi_face' 
+                              ? 'Single Person Permitted' 
+                              : (webcamStream && webcamGranted) 
+                                ? 'Face Aligned & Ready' 
+                                : 'Awaiting Camera'}
                 </span>
               </div>
 
@@ -1474,8 +1494,8 @@ export function BiometricCheckView({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '7.5pt', color: '#475569' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontWeight: 'bold', color: challengeFulfilled ? '#16a34a' : '#0284c7' }}>
-                          {challengeFulfilled 
+                        <span style={{ fontWeight: 'bold', color: (challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) ? '#16a34a' : '#0284c7' }}>
+                          {(challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) 
                             ? 'Liveness Challenge Verified' 
                             : challengesList.length === 1
                               ? (!baselinePoseRef.current ? 'Liveness Challenge: Calibrating' : 'Active Liveness Challenge')
@@ -1485,8 +1505,8 @@ export function BiometricCheckView({
                         </span>
                         <div style={{ display: 'flex', gap: '4px' }}>
                           {challengesList.map((ch, chIdx) => {
-                            const isDone = challengeFulfilled || chIdx < currentChallengeIndex;
-                            const isCurrent = !challengeFulfilled && chIdx === currentChallengeIndex;
+                            const isDone = (challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) || chIdx < currentChallengeIndex;
+                            const isCurrent = !(challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) && chIdx === currentChallengeIndex;
                             return (
                               <span
                                 key={chIdx}
@@ -1506,8 +1526,8 @@ export function BiometricCheckView({
                           })}
                         </div>
                       </div>
-                      <strong style={{ color: challengeFulfilled ? '#16a34a' : '#0284c7' }}>
-                        {challengeFulfilled 
+                      <strong style={{ color: (challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) ? '#16a34a' : '#0284c7' }}>
+                        {(challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) 
                           ? '100% (Confirmed)' 
                           : !baselinePoseRef.current 
                             ? 'Calibrating...' 
@@ -1516,7 +1536,7 @@ export function BiometricCheckView({
                     </div>
 
                     <div style={{ fontSize: '7pt', color: '#64748b', fontStyle: 'italic' }}>
-                      {challengeFulfilled 
+                      {(challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) 
                         ? 'Facial liveness verified. Click Capture Baseline Photo below.' 
                         : !baselinePoseRef.current 
                           ? 'Look directly at camera to center neutral position.' 
@@ -1524,7 +1544,7 @@ export function BiometricCheckView({
                     </div>
 
                     <div style={{ width: '100%', height: '5px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div style={{ width: `${challengeFulfilled ? 100 : challengeProgress}%`, height: '100%', backgroundColor: challengeFulfilled ? '#22c55e' : '#38bdf8', transition: 'width 0.15s ease' }} />
+                      <div style={{ width: `${(challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) ? 100 : challengeProgress}%`, height: '100%', backgroundColor: (challengeFulfilled || challengeFulfilledRef.current || livenessVerified || livenessVerifiedRef.current) ? '#22c55e' : '#38bdf8', transition: 'width 0.15s ease' }} />
                     </div>
                   </div>
                 );
@@ -1616,8 +1636,8 @@ export function BiometricCheckView({
                   <button 
                     className="cf-btn-primary" 
                     onClick={handleCapturePhoto}
-                    disabled={!livenessVerified || isVerifyingBiometrics}
-                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt', fontWeight: 'bold', opacity: (livenessVerified && !isVerifyingBiometrics) ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                    disabled={!canCapturePhoto}
+                    style={{ flex: 1, padding: '7px 12px', fontSize: '8.5pt', fontWeight: 'bold', opacity: canCapturePhoto ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: canCapturePhoto ? 'pointer' : 'not-allowed' }}
                   >
                     {isVerifyingBiometrics ? (
                       <>
@@ -1660,7 +1680,7 @@ export function BiometricCheckView({
               </div>
 
               {/* Live Canvas Waveform */}
-              <canvas ref={audioCanvasRef} width={460} height={36} style={{ width: '100%', height: '36px', borderRadius: '4px', border: '1px solid #334155', backgroundColor: '#0f172a', display: 'block' }} />
+              <canvas ref={audioCanvasRef} width={460} height={32} style={{ width: '100%', height: '32px', borderRadius: '3px', border: '1px solid #cbd5e1' }} />
 
               {/* Prompt Oath Box */}
               <div style={{ backgroundColor: '#f0f4fa', border: '1px solid var(--cf-border)', borderRadius: '3px', padding: '8px 10px' }}>
@@ -1749,7 +1769,7 @@ export function BiometricCheckView({
                 <button
                   type="button"
                   onClick={() => triggerVoiceFallback('Microphone hardware audio level calibrated.', true)}
-                  disabled={!micGranted || isCalibratingVoice}
+                  disabled={!micGranted}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -1761,7 +1781,7 @@ export function BiometricCheckView({
                     padding: '3px 0',
                     textAlign: 'center',
                     marginTop: '2px',
-                    opacity: isCalibratingVoice ? 0.6 : 1
+                    opacity: 1
                   }}
                 >
                   Speech recognition not picking up? Verify microphone audio levels instead
