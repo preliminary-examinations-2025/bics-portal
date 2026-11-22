@@ -244,6 +244,21 @@ export const QuestionViewer = ({
           .cf-question-title-text .katex * {
             font-family: KaTeX_Main, 'Times New Roman', serif !important;
           }
+          .cf-display-equation {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            width: 100% !important;
+            margin: 14px 0 !important;
+            text-align: center !important;
+          }
+          .cf-display-equation .katex-display {
+            margin: 0 !important;
+            text-align: center !important;
+          }
+          .cf-display-equation .katex {
+            text-align: center !important;
+          }
         `}</style>
         <div style={{ zIndex: 11, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>

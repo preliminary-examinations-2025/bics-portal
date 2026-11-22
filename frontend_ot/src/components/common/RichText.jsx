@@ -161,6 +161,42 @@ export const RichText = React.memo(function RichText({ text, style, className })
           return;
         }
 
+        // Check for standalone LaTeX math block (e.g. $$...$$, $...$, \[...\], \(...\))
+        // or a standalone mathematical equation (e.g., "p = 2+ i;", "y = mx + c")
+        // Centers the equation horizontally with respect to the question viewer pane
+        const isStandaloneMathPh = /^(?:%%MATHBLOCK[ID]\d+%%\s*)+[;,.]?$/.test(trimmedLine);
+        const hasLatexMacro = /\\[a-zA-Z]+/.test(trimmedLine) && !/\b(if|for|while|return|const|let|var|function)\b/.test(trimmedLine) && trimmedLine.split(/\s+/).length <= 6;
+        const isStandaloneRawEquation = !trimmedLine.includes('%%') &&
+          !trimmedLine.includes('<') &&
+          !trimmedLine.includes('>') &&
+          /^[a-zA-Z\d_\^\{\}\(\)\[\]\s\*\+\-\/\\]+\s*=\s*[^=;]+;?$/.test(trimmedLine) &&
+          !/^(if|for|while|return|const|let|var|def|class|public|private|function|case|switch|import|export)\b/i.test(trimmedLine) &&
+          trimmedLine.split(/\s+/).length <= 10;
+
+        if (isStandaloneMathPh || hasLatexMacro || isStandaloneRawEquation) {
+          let mathLine = trimmedLine;
+          if (isStandaloneMathPh) {
+            // Upgrade inline math ($...$) to display math ($$...$$) if alone on its line for prominent typography
+            mathBlocks.forEach(b => {
+              if (mathLine.includes(b.placeholder) && b.content.startsWith('$') && !b.content.startsWith('$$')) {
+                const inner = b.content.slice(1, -1);
+                b.content = `$$${inner}$$`;
+              }
+            });
+          } else {
+            mathLine = `$$${trimmedLine}$$`;
+          }
+
+          resultLines.push(`
+            <div class="cf-display-equation" style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 14px 0; text-align: center; overflow-x: auto;">
+              <div style="display: inline-block; text-align: center; max-width: 100%;">
+                ${mathLine}
+              </div>
+            </div>
+          `);
+          return;
+        }
+
         // Normal paragraph line
         resultLines.push(`<div style="line-height: 1.7; margin-bottom: 4px; text-align: justify; text-align-last: left;">${trimmedLine}</div>`);
       });
@@ -294,12 +330,31 @@ export const RichText = React.memo(function RichText({ text, style, className })
   }); // Run math rendering on every render cycle so KaTeX math is always preserved!
 
   return (
-    <div
-      ref={containerRef}
-      style={style}
-      className={className}
-      dangerouslySetInnerHTML={{ __html: formatText(text) }}
-    />
+    <>
+      <style>{`
+        .cf-display-equation {
+          display: flex !important;
+          justify-content: center !important;
+          align-items: center !important;
+          width: 100% !important;
+          margin: 14px 0 !important;
+          text-align: center !important;
+        }
+        .cf-display-equation .katex-display {
+          margin: 0 !important;
+          text-align: center !important;
+        }
+        .cf-display-equation .katex {
+          text-align: center !important;
+        }
+      `}</style>
+      <div
+        ref={containerRef}
+        style={style}
+        className={className}
+        dangerouslySetInnerHTML={{ __html: formatText(text) }}
+      />
+    </>
   );
 }, (prevProps, nextProps) => {
   if (prevProps.text !== nextProps.text) return false;
