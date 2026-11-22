@@ -1280,13 +1280,16 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
             if (existingSub.status === 'started') {
                 const prevHeartbeat = existingSub.lastHeartbeatAt ? new Date(existingSub.lastHeartbeatAt).getTime() : null;
                 const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
+                const serverBootTime = Date.now() - (process.uptime() * 1000);
+                const isServerRebootGap = prevHeartbeat && prevHeartbeat < serverBootTime;
 
                 const updateOps = {
                     $set: { lastHeartbeatAt: now }
                 };
 
-                // Rule 3: Heartbeat gap >= 25s (missing >= 5 consecutive 5s pulses) confirms sustained network disconnection
-                if (gapMs >= 25000) {
+                // Rule 3: Heartbeat gap >= 25s confirms sustained candidate network disconnection
+                // (Suppressed if the gap was caused by a backend server restart/downtime!)
+                if (!isServerRebootGap && gapMs >= 25000) {
                     const gapSeconds = Math.round(gapMs / 1000);
                     const downtimeSeconds = Math.max(0, gapSeconds - 5);
                     updateOps.$push = {
@@ -1346,9 +1349,11 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
             if (sub.status === 'started') {
                 const prevHeartbeat = sub.lastHeartbeatAt ? new Date(sub.lastHeartbeatAt).getTime() : null;
                 const gapMs = prevHeartbeat ? (now.getTime() - prevHeartbeat) : 0;
+                const serverBootTime = Date.now() - (process.uptime() * 1000);
+                const isServerRebootGap = prevHeartbeat && prevHeartbeat < serverBootTime;
                 sub.lastHeartbeatAt = now;
 
-                if (gapMs >= 25000) {
+                if (!isServerRebootGap && gapMs >= 25000) {
                     const gapSeconds = Math.round(gapMs / 1000);
                     const downtimeSeconds = Math.max(0, gapSeconds - 5);
                     if (!sub.proctoringLog) sub.proctoringLog = {};
