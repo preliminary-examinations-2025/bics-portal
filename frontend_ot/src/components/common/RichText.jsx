@@ -332,13 +332,39 @@ export const RichText = React.memo(function RichText({ text, style, className })
   return (
     <>
       <style>{`
+        /* KaTeX Fraction Numerator & Denominator Strict Centering */
+        .katex .mfrac,
+        .katex .mfrac > span,
+        .katex .mfrac .vlist-t,
+        .katex .mfrac .vlist-r,
+        .katex .mfrac .vlist,
+        .katex .mfrac .vlist > span,
+        .katex .mfrac .vlist > span > span {
+          text-align: center !important;
+        }
+        .katex .mfrac .vlist > span {
+          display: block !important;
+          width: 100% !important;
+          text-align: center !important;
+        }
+        .katex .mfrac .vlist > span > span {
+          display: inline-block !important;
+          text-align: center !important;
+        }
+        /* Enhanced Fraction Typography */
+        .katex .mfrac {
+          font-size: 1.22em !important;
+        }
+        .katex .mord.sqrt {
+          font-size: 1.08em;
+        }
         .cf-display-equation {
           display: flex !important;
           justify-content: center !important;
           align-items: center !important;
           width: 100% !important;
-          margin: 18px 0 !important;
-          padding: 6px 0 !important;
+          margin: 20px 0 !important;
+          padding: 8px 0 !important;
           line-height: 2 !important;
           text-align: center !important;
           overflow: visible !important;
@@ -354,11 +380,14 @@ export const RichText = React.memo(function RichText({ text, style, className })
           margin: 0 !important;
           text-align: center !important;
           overflow: visible !important;
-          font-size: 1.22em !important;
+          font-size: 1.34em !important;
         }
         .cf-display-equation .katex {
           text-align: center !important;
-          font-size: 1.2em !important;
+          font-size: 1.32em !important;
+        }
+        .cf-display-equation .katex .mfrac {
+          font-size: 1.15em !important;
         }
       `}</style>
       <div
