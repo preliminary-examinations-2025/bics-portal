@@ -1287,9 +1287,9 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
                     $set: { lastHeartbeatAt: now }
                 };
 
-                // Rule 3: Heartbeat gap >= 25s confirms sustained candidate network disconnection
+                // Rule 3: Heartbeat gap >= 20s (4 missed 5s pulses = 15s downtime) confirms sustained candidate network disconnection
                 // (Suppressed if the gap was caused by a backend server restart/downtime!)
-                if (!isServerRebootGap && gapMs >= 25000) {
+                if (!isServerRebootGap && gapMs >= 20000) {
                     const gapSeconds = Math.round(gapMs / 1000);
                     const downtimeSeconds = Math.max(0, gapSeconds - 5);
                     updateOps.$push = {
@@ -1353,7 +1353,7 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
                 const isServerRebootGap = prevHeartbeat && prevHeartbeat < serverBootTime;
                 sub.lastHeartbeatAt = now;
 
-                if (!isServerRebootGap && gapMs >= 25000) {
+                if (!isServerRebootGap && gapMs >= 20000) {
                     const gapSeconds = Math.round(gapMs / 1000);
                     const downtimeSeconds = Math.max(0, gapSeconds - 5);
                     if (!sub.proctoringLog) sub.proctoringLog = {};

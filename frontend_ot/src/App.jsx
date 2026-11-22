@@ -4227,7 +4227,7 @@ function AppContent() {
       if (offlineStartMonotonicRef.current !== null) {
         const durationSec = Math.round(((performance.now() - offlineStartMonotonicRef.current) / 1000) * 10) / 10;
         offlineStartMonotonicRef.current = null;
-        if (durationSec > 5) {
+        if (durationSec >= 15) {
           logProctoringEvent(
             submission,
             'NETWORK_OFFLINE',

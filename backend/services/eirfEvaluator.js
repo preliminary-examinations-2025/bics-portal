@@ -11,10 +11,10 @@
  *   - Any individual major violation (Fullscreen exit, Tab switch, Inspect attempt) duration > 5s, OR
  *   - totalMajorWarnings > 1 (fullscreenExits + tabSwitches + inspectAttempts > 1).
  * 
- * Rule 3: Network Disconnection Duration (> 5 seconds)
- *   - Any 'NETWORK_OFFLINE' event with durationSeconds > 5, OR
- *   - Any server-observed heartbeat gap >= 10s (2 consecutive missed 5s heartbeats).
- *   - Transient network drops <= 5s are within normal internet jitter tolerance and DO NOT flag EIRF.
+ * Rule 3: Network Disconnection Duration (>= 15 seconds)
+ *   - Any 'NETWORK_OFFLINE' event with durationSeconds >= 15, OR
+ *   - Any server-observed heartbeat gap >= 20s (downtime >= 15s).
+ *   - Transient network drops < 15s are within normal internet jitter tolerance and DO NOT flag EIRF.
  * 
  * Rule 4: Involuntary Auto-Submitted Sessions
  *   - Session status is 'auto-submitted' due to proctoring violation limit, overtime (> 120s grace),
@@ -40,6 +40,7 @@ function evaluateEirfIncident(submission, testConfig = {}) {
     const ruleBreakdown = {
         rule1_minorWarningsExceeded: false,
         rule2_majorWarningSeverityOrCount: false,
+        rule3_networkDisconnectOver15s: false,
         rule3_networkDisconnectOver5s: false,
         rule4_involuntaryAutoSubmitted: false,
         details: {
@@ -179,10 +180,11 @@ function evaluateEirfIncident(submission, testConfig = {}) {
 
     ruleBreakdown.details.maxOfflineDurationSec = maxOfflineDurationSec;
 
-    if (maxOfflineDurationSec > 5) {
+    if (maxOfflineDurationSec >= 15) {
+        ruleBreakdown.rule3_networkDisconnectOver15s = true;
         ruleBreakdown.rule3_networkDisconnectOver5s = true;
         flaggedReasons.push(
-            `Network disconnection exceeded 5-second tolerance (${maxOfflineDurationSec}s offline).`
+            `Client network disconnection exceeded 15-second jitter tolerance (${maxOfflineDurationSec}s offline).`
         );
     }
 
