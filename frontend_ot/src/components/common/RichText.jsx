@@ -327,76 +327,15 @@ export const RichText = React.memo(function RichText({ text, style, className })
     };
 
     renderMath();
-  }); // Run math rendering on every render cycle so KaTeX math is always preserved!
+  }, [text]); // Run math rendering on mount and when text changes
 
   return (
-    <>
-      <style>{`
-        /* KaTeX Fraction Numerator & Denominator Strict Centering */
-        .katex .mfrac,
-        .katex .mfrac > span,
-        .katex .mfrac .vlist-t,
-        .katex .mfrac .vlist-r,
-        .katex .mfrac .vlist,
-        .katex .mfrac .vlist > span,
-        .katex .mfrac .vlist > span > span {
-          text-align: center !important;
-        }
-        .katex .mfrac .vlist > span {
-          display: block !important;
-          width: 100% !important;
-          text-align: center !important;
-        }
-        .katex .mfrac .vlist > span > span {
-          display: inline-block !important;
-          text-align: center !important;
-        }
-        /* Enhanced Fraction Typography */
-        .katex .mfrac {
-          font-size: 1.22em !important;
-        }
-        .katex .mord.sqrt {
-          font-size: 1.08em;
-        }
-        .cf-display-equation {
-          display: flex !important;
-          justify-content: center !important;
-          align-items: center !important;
-          width: 100% !important;
-          margin: 20px 0 !important;
-          padding: 8px 0 !important;
-          line-height: 2 !important;
-          text-align: center !important;
-          overflow: visible !important;
-          scrollbar-width: none !important;
-        }
-        .cf-display-equation::-webkit-scrollbar,
-        .cf-display-equation .katex-display::-webkit-scrollbar {
-          display: none !important;
-          width: 0 !important;
-          height: 0 !important;
-        }
-        .cf-display-equation .katex-display {
-          margin: 0 !important;
-          text-align: center !important;
-          overflow: visible !important;
-          font-size: 1.34em !important;
-        }
-        .cf-display-equation .katex {
-          text-align: center !important;
-          font-size: 1.32em !important;
-        }
-        .cf-display-equation .katex .mfrac {
-          font-size: 1.15em !important;
-        }
-      `}</style>
-      <div
-        ref={containerRef}
-        style={style}
-        className={className}
-        dangerouslySetInnerHTML={{ __html: formatText(text) }}
-      />
-    </>
+    <div
+      ref={containerRef}
+      style={style}
+      className={className}
+      dangerouslySetInnerHTML={{ __html: formatText(text) }}
+    />
   );
 }, (prevProps, nextProps) => {
   if (prevProps.text !== nextProps.text) return false;

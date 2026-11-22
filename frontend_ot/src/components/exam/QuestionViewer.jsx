@@ -196,23 +196,17 @@ export const QuestionViewer = ({
           padding: '16px 20px',
           fontSize: '10pt',
           lineHeight: '1.65',
-          color: '#334155'
+          color: '#334155',
+          position: 'relative',
+          zIndex: 11
         }}>
         {/* Question Title Header: Prominently sized in Plus Jakarta Sans */}
         <style>{`
-          @keyframes otQuestionFadeSlide {
-            0% {
-              opacity: 0;
-              transform: translateY(12px);
-            }
-            100% {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
           .ot-question-content-transition {
-            animation: otQuestionFadeSlide 500ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
-            will-change: opacity, transform;
+            animation: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+            will-change: auto !important;
           }
           @media (prefers-reduced-motion: reduce) {
             .ot-question-content-transition {
@@ -323,7 +317,10 @@ export const QuestionViewer = ({
         {(currentQuestion.type === 'mcq' || currentQuestion.type === 'scc' || currentQuestion.type === 'mcc') && (
           <div style={{ zIndex: 11, display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {(currentQuestion.description || currentQuestion.questionText || currentQuestion.statement) && (
-              <div style={{ fontSize: '10pt', lineHeight: '1.7', color: '#334155' }}>
+              <div style={{ fontSize: '10pt', lineHeight: '1.7', color: '#334155',
+          position: 'relative',
+          zIndex: 11
+        }}>
                 <RichText
                   text={currentQuestion.description || currentQuestion.questionText || currentQuestion.statement}
                 />

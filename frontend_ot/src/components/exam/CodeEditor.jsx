@@ -360,19 +360,11 @@ export const CodeEditor = ({
       boxSizing: 'border-box'
     }}>
       <style>{`
-        @keyframes otQuestionFadeSlide {
-          0% {
-            opacity: 0;
-            transform: translateY(12px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
         .ot-question-content-transition {
-          animation: otQuestionFadeSlide 500ms cubic-bezier(0.25, 1, 0.5, 1) forwards;
-          will-change: opacity, transform;
+          animation: none !important;
+          opacity: 1 !important;
+          transform: none !important;
+          will-change: auto !important;
         }
         @media (prefers-reduced-motion: reduce) {
           .ot-question-content-transition {
@@ -554,7 +546,7 @@ export const CodeEditor = ({
             <div 
               key={`mcq-body-${selectedQuestionIndex}`}
               className="ot-question-content-transition"
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 20px', overflowY: 'auto', minHeight: 0 }}>
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 20px', overflowY: 'auto', minHeight: 0 , position: 'relative', zIndex: 11}}>
               {currentQuestion.options?.map((opt, oIdx) => {
                 const isSelected = isMultiChoice
                   ? (Array.isArray(draftMCQ) && draftMCQ.includes(oIdx))

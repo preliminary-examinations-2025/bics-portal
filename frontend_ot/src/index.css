@@ -897,3 +897,12 @@ body.eirf-active #root {
 .eirf-view-container label {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
 }
+
+
+/* Eradicate visual shift, opacity lag, and font blurriness on question transitions */
+.ot-question-content-transition {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    will-change: auto !important;
+}
