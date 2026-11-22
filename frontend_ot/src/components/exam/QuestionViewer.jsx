@@ -202,19 +202,7 @@ export const QuestionViewer = ({
         }}>
         {/* Question Title Header: Prominently sized in Plus Jakarta Sans */}
         <style>{`
-          .ot-question-content-transition {
-            animation: none !important;
-            opacity: 1 !important;
-            transform: none !important;
-            will-change: auto !important;
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .ot-question-content-transition {
-              animation: none !important;
-              opacity: 1 !important;
-              transform: none !important;
-            }
-          }
+          
           .cf-question-title-text,
           .cf-question-title-text * {
             font-family: 'Plus Jakarta Sans', sans-serif !important;

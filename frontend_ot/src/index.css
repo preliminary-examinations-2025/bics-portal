@@ -899,10 +899,26 @@ body.eirf-active #root {
 }
 
 
-/* Eradicate visual shift, opacity lag, and font blurriness on question transitions */
+/* Smooth, perceptible question transition (450ms graceful deceleration float) */
+@keyframes otQuestionFadeIn {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .ot-question-content-transition {
-    animation: none !important;
-    opacity: 1 !important;
-    transform: none !important;
-    will-change: auto !important;
+    animation: otQuestionFadeIn 450ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ot-question-content-transition {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+    }
 }

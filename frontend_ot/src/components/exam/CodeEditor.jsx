@@ -360,19 +360,7 @@ export const CodeEditor = ({
       boxSizing: 'border-box'
     }}>
       <style>{`
-        .ot-question-content-transition {
-          animation: none !important;
-          opacity: 1 !important;
-          transform: none !important;
-          will-change: auto !important;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .ot-question-content-transition {
-            animation: none !important;
-            opacity: 1 !important;
-            transform: none !important;
-          }
-        }
+        
         @keyframes cf-spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
