@@ -53,6 +53,14 @@ const getReturnUrl = (targetPath = '/coursework/online-tests') => {
   if (!subPath.startsWith('/main/')) {
     subPath = `/main${subPath}`;
   }
+  const activeToken = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') ||
+                      (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('bics_ot_auth_token') || sessionStorage.getItem('bics_auth_token') : '') ||
+                      (typeof localStorage !== 'undefined' ? localStorage.getItem('bics_auth_token') : '') ||
+                      '';
+  if (activeToken) {
+    const sep = subPath.includes('?') ? '&' : '?';
+    subPath = `${subPath}${sep}authToken=${encodeURIComponent(activeToken)}`;
+  }
   return `${cleanBase}${subPath}`;
 };
 
@@ -1192,36 +1200,35 @@ function AppContent() {
       const urlAuthToken = searchParams.get('authToken') || searchParams.get('jwt');
       if (urlAuthToken) {
         sessionStorage.setItem('bics_ot_auth_token', urlAuthToken);
+        sessionStorage.setItem('bics_auth_token', urlAuthToken);
+        localStorage.setItem('bics_auth_token', urlAuthToken);
         if (typeof window !== 'undefined') window.__BICS_OT_AUTH_TOKEN__ = urlAuthToken;
         // Do NOT strip authToken from URL — preserve it for page refreshes and debugging
 
-        // Since main portal and OT share the same origin (bicsportal.netlify.app),
-        // they share localStorage. If localStorage has a DIFFERENT user's token
-        // (e.g. a stale admin session), clear it so the main portal doesn't show
-        // the wrong dashboard when the user navigates back.
         try {
-          const lsToken = localStorage.getItem('bics_auth_token');
-          if (lsToken && lsToken !== urlAuthToken) {
-            const decodeJwt = (t) => {
-              try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch { return null; }
+          const decodeJwt = (t) => {
+            try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch { return null; }
+          };
+          const urlPayload = decodeJwt(urlAuthToken);
+          if (urlPayload) {
+            const userObj = {
+              id: urlPayload.id || urlPayload.userId || urlPayload.username,
+              username: urlPayload.username || urlPayload.name || urlPayload.id,
+              role: urlPayload.role || 'student',
+              name: urlPayload.name || urlPayload.fullName || urlPayload.username || 'Student'
             };
-            const lsPayload = decodeJwt(lsToken);
-            const urlPayload = decodeJwt(urlAuthToken);
-            // Different user or role in localStorage — evict the stale session
-            if (lsPayload && urlPayload && (lsPayload.role !== urlPayload.role || lsPayload.id !== urlPayload.id)) {
-              localStorage.removeItem('bics_auth_token');
-              localStorage.removeItem('bics_session');
-              localStorage.removeItem('bics_token_expiry');
-              sessionStorage.removeItem('bics_session');
-              // Notify any open main portal tab to re-read its auth state
-              try {
-                if (typeof BroadcastChannel !== 'undefined') {
-                  const ch = new BroadcastChannel('bics_auth_sync');
-                  ch.postMessage({ type: 'BICS_SESSION_EVICTED' });
-                  ch.close();
-                }
-              } catch {}
-            }
+            const exp = (urlPayload.exp ? urlPayload.exp * 1000 : null) || (Date.now() + 24 * 60 * 60 * 1000);
+            localStorage.setItem('bics_session', JSON.stringify({ user: userObj, expiry: exp }));
+            localStorage.removeItem('token');
+            sessionStorage.removeItem('token');
+            // Notify any open main portal tab that the student session is active
+            try {
+              if (typeof BroadcastChannel !== 'undefined') {
+                const ch = new BroadcastChannel('bics_auth_sync');
+                ch.postMessage({ type: 'BICS_LOGIN', user: userObj, token: urlAuthToken });
+                ch.close();
+              }
+            } catch {}
           }
         } catch {}
       }

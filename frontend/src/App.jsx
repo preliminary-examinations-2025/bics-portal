@@ -337,7 +337,34 @@ function PortalApp() {
       const isClean = typeof window !== 'undefined' && (window.location.search.includes('clean=1') || window.location.pathname.includes('/logout'));
       if (isClean) return null;
 
-      const token = getAuthToken();
+      // Check if URL has incoming authToken (e.g. returning from OT terminal)
+      let token = null;
+      if (typeof window !== 'undefined') {
+        try {
+          const sp = new URLSearchParams(window.location.search);
+          const urlAuth = sp.get('authToken') || sp.get('jwt');
+          if (urlAuth && urlAuth.startsWith('eyJ')) {
+            const derivedFromUrl = parseJwtUser(urlAuth);
+            if (derivedFromUrl) {
+              setAuthToken(urlAuth, true);
+              const exp = parseJwtExp(urlAuth) || (Date.now() + 24 * 60 * 60 * 1000);
+              localStorage.setItem('bics_session', JSON.stringify({ user: derivedFromUrl, expiry: exp }));
+              sessionStorage.setItem('bics_session', JSON.stringify({ user: derivedFromUrl, expiry: exp }));
+              // Cleanly strip authToken from query params without reloading
+              sp.delete('authToken');
+              sp.delete('jwt');
+              const cleanSearch = sp.toString() ? `?${sp.toString()}` : '';
+              const cleanUrl = window.location.pathname + cleanSearch + (window.location.hash || '');
+              window.history.replaceState({}, document.title, cleanUrl);
+              return derivedFromUrl;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!token) {
+        token = getAuthToken();
+      }
       if (!token) return null;
 
       const expMs = parseJwtExp(token);
@@ -356,16 +383,14 @@ function PortalApp() {
           // Prevents stale admin sessions from leaking when a new user logs in
           const derivedForCheck = parseJwtUser(token);
           if (derivedForCheck && parsed.user.role !== derivedForCheck.role) {
-            // Role mismatch — stale session. Clear it and fall through to JWT decode.
-            localStorage.removeItem('bics_session');
-            localStorage.removeItem('bics_auth_token');
-            sessionStorage.removeItem('bics_session');
+            // Role mismatch — update session to match the active token rather than wiping the valid token
+            localStorage.setItem('bics_session', JSON.stringify({ user: derivedForCheck, expiry: parsed.expiry }));
+            return derivedForCheck;
           } else {
             return parsed.user;
           }
         } else {
           localStorage.removeItem('bics_session');
-          localStorage.removeItem('bics_auth_token');
         }
       }
       const temp = sessionStorage.getItem('bics_session');
@@ -375,6 +400,7 @@ function PortalApp() {
           const derivedForCheck = parseJwtUser(token);
           if (derivedForCheck && parsed.user.role !== derivedForCheck.role) {
             sessionStorage.removeItem('bics_session');
+            return derivedForCheck;
           } else {
             return parsed.user;
           }
@@ -894,6 +920,35 @@ function PortalApp() {
     };
     window.addEventListener('message', handleMessage);
 
+    // Native Cross-Tab Storage Event Synchronization
+    const handleStorageEvent = (e) => {
+      if (e.key === 'bics_logout_signal' || (e.key === 'bics_session' && !e.newValue)) {
+        handleLogoutEvent();
+        return;
+      }
+      if (e.key === 'bics_auth_token' || e.key === 'bics_session' || e.key === 'bics_login_signal') {
+        const freshToken = getAuthToken();
+        if (!freshToken) {
+          handleLogoutEvent();
+          return;
+        }
+        const derived = parseJwtUser(freshToken);
+        if (derived) {
+          setUser(prev => {
+            if (prev && prev.id === derived.id && prev.role === derived.role) return prev;
+            return derived;
+          });
+          const targetView = derived.role === 'admin' ? 'admin' : 'announcements';
+          setViewState(v => {
+            if (derived.role === 'admin' && v !== 'admin' && !v.startsWith('admin_')) return 'admin';
+            if (derived.role !== 'admin' && (v === 'admin' || v.startsWith('admin_'))) return 'announcements';
+            return v;
+          });
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
     let channel = null;
     try {
       if (typeof BroadcastChannel !== 'undefined') {
@@ -901,15 +956,23 @@ function PortalApp() {
         channel.onmessage = (e) => {
           if (e.data?.type === 'BICS_LOGOUT') {
             handleLogoutEvent();
-          }
-          // OT terminal evicted a stale session (e.g. admin token lingering while student is in OT)
-          // Re-read auth state from storage — if nothing valid remains, show login
-          if (e.data?.type === 'BICS_SESSION_EVICTED') {
+          } else if (e.data?.type === 'BICS_LOGIN') {
+            const freshToken = e.data.token || getAuthToken();
+            if (freshToken) {
+              const derived = parseJwtUser(freshToken);
+              if (derived) {
+                setUser(derived);
+                const defaultView = derived.role === 'admin' ? 'admin' : 'announcements';
+                const defaultPath = derived.role === 'admin' ? '/admin/dashboard' : '/home';
+                setViewState(defaultView);
+                navigate(defaultPath, { replace: true });
+              }
+            }
+          } else if (e.data?.type === 'BICS_SESSION_EVICTED') {
             const freshToken = getAuthToken();
             if (!freshToken) {
               handleLogoutEvent();
             } else {
-              // A valid token still exists (the new user's) — re-derive user from it
               try {
                 const derived = parseJwtUser(freshToken);
                 if (derived) {
@@ -926,6 +989,7 @@ function PortalApp() {
 
     return () => {
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('storage', handleStorageEvent);
       if (channel) {
         try { channel.close(); } catch (e) {}
       }
@@ -3442,10 +3506,14 @@ int main() {
 
           try {
             localStorage.setItem('bics_session', JSON.stringify(sessionData));
-            if (rememberMe) {
-              sessionStorage.removeItem('bics_session');
-            } else {
-              sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
+            sessionStorage.setItem('bics_session', JSON.stringify(sessionData));
+            // Cross-tab synchronization triggers
+            localStorage.setItem('bics_login_signal', String(Date.now()));
+            localStorage.removeItem('bics_login_signal');
+            if (typeof BroadcastChannel !== 'undefined') {
+              const ch = new BroadcastChannel('bics_auth_sync');
+              ch.postMessage({ type: 'BICS_LOGIN', user: userObj, token: data.token });
+              ch.close();
             }
           } catch (_) {}
 
@@ -3490,6 +3558,21 @@ int main() {
     setLoadingMessage("Signing out & clearing session cache...");
     
     const currentToken = getAuthToken() || '';
+
+    // SYNCHRONOUSLY and IMMEDIATELY eradicate tokens and session from storage
+    clearAuthToken();
+    try {
+      localStorage.removeItem('bics_session');
+      sessionStorage.removeItem('bics_session');
+      localStorage.removeItem('kata_handle');
+      sessionStorage.removeItem('bics_redirect_url');
+      localStorage.removeItem('bics_redirect_url');
+      localStorage.removeItem('bics_token_expiry');
+      // Trigger native storage event across all tabs
+      localStorage.setItem('bics_logout_signal', String(Date.now()));
+      localStorage.removeItem('bics_logout_signal');
+    } catch (e) {}
+
     if (user || currentToken) {
       fetch(`${API_BASE}/logout`, {
         method: 'POST',

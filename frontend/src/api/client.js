@@ -44,13 +44,9 @@ export const setAuthToken = (token, rememberMe = true) => {
     return;
   }
   try {
-    if (rememberMe) {
-      localStorage.setItem('bics_auth_token', token);
-      sessionStorage.removeItem('bics_auth_token');
-    } else {
-      sessionStorage.setItem('bics_auth_token', token);
-      localStorage.removeItem('bics_auth_token');
-    }
+    // Always persist to localStorage to guarantee cross-tab session preservation
+    localStorage.setItem('bics_auth_token', token);
+    sessionStorage.setItem('bics_auth_token', token);
     localStorage.removeItem('token');
     sessionStorage.removeItem('token');
   } catch {

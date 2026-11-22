@@ -33,6 +33,14 @@ export const getReturnUrl = (targetPath = '/coursework/online-tests') => {
   if (!subPath.startsWith('/main/')) {
     subPath = `/main${subPath}`;
   }
+  const activeToken = (typeof window !== 'undefined' ? window.__BICS_OT_AUTH_TOKEN__ : '') ||
+                      (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('bics_ot_auth_token') || sessionStorage.getItem('bics_auth_token') : '') ||
+                      (typeof localStorage !== 'undefined' ? localStorage.getItem('bics_auth_token') : '') ||
+                      '';
+  if (activeToken) {
+    const sep = subPath.includes('?') ? '&' : '?';
+    subPath = `${subPath}${sep}authToken=${encodeURIComponent(activeToken)}`;
+  }
   return `${cleanBase}${subPath}`;
 };
 

@@ -45,7 +45,22 @@ if (typeof window !== 'undefined') {
     const urlAuth = params.get('authToken') || params.get('jwt');
     if (urlAuth) {
       sessionStorage.setItem('bics_ot_auth_token', urlAuth);
+      sessionStorage.setItem('bics_auth_token', urlAuth);
+      localStorage.setItem('bics_auth_token', urlAuth);
       window.__BICS_OT_AUTH_TOKEN__ = urlAuth;
+      try {
+        const payload = JSON.parse(atob(urlAuth.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload) {
+          const userObj = {
+            id: payload.id || payload.userId || payload.username,
+            username: payload.username || payload.name || payload.id,
+            role: payload.role || 'student',
+            name: payload.name || payload.fullName || payload.username || 'Student'
+          };
+          const exp = (payload.exp ? payload.exp * 1000 : null) || (Date.now() + 24 * 60 * 60 * 1000);
+          localStorage.setItem('bics_session', JSON.stringify({ user: userObj, expiry: exp }));
+        }
+      } catch (_) {}
     }
     const urlExamToken = params.get('token');
     if (urlExamToken) {

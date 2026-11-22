@@ -53,13 +53,8 @@ export function AuthProvider({ children }) {
       setAuthToken(token, rememberMe);
     }
     const sessionObj = JSON.stringify({ user: userData, studentProfile: profileData });
-    if (rememberMe) {
-      localStorage.setItem('bics_session', sessionObj);
-      sessionStorage.removeItem('bics_session');
-    } else {
-      sessionStorage.setItem('bics_session', sessionObj);
-      localStorage.removeItem('bics_session');
-    }
+    localStorage.setItem('bics_session', sessionObj);
+    sessionStorage.setItem('bics_session', sessionObj);
   };
 
   const logout = () => {
