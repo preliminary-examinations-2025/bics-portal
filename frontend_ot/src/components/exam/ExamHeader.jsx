@@ -116,9 +116,36 @@ export const ExamHeader = ({
   const cloudMeta = getCloudMeta();
 
   return (
-    <div
-      className="cf-card"
-      style={{
+    <>
+      <style>{`
+        @keyframes wifiSoftBlink {
+          0%, 100% {
+            background-color: #fef2f2;
+            border-color: #fecaca;
+            color: #dc2626;
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2), 0 1px 2px rgba(0, 0, 0, 0.03);
+            opacity: 1;
+          }
+          50% {
+            background-color: #fff1f2;
+            border-color: #fca5a5;
+            color: #e11d48;
+            box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.08), 0 1px 2px rgba(0, 0, 0, 0.03);
+            opacity: 0.72;
+          }
+        }
+        @keyframes wifiCountdownSoftBlink {
+          0%, 100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.65;
+          }
+        }
+      `}</style>
+      <div
+        className="cf-card"
+        style={{
         backgroundColor: '#ffffff',
         margin: 0,
         padding: '12px 20px',
@@ -244,7 +271,8 @@ export const ExamHeader = ({
                   cursor: 'help',
                   transition: 'all 0.2s ease',
                   flexShrink: 0,
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                  animation: effectiveNetworkQuality === 'disconnected' ? 'wifiSoftBlink 1.4s ease-in-out infinite' : 'none'
                 }}
               >
                 {wifiMeta.icon}
@@ -261,7 +289,8 @@ export const ExamHeader = ({
                     color: '#dc2626',
                     letterSpacing: '0.2px',
                     whiteSpace: 'nowrap',
-                    userSelect: 'none'
+                    userSelect: 'none',
+                    animation: 'wifiCountdownSoftBlink 1.4s ease-in-out infinite'
                   }}
                 >
                   {currentCountdown}s
@@ -344,5 +373,6 @@ export const ExamHeader = ({
         )}
       </div>
     </div>
+    </>
   );
 };
