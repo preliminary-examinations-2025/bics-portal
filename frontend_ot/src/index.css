@@ -117,11 +117,11 @@ body.ot-google-font select,
 
 /* Enhanced Fraction Typography (Enlarged and Readable) */
 .katex .mfrac {
-    font-size: 1.22em !important;
+    font-size: 1.18em !important;
 }
 
 .katex .mord.sqrt {
-    font-size: 1.08em;
+    font-size: 1.05em;
 }
 
 /* Standalone / Display Math Equations */
@@ -130,12 +130,13 @@ body.ot-google-font select,
     justify-content: center !important;
     align-items: center !important;
     width: 100% !important;
-    margin: 20px 0 !important;
-    padding: 8px 0 !important;
-    line-height: 2 !important;
+    margin: 14px 0 !important;
+    padding: 4px 0 !important;
+    line-height: 1.8 !important;
     text-align: center !important;
     overflow: visible !important;
     scrollbar-width: none !important;
+    font-size: 18px !important;
 }
 
 .cf-display-equation::-webkit-scrollbar,
@@ -149,16 +150,16 @@ body.ot-google-font select,
     margin: 0 !important;
     text-align: center !important;
     overflow: visible !important;
-    font-size: 1.34em !important;
+    font-size: 18px !important;
 }
 
 .cf-display-equation .katex {
     text-align: center !important;
-    font-size: 1.32em !important;
+    font-size: 18px !important;
 }
 
 .cf-display-equation .katex .mfrac {
-    font-size: 1.15em !important;
+    font-size: 1em !important;
 }
 
 /* Retain monospaced fonts for code editors, logs, and technical badges */

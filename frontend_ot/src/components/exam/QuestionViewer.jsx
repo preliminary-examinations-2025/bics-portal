@@ -247,22 +247,23 @@ export const QuestionViewer = ({
           }
           /* Enhanced Fraction Typography */
           .katex .mfrac {
-            font-size: 1.22em !important;
+            font-size: 1.18em !important;
           }
           .katex .mord.sqrt {
-            font-size: 1.08em;
+            font-size: 1.05em;
           }
           .cf-display-equation {
             display: flex !important;
             justify-content: center !important;
             align-items: center !important;
             width: 100% !important;
-            margin: 20px 0 !important;
-            padding: 8px 0 !important;
-            line-height: 2 !important;
+            margin: 14px 0 !important;
+            padding: 4px 0 !important;
+            line-height: 1.8 !important;
             text-align: center !important;
             overflow: visible !important;
             scrollbar-width: none !important;
+            font-size: 18px !important;
           }
           .cf-display-equation::-webkit-scrollbar,
           .cf-display-equation .katex-display::-webkit-scrollbar {
@@ -274,14 +275,14 @@ export const QuestionViewer = ({
             margin: 0 !important;
             text-align: center !important;
             overflow: visible !important;
-            font-size: 1.34em !important;
+            font-size: 18px !important;
           }
           .cf-display-equation .katex {
             text-align: center !important;
-            font-size: 1.32em !important;
+            font-size: 18px !important;
           }
           .cf-display-equation .katex .mfrac {
-            font-size: 1.15em !important;
+            font-size: 1em !important;
           }
         `}</style>
         <div style={{ zIndex: 11, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>

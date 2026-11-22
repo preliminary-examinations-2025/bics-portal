@@ -1,8 +1,29 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 
 // Helper component to render KaTeX math expressions + basic bold/italics/code markdown
 export const RichText = React.memo(function RichText({ text, style, className }) {
   const containerRef = useRef(null);
+
+  // Check if window.katex is ready for synchronous string rendering
+  const [katexLoaded, setKatexLoaded] = useState(
+    () => typeof window !== 'undefined' && Boolean(window.katex && window.katex.renderToString)
+  );
+
+  useEffect(() => {
+    if (!katexLoaded) {
+      if (typeof window !== 'undefined' && window.katex && window.katex.renderToString) {
+        setKatexLoaded(true);
+      } else {
+        const timer = setInterval(() => {
+          if (typeof window !== 'undefined' && window.katex && window.katex.renderToString) {
+            setKatexLoaded(true);
+            clearInterval(timer);
+          }
+        }, 50);
+        return () => clearInterval(timer);
+      }
+    }
+  }, [katexLoaded]);
 
   const formatText = (raw) => {
     if (!raw) return '';
@@ -59,28 +80,28 @@ export const RichText = React.memo(function RichText({ text, style, className })
     // Temporarily extract double-dollar display math blocks with HTML escaping
     formatted = formatted.replace(/\$\$(.*?)\$\$/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: `$$${escapeHtml(mathContent)}$$` });
+      mathBlocks.push({ placeholder, content: `$$${escapeHtml(mathContent)}$$`, isDisplay: true });
       return placeholder;
     });
 
     // Temporarily extract single-dollar inline math blocks with HTML escaping
     formatted = formatted.replace(/\$(.*?)\$/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: `$${escapeHtml(mathContent)}$` });
+      mathBlocks.push({ placeholder, content: `$${escapeHtml(mathContent)}$`, isDisplay: false });
       return placeholder;
     });
 
     // Temporarily extract \[...\] display math with HTML escaping
     formatted = formatted.replace(/\\\[(.*?)\\\]/gs, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKD${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: `\\[${escapeHtml(mathContent)}\\]` });
+      mathBlocks.push({ placeholder, content: `\\[${escapeHtml(mathContent)}\\]`, isDisplay: true });
       return placeholder;
     });
 
     // Temporarily extract \(...\) inline math with HTML escaping
     formatted = formatted.replace(/\\\((.*?)\\\)/g, (match, mathContent) => {
       const placeholder = `%%MATHBLOCKI${placeholderIndex++}%%`;
-      mathBlocks.push({ placeholder, content: `\\(${escapeHtml(mathContent)}\\)` });
+      mathBlocks.push({ placeholder, content: `\\(${escapeHtml(mathContent)}\\)`, isDisplay: false });
       return placeholder;
     });
 
@@ -178,9 +199,12 @@ export const RichText = React.memo(function RichText({ text, style, className })
           if (isStandaloneMathPh) {
             // Upgrade inline math ($...$) to display math ($$...$$) if alone on its line for prominent typography
             mathBlocks.forEach(b => {
-              if (mathLine.includes(b.placeholder) && b.content.startsWith('$') && !b.content.startsWith('$$')) {
-                const inner = b.content.slice(1, -1);
-                b.content = `$$${inner}$$`;
+              if (mathLine.includes(b.placeholder)) {
+                b.isDisplay = true;
+                if (b.content.startsWith('$') && !b.content.startsWith('$$')) {
+                  const inner = b.content.slice(1, -1);
+                  b.content = `$$${inner}$$`;
+                }
               }
             });
           } else {
@@ -188,7 +212,7 @@ export const RichText = React.memo(function RichText({ text, style, className })
           }
 
           resultLines.push(`
-            <div class="cf-display-equation" style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 18px 0; padding: 6px 0; line-height: 2; text-align: center; overflow: visible;">
+            <div class="cf-display-equation" style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 14px 0; padding: 4px 0; line-height: 1.8; font-size: 18px; text-align: center; overflow: visible;">
               <div style="display: inline-block; text-align: center; max-width: 100%; overflow: visible;">
                 ${mathLine}
               </div>
@@ -297,17 +321,49 @@ export const RichText = React.memo(function RichText({ text, style, className })
       resultHtml = resultHtml.replace(placeholder, codeHtml);
     });
 
-    // Restore original LaTeX formulas back inside placeholders
-    mathBlocks.forEach(({ placeholder, content }) => {
-      resultHtml = resultHtml.replace(placeholder, content);
+    // Restore LaTeX formulas directly as rendered KaTeX HTML strings if window.katex is ready!
+    mathBlocks.forEach(({ placeholder, content, isDisplay }) => {
+      let replacement = content;
+      if (typeof window !== 'undefined' && window.katex && typeof window.katex.renderToString === 'function') {
+        try {
+          let inner = content;
+          if (content.startsWith('$$') && content.endsWith('$$')) {
+            inner = content.slice(2, -2);
+          } else if (content.startsWith('$') && content.endsWith('$')) {
+            inner = content.slice(1, -1);
+          } else if (content.startsWith('\\[') && content.endsWith('\\]')) {
+            inner = content.slice(2, -2);
+          } else if (content.startsWith('\\(') && content.endsWith('\\)')) {
+            inner = content.slice(2, -2);
+          }
+
+          // Unescape HTML entities from inner so KaTeX receives clean mathematical syntax
+          inner = inner
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'");
+
+          replacement = window.katex.renderToString(inner, {
+            displayMode: Boolean(isDisplay),
+            throwOnError: false
+          });
+        } catch (e) {
+          replacement = content;
+        }
+      }
+      resultHtml = resultHtml.replace(placeholder, replacement);
     });
 
     return resultHtml;
   };
 
   useEffect(() => {
-    const renderMath = () => {
-      if (containerRef.current && window.renderMathInElement) {
+    // Fallback: If any unrendered LaTeX expressions remain in the DOM, run auto-render
+    if (containerRef.current && window.renderMathInElement) {
+      const html = containerRef.current.innerHTML || '';
+      if (html.includes('$') || html.includes('\\(') || html.includes('\\[') || html.includes('%%MATHBLOCK')) {
         try {
           window.renderMathInElement(containerRef.current, {
             delimiters: [
@@ -319,15 +375,11 @@ export const RichText = React.memo(function RichText({ text, style, className })
             throwOnError: false
           });
         } catch (err) {
-          console.error("KaTeX auto-render failed:", err);
+          console.error("KaTeX fallback auto-render failed:", err);
         }
-      } else if (!window.renderMathInElement) {
-        setTimeout(renderMath, 100);
       }
-    };
-
-    renderMath();
-  }, [text]); // Run math rendering on mount and when text changes
+    }
+  });
 
   return (
     <div
