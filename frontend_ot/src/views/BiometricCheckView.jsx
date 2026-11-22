@@ -64,7 +64,9 @@ export function BiometricCheckView({
   const speechRecognitionRef = useRef(null);
   const voiceFallbackTimerRef = useRef(null);
   const voiceFallbackActiveRef = useRef(false);
-  const latestDecibelsRef = useRef(30);
+  const isCalibratingVoiceRef = useRef(false);
+  const latestDecibelsRef = useRef(0);
+  const hasDetectedSpeechVolumeRef = useRef(false);
   const voiceCalibratedRef = useRef(Boolean(savedBiometrics?.voiceCalibrated));
   const faceHistoryRef = useRef([]);
   // Differential Active Challenge State Machine Refs
@@ -114,6 +116,7 @@ export function BiometricCheckView({
     return {};
   });
   const [speechRecognized, setSpeechRecognized] = useState(() => Boolean(savedBiometrics?.voiceCalibrated));
+  const [speechNoticeMessage, setSpeechNoticeMessage] = useState('');
   const [speechErrorMessage, setSpeechErrorMessage] = useState('');
 
   // 4-Corner Eye Gaze Calibration States
@@ -779,75 +782,194 @@ export function BiometricCheckView({
     }
   };
 
-  // 6. Web Audio API Decibel Meter & Live Waveform
+  // 6. Web Audio API Decibel Meter & Live Waveform (Real Oscilloscope & Voice Lines)
   useEffect(() => {
-    if (!webcamStream || !micGranted) return;
-    if (typeof webcamStream.getAudioTracks === 'function' && webcamStream.getAudioTracks().length === 0) return;
+    let micStream = null;
+    let localAudioCtx = null;
+    let isCancelled = false;
 
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+    const setupAudioVisualizer = async () => {
+      try {
+        let stream = webcamStream;
+        const hasLiveAudio = stream &&
+          typeof stream.getAudioTracks === 'function' &&
+          stream.getAudioTracks().length > 0 &&
+          stream.getAudioTracks().some(t => t.readyState === 'live');
+
+        // Fallback: If webcamStream has no audio track, request microphone stream directly
+        if (!hasLiveAudio && micGranted) {
+          if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+            try {
+              micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              stream = micStream;
+            } catch (micErr) {
+              console.warn("[VoiceVisualizer] Direct mic stream fallback notice:", micErr);
+            }
+          }
+        }
+
+        if (isCancelled) return;
+
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+
+        localAudioCtx = new AudioCtx();
+        audioContextRef.current = localAudioCtx;
+
+        // Auto-resume on any user click or keypress
+        const resumeOnGesture = () => {
+          if (localAudioCtx && localAudioCtx.state === 'suspended') {
+            localAudioCtx.resume().catch(() => {});
+          }
+        };
+        window.addEventListener('click', resumeOnGesture);
+        window.addEventListener('touchstart', resumeOnGesture);
+        window.addEventListener('keydown', resumeOnGesture);
+
+        // Attempt initial resume
+        if (localAudioCtx.state === 'suspended') {
+          localAudioCtx.resume().catch(() => {});
+        }
+
+        let analyser = null;
+        if (stream && (typeof stream.getAudioTracks !== 'function' || stream.getAudioTracks().length > 0)) {
+          try {
+            analyser = localAudioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = 0.65;
+            analyserRef.current = analyser;
+
+            const source = localAudioCtx.createMediaStreamSource(stream);
+            source.connect(analyser);
+          } catch (srcErr) {
+            console.warn("[VoiceVisualizer] Source connect notice:", srcErr);
+          }
+        }
+
+        const bufferLength = analyser ? analyser.frequencyBinCount : 256;
+        const timeData = new Uint8Array(bufferLength);
+        const freqData = new Uint8Array(bufferLength);
+
+        const drawVisualizer = () => {
+          if (isCancelled) return;
+          if (!audioCanvasRef.current) {
+            audioAnimFrameRef.current = requestAnimationFrame(drawVisualizer);
+            return;
+          }
+
+          const canvas = audioCanvasRef.current;
+          const ctx = canvas.getContext('2d');
+          const width = canvas.width || 460;
+          const height = canvas.height || 40;
+
+          let computedDb = 20;
+
+          if (analyser && localAudioCtx && localAudioCtx.state === 'running') {
+            analyser.getByteTimeDomainData(timeData);
+            analyser.getByteFrequencyData(freqData);
+
+            let sumSquares = 0;
+            let freqSum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+              const norm = (timeData[i] - 128) / 128.0;
+              sumSquares += norm * norm;
+              freqSum += freqData[i];
+            }
+            const rms = Math.sqrt(sumSquares / bufferLength);
+            const freqAvg = freqSum / bufferLength;
+
+            computedDb = Math.min(100, Math.round(20 + Math.max(rms * 140, (freqAvg / 255) * 65)));
+            latestDecibelsRef.current = computedDb;
+            setCurrentDecibels(computedDb);
+
+            // Flag genuine voice input if volume rises noticeably above ambient quiet
+            if (computedDb >= 36) {
+              hasDetectedSpeechVolumeRef.current = true;
+            }
+          }
+
+          // 1. Sleek Dark Canvas Background
+          ctx.clearRect(0, 0, width, height);
+          ctx.fillStyle = '#0f172a'; // Rich Slate-900
+          ctx.fillRect(0, 0, width, height);
+
+          // 2. Faint Center Guide Line
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, height / 2);
+          ctx.lineTo(width, height / 2);
+          ctx.stroke();
+
+          // 3. Dynamic Audio Frequency Bars (Background Equalizer)
+          const numBars = 36;
+          const barWidth = width / numBars;
+          for (let b = 0; b < numBars; b++) {
+            const fIdx = Math.floor(b * (bufferLength / numBars));
+            const val = freqData[fIdx] / 255;
+            const bHeight = Math.max(3, val * (height - 8));
+            ctx.fillStyle = computedDb > 38 ? 'rgba(56, 189, 248, 0.35)' : 'rgba(100, 116, 139, 0.22)';
+            ctx.fillRect(b * barWidth + 1, (height - bHeight) / 2, barWidth - 2, bHeight);
+          }
+
+          // 4. Primary Live Oscilloscope Waveform (Lines Representing Voice)
+          const isLoud = computedDb > 38;
+          ctx.lineWidth = isLoud ? 2.5 : 1.5;
+          ctx.strokeStyle = isLoud ? '#38bdf8' : (computedDb > 26 ? '#60a5fa' : '#94a3b8');
+          ctx.shadowColor = isLoud ? '#38bdf8' : 'transparent';
+          ctx.shadowBlur = isLoud ? 8 : 0;
+
+          ctx.beginPath();
+          const sliceWidth = width / bufferLength;
+          let x = 0;
+
+          const now = Date.now();
+          for (let i = 0; i < bufferLength; i++) {
+            let v = (timeData[i] - 128) / 128.0;
+            // When quiet or audio context suspended, provide subtle organic pulse so user sees active mic monitor
+            if (computedDb < 26) {
+              v += Math.sin((i / 10) + (now / 220)) * 0.08;
+            }
+            const y = (height / 2) + (v * (height / 2) * 0.85);
+
+            if (i === 0) {
+              ctx.moveTo(x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
+            x += sliceWidth;
+          }
+          ctx.lineTo(width, height / 2);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          // 5. Small Live Status Badge in top right of canvas
+          ctx.fillStyle = computedDb > 35 ? '#22c55e' : '#64748b';
+          ctx.beginPath();
+          ctx.arc(width - 12, 10, 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          audioAnimFrameRef.current = requestAnimationFrame(drawVisualizer);
+        };
+
+        drawVisualizer();
+      } catch (err) {
+        console.warn("Audio visualizer initialization error:", err);
       }
-      audioContextRef.current = audioCtx;
+    };
 
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.5;
-      analyserRef.current = analyser;
-
-      const source = audioCtx.createMediaStreamSource(webcamStream);
-      source.connect(analyser);
-
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const drawVisualizer = () => {
-        if (!audioCanvasRef.current) return;
-        const canvas = audioCanvasRef.current;
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-
-        analyser.getByteFrequencyData(dataArray);
-
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / bufferLength;
-        const currentDb = Math.min(100, Math.round(20 + (avg / 255) * 60));
-        latestDecibelsRef.current = currentDb;
-        setCurrentDecibels(currentDb);
-
-        // Render sleek subtle waveform
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(0, 0, width, height);
-
-        const barWidth = (width / bufferLength) * 2.5;
-        let x = 0;
-
-        for (let i = 0; i < bufferLength; i++) {
-          const barHeight = (dataArray[i] / 255) * height * 0.9;
-          ctx.fillStyle = currentDb > 45 ? '#3b5998' : '#94a3b8';
-          ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
-          x += barWidth + 1;
-        }
-
-        audioAnimFrameRef.current = requestAnimationFrame(drawVisualizer);
-      };
-
-      drawVisualizer();
-    } catch (err) {
-      console.warn("Web Audio API visualizer init error:", err);
-    }
+    setupAudioVisualizer();
 
     return () => {
+      isCancelled = true;
       if (audioAnimFrameRef.current) cancelAnimationFrame(audioAnimFrameRef.current);
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close().catch(() => {});
+      if (localAudioCtx && localAudioCtx.state !== 'closed') {
+        localAudioCtx.close().catch(() => {});
+      }
+      if (micStream) {
+        micStream.getTracks().forEach(t => {
+          try { t.stop(); } catch (_) {}
+        });
       }
     };
   }, [webcamStream, micGranted]);
@@ -942,10 +1064,12 @@ export function BiometricCheckView({
     };
   }, []);
 
-  const triggerVoiceFallback = (reasonMessage) => {
+  const triggerVoiceFallback = (reasonMessage, isNoticeOnly = true) => {
     ensureAudioContext();
     if (voiceFallbackActiveRef.current || voiceCalibratedRef.current) return;
     voiceFallbackActiveRef.current = true;
+    isCalibratingVoiceRef.current = false;
+    setIsCalibratingVoice(false);
 
     if (speechRecognitionRef.current) {
       try { speechRecognitionRef.current.stop(); } catch {}
@@ -955,7 +1079,9 @@ export function BiometricCheckView({
       clearTimeout(voiceFallbackTimerRef.current);
     }
 
-    setSpeechErrorMessage(reasonMessage || 'Verifying microphone hardware audio levels...');
+    setSpeechNoticeMessage(reasonMessage || 'Measuring microphone hardware audio levels...');
+    setSpeechErrorMessage('');
+
     voiceFallbackTimerRef.current = setTimeout(() => {
       voiceFallbackTimerRef.current = null;
       voiceFallbackActiveRef.current = false;
@@ -991,16 +1117,18 @@ export function BiometricCheckView({
       voiceFallbackTimerRef.current = null;
     }
     voiceFallbackActiveRef.current = false;
+    isCalibratingVoiceRef.current = true;
     setIsCalibratingVoice(true);
     setSpokenTranscript('');
     setSpeechRecognized(false);
     setPhraseMatchScore(0);
     setMatchedWordsMap({});
     setSpeechErrorMessage('');
+    setSpeechNoticeMessage('');
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      triggerVoiceFallback('Web Speech API engine not available in this browser. Measuring microphone input levels.');
+      triggerVoiceFallback('Web Speech API engine not available in this browser. Measuring microphone input levels.', true);
       return;
     }
 
@@ -1010,18 +1138,6 @@ export function BiometricCheckView({
       recognition.interimResults = true;
       recognition.lang = 'en-US';
       recognition.maxAlternatives = 1;
-
-      // Watchdog safety timer: after 6.5 seconds of listening, if audio volume was active, automatically calibrate
-      const watchdog = setTimeout(() => {
-        if (!voiceCalibratedRef.current) {
-          if ((latestDecibelsRef.current || currentDecibels) > 26) {
-            triggerVoiceFallback('Microphone speech input captured. Ambient audio floor established.');
-          } else {
-            setSpeechErrorMessage('No speech detected. Please speak clearly into your mic or verify hardware audio levels below.');
-            setIsCalibratingVoice(false);
-          }
-        }
-      }, 6500);
 
       recognition.onresult = (event) => {
         let fullTranscript = '';
@@ -1035,28 +1151,28 @@ export function BiometricCheckView({
 
       recognition.onerror = (e) => {
         const errCode = e?.error || 'unknown';
-        console.warn("[PROCTOR_VOICE]: Speech recognition event notice:", errCode);
-        clearTimeout(watchdog);
         if (errCode === 'no-speech') {
-          if ((latestDecibelsRef.current || currentDecibels) > 26) {
-            triggerVoiceFallback('Microphone audio detected. Calibrating audio floor...');
-          } else {
-            setSpeechErrorMessage('No speech detected. Please speak louder into your microphone, or click the direct verification option below.');
-            setIsCalibratingVoice(false);
-          }
+          // Normal brief pause while candidate reads statement; continue listening
           return;
         }
-        triggerVoiceFallback(`Browser speech recognition notice (${errCode}). Verifying microphone audio levels instead.`);
+        console.warn("[PROCTOR_VOICE]: Speech recognition event notice:", errCode);
+        if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(errCode)) {
+          triggerVoiceFallback(`Microphone speech transcription restricted by browser policy (${errCode}). Verifying microphone input levels instead.`, true);
+        }
       };
 
       recognition.onend = () => {
-        clearTimeout(watchdog);
-        if (!voiceCalibratedRef.current && !voiceFallbackActiveRef.current) {
-          if ((latestDecibelsRef.current || currentDecibels) > 26) {
-            triggerVoiceFallback('Microphone speech input captured. Calibrating noise floor.');
-          } else {
+        // If candidate is still speaking/calibrating and hasn't finished, restart recognition smoothly
+        if (isCalibratingVoiceRef.current && !voiceCalibratedRef.current && !voiceFallbackActiveRef.current) {
+          try {
+            recognition.start();
+          } catch (_) {
+            isCalibratingVoiceRef.current = false;
             setIsCalibratingVoice(false);
           }
+        } else {
+          isCalibratingVoiceRef.current = false;
+          setIsCalibratingVoice(false);
         }
       };
 
@@ -1064,7 +1180,7 @@ export function BiometricCheckView({
       recognition.start();
     } catch (err) {
       console.warn("Speech recognition initialization fallback:", err);
-      triggerVoiceFallback('Speech recognition service unavailable in this session. Measuring microphone input levels.');
+      triggerVoiceFallback('Speech recognition service unavailable in this session. Measuring microphone input levels.', true);
     }
   };
 
@@ -1544,7 +1660,7 @@ export function BiometricCheckView({
               </div>
 
               {/* Live Canvas Waveform */}
-              <canvas ref={audioCanvasRef} width={460} height={32} style={{ width: '100%', height: '32px', borderRadius: '3px', border: '1px solid #cbd5e1' }} />
+              <canvas ref={audioCanvasRef} width={460} height={36} style={{ width: '100%', height: '36px', borderRadius: '4px', border: '1px solid #334155', backgroundColor: '#0f172a', display: 'block' }} />
 
               {/* Prompt Oath Box */}
               <div style={{ backgroundColor: '#f0f4fa', border: '1px solid var(--cf-border)', borderRadius: '3px', padding: '8px 10px' }}>
@@ -1604,9 +1720,17 @@ export function BiometricCheckView({
                 </div>
               )}
 
+              {/* Notice / Informational message if any */}
+              {speechNoticeMessage && (
+                <div style={{ fontSize: '7.8pt', color: '#0369a1', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '5px 8px', borderRadius: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <CheckCircle2 size={12} style={{ color: '#0284c7', flexShrink: 0 }} />
+                  <span>{speechNoticeMessage}</span>
+                </div>
+              )}
+
               {/* Fallback Error message if any */}
               {speechErrorMessage && (
-                <div style={{ fontSize: '7.5pt', color: '#b91c1c', backgroundColor: '#fef2f2', padding: '4px 8px', borderRadius: '3px' }}>
+                <div style={{ fontSize: '7.5pt', color: '#b91c1c', backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '4px 8px', borderRadius: '3px' }}>
                   {speechErrorMessage}
                 </div>
               )}
@@ -1624,7 +1748,7 @@ export function BiometricCheckView({
               {!voiceCalibrated && (
                 <button
                   type="button"
-                  onClick={() => triggerVoiceFallback('Manual microphone hardware level verification selected.')}
+                  onClick={() => triggerVoiceFallback('Microphone hardware audio level calibrated.', true)}
                   disabled={!micGranted || isCalibratingVoice}
                   style={{
                     background: 'none',

@@ -3165,12 +3165,20 @@ int main() {
     }
 
     let resolvedUser = null;
+    const derivedFromToken = parseJwtUser(token);
+
     try {
       const stored = localStorage.getItem('bics_session');
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed?.user && (!parsed.expiry || Date.now() < parsed.expiry)) {
-          resolvedUser = parsed.user;
+          // Cross-validate: stored session role MUST match active cryptographically-signed JWT
+          if (derivedFromToken && parsed.user.role !== derivedFromToken.role) {
+            resolvedUser = derivedFromToken;
+            localStorage.setItem('bics_session', JSON.stringify({ user: derivedFromToken, expiry: parsed.expiry }));
+          } else {
+            resolvedUser = parsed.user;
+          }
         } else {
           localStorage.removeItem('bics_session');
           clearAuthToken();
@@ -3186,19 +3194,38 @@ int main() {
         const temp = sessionStorage.getItem('bics_session');
         if (temp) {
           const parsed = JSON.parse(temp);
-          if (parsed?.user) resolvedUser = parsed.user;
+          if (parsed?.user) {
+            if (derivedFromToken && parsed.user.role !== derivedFromToken.role) {
+              resolvedUser = derivedFromToken;
+            } else {
+              resolvedUser = parsed.user;
+            }
+          }
         }
       } catch (e) {}
     }
 
     if (!resolvedUser) {
-      resolvedUser = parseJwtUser(token);
+      resolvedUser = derivedFromToken;
     }
 
     if (resolvedUser) {
+      if (derivedFromToken && resolvedUser.role !== derivedFromToken.role) {
+        resolvedUser = derivedFromToken;
+      }
       setUser(resolvedUser);
-      const pathname = window.location.pathname || '';
+
+      // Cleanse any stale admin redirect url from session storage when a non-admin is active
       const searchParams = new URLSearchParams(window.location.search || '');
+      const rawRedirect = searchParams.get('redirect') || searchParams.get('returnUrl') || sessionStorage.getItem('bics_redirect_url');
+      if (rawRedirect && (rawRedirect.includes('/admin') || rawRedirect.includes('admin_')) && resolvedUser.role !== 'admin') {
+        try {
+          sessionStorage.removeItem('bics_redirect_url');
+          localStorage.removeItem('bics_redirect_url');
+        } catch (_) {}
+      }
+
+      const pathname = window.location.pathname || '';
       const hasRedirectTarget = Boolean(
         searchParams.get('redirect') ||
         searchParams.get('returnUrl') ||

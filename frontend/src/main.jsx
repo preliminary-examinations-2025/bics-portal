@@ -61,19 +61,19 @@ if (typeof window !== 'undefined') {
       }
     } catch (e) {}
 
-    const hasToken = effectiveToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token');
-    let homeTarget = incomingTokenRole === 'admin' ? '/main/admin/dashboard' : '/main/home';
-    if (!incomingTokenRole) {
+    const activeToken = effectiveToken || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token');
+    let tokenRole = incomingTokenRole;
+    if (!tokenRole && activeToken && typeof activeToken === 'string' && activeToken.startsWith('eyJ')) {
       try {
-        const stored = localStorage.getItem('bics_session') || sessionStorage.getItem('bics_session');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed?.user?.role === 'admin') {
-            homeTarget = '/main/admin/dashboard';
-          }
+        const p = JSON.parse(atob(activeToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (p && p.role) {
+          tokenRole = p.role;
         }
-      } catch (e) {}
+      } catch (_) {}
     }
+
+    const hasToken = Boolean(activeToken);
+    const homeTarget = tokenRole === 'admin' ? '/main/admin/dashboard' : '/main/home';
 
     if (path === '/' || path === '') {
       window.history.replaceState(null, '', (hasToken ? homeTarget : '/main/login') + search + hash);
