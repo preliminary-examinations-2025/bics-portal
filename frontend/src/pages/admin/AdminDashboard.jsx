@@ -165,6 +165,7 @@ export default function AdminDashboard({
                 <tr>
                   <th>Course Code</th>
                   <th>Course Name</th>
+                  <th>Category</th>
                   <th>Exam Date</th>
                   <th>Time Duration Slot</th>
                   <th>Mode</th>
@@ -176,7 +177,7 @@ export default function AdminDashboard({
               <tbody>
                 {adminTimetable.length === 0 ? (
                   <tr>
-                    <td colSpan="8" style={{ textAlign: 'center', color: '#64748b' }}>No exam slots added yet. Click Add Course Slot to start.</td>
+                    <td colSpan="9" style={{ textAlign: 'center', color: '#64748b' }}>No exam slots added yet. Click Add Course Slot to start.</td>
                   </tr>
                 ) : (
                   adminTimetable.map((t, idx) => (
@@ -186,6 +187,19 @@ export default function AdminDashboard({
                       </td>
                       <td>
                         <input type="text" className="cf-input" style={{ width: '100%' }} required value={t.course || ''} onChange={e => handleTimetableCellChange(idx, 'course', e.target.value)} placeholder="e.g. C++ Programming" />
+                      </td>
+                      <td>
+                        <select
+                          className="cf-input"
+                          style={{ width: '100%', padding: '6px' }}
+                          value={t.category || 'theory'}
+                          onChange={e => handleTimetableCellChange(idx, 'category', e.target.value)}
+                        >
+                          <option value="theory">Theory Exam</option>
+                          <option value="online">Online Exam</option>
+                          <option value="written">Written Exam</option>
+                          <option value="practical">Practical Exam</option>
+                        </select>
                       </td>
                       <td>
                         <input type="date" className="cf-input" style={{ width: '100%' }} required value={t.date || ''} onChange={e => handleTimetableCellChange(idx, 'date', e.target.value)} />

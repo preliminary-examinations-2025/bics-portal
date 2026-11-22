@@ -28,7 +28,7 @@ function truncateToTwoDigits(val) {
 const ONLINE_TEST_COMPONENTS = {
     mstQuiz1: { label: 'Theory MST Quiz 1', maxMarks: 20, courseType: 'theory' },
     eseQuiz1: { label: 'Theory ESE Quiz 1', maxMarks: 30, courseType: 'theory' },
-    labQuiz1: { label: 'Lab Quiz 1', maxMarks: 60, courseType: 'lab' },
+    labQuiz1: { label: 'Lab Quiz 1', maxMarks: 40, courseType: 'lab' },
     mstOnline: { label: 'Lab MST Online', maxMarks: 40, courseType: 'lab' },
     eseOnline: { label: 'Lab ESE Online', maxMarks: 100, courseType: 'lab' }
 };
@@ -42,10 +42,10 @@ function normalizeTargetComponent(target) {
 
 function getDefaultKataContests(courseCode) {
     if (courseCode === 'R526CS02L') {
-        return ['SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07'];
+        return ['SHIN01', 'SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07'];
     }
     if (courseCode === 'R526CS03L') {
-        return ['FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07'];
+        return ['FORMA01', 'FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07'];
     }
     return [];
 }
@@ -294,7 +294,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 const sub = findSubmissionForStudent(cand, existing, subMaps.labQuiz1.subMap);
                 if (sub) {
                     const rawScored = getSubmissionScore(sub);
-                    labQuiz1 = truncateToTwoDigits(Math.min(60, (rawScored / subMaps.labQuiz1.testMax) * 60));
+                    labQuiz1 = truncateToTwoDigits(Math.min(40, (rawScored / subMaps.labQuiz1.testMax) * 40));
                 }
             }
             const labQuizzes = {
@@ -366,6 +366,7 @@ router.get('/ledger/:courseCode', async (req, res) => {
                 eseWritten,
                 eseWrittenStatus,
                 eseOnline,
+                eseExperiment: Number(existing.eseExperiment || 0),
                 eseViva: Number(existing.eseViva || 0),
 
                 // Legacy
@@ -802,7 +803,9 @@ router.post('/sync-kata/:courseCode', requireAdmin, async (req, res) => {
             });
 
             m.labKataContests = kataContestResults;
-            m.taKata = truncateToTwoDigits(kataContestResults.reduce((acc, kc) => acc + kc.scaledMark, 0));
+            const sortedContestMarks = kataContestResults.map(kc => Number(kc.scaledMark || 0)).sort((a, b) => b - a);
+            const top5Sum = sortedContestMarks.slice(0, 5).reduce((acc, val) => acc + val, 0);
+            m.taKata = truncateToTwoDigits(Math.min(5.0, Math.max(0, top5Sum)));
 
             return calculateMarksLedgerEntry(m, courseDef.type);
         });
@@ -837,8 +840,8 @@ router.post('/config-kata-contests/:courseCode', requireAdmin, async (req, res) 
     const { courseCode } = req.params;
     const { contests } = req.body;
 
-    if (!Array.isArray(contests) || contests.length !== 6) {
-        return res.status(400).json({ error: "Exactly 6 contests must be selected for Option A ledger calculation." });
+    if (!Array.isArray(contests) || contests.length < 5 || contests.length > 7) {
+        return res.status(400).json({ error: "Between 5 and 7 contests must be selected for Kata ledger calculation." });
     }
 
     try {

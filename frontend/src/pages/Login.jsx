@@ -72,7 +72,7 @@ export default function Login({
           </div>
           <div className="cf-input-group" style={{ marginBottom: '15px' }}>
             <label className="cf-label">Enter Captcha Code</label>
-            <input type="text" className="cf-input" required value={captchaInput} onChange={e => setCaptchaInput(e.target.value)} placeholder="Case-insensitive" />
+            <input type="text" className="cf-input" required value={captchaInput} onChange={e => setCaptchaInput(e.target.value)} placeholder="Case-sensitive" />
           </div>
 
           {/* Remember Me Checkbox */}

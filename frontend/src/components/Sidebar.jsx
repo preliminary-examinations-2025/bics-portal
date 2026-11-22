@@ -4,7 +4,7 @@ import {
   Layers, ClipboardList, Flag, Trash2, Bell, Upload, User, ShieldAlert,
   ChevronDown, ChevronRight, CheckCircle, Calendar, Mail, MessageSquare,
   GraduationCap, Key, LogOut, Wrench, Scale, Database, Code, Sparkles,
-  Award, Scroll, RotateCcw, FolderArchive
+  Award, Scroll, RotateCcw, FolderArchive, QrCode
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -320,8 +320,8 @@ export default function Sidebar({
             </button>
             {dropdowns.exam && (
               <div className="dropdown-container">
-                <button className={`dropdown-item ${view === 'schedule' ? 'active' : ''}`} onClick={() => { setView('schedule'); setIsMobileSidebarOpen(false); }}>
-                  <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Schedule
+                <button className={`dropdown-item ${view === 'attendance' || view === 'schedule' ? 'active' : ''}`} onClick={() => { setView('attendance'); setIsMobileSidebarOpen(false); }}>
+                  <QrCode size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Digital Attendance
                 </button>
                 <button className={`dropdown-item ${view === 'hallticket' ? 'active' : ''}`} onClick={() => { setView('hallticket'); setIsMobileSidebarOpen(false); setConsentSuccess && setConsentSuccess(''); }}>
                   <FileText size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall ticket

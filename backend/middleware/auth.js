@@ -193,7 +193,8 @@ const isWhitelisted = (urlPath, method = 'GET') => {
         fullPath === '/api/tests/verify-token' ||
         fullPath === '/api/tests/beacon-disconnect' ||
         fullPath === '/api/log-client-error' ||
-        fullPath.startsWith('/api/kata/')
+        fullPath.startsWith('/api/kata/') ||
+        fullPath.startsWith('/api/attendance/generate-token')
     );
 };
 

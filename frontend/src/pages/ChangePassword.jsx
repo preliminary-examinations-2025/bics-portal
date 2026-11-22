@@ -138,7 +138,7 @@ export default function ChangePassword({
         </div>
         <div className="cf-input-group" style={{ marginBottom: '20px' }}>
           <label className="cf-label">Enter Captcha Code</label>
-          <input type="text" className="cf-input" required value={changePasswordCaptchaInput} onChange={e => setChangePasswordCaptchaInput(e.target.value)} placeholder="Case-insensitive" />
+          <input type="text" className="cf-input" required value={changePasswordCaptchaInput} onChange={e => setChangePasswordCaptchaInput(e.target.value)} placeholder="Case-sensitive" />
         </div>
 
         <button type="submit" className="cf-btn-primary" style={{ width: '100%' }}>Update Password</button>

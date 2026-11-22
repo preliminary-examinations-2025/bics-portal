@@ -475,8 +475,8 @@ function drawBwTable(doc, {
             const w = colWidths[cIdx] || (width / cells.length);
             const align = headers[cIdx]?.align || 'left';
             const innerW = Math.max(8, w - padX * 2);
-            const cellText = safeText(cellVal);
-            const h = doc.heightOfString(cellText, { width: innerW, lineGap });
+            const cellText = (cellVal === '' || (cellVal === null && headers[cIdx]?.allowEmpty)) ? '' : safeText(cellVal);
+            const h = cellText ? doc.heightOfString(cellText, { width: innerW, lineGap }) : 0;
             if (h > maxCellH) maxCellH = h;
             return { w, align, innerW, cellText };
         });
@@ -500,8 +500,10 @@ function drawBwTable(doc, {
 
         let colX = startX;
         measuredCells.forEach((cell, cIdx) => {
-            doc.fillColor('#000000').fontSize(fontSize).font(font)
-               .text(cell.cellText, colX + padX, curY + padY, { width: cell.innerW, align: cell.align, lineGap });
+            if (cell.cellText) {
+                doc.fillColor('#000000').fontSize(fontSize).font(font)
+                   .text(cell.cellText, colX + padX, curY + padY, { width: cell.innerW, align: cell.align, lineGap });
+            }
             colX += cell.w;
             if (cIdx < measuredCells.length - 1) {
                 doc.moveTo(colX, curY).lineTo(colX, curY + actualRowH).strokeColor('#475569').lineWidth(0.65).stroke();

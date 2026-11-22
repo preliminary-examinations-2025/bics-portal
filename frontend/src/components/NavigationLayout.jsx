@@ -6,7 +6,7 @@ import {
   Key, Video, BookOpen, ClipboardList, Settings, Users,
   GraduationCap, MessageSquare, Clock, Activity,
   Trash2, Ticket, Flag, Bell, Layers, LifeBuoy, Check, Code, Home, Printer, HelpCircle, Scale,
-  Award, Scroll, RotateCcw
+  Award, Scroll, RotateCcw, QrCode
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 
@@ -185,8 +185,8 @@ export default function NavigationLayout() {
                   </button>
                   {dropdowns.exam && (
                     <div className="dropdown-container">
-                      <NavLink to="/examination/schedule" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
-                        <Calendar size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Exam Schedule
+                      <NavLink to="/examination/attendance" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
+                        <QrCode size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Digital Attendance
                       </NavLink>
                       <NavLink to="/examination/hall-ticket" className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`} onClick={closeMobileSidebar}>
                         <Printer size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} /> Hall Ticket Generation

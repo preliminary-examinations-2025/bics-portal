@@ -271,11 +271,7 @@ async function generateHallTicketPdfBuffer({
                         sch.date || 'To be announced',
                         sch.time || '10:00 AM - 12:00 PM',
                         (typeof sch.mode === 'string' && sch.mode.trim()) ? sch.mode.trim() : (isLab ? 'Computer Lab' : 'Online Proctored'),
-                        (typeof sch.reportTime === 'string' && sch.reportTime.trim())
-                            ? sch.reportTime.trim()
-                            : ((typeof sch.reportingTime === 'string' && sch.reportingTime.trim())
-                                ? sch.reportingTime.trim()
-                                : (sch.report || 'As Scheduled'))
+                        '' // Invigilator's sign column left blank for physical signature
                     ],
                     bold: false
                 };
@@ -287,9 +283,9 @@ async function generateHallTicketPdfBuffer({
                 { label: 'DATE', align: 'center' },
                 { label: 'SESSION TIME', align: 'center' },
                 { label: 'MODE', align: 'center' },
-                { label: 'REPORT TIME', align: 'center' }
+                { label: "INVIGILATOR'S SIGN", align: 'center' }
             ];
-            const schedColWidths = [74, 140, 65, 92, 92, 72];
+            const schedColWidths = [74, 136, 65, 90, 85, 85];
 
             curY = drawBwTable(doc, {
                 startX,

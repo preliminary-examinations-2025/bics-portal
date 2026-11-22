@@ -43,6 +43,7 @@ const adminDbViewerRouter = require('./routes/adminDbViewer');
 const adminEmailsRouter = require('./routes/adminEmails');
 const adminMediaRouter = require('./routes/adminMedia');
 const kataRouter = require('./routes/kata');
+const examAttendanceRouter = require('./routes/examAttendance');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -137,6 +138,7 @@ app.use('/api/admin/db', adminDbViewerRouter);
 app.use('/api/admin/emails', adminEmailsRouter);
 app.use('/api/admin/media', adminMediaRouter);
 app.use('/api/kata', kataRouter);
+app.use('/api/attendance', examAttendanceRouter);
 
 // Global Technical Error Handling Middleware
 app.use(async (err, req, res, next) => {

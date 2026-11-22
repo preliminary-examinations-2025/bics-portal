@@ -11,6 +11,7 @@ import HomeDashboard from './pages/HomeDashboard';
 import StudentRegistration from './pages/StudentRegistration';
 import StudentInfo from './pages/StudentInfo';
 import ExaminationScheduleView from './pages/ExaminationScheduleView';
+import DigitalAttendanceView from './pages/DigitalAttendanceView';
 import LecturesView, { extractYouTubeId } from './pages/LecturesView';
 import MaterialsView from './pages/MaterialsView';
 import OnlineTestsView from './pages/OnlineTestsView';
@@ -183,8 +184,10 @@ const PATH_TO_VIEW_MAP = {
   '/main/submissions/objections': 'objections',
   '/submissions/counterfoil': 'counterfoil',
   '/main/submissions/counterfoil': 'counterfoil',
-  '/examination/schedule': 'schedule',
-  '/main/examination/schedule': 'schedule',
+  '/examination/attendance': 'attendance',
+  '/main/examination/attendance': 'attendance',
+  '/examination/schedule': 'attendance',
+  '/main/examination/schedule': 'attendance',
   '/examination/hall-ticket': 'hallticket',
   '/main/examination/hall-ticket': 'hallticket',
   '/examination/objections': 'objections',
@@ -440,7 +443,8 @@ function PortalApp() {
     verification: '/submissions/verification',
     objections: '/submissions/objections',
     counterfoil: '/examination/counterfoil',
-    schedule: '/examination/schedule',
+    attendance: '/examination/attendance',
+    schedule: '/examination/attendance',
     hallticket: '/examination/hall-ticket',
     contact: '/support/ticket',
     midsem: '/support/feedback',
@@ -487,7 +491,7 @@ function PortalApp() {
       return ['admin', 'admin_candidates', 'admin_attendance', 'admin_coursework', 'admin_tests', 'admin_logs', 'admin_database', 'admin_emails', 'admin_media', 'admin_proctoring', 'admin_tickets', 'admin_submissions', 'admin_objections', 'admin_recyclebin', 'admin_counterfoil', 'admin_marks_ledger', 'admin_kata'].includes(targetView);
     }
     if (isStudentRole(role)) {
-      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
+      return ['announcements', 'register', 'info', 'conduct', 'attendance', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     return false;
   };
@@ -1470,8 +1474,8 @@ function PortalApp() {
   const [attendanceBenchPosition, setAttendanceBenchPosition] = useState('Left');
   const [attendanceEligibilityFilter, setAttendanceEligibilityFilter] = useState('all'); // 'all' | 'eligible_only'
   const [attendanceExamTypeOverride, setAttendanceExamTypeOverride] = useState(''); // '' (auto-synced with adminExamType) | 'MST' | 'ESE'
-  const [attendanceMainHeader, setAttendanceMainHeader] = useState('Preliminary Examinations 2026');
-  const [attendanceSubHeader, setAttendanceSubHeader] = useState('Basic Introductory Computer Science (BICS) Course');
+  const [attendanceMainHeader, setAttendanceMainHeader] = useState('Basic Introductory Computer Science (BICS) Course');
+  const [attendanceSubHeader, setAttendanceSubHeader] = useState('Conducted by Preliminary Examinations 2026');
   const [attendanceDegree, setAttendanceDegree] = useState('Bachelor of Technology');
   const [attendanceProgram, setAttendanceProgram] = useState('Computer Engineering');
   const [attendanceExamName, setAttendanceExamName] = useState('');
@@ -3760,7 +3764,7 @@ int main() {
   const handleAddTimetableRow = () => {
     setAdminTimetable([
       ...adminTimetable,
-      { code: "CS-10X", course: "Custom Course Name", date: "", time: "", mode: "Online Proctored", reportTime: "09:30 AM", marks: 50 }
+      { code: "CS-10X", course: "Custom Course Name", category: "theory", date: "", time: "", mode: "Online Proctored", reportTime: "09:30 AM", marks: 50 }
     ]);
   };
 
@@ -3964,8 +3968,10 @@ int main() {
         case 'exit':
           if (!isInitialUserHydration) fetchStudentProfile();
           break;
+        case 'attendance':
         case 'schedule':
           fetchConfig();
+          if (!isInitialUserHydration) fetchStudentProfile();
           break;
         case 'verification':
           if (userId) fetchSubmittedTestsList(userId);
@@ -4498,7 +4504,7 @@ int main() {
     }
     
     if (isStudentRole(user.role)) {
-      return ['announcements', 'register', 'info', 'conduct', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
+      return ['announcements', 'register', 'info', 'conduct', 'attendance', 'schedule', 'hallticket', 'verification', 'counterfoil', 'objections', 'contact', 'midsem', 'endsem', 'exit', 'onlinetest', 'onlinetest_setup', 'lectures', 'materials', 'tests', 'submissions'].includes(targetView);
     }
     
     return false;
@@ -4695,20 +4701,13 @@ int main() {
                 )
               )}
 
-              {view === 'schedule' && (
-                systemConfig ? (
-                  <ExaminationScheduleView
-                    systemConfig={systemConfig}
-                  />
-                ) : (
-                  <PortalDataStateCard
-                    title="Examination Schedule"
-                    loading={configLoading}
-                    error={configError}
-                    message="Synchronizing examination timetable and schedule..."
-                    onRetry={fetchConfig}
-                  />
-                )
+              {(view === 'attendance' || view === 'schedule') && (
+                <DigitalAttendanceView
+                  candidate={studentProfile}
+                  user={user}
+                  timetable={systemConfig?.timetable || adminTimetable || []}
+                  coursesList={COURSES_LIST}
+                />
               )}
 
               {view === 'lectures' && (

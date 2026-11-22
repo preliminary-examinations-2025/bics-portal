@@ -311,12 +311,14 @@ const normalizeTimetableRows = (rows) => {
             ? plain.reportTime.trim()
             : (typeof plain.reportingTime === 'string' ? plain.reportingTime.trim() : '');
         const parsedMarks = Number(plain.marks);
+        const categoryVal = typeof plain.category === 'string' ? plain.category.trim().toLowerCase() : (isLab ? 'online' : 'theory');
         return {
             code: codeStr,
             course: courseStr,
+            category: categoryVal,
             date: String(plain.date || '').trim(),
             time: String(plain.time || '').trim(),
-            marks: Number.isFinite(parsedMarks) ? parsedMarks : 50,
+            marks: Number.isFinite(parsedMarks) ? parsedMarks : (categoryVal === 'practical' ? 50 : (isLab ? 100 : 50)),
             mode: modeVal || defaultMode,
             reportTime: reportTimeVal || defaultReportTime
         };
@@ -561,4 +563,5 @@ router.post(
 // Health check endpoint
 router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
+router.normalizeTimetableRows = normalizeTimetableRows;
 module.exports = router;

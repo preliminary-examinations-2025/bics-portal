@@ -588,31 +588,33 @@ function calculateMarksLedgerEntry(m, type) {
             scaledPracticals = truncateToTwoDigits(Math.min(20, Math.max(0, Number(m.taPracticalEval || 0))));
         }
 
-        // 2. Kata Contests: 6 Contests -> 6m (1 mark per contest max)
+        // 2. Kata Contests: Best 5 out of 7 Contests -> 5m (1 mark per contest max)
         if (Array.isArray(m.labKataContests) && m.labKataContests.length > 0) {
-            let kataSum = 0;
-            m.labKataContests.forEach(kc => {
+            const contestScores = m.labKataContests.map(kc => {
                 const cMark = kc.scaledMark !== undefined && kc.scaledMark !== null
                     ? Number(kc.scaledMark)
                     : (kc.normalizedScore !== undefined ? (Number(kc.normalizedScore) / 5) : 0);
-                kataSum += truncateToTwoDigits(Math.min(1.0, Math.max(0, cMark)));
+                return truncateToTwoDigits(Math.min(1.0, Math.max(0, cMark)));
             });
-            scaledKata = truncateToTwoDigits(Math.min(6, Math.max(0, kataSum)));
+            // Sort descending to evaluate best 5
+            contestScores.sort((a, b) => b - a);
+            const top5Sum = contestScores.slice(0, 5).reduce((acc, val) => acc + val, 0);
+            scaledKata = truncateToTwoDigits(Math.min(5, Math.max(0, top5Sum)));
         } else if (m.taKata !== undefined) {
-            scaledKata = truncateToTwoDigits(Math.min(6, Math.max(0, Number(m.taKata || 0))));
+            scaledKata = truncateToTwoDigits(Math.min(5, Math.max(0, Number(m.taKata || 0))));
         } else {
-            scaledKata = truncateToTwoDigits(Math.min(6, Math.max(0, Number(m.taPracticalEval ? (m.taPracticalEval > 20 ? (m.taPracticalEval - 20) : 0) : 0))));
+            scaledKata = truncateToTwoDigits(Math.min(5, Math.max(0, Number(m.taPracticalEval ? (m.taPracticalEval > 20 ? (m.taPracticalEval - 20) : 0) : 0))));
         }
 
-        // 3. Lab Quizzes: Lab Quiz 1 (60m) + Lab Quiz 2 (60m) = 120m -> scaled to 4m
-        const lq1 = Math.min(60, Math.max(0, Number(m.labQuizzes?.quiz1 ?? m.labQuiz1 ?? 0)));
+        // 3. Lab Quizzes: Online Lab Quiz (40m) + Written Lab Quiz 02 (60m) = 100m -> scaled to 5m
+        const lq1 = Math.min(40, Math.max(0, Number(m.labQuizzes?.quiz1 ?? m.labQuiz1 ?? 0)));
         const lq2 = Math.min(60, Math.max(0, Number(m.labQuizzes?.quiz2 ?? m.labQuiz2 ?? 0)));
         const sumLQ = lq1 + lq2;
 
         if (m.labQuizzes || sumLQ > 0) {
-            scaledLabQuiz = truncateToTwoDigits(Math.min(4, Math.max(0, (sumLQ / 120) * 4)));
+            scaledLabQuiz = truncateToTwoDigits(Math.min(5, Math.max(0, (sumLQ / 100) * 5)));
         } else {
-            scaledLabQuiz = truncateToTwoDigits(Math.min(4, Math.max(0, Number(m.taLabQuiz || 0))));
+            scaledLabQuiz = truncateToTwoDigits(Math.min(5, Math.max(0, Number(m.taLabQuiz || 0))));
         }
 
         // 4. Lab Project: 250m -> scaled to 10m
@@ -647,11 +649,12 @@ function calculateMarksLedgerEntry(m, type) {
         // Theory: ESE 100m graded down to 50m
         scaledEse = truncateToTwoDigits((wEse / 100) * 50);
     } else {
-        // Lab: ESE Online (100) + ESE Written (100) + ESE Viva (40) = 240m graded to 40m
+        // Lab: ESE Online (100) + ESE Written (100) + Practical Exam (50m: Experiment 25m + Viva 25m) = 250m graded to 40m
         const oEse = Math.min(100, Math.max(0, Number(m.eseOnline || 0)));
-        const vEse = Math.min(40, Math.max(0, Number(m.eseViva || 0)));
-        const rawEse = wEse + oEse + vEse;
-        scaledEse = truncateToTwoDigits((rawEse / 240) * 40);
+        const expEse = Math.min(25, Math.max(0, Number(m.eseExperiment || 0)));
+        const vEse = Math.min(25, Math.max(0, Number(m.eseViva || 0)));
+        const rawEse = wEse + oEse + expEse + vEse;
+        scaledEse = truncateToTwoDigits(Math.min(40, Math.max(0, (rawEse / 250) * 40)));
     }
 
     // 4. Final Consolidated Score & Letter Grade Computation (100 Marks Max)

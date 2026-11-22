@@ -10,7 +10,7 @@ import { API_BASE } from '../../config';
 const ONLINE_TEST_METADATA = {
   mstQuiz1: { label: 'MST Quiz 1', maxMarks: 20, courseType: 'theory', desc: 'Theory MST Online Quiz (20m max)' },
   eseQuiz1: { label: 'ESE Quiz 1', maxMarks: 30, courseType: 'theory', desc: 'Theory ESE Online Quiz (30m max)' },
-  labQuiz1: { label: 'Lab Quiz 1', maxMarks: 60, courseType: 'lab', desc: 'Lab Online Quiz 1 (60m max)' },
+  labQuiz1: { label: 'Lab Quiz 1', maxMarks: 40, courseType: 'lab', desc: 'Lab Online Quiz 1 (40m max)' },
   mstOnline: { label: 'Lab MST Online', maxMarks: 40, courseType: 'lab', desc: 'Lab Mid-Sem Online Exam (40m max)' },
   eseOnline: { label: 'Lab ESE Online', maxMarks: 100, courseType: 'lab', desc: 'Lab End-Sem Online Exam (100m max)' }
 };
@@ -88,25 +88,26 @@ function calculateLiveStudentEntry(m, courseType) {
     }
     scaledPracticals = truncateToTwoDigits(Math.min(20, (sumPracticals / 100) * 20));
 
-    // 2. Kata Contests: 6 Contests -> 6m (1 mark max per contest)
+    // 2. Kata Contests: Best 5 of 7 Contests -> 5m (1 mark max per contest)
     if (Array.isArray(m.labKataContests) && m.labKataContests.length > 0) {
-      let kataSum = 0;
-      m.labKataContests.forEach(kc => {
+      const contestScores = m.labKataContests.map(kc => {
         const cMark = kc.scaledMark !== undefined && kc.scaledMark !== null
           ? Number(kc.scaledMark)
           : (kc.normalizedScore !== undefined ? (Number(kc.normalizedScore) / 5) : 0);
-        kataSum += truncateToTwoDigits(Math.min(1.0, Math.max(0, cMark)));
+        return truncateToTwoDigits(Math.min(1.0, Math.max(0, cMark)));
       });
-      scaledKata = truncateToTwoDigits(Math.min(6, Math.max(0, kataSum)));
+      contestScores.sort((a, b) => b - a);
+      const top5Sum = contestScores.slice(0, 5).reduce((acc, val) => acc + val, 0);
+      scaledKata = truncateToTwoDigits(Math.min(5, Math.max(0, top5Sum)));
     } else {
-      scaledKata = truncateToTwoDigits(Math.min(6, Math.max(0, Number(m.taKata || 0))));
+      scaledKata = truncateToTwoDigits(Math.min(5, Math.max(0, Number(m.taKata || 0))));
     }
 
-    // 3. Lab Quizzes: LQ1 (60) + LQ2 (60) = 120m -> scaled to 4m
-    const lq1 = Math.min(60, Math.max(0, Number(m.labQuizzes?.quiz1 ?? 0)));
+    // 3. Lab Quizzes: Online (40) + Written (60) = 100m -> scaled to 5m
+    const lq1 = Math.min(40, Math.max(0, Number(m.labQuizzes?.quiz1 ?? 0)));
     const lq2 = Math.min(60, Math.max(0, Number(m.labQuizzes?.quiz2 ?? 0)));
     const sumLQ = lq1 + lq2;
-    scaledLabQuiz = truncateToTwoDigits(Math.min(4, Math.max(0, (sumLQ / 120) * 4)));
+    scaledLabQuiz = truncateToTwoDigits(Math.min(5, Math.max(0, (sumLQ / 100) * 5)));
 
     // 4. Lab Project: 250m -> scaled to 10m
     const rawLabProj = Math.min(250, Math.max(0, Number(m.labProject ?? m.project ?? 0)));
@@ -133,8 +134,9 @@ function calculateLiveStudentEntry(m, courseType) {
     scaledEse = truncateToTwoDigits((wEse / 100) * 50);
   } else {
     const oEse = Math.min(100, Math.max(0, Number(m.eseOnline || 0)));
-    const vEse = Math.min(40, Math.max(0, Number(m.eseViva || 0)));
-    scaledEse = truncateToTwoDigits(((wEse + oEse + vEse) / 240) * 40);
+    const expEse = Math.min(25, Math.max(0, Number(m.eseExperiment || 0)));
+    const vEse = Math.min(25, Math.max(0, Number(m.eseViva || 0)));
+    scaledEse = truncateToTwoDigits(Math.min(40, Math.max(0, ((wEse + oEse + expEse + vEse) / 250) * 40)));
   }
 
   const finalScore = truncateToTwoDigits(totalTa + scaledMst + scaledEse);
@@ -273,8 +275,8 @@ export default function AdminMarksLedger() {
         } else {
           setCustomKataContests(
             courseCode === 'R526CS02L' 
-              ? ['SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07']
-              : ['FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07']
+              ? ['SHIN01', 'SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07']
+              : ['FORMA01', 'FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07']
           );
         }
         await loadAllRelevantAvailableTests(courseCode, data.courseType);
@@ -464,8 +466,8 @@ export default function AdminMarksLedger() {
 
   // Save Configured Kata Contests (Option A)
   const handleSaveKataContestsConfig = async () => {
-    if (customKataContests.length !== 6) {
-      setMessage({ type: 'danger', text: "Exactly 6 contests must be selected for Option A ledger calculation." });
+    if (customKataContests.length < 5 || customKataContests.length > 7) {
+      setMessage({ type: 'danger', text: "Between 5 and 7 contests must be selected for Kata ledger calculation." });
       return;
     }
     setSavingKataConfig(true);
@@ -985,8 +987,8 @@ export default function AdminMarksLedger() {
                     ) : (
                       <>
                         <th>Practicals (20m)</th>
-                        <th>Kata Contests (6m)</th>
-                        <th>Lab Quizzes (4m)</th>
+                        <th>Kata Contests (5m)</th>
+                        <th>Lab Quizzes (5m)</th>
                         <th>Lab Project (10m)</th>
                       </>
                     )}
@@ -1008,8 +1010,8 @@ export default function AdminMarksLedger() {
                       ) : (
                         <>
                           <td style={{ color: '#3b5998', fontWeight: '500' }}>{fmt2(sm.taPracticalEval)} / 20m</td>
-                          <td style={{ color: '#3b5998', fontWeight: '500' }}>{fmt2(sm.taKata)} / 6m</td>
-                          <td style={{ color: '#3b5998', fontWeight: '500' }}>{fmt2(sm.taLabQuiz)} / 4m</td>
+                          <td style={{ color: '#3b5998', fontWeight: '500' }}>{fmt2(sm.taKata)} / 5m</td>
+                          <td style={{ color: '#3b5998', fontWeight: '500' }}>{fmt2(sm.taLabQuiz)} / 5m</td>
                           <td style={{ color: '#3b5998', fontWeight: '500' }}>{fmt2(sm.taProject)} / 10m</td>
                         </>
                       )}
@@ -1346,7 +1348,7 @@ export default function AdminMarksLedger() {
             </div>
           )}
 
-          {/* Sub-View: Lab Kata Contests (Option A: 6 selected contests -> 6m) */}
+          {/* Sub-View: Lab Kata Contests (Option A: 7 contests -> Best 5 for 5m) */}
           {!isTheory && taSubTab === 'kata' && (
             <div>
               {/* Kata Toolbar & Settings */}
@@ -1354,10 +1356,10 @@ export default function AdminMarksLedger() {
                 <div>
                   <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#3b5998', display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <Award size={14} style={{ color: '#3b5998' }} />
-                    Option A Selected Contests (6 Contests = 6.0 Marks Total)
+                    Option A Selected Contests (7 Contests = Best 5 Evaluated for 5.0 Marks Total)
                   </div>
                   <div style={{ fontSize: '7.5pt', color: '#64748b', marginTop: '2px' }}>
-                    Active Contests: <strong>{(ledgerData?.configuredKataContests || customKataContests).join(', ')}</strong> (1 mark per contest max)
+                    Active Contests: <strong>{(ledgerData?.configuredKataContests || customKataContests).join(', ')}</strong> (Best 5 scores counted, 1 mark max per contest)
                   </div>
                 </div>
 
@@ -1380,7 +1382,7 @@ export default function AdminMarksLedger() {
                     }}
                   >
                     <Settings size={12} />
-                    <span>⚙ Configure 6 Contests</span>
+                    <span>⚙ Configure Contests (1 to 7)</span>
                   </button>
 
                   <button
@@ -1411,10 +1413,10 @@ export default function AdminMarksLedger() {
               {showKataConfig && (
                 <div style={{ backgroundColor: '#ffffff', border: '1px solid #b9c9fe', borderRadius: '4px', padding: '10px 12px', marginBottom: '12px' }}>
                   <div style={{ fontSize: '8pt', fontWeight: 'bold', color: '#3b5998', marginBottom: '4px' }}>
-                    Configure Which 6 Contests Are Counted (Option A):
+                    Configure Which Contests Are Counted (Contests 1 to 7):
                   </div>
                   <div style={{ fontSize: '7.5pt', color: '#64748b', marginBottom: '8px' }}>
-                    Enter exactly 6 contest IDs or select a preset. Contests 02-07 (Option A) is recommended as Contest 01 was orientation.
+                    Enter up to 7 contest IDs (Contests 01-07). The Best 5 scaled scores will be automatically selected and counted towards the 5.0 Marks TA weight.
                   </div>
 
                   {/* Presets */}
@@ -1423,29 +1425,29 @@ export default function AdminMarksLedger() {
                       type="button"
                       onClick={() => setCustomKataContests(
                         selectedCourseCode === 'R526CS02L'
-                          ? ['SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07']
-                          : ['FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07']
+                          ? ['SHIN01', 'SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07']
+                          : ['FORMA01', 'FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07']
                       )}
                       style={{ fontSize: '7.5pt', padding: '3px 7px', borderRadius: '3px', backgroundColor: '#f0f4fa', color: '#3b5998', border: '1px solid #b9c9fe', cursor: 'pointer' }}
                     >
-                      Preset: Contests 02 to 07 (Option A Default)
+                      Preset: Contests 01 to 07 (Default Best 5 of 7)
                     </button>
                     <button
                       type="button"
                       onClick={() => setCustomKataContests(
                         selectedCourseCode === 'R526CS02L'
-                          ? ['SHIN01', 'SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06']
-                          : ['FORMA01', 'FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06']
+                          ? ['SHIN02', 'SHIN03', 'SHIN04', 'SHIN05', 'SHIN06', 'SHIN07']
+                          : ['FORMA02', 'FORMA03', 'FORMA04', 'FORMA05', 'FORMA06', 'FORMA07']
                       )}
                       style={{ fontSize: '7.5pt', padding: '3px 7px', borderRadius: '3px', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', cursor: 'pointer' }}
                     >
-                      Preset: Contests 01 to 06
+                      Preset: Contests 02 to 07
                     </button>
                   </div>
 
-                  {/* 6 Inputs Grid */}
+                  {/* 7 Inputs Grid */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '6px', marginBottom: '10px' }}>
-                    {Array.from({ length: 6 }).map((_, idx) => (
+                    {Array.from({ length: 7 }).map((_, idx) => (
                       <div key={idx}>
                         <label style={{ fontSize: '7pt', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '2px' }}>
                           Contest #{idx + 1}:
@@ -1458,7 +1460,7 @@ export default function AdminMarksLedger() {
                             updated[idx] = e.target.value.trim().toUpperCase();
                             setCustomKataContests(updated);
                           }}
-                          placeholder={selectedCourseCode === 'R526CS02L' ? `SHIN0${idx + 2}` : `FORMA0${idx + 2}`}
+                          placeholder={selectedCourseCode === 'R526CS02L' ? `SHIN0${idx + 1}` : `FORMA0${idx + 1}`}
                           style={{ width: '100%', padding: '3px 5px', borderRadius: '3px', border: '1px solid #b9c9fe', fontSize: '8pt', fontFamily: 'monospace' }}
                         />
                       </div>
@@ -1469,7 +1471,7 @@ export default function AdminMarksLedger() {
                     <button
                       type="button"
                       onClick={handleSaveKataContestsConfig}
-                      disabled={savingKataConfig || customKataContests.length !== 6}
+                      disabled={savingKataConfig || customKataContests.length < 5 || customKataContests.length > 7}
                       style={{ fontSize: '7.5pt', padding: '4px 10px', fontWeight: '500', borderRadius: '3px', backgroundColor: '#f0f4fa', color: '#3b5998', border: '1px solid #b9c9fe', cursor: 'pointer' }}
                     >
                       {savingKataConfig ? 'Saving...' : 'Save Configuration & Re-Sync'}
@@ -1498,7 +1500,7 @@ export default function AdminMarksLedger() {
                           <div style={{ fontSize: '7pt', color: '#64748b', fontWeight: 'normal' }}>Contest #{idx + 1}</div>
                         </th>
                       ))}
-                      <th>Total Kata (6m)</th>
+                      <th>Best 5 Kata (5m)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1521,7 +1523,7 @@ export default function AdminMarksLedger() {
                             );
                           })}
                           <td style={{ fontWeight: 'bold', color: '#3b5998', fontSize: '9pt' }}>
-                            {fmt2(sm.taKata)} / 6.0m
+                            {fmt2(sm.taKata)} / 5.0m
                           </td>
                         </tr>
                       );
@@ -1532,12 +1534,12 @@ export default function AdminMarksLedger() {
             </div>
           )}
 
-          {/* Sub-View: Lab Quizzes (120m -> 4m) */}
+          {/* Sub-View: Lab Quizzes (100m -> 5m) */}
           {!isTheory && taSubTab === 'quizzes' && (
             <div>
               <div style={{ backgroundColor: '#f0f4fa', border: '1px solid #b9c9fe', borderRadius: '4px', padding: '7px 12px', marginBottom: '10px', fontSize: '8pt', color: '#3b5998', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
                 <div>
-                  ⚡ <strong>Online Test Sync:</strong> Lab Quiz 1 (Online - 60m) is linked to online test evaluation.
+                  ⚡ <strong>Online Test Sync:</strong> Lab Quiz 1 (Online - 40m) is linked to online test evaluation.
                 </div>
                 <button
                   type="button"
@@ -1555,10 +1557,10 @@ export default function AdminMarksLedger() {
                     <tr>
                       <th>Student ID</th>
                       <th>Candidate Name</th>
-                      <th>Lab Quiz 1 (60m Online) ⚡</th>
+                      <th>Lab Quiz 1 (40m Online) ⚡</th>
                       <th>Lab Quiz 2 (60m)</th>
-                      <th>Raw Sum (120m)</th>
-                      <th>Scaled TA Weight (4m)</th>
+                      <th>Raw Sum (100m)</th>
+                      <th>Scaled TA Weight (5m)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1573,7 +1575,7 @@ export default function AdminMarksLedger() {
                             <input
                               type="number"
                               min="0"
-                              max="60"
+                              max="40"
                               step="0.5"
                               value={lq.quiz1 ?? 0}
                               onChange={(e) => handleGranularMarksChange(sm.studentId, 'labQuizzes.quiz1', e.target.value)}
@@ -1593,8 +1595,8 @@ export default function AdminMarksLedger() {
                               style={{ width: '48px', padding: '3px 4px', borderRadius: '3px', border: '1px solid #b9c9fe', fontSize: '8.5pt' }}
                             />
                           </td>
-                          <td style={{ color: '#555555' }}>{rawSum} / 120</td>
-                          <td style={{ fontWeight: 'bold', color: '#3b5998' }}>{fmt2(sm.taLabQuiz)} / 4m</td>
+                          <td style={{ color: '#555555' }}>{rawSum} / 100</td>
+                          <td style={{ fontWeight: 'bold', color: '#3b5998' }}>{fmt2(sm.taLabQuiz)} / 5m</td>
                         </tr>
                       );
                     })}
@@ -1763,8 +1765,9 @@ export default function AdminMarksLedger() {
                   {!isTheory && (
                     <>
                       <th>Online ESE (100m) ⚡</th>
-                      <th>Viva ESE (40m)</th>
-                      <th>Total Raw (240m)</th>
+                      <th>Experiment (25m)</th>
+                      <th>Viva (25m)</th>
+                      <th>Total Raw (250m)</th>
                     </>
                   )}
                   <th>Scaled ESE Weight ({isTheory ? '50m' : '40m'})</th>
@@ -1820,16 +1823,28 @@ export default function AdminMarksLedger() {
                           <input
                             type="number"
                             min="0"
-                            max="40"
+                            max="25"
                             step="0.5"
-                            value={sm.eseViva}
+                            value={sm.eseExperiment ?? 0}
+                            onChange={(e) => handleGranularMarksChange(sm.studentId, 'eseExperiment', e.target.value)}
+                            disabled={ledgerData?.isLocked}
+                            style={{ width: '50px', padding: '3px 5px', borderRadius: '3px', border: '1px solid #b9c9fe', fontSize: '8.5pt' }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            max="25"
+                            step="0.5"
+                            value={sm.eseViva ?? 0}
                             onChange={(e) => handleGranularMarksChange(sm.studentId, 'eseViva', e.target.value)}
                             disabled={ledgerData?.isLocked}
                             style={{ width: '50px', padding: '3px 5px', borderRadius: '3px', border: '1px solid #b9c9fe', fontSize: '8.5pt' }}
                           />
                         </td>
                         <td style={{ color: '#555555' }}>
-                          {Number(sm.eseWritten || 0) + Number(sm.eseOnline || 0) + Number(sm.eseViva || 0)} / 240
+                          {Number(sm.eseWritten || 0) + Number(sm.eseOnline || 0) + Number(sm.eseExperiment || 0) + Number(sm.eseViva || 0)} / 250
                         </td>
                       </>
                     )}

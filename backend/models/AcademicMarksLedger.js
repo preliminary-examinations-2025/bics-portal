@@ -93,6 +93,7 @@ const AcademicMarksLedgerSchema = new mongoose.Schema({
         eseWritten: { type: Number, default: 0 },
         eseWrittenStatus: { type: String, enum: ['approved', 'pending_approval', 'manual'], default: 'manual' },
         eseOnline: { type: Number, default: 0 },
+        eseExperiment: { type: Number, default: 0 },
         eseViva: { type: Number, default: 0 },
         
         // Computed Results

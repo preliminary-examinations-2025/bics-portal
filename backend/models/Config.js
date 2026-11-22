@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const TimetableSubSchema = new mongoose.Schema({
     code: String,
     course: String,
+    category: { type: String, default: 'theory' },
     date: String,
     time: String,
     marks: Number,

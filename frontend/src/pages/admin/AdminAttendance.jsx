@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { FileText, RefreshCw, Printer } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { FileText, RefreshCw, Printer, CheckCircle, AlertCircle, QrCode, Search } from 'lucide-react';
 
 export default function AdminAttendance({
   user,
@@ -41,54 +41,150 @@ export default function AdminAttendance({
   setAttendanceSemester
 }) {
   const [isSyncing, setIsSyncing] = useState(false);
+  const [qrDataUri, setQrDataUri] = useState('');
+  const [qrToken, setQrToken] = useState('');
+  const [verifyCodeInput, setVerifyCodeInput] = useState('');
+  const [verifyResult, setVerifyResult] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+
   const isLab = attendanceCourseCode.endsWith('L') || attendanceCourseCode.toLowerCase().includes('lab');
-            
-            // Exam type: 'MST' (Mid Semester Test) or 'ESE' (End Semester Examination)
-            const defaultExamType = adminExamType === 'endsem' ? 'ESE' : 'MST';
-            const effectiveExamType = attendanceExamTypeOverride || defaultExamType;
+  const currentCategory = isLab ? (attendanceLabSheetType || 'written') : 'theory';
 
-            // Find matched course in adminTimetable or COURSES_LIST
-            const matchedSlot = adminTimetable.find(t => t.code === attendanceCourseCode || t.course.toLowerCase().includes(attendanceCourseCode.toLowerCase()));
-            const selectedCourseCode = matchedSlot?.code || attendanceCourseCode;
-            const selectedCourseTitle = matchedSlot?.course || (COURSES_LIST.find(c => c.startsWith(attendanceCourseCode)) || attendanceCourseCode).replace(/^[^-]+-\s*/, '');
-            
-            const defaultSlotDate = matchedSlot?.date ? (matchedSlot.date.includes('-') ? matchedSlot.date.split('-').reverse().join('/') : matchedSlot.date) : '11/09/2026';
-            const defaultSlotTime = matchedSlot?.time || (isLab ? '02:00 PM to 05:00 PM' : '03:15 PM to 04:45 PM');
-            const defaultSlotMarks = matchedSlot?.marks !== undefined ? String(matchedSlot.marks) : (isLab ? '50' : '100');
+  // Exam type: 'MST' (Mid Semester Test) or 'ESE' (End Semester Examination)
+  const defaultExamType = adminExamType === 'endsem' ? 'ESE' : 'MST';
+  const effectiveExamType = attendanceExamTypeOverride || defaultExamType;
 
-            const examDate = attendanceCustomDate || defaultSlotDate;
-            const examDuration = attendanceCustomTime || defaultSlotTime;
-            const examMarks = attendanceCustomMarks || defaultSlotMarks;
+  // Find matched course in adminTimetable by matching course code and category first
+  let matchedSlot = (adminTimetable || []).find(t => 
+    (t.code === attendanceCourseCode || t.course.toLowerCase().includes(attendanceCourseCode.toLowerCase())) &&
+    (t.category && t.category.toLowerCase() === currentCategory.toLowerCase())
+  );
+  if (!matchedSlot) {
+    matchedSlot = (adminTimetable || []).find(t => t.code === attendanceCourseCode || t.course.toLowerCase().includes(attendanceCourseCode.toLowerCase()));
+  }
 
-            let bannerSubtitle = `${effectiveExamType} of Theory Courses`;
-            if (isLab) {
-              if (attendanceLabSheetType === 'written') {
-                bannerSubtitle = `${effectiveExamType} of Lab Courses - Written`;
-              } else if (attendanceLabSheetType === 'online') {
-                bannerSubtitle = `${effectiveExamType} of Lab Courses - Online/Terminal`;
-              } else if (attendanceLabSheetType === 'viva') {
-                bannerSubtitle = `${effectiveExamType} of Lab Courses - Viva-Voce`;
-              }
-            }
+  const selectedCourseCode = matchedSlot?.code || attendanceCourseCode;
+  const selectedCourseTitle = matchedSlot?.course || (COURSES_LIST.find(c => c.startsWith(attendanceCourseCode)) || attendanceCourseCode).replace(/^[^-]+-\s*/, '');
+  
+  const defaultSlotDate = matchedSlot?.date ? (matchedSlot.date.includes('-') ? matchedSlot.date.split('-').reverse().join('/') : matchedSlot.date) : '11/09/2026';
+  const defaultSlotTime = matchedSlot?.time || (isLab ? '02:00 PM to 05:00 PM' : '03:15 PM to 04:45 PM');
+  const defaultSlotMarks = matchedSlot?.marks !== undefined ? String(matchedSlot.marks) : (isLab ? '50' : '100');
 
-            // Function to re-fetch / synchronize metadata from timetable slot
-            const syncFromTimetable = (courseCodeToSync) => {
-              const targetCode = courseCodeToSync || attendanceCourseCode;
-              const slot = adminTimetable.find(t => t.code === targetCode || t.course.toLowerCase().includes(targetCode.toLowerCase()));
-              if (slot) {
-                const sDate = slot.date ? (slot.date.includes('-') ? slot.date.split('-').reverse().join('/') : slot.date) : '';
-                setAttendanceCustomDate(sDate);
-                setAttendanceCustomTime(slot.time || '');
-                setAttendanceCustomMarks(slot.marks !== undefined ? String(slot.marks) : '');
-              }
-            };
+  const examDate = attendanceCustomDate || defaultSlotDate;
+  const examDuration = attendanceCustomTime || defaultSlotTime;
+  const examMarks = attendanceCustomMarks || defaultSlotMarks;
 
-            const handleManualSync = (courseCodeToSync) => {
-              if (isSyncing) return;
-              setIsSyncing(true);
-              syncFromTimetable(courseCodeToSync);
-              setTimeout(() => setIsSyncing(false), 600);
-            };
+  let bannerSubtitle = `${effectiveExamType} of Theory Courses`;
+  if (isLab) {
+    if (attendanceLabSheetType === 'online') {
+      bannerSubtitle = `${effectiveExamType} of Lab Courses - Online Exam`;
+    } else if (attendanceLabSheetType === 'practical') {
+      bannerSubtitle = `${effectiveExamType} of Lab Courses - Practical Exam`;
+    } else {
+      bannerSubtitle = `${effectiveExamType} of Lab Courses - Written Exam`;
+    }
+  }
+
+  // Function to re-fetch / synchronize metadata from timetable slot
+  const syncFromTimetable = (courseCodeToSync, categoryToSync) => {
+    const targetCode = courseCodeToSync || attendanceCourseCode;
+    const targetCat = categoryToSync || (targetCode.endsWith('L') || targetCode.toLowerCase().includes('lab') ? (attendanceLabSheetType || 'written') : 'theory');
+    let slot = (adminTimetable || []).find(t => 
+      (t.code === targetCode || t.course.toLowerCase().includes(targetCode.toLowerCase())) &&
+      (t.category && t.category.toLowerCase() === targetCat.toLowerCase())
+    );
+    if (!slot) {
+      slot = (adminTimetable || []).find(t => t.code === targetCode || t.course.toLowerCase().includes(targetCode.toLowerCase()));
+    }
+    if (slot) {
+      const sDate = slot.date ? (slot.date.includes('-') ? slot.date.split('-').reverse().join('/') : slot.date) : '';
+      setAttendanceCustomDate(sDate);
+      setAttendanceCustomTime(slot.time || '');
+      setAttendanceCustomMarks(slot.marks !== undefined ? String(slot.marks) : '');
+    }
+  };
+
+  const handleManualSync = (courseCodeToSync) => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    syncFromTimetable(courseCodeToSync);
+    setTimeout(() => setIsSyncing(false), 600);
+  };
+
+  // Fetch / Generate signed QR Code for this attendance sheet
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchToken = async () => {
+      try {
+        const token = user?.token || localStorage.getItem('bics_auth_token') || sessionStorage.getItem('bics_auth_token') || localStorage.getItem('token') || '';
+        let formattedDate = examDate;
+        if (formattedDate && formattedDate.includes('/')) {
+          const parts = formattedDate.split('/');
+          if (parts.length === 3) {
+            formattedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          }
+        }
+
+        const res = await fetch('/api/attendance/generate-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            courseCode: selectedCourseCode,
+            courseTitle: selectedCourseTitle,
+            category: currentCategory,
+            examDate: formattedDate
+          })
+        });
+        const data = await res.json();
+        if (!isCancelled && data.success && data.qrDataUri) {
+          setQrDataUri(data.qrDataUri);
+          setQrToken(data.token);
+        }
+      } catch (err) {
+        console.error('Failed to generate attendance QR token:', err);
+      }
+    };
+
+    fetchToken();
+    return () => { isCancelled = true; };
+  }, [selectedCourseCode, selectedCourseTitle, currentCategory, examDate, user?.token]);
+
+  // Invigilator 10-Digit Code Verification
+  const handleVerifyCode = async () => {
+    const code = verifyCodeInput.trim();
+    if (!code || code.length !== 10) {
+      setVerifyResult({ success: false, message: 'Please enter a valid 10-digit ticket number.' });
+      return;
+    }
+    setIsVerifying(true);
+    try {
+      const token = user?.token || localStorage.getItem('token') || '';
+      const res = await fetch('/api/attendance/admin/verify-code', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ trackingCode: code })
+      });
+      const data = await res.json();
+      if (data.success && data.record) {
+        setVerifyResult({
+          success: true,
+          message: `AUTHENTIC RECORD: ${data.record.studentName} (${data.record.candidateId}) | ${data.record.courseCode} (${data.record.examCategory?.toUpperCase()}) | Signed at ${new Date(data.record.timestamp).toLocaleTimeString()}`
+        });
+      } else {
+        setVerifyResult({ success: false, message: data.message || `No attendance record matches ticket #${code}.` });
+      }
+    } catch (e) {
+      setVerifyResult({ success: false, message: 'Error communicating with attendance verification API.' });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
             // Filter students
             let studentList = (candidatesList || []).filter(cand => {
@@ -357,7 +453,7 @@ export default function AdminAttendance({
                         type="text"
                         value={attendanceMainHeader}
                         onChange={e => setAttendanceMainHeader(e.target.value)}
-                        placeholder="Preliminary Examinations 2026"
+                        placeholder="Basic Introductory Computer Science (BICS) Course"
                         style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt', fontWeight: 'bold' }}
                       />
                     </div>
@@ -370,7 +466,7 @@ export default function AdminAttendance({
                         type="text"
                         value={attendanceSubHeader}
                         onChange={e => setAttendanceSubHeader(e.target.value)}
-                        placeholder="Basic Introductory Computer Science (BICS) Course"
+                        placeholder="Conducted by Preliminary Examinations 2026"
                         style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '8.5pt' }}
                       />
                     </div>
@@ -407,22 +503,68 @@ export default function AdminAttendance({
                     </div>
                   </div>
 
+                  {/* Section 4: Invigilator Real-Time 10-Digit Code Verification */}
+                  <div style={{ marginTop: '16px', padding: '12px 16px', backgroundColor: '#f1f5f9', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+                    <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#1e293b', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Search size={14} color="#0284c7" />
+                      Invigilator Audit: Verify 10-Digit Digital Ticket Number
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        placeholder="Enter 10-digit ticket #..."
+                        value={verifyCodeInput}
+                        onChange={e => setVerifyCodeInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        style={{ padding: '6px 10px', fontSize: '9pt', borderRadius: '4px', border: '1px solid #cbd5e1', width: '220px', fontFamily: 'monospace' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleVerifyCode}
+                        disabled={isVerifying}
+                        className="cf-btn-primary"
+                        style={{ padding: '6px 14px', fontSize: '8.5pt', margin: 0 }}
+                      >
+                        {isVerifying ? 'Checking...' : 'Verify Ticket'}
+                      </button>
+                      {verifyResult && (
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '8.5pt',
+                          fontWeight: 'bold',
+                          color: verifyResult.success ? '#15803d' : '#b91c1c',
+                          backgroundColor: verifyResult.success ? '#dcfce7' : '#fee2e2',
+                          padding: '4px 10px',
+                          borderRadius: '4px',
+                          border: `1px solid ${verifyResult.success ? '#86efac' : '#fca5a5'}`
+                        }}>
+                          {verifyResult.success ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
+                          <span>{verifyResult.message}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   {/* If Lab course, show the 3 attendance sheet types requested by user */}
                   {isLab && (
-                    <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '6px', padding: '12px 16px' }}>
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '6px', padding: '12px 16px', marginTop: '16px' }}>
                       <div style={{ fontSize: '8.5pt', fontWeight: 'bold', color: '#166534', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                         Lab Examination Sheet Type:
                       </div>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         {[
-                          { id: 'written', label: '1. Written Exam Attendance Sheet', desc: 'Answer book barcode & graph' },
-                          { id: 'online', label: '2. Online Exam Attendance Sheet', desc: 'Terminal / PC No. & IP tracking' },
-                          { id: 'viva', label: '3. Viva-Voce Attendance Sheet', desc: 'Marks & Examiner remarks' }
+                          { id: 'written', label: '1. Written Exam Attendance Sheet', desc: 'Answer book serial & supplement tracking' },
+                          { id: 'online', label: '2. Online Exam Attendance Sheet', desc: 'Terminal / PC No. & Digital Ticket' },
+                          { id: 'practical', label: '3. Practical Exam Attendance Sheet', desc: 'Answer book serial & experiment tracking' }
                         ].map(type => (
                           <button
                             key={type.id}
                             type="button"
-                            onClick={() => setAttendanceLabSheetType(type.id)}
+                            onClick={() => {
+                              setAttendanceLabSheetType(type.id);
+                              syncFromTimetable(attendanceCourseCode, type.id);
+                            }}
                             style={{
                               flex: '1',
                               minWidth: '200px',
@@ -477,13 +619,13 @@ export default function AdminAttendance({
                               />
                             </div>
 
-                            {/* Center Title: Preliminary Examinations 2026 as main header and Basic Introductory Computer Science (BICS) Course as sub heading */}
+                            {/* Center Title: Basic Introductory Computer Science (BICS) Course as main header and Conducted by Preliminary Examinations 2026 as sub heading */}
                             <div style={{ textAlign: 'center', margin: '0 120px 0 70px' }}>
                               <div style={{ fontSize: '13.5pt', fontWeight: 'bold', color: '#000', textTransform: 'none', letterSpacing: '0.3px', fontFamily: 'Arial, sans-serif' }}>
-                                {attendanceMainHeader || 'Preliminary Examinations 2026'}
+                                {attendanceMainHeader || 'Basic Introductory Computer Science (BICS) Course'}
                               </div>
                               <div style={{ fontSize: '9.5pt', fontWeight: 'bold', color: '#000', marginTop: '3px', fontFamily: 'Arial, sans-serif' }}>
-                                {attendanceSubHeader || 'Basic Introductory Computer Science (BICS) Course'}
+                                {attendanceSubHeader || 'Conducted by Preliminary Examinations 2026'}
                               </div>
                             </div>
 
@@ -535,57 +677,47 @@ export default function AdminAttendance({
                                 <th style={{ border: '1px solid #000', padding: '4px 3px', width: '5%', textAlign: 'center', fontWeight: 'bold' }}>
                                   Sr.<br />No.
                                 </th>
-                                <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                <th style={{ border: '1px solid #000', padding: '4px 6px', width: isLab && (attendanceLabSheetType === 'online' || attendanceLabSheetType === 'practical') ? '15%' : '14%', textAlign: 'center', fontWeight: 'bold' }}>
                                   Reg No.
                                 </th>
-                                <th style={{ border: '1px solid #000', padding: '4px 8px', width: '38%', textAlign: 'left', fontWeight: 'bold' }}>
+                                <th style={{ border: '1px solid #000', padding: '4px 8px', width: isLab && (attendanceLabSheetType === 'online' || attendanceLabSheetType === 'practical') ? '33%' : '31%', textAlign: 'center', fontWeight: 'bold' }}>
                                   Name of Student
                                 </th>
-                                {isLab ? (
-                                  attendanceLabSheetType === 'online' ? (
-                                    <>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Terminal / PC No.
-                                      </th>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Workstation / IP
-                                      </th>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Signature<br />of Student
-                                      </th>
-                                    </>
-                                  ) : attendanceLabSheetType === 'viva' ? (
-                                    <>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Marks Obtained<br />(Max: {examMarks})
-                                      </th>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Examiner Remarks
-                                      </th>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Signature<br />of Student
-                                      </th>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Serial No .of<br />Answer book
-                                      </th>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        No. of<br />Supplements/Graph
-                                      </th>
-                                      <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
-                                        Signature<br />of Student
-                                      </th>
-                                    </>
-                                  )
-                                ) : (
+                                {isLab && attendanceLabSheetType === 'online' ? (
                                   <>
-                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
-                                      Serial No .of<br />Answer book
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '18%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Terminal / PC No.
                                     </th>
                                     <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Digital Ticket No.
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '14%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Signature<br />of Student
+                                    </th>
+                                  </>
+                                ) : isLab && attendanceLabSheetType === 'practical' ? (
+                                  <>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '18%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Serial No. of<br />Answer book
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Digital Ticket No.
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '14%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Signature<br />of Student
+                                    </th>
+                                  </>
+                                ) : (
+                                  /* Written Exam (Lab or Theory) */
+                                  <>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Serial No. of<br />Answer book
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 2px', width: '8%', textAlign: 'center', fontWeight: 'bold' }}>
                                       No. of<br />Supplements/Graph
+                                    </th>
+                                    <th style={{ border: '1px solid #000', padding: '4px 6px', width: '15%', textAlign: 'center', fontWeight: 'bold' }}>
+                                      Digital Ticket No.
                                     </th>
                                     <th style={{ border: '1px solid #000', padding: '4px 6px', width: '12%', textAlign: 'center', fontWeight: 'bold' }}>
                                       Signature<br />of Student
@@ -608,50 +740,94 @@ export default function AdminAttendance({
                                     <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center', fontFamily: 'monospace', fontSize: '8.5pt' }}>
                                       {regNo}
                                     </td>
-                                    <td style={{ border: '1px solid #000', padding: '3px 8px', textAlign: 'left', fontWeight: '500' }}>
+                                    <td style={{ border: '1px solid #000', padding: '3px 8px', textAlign: 'center', fontWeight: '500' }}>
                                       {fullName}
                                     </td>
                                     <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
                                     <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
                                     <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
+                                    {(!isLab || attendanceLabSheetType === 'written') && (
+                                      <td style={{ border: '1px solid #000', padding: '3px 6px', textAlign: 'center' }}></td>
+                                    )}
                                   </tr>
                                 );
                               })}
                             </tbody>
                           </table>
 
-                          {/* SUMMARY STATISTICS (Only on the Last Page - Reference Image 2) */}
+                          {/* SUMMARY STATISTICS & DIGITAL ATTENDANCE QR (Side-by-side directly after table ends) */}
                           {isLastPage && (
-                            <table style={{
-                              borderCollapse: 'collapse',
-                              width: '250px',
-                              margin: '18px auto 14px auto',
-                              border: '1.5px solid #000',
-                              fontSize: '8.5pt'
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              marginTop: '16px',
+                              marginBottom: '8px',
+                              width: '100%',
+                              pageBreakInside: 'avoid'
                             }}>
-                              <tbody>
-                                <tr>
-                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center', width: '60%' }}>
-                                    Total Students
-                                  </td>
-                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
-                                    {studentList.length}
-                                  </td>
-                                </tr>
-                                <tr>
-                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
-                                    Present Students
-                                  </td>
-                                  <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}></td>
-                                </tr>
-                                <tr>
-                                  <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
-                                    Absent Students
-                                  </td>
-                                  <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}></td>
-                                </tr>
-                              </tbody>
-                            </table>
+                              {/* Left: Summary Table */}
+                              <table style={{
+                                borderCollapse: 'collapse',
+                                width: '250px',
+                                border: '1.5px solid #000',
+                                fontSize: '8.5pt',
+                                margin: 0
+                              }}>
+                                <tbody>
+                                  <tr>
+                                    <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center', width: '60%' }}>
+                                      Total Students
+                                    </td>
+                                    <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
+                                      {studentList.length}
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
+                                      Present Students
+                                    </td>
+                                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}></td>
+                                  </tr>
+                                  <tr>
+                                    <td style={{ border: '1px solid #000', padding: '4px 8px', fontWeight: 'bold', textAlign: 'center' }}>
+                                      Absent Students
+                                    </td>
+                                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}></td>
+                                  </tr>
+                                </tbody>
+                              </table>
+
+                              {/* Right: Digital Attendance QR Box */}
+                              <div style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                border: '1.5px solid #000',
+                                padding: '5px 10px',
+                                backgroundColor: '#ffffff'
+                              }}>
+                                {qrDataUri ? (
+                                  <img 
+                                    src={qrDataUri} 
+                                    alt="Digital Attendance QR" 
+                                    style={{ width: '70px', height: '70px', display: 'block', imageRendering: 'pixelated' }} 
+                                  />
+                                ) : (
+                                  <img 
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(JSON.stringify({ courseCode: selectedCourseCode, type: isLab ? attendanceLabSheetType : 'written', date: examDate }))}`} 
+                                    alt="Digital Attendance QR" 
+                                    style={{ width: '70px', height: '70px', display: 'block' }} 
+                                  />
+                                )}
+                                <div style={{ textAlign: 'left', fontSize: '7pt', lineHeight: '1.25', color: '#000' }}>
+                                  <div style={{ fontWeight: 'bold', fontSize: '7.5pt' }}>DIGITAL ATTENDANCE QR</div>
+                                  <div>Course: <b>{selectedCourseCode}</b></div>
+                                  <div>Type: {isLab ? (attendanceLabSheetType === 'online' ? 'Online Exam' : attendanceLabSheetType === 'practical' ? 'Practical Exam' : 'Written Exam') : 'Theory Exam'}</div>
+                                  <div style={{ fontStyle: 'italic', color: '#333' }}>Scan in student portal for Digital Ticket</div>
+                                </div>
+                              </div>
+                            </div>
                           )}
                         </div>
 

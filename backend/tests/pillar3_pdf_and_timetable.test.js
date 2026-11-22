@@ -1042,8 +1042,7 @@ async function runPillar3Suite() {
             assert.ok(htText.includes('CANDIDATE FULL NAME:'), 'Hall ticket preserves original candidate label format');
             assert.ok(htText.includes('STUDENT ID / ROLL NO:'), 'Hall ticket preserves student ID label format');
             assert.ok(htText.includes('Online Mode (Proctored)'), 'Must display custom admin Mode');
-            assert.ok(htText.includes('09:15 AM'), 'Must display custom admin Report Time');
-            assert.ok(htText.includes('01:15 PM'), 'Must display lab Report Time');
+            assert.ok(htText.includes("INVIGILATOR'S SIGN"), "Must display Invigilator's Sign column header");
             assert.ok(htText.includes('Sahyadri Academic Hostel, Pune - 411004'), 'Wrapped address rendered');
             assert.ok(htText.includes('B.Sc. Computer Science (R526CS09T - Advanced Algorithms & Web Systems, R526CS02L)'), 'Enrolled courses rendered');
             assert.ok(htText.includes('[X] Institutional Coursework Feedback Submitted'), 'Populated feedback renders [X]');
@@ -1072,7 +1071,7 @@ async function runPillar3Suite() {
             });
             const emptyFbText = (await extractPdfText(emptyFbPdf)).allText;
             assert.ok(emptyFbText.includes('[ ] Institutional Coursework Feedback Submitted'), 'Empty {} feedback must render [ ], NOT [X]');
-            assert.ok(emptyFbText.includes('As Scheduled'), 'Missing reportTime must render "As Scheduled", NOT fake "02:45 PM"');
+            assert.ok(emptyFbText.includes("INVIGILATOR'S SIGN"), "Table must display Invigilator's Sign header");
             assert.strictEqual(emptyFbText.includes('02:45 PM'), false, 'Fake 02:45 PM must not appear when absent');
             assert.ok(emptyFbText.includes('Online Proctored'), 'PYTHON-101 (contains P inside word, does not end in P) must default to Online Proctored, NOT Computer Lab');
 
