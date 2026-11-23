@@ -828,6 +828,12 @@ function AppContent() {
 
   // BICS BIOS Utility State & Invigilator Focus Guard
   const [isBiosOpen, setIsBiosOpen] = useState(false);
+  const isBiosOpenRef = useRef(false);
+  const handleCloseBiosRef = useRef(null);
+  const commitActiveDraftToAnswersRef = useRef(null);
+  useEffect(() => {
+    isBiosOpenRef.current = isBiosOpen;
+  }, [isBiosOpen]);
   const isInvigilatorActionRef = useRef(false);
   const biosAutoExpiryTimeoutRef = useRef(null);
   const f2PressCountRef = useRef(0);
@@ -2617,6 +2623,7 @@ function AppContent() {
       clearTimeout(biosAutoExpiryTimeoutRef.current);
       biosAutoExpiryTimeoutRef.current = null;
     }
+    isBiosOpenRef.current = false;
     setIsBiosOpen(false);
     isInvigilatorActionRef.current = false;
 
@@ -2678,10 +2685,15 @@ function AppContent() {
       }
     }
   };
+  handleCloseBiosRef.current = handleCloseBios;
 
   // Global BICS BIOS Trigger (Available across all exam lifecycle states: Ctrl+Shift+Alt+B or 3x F2)
+  // Stable ref-based handler registered once on mount so it always precedes blockKeydown in capture order
   useEffect(() => {
     const handleGlobalBiosKey = (e) => {
+      // Ignore key repeat so holding keys does not toggle BIOS open and shut
+      if (e.repeat) return;
+
       const isModifier = e.ctrlKey || e.metaKey;
       const key = (e.key || '').toLowerCase();
 
@@ -2694,14 +2706,20 @@ function AppContent() {
         if (typeof e.stopImmediatePropagation === 'function') {
           e.stopImmediatePropagation();
         }
-        if (isBiosOpen) {
-          handleCloseBios();
+        if (isBiosOpenRef.current) {
+          if (typeof handleCloseBiosRef.current === 'function') {
+            handleCloseBiosRef.current();
+          } else {
+            isBiosOpenRef.current = false;
+            setIsBiosOpen(false);
+          }
         } else {
-          if (typeof commitActiveDraftToAnswers === 'function') {
-            commitActiveDraftToAnswers();
+          if (typeof commitActiveDraftToAnswersRef.current === 'function') {
+            commitActiveDraftToAnswersRef.current();
           }
           // Do NOT suppress guards prior to server PIN verification
           isInvigilatorActionRef.current = false;
+          isBiosOpenRef.current = true;
           setIsBiosOpen(true);
         }
         return;
@@ -2722,14 +2740,20 @@ function AppContent() {
           if (typeof e.stopImmediatePropagation === 'function') {
             e.stopImmediatePropagation();
           }
-          if (isBiosOpen) {
-            handleCloseBios();
+          if (isBiosOpenRef.current) {
+            if (typeof handleCloseBiosRef.current === 'function') {
+              handleCloseBiosRef.current();
+            } else {
+              isBiosOpenRef.current = false;
+              setIsBiosOpen(false);
+            }
           } else {
-            if (typeof commitActiveDraftToAnswers === 'function') {
-              commitActiveDraftToAnswers();
+            if (typeof commitActiveDraftToAnswersRef.current === 'function') {
+              commitActiveDraftToAnswersRef.current();
             }
             // Do NOT suppress guards prior to server PIN verification
             isInvigilatorActionRef.current = false;
+            isBiosOpenRef.current = true;
             setIsBiosOpen(true);
           }
         }
@@ -2738,7 +2762,7 @@ function AppContent() {
 
     window.addEventListener('keydown', handleGlobalBiosKey, true);
     return () => window.removeEventListener('keydown', handleGlobalBiosKey, true);
-  }, [isBiosOpen]);
+  }, []);
 
   // ML webcam face proctoring loop
   useEffect(() => {
@@ -3109,23 +3133,13 @@ function AppContent() {
       const key = (e.key || '').toLowerCase();
       const isInsert = e.key === 'Insert';
 
-      // BICS BIOS Diagnostic Utility Trigger: Handled by handleGlobalBiosKey, allow through without double-trigger
+      // BICS BIOS Diagnostic Utility Trigger: Handled globally by handleGlobalBiosKey, allow through untouched
       if (
         (isModifier && e.shiftKey && e.altKey && key === 'b') ||
-        (key === 'f2' && e.ctrlKey && e.altKey)
+        (key === 'f2' && e.ctrlKey && e.altKey) ||
+        key === 'f2'
       ) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation();
-        }
-        return false;
-      }
-
-      // Rapid 3-tap of F2 handled globally by handleGlobalBiosKey
-      if (key === 'f2') {
-        e.preventDefault();
-        return false;
+        return;
       }
 
       // Block Inspect / Developer Tools / View Source shortcuts
@@ -3658,6 +3672,7 @@ function AppContent() {
     }
     return currentList;
   };
+  commitActiveDraftToAnswersRef.current = commitActiveDraftToAnswers;
 
   // Sync draft buffers into global answers list
   const handleSaveAndNext = () => {

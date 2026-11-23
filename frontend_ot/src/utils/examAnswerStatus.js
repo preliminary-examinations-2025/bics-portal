@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES } from '../config/constants';
+import { DEFAULT_TEMPLATES } from '../config/constants.js';
 
 /**
  * Normalizes code/markup string by converting CRLF to LF and trimming whitespace.
@@ -16,14 +16,14 @@ export const isQuestionAnswered = (q, ans, drafts = {}) => {
   if (!q) return false;
 
   // 1. Multiple Choice Questions (Single Choice SCC & Multi Choice MCC)
-  if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc') {
+  if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc' || (Array.isArray(q.options) && q.options.length > 0)) {
     const isMulti = q.isMultiChoice || q.type === 'mcc' || q.category === 'Multiple Choice';
     if (isMulti) {
       const selOpts = drafts.draftMCQ !== undefined ? drafts.draftMCQ : (ans?.selectedOptionIndices ?? (ans?.selectedOptionIndex !== null && ans?.selectedOptionIndex !== undefined ? [ans.selectedOptionIndex] : []));
       return Array.isArray(selOpts) && selOpts.length > 0;
     }
     const selOpt = drafts.draftMCQ !== undefined ? drafts.draftMCQ : ans?.selectedOptionIndex;
-    return selOpt !== null && selOpt !== undefined;
+    return selOpt !== null && selOpt !== undefined && selOpt !== -1;
   }
 
   // 2. Interactive Web Development

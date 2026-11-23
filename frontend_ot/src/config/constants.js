@@ -1,5 +1,5 @@
 export const API_BASE = (() => {
-  const envBase = import.meta.env.VITE_API_BASE;
+  const envBase = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_API_BASE : '';
   if (envBase && !envBase.includes('onrender.com')) {
     return envBase;
   }
@@ -23,7 +23,7 @@ export const getReturnUrl = (targetPath = '/coursework/online-tests') => {
                   window.location.hostname.startsWith('192.168.') || 
                   window.location.hostname.startsWith('10.') || 
                   window.location.hostname.startsWith('172.');
-  const base = import.meta.env.VITE_DASHBOARD_URL || (
+  const base = (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_DASHBOARD_URL : '') || (
     isLocal
       ? 'http://localhost:5173'
       : window.location.origin.replace('ot-bics', 'bics-portal').replace('otbicsexam', 'bicsportal')

@@ -137,23 +137,33 @@ function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
     }
   }
 
-  // 4. Evaluate using standard platform checker
+  // 4. Primary Source of Truth: Standard platform checker
   const isPlatformAnswered = checkIsQuestionAnswered(q, workingAns, draftsMap);
+  const isExplicitlySaved = Boolean(workingAns.isSavedByUser);
+  const hasTextAnswer = typeof workingAns.answer === 'string' && workingAns.answer.trim().length > 0;
 
-  // 5. Evaluate according to question type and build descriptive summary
+  if (!isPlatformAnswered && !isExplicitlySaved && !hasTextAnswer) {
+    return { hasAnswer: false, summary: '—', raw: workingAns };
+  }
+
+  // 5. Build descriptive summary for verified answered question
   const isMulti = q.isMultiChoice || q.type === 'mcc' || q.category === 'Multiple Choice';
   const hasOptions = Array.isArray(q.options) && q.options.length > 0;
   if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc' || hasOptions) {
     if (isMulti) {
-      const opts = workingAns.selectedOptionIndices ?? (workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined ? [workingAns.selectedOptionIndex] : []);
+      const opts = draftsMap.draftMCQ !== undefined
+        ? draftsMap.draftMCQ
+        : (workingAns.selectedOptionIndices ?? (workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined ? [workingAns.selectedOptionIndex] : []));
       if (Array.isArray(opts) && opts.length > 0) {
         const labels = opts.map(o => String.fromCharCode(65 + Number(o))).join(', ');
         return { hasAnswer: true, summary: `Selected [${labels}]`, raw: workingAns };
       }
     } else {
-      const opt = workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined && workingAns.selectedOptionIndex !== -1
-        ? workingAns.selectedOptionIndex
-        : (typeof workingAns.answer === 'number' && workingAns.answer >= 0 ? workingAns.answer : (typeof workingAns === 'number' && workingAns >= 0 ? workingAns : null));
+      const opt = draftsMap.draftMCQ !== undefined
+        ? draftsMap.draftMCQ
+        : (workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined && workingAns.selectedOptionIndex !== -1
+            ? workingAns.selectedOptionIndex
+            : (typeof workingAns.answer === 'number' && workingAns.answer >= 0 ? workingAns.answer : null));
       if (opt !== null && opt !== undefined && opt >= 0) {
         return { hasAnswer: true, summary: `Option ${String.fromCharCode(65 + Number(opt))}`, raw: workingAns };
       }
@@ -162,39 +172,27 @@ function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
 
   // Web Development
   if (q.type === 'web') {
-    const h = cleanCodeStr(workingAns.submittedHtml || workingAns.html);
-    const c = cleanCodeStr(workingAns.submittedCss || workingAns.css);
-    const j = cleanCodeStr(workingAns.submittedJs || workingAns.js);
-    const initH = cleanCodeStr(q.initialHtml || q.initialCode?.html);
-    const initC = cleanCodeStr(q.initialCss || q.initialCode?.css);
-    const initJ = cleanCodeStr(q.initialJs || q.initialCode?.js);
-    const modified = (h && h !== initH) || (c && c !== initC) || (j && j !== initJ);
-    const totalChars = h.length + c.length + j.length;
-    if (modified || isPlatformAnswered || workingAns.isSavedByUser) {
-      return { hasAnswer: true, summary: `Web code (${totalChars} chars)`, raw: workingAns };
-    }
+    const curH = cleanCodeStr(draftsMap.draftHtml !== undefined ? draftsMap.draftHtml : workingAns.submittedHtml);
+    const curC = cleanCodeStr(draftsMap.draftCss !== undefined ? draftsMap.draftCss : workingAns.submittedCss);
+    const curJ = cleanCodeStr(draftsMap.draftJs !== undefined ? draftsMap.draftJs : workingAns.submittedJs);
+    const totalChars = curH.length + curC.length + curJ.length;
+    return { hasAnswer: true, summary: `Web code (${totalChars} chars)`, raw: workingAns };
   }
 
   // Algorithmic Coding
-  const code = cleanCodeStr(workingAns.submittedCode || workingAns.code);
-  if (code) {
-    const init = cleanCodeStr(q.initialTemplate || '');
-    const isDefaultBoilerplate = code.startsWith('// Write your') || code.startsWith('/* Write your');
-    if ((code !== init && !isDefaultBoilerplate) || isPlatformAnswered || workingAns.isSavedByUser) {
-      const lang = workingAns.selectedLanguage || workingAns.language || 'code';
+  if (q.type !== 'mcq' && q.type !== 'scc' && q.type !== 'mcc' && !hasOptions && q.type !== 'web') {
+    const code = cleanCodeStr(draftsMap.draftCode !== undefined ? draftsMap.draftCode : workingAns.submittedCode);
+    if (code) {
+      const lang = draftsMap.draftLanguage || workingAns.selectedLanguage || workingAns.language || 'cpp';
       return { hasAnswer: true, summary: `${lang} (${code.length} chars)`, raw: workingAns };
     }
   }
 
-  if (isPlatformAnswered || workingAns.isSavedByUser) {
-    return { hasAnswer: true, summary: 'Marked answered', raw: workingAns };
-  }
-
-  if (typeof workingAns.answer === 'string' && workingAns.answer.trim().length > 0) {
+  if (hasTextAnswer) {
     return { hasAnswer: true, summary: `${workingAns.answer.trim().length} chars`, raw: workingAns };
   }
 
-  return { hasAnswer: false, summary: '—', raw: workingAns };
+  return { hasAnswer: true, summary: 'Marked answered', raw: workingAns };
 }
 
 export default function ExamBiosModal({
@@ -613,7 +611,7 @@ export default function ExamBiosModal({
   // Calculate actual answered count from questions
   const answeredCount = questions.length > 0
     ? questions.filter((q, idx) => resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft).hasAnswer).length
-    : (Array.isArray(answers) ? answers.filter(a => a && (a.isSavedByUser || a.selectedOptionIndex !== null || a.submittedCode)).length : Object.keys(answers || {}).length);
+    : (Array.isArray(answers) ? answers.filter(a => a && (a.isSavedByUser || (a.selectedOptionIndex !== null && a.selectedOptionIndex !== undefined))).length : 0);
 
   return (
     <>
