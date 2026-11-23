@@ -535,21 +535,6 @@ export default function ExamBiosModal({
     setPinInput('');
     setPinError('');
     setActionNotice(null);
-
-    // Make full screen on exit if not already (user gesture grants full permission)
-    try {
-      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
-      if (!fsEl) {
-        const el = document.documentElement;
-        const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-        if (req) {
-          req.call(el).catch(() => {});
-        }
-      }
-    } catch (err) {
-      console.warn('[ExamBiosModal] Exit fullscreen request:', err);
-    }
-
     onClose();
   };
 

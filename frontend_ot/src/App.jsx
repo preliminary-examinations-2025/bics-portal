@@ -838,6 +838,7 @@ function AppContent() {
   const biosAutoExpiryTimeoutRef = useRef(null);
   const f2PressCountRef = useRef(0);
   const lastF2PressTimeRef = useRef(0);
+  const lastBiosCloseTimeRef = useRef(0);
 
   // Auto-commit draft tracking refs (Item 3)
   const prevSelectedQuestionIndexRef = useRef(0);
@@ -1905,8 +1906,8 @@ function AppContent() {
       
       if (flow === 'active_exam') {
         if (!fs) {
-          if (isInvigilatorActionRef.current) {
-            console.log('[Proctoring Focus Guard] Fullscreen exit suppressed for authorized invigilator action.');
+          if (isInvigilatorActionRef.current || (Date.now() - lastBiosCloseTimeRef.current < 2000)) {
+            console.log('[Proctoring Focus Guard] Fullscreen exit suppressed for authorized invigilator action or BIOS exit grace period.');
             return;
           }
           const now = Date.now();
@@ -1926,21 +1927,25 @@ function AppContent() {
             setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
           }
           setShowWarningModal(true);
-        } else if (fsExitStartTimeRef.current) {
-          const startTime = fsExitStartTimeRef.current;
-          const endTime = Date.now();
-          const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
-          fsExitStartTimeRef.current = null;
-          handleProctorResolved('FULLSCREEN_EXIT');
-          setShowWarningModal(false);
-          syncProctoringLogs(
-            proctoringWarnings,
-            'FULLSCREEN_RETURNED',
-            `Candidate returned to fullscreen after ${durationSeconds} seconds.`,
-            startTime,
-            endTime,
-            durationSeconds
-          );
+        } else {
+          // Fullscreen confirmed active; clear invigilator shield
+          isInvigilatorActionRef.current = false;
+          if (fsExitStartTimeRef.current) {
+            const startTime = fsExitStartTimeRef.current;
+            const endTime = Date.now();
+            const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
+            fsExitStartTimeRef.current = null;
+            handleProctorResolved('FULLSCREEN_EXIT');
+            setShowWarningModal(false);
+            syncProctoringLogs(
+              proctoringWarnings,
+              'FULLSCREEN_RETURNED',
+              `Candidate returned to fullscreen after ${durationSeconds} seconds.`,
+              startTime,
+              endTime,
+              durationSeconds
+            );
+          }
         }
       }
     };
@@ -1957,8 +1962,8 @@ function AppContent() {
   useEffect(() => {
     const handleFocusLost = (source = 'blur') => {
       if (flow !== 'active_exam') return;
-      if (isInvigilatorActionRef.current) {
-        console.log('[Proctoring Focus Guard] Focus loss suppressed for authorized invigilator action.');
+      if (isInvigilatorActionRef.current || (Date.now() - lastBiosCloseTimeRef.current < 2000)) {
+        console.log('[Proctoring Focus Guard] Focus loss suppressed for authorized invigilator action or BIOS exit grace period.');
         tabExitStartTimeRef.current = null;
         return;
       }
@@ -2625,7 +2630,18 @@ function AppContent() {
     }
     isBiosOpenRef.current = false;
     setIsBiosOpen(false);
-    isInvigilatorActionRef.current = false;
+
+    // Set grace timestamp so exit transitions don't trigger false proctoring penalties
+    lastBiosCloseTimeRef.current = Date.now();
+
+    // Clear the invigilator shield once fullscreen is confirmed back, or after grace period
+    if (getActiveFullscreenElement()) {
+      isInvigilatorActionRef.current = false;
+    } else {
+      setTimeout(() => {
+        isInvigilatorActionRef.current = false;
+      }, 2500);
+    }
 
     if (reason === 'auto_expiry') {
       syncProctoringLogs(
@@ -2675,12 +2691,34 @@ function AppContent() {
         }
       } catch (err) {
         console.warn('[BIOS Exit] Auto-fullscreen attempt error:', err);
-        if (flow === 'active_exam') {
-          const now = Date.now();
-          fsExitStartTimeRef.current = now;
-          lastFullscreenExitTimeRef.current = now;
-          setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
-          setShowWarningModal(true);
+        // A failed fullscreen request is NEVER candidate misconduct or a direct strike.
+        const currentFs = getActiveFullscreenElement();
+        if (currentFs) {
+          setIsFullscreen(true);
+          setShowWarningModal(false);
+        } else {
+          // If fullscreen is not active, prompt candidate politely with user gesture permission without penalty
+          setCustomModal({
+            isOpen: true,
+            title: 'Resume Fullscreen Exam',
+            message: 'Invigilator diagnostic session has ended. Please click "Resume Fullscreen Exam" to return to full-screen examination mode.',
+            confirmText: 'Resume Fullscreen Exam',
+            cancelText: '',
+            isAlert: true,
+            onConfirm: async () => {
+              try {
+                const el = document.documentElement;
+                const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+                if (req) {
+                  await req.call(el);
+                  setIsFullscreen(true);
+                  setShowWarningModal(false);
+                }
+              } catch (fsErr) {
+                console.warn('[Prompt Fullscreen] Error returning to fullscreen:', fsErr);
+              }
+            }
+          });
         }
       }
     }
