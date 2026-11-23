@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel, ServerOutageIncidentModel } = require('../models');
+const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel, ServerOutageIncidentModel, AuditLogModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
@@ -1409,6 +1409,127 @@ router.post('/heartbeat/:submissionId', requireAuth, async (req, res) => {
     }
 });
 
+// 4.1a Client Reconnect Telemetry Dispatch
+router.post('/telemetry/reconnect', requireAuth, async (req, res) => {
+    const { submissionId, outageWindow, failedRequestsCount, failedRequestsJournal } = req.body;
+    if (!submissionId) return res.status(400).json({ error: "submissionId is required" });
+
+    try {
+        const sub = await findActiveSubmissionByParam(submissionId);
+        if (!sub) return res.status(404).json({ error: "Submission session not found" });
+
+        if (!isSubmissionOwnerForUser(req.user, sub)) {
+            return res.status(403).json({ error: "Access denied: You do not own this examination session." });
+        }
+
+        const clientStart = outageWindow?.clientObservedStart
+            ? new Date(outageWindow.clientObservedStart)
+            : new Date(Date.now() - 300000);
+        const clientEnd = outageWindow?.clientObservedEnd
+            ? new Date(outageWindow.clientObservedEnd)
+            : new Date();
+
+        let isVerified = false;
+        let matchedIncident = null;
+
+        if (dbState.useMongo) {
+            // Check overlapping ServerOutageIncident in MongoDB
+            matchedIncident = await ServerOutageIncidentModel.findOne({
+                $or: [
+                    { outageStart: { $lte: clientEnd }, outageEnd: { $gte: clientStart } },
+                    { outageStart: { $gte: clientStart, $lte: clientEnd } }
+                ]
+            }).lean();
+
+            // Check if server rebooted within/near the reported client window (±45s tolerance)
+            const serverBootTime = Date.now() - (process.uptime() * 1000);
+            const isRebootMatch = serverBootTime >= (clientStart.getTime() - 45000) && serverBootTime <= (clientEnd.getTime() + 45000);
+
+            if (matchedIncident || isRebootMatch) {
+                isVerified = true;
+            }
+
+            const incidentRef = matchedIncident ? String(matchedIncident._id) : (isRebootMatch ? 'REBOOT_VERIFIED' : 'NONE');
+            const durationSec = outageWindow?.durationSeconds || Math.max(1, Math.round((clientEnd.getTime() - clientStart.getTime()) / 1000));
+            const failedCount = typeof failedRequestsCount === 'number' ? failedRequestsCount : (Array.isArray(failedRequestsJournal) ? failedRequestsJournal.length : 0);
+
+            if (matchedIncident) {
+                await ServerOutageIncidentModel.findByIdAndUpdate(matchedIncident._id, {
+                    $inc: { affectedSubmissionsCount: 1 },
+                    $addToSet: { affectedCandidateIds: sub.studentId || String(sub._id) }
+                }).catch(() => {});
+            }
+
+            const updateOps = {
+                $set: {
+                    'offlineSyncMetadata.wasSyncedOffline': true,
+                    'offlineSyncMetadata.outageVerified': isVerified,
+                    'offlineSyncMetadata.outageIncidentId': matchedIncident ? matchedIncident._id : null,
+                    'offlineSyncMetadata.verifiedAt': new Date()
+                },
+                $push: {
+                    'proctoringLog.events': {
+                        timestamp: new Date(),
+                        type: isVerified ? 'SERVER_OUTAGE_VERIFIED' : 'CLIENT_DISCONNECT_JOURNALED',
+                        details: isVerified
+                            ? `Server outage (${durationSec}s, ${failedCount} buffered requests) verified against infrastructure incident ${incidentRef}. Excused from network disconnect penalty.`
+                            : `Client reported ${durationSec}s blackout (${failedCount} buffered requests). No matching infrastructure outage in server ledger.`,
+                        durationSeconds: durationSec,
+                        failedAttempts: failedCount,
+                        incidentRef
+                    }
+                }
+            };
+
+            await TestSubmissionModel.findByIdAndUpdate(sub._id, updateOps);
+
+            // Fire-and-forget selective audit log
+            AuditLogModel.create({
+                timestamp: new Date(),
+                method: 'TELEMETRY',
+                path: '/api/tests/telemetry/reconnect',
+                statusCode: 200,
+                durationMs: 0,
+                userId: req.user?.id || req.user?._id || null,
+                submissionId: sub._id,
+                ip: req.ip,
+                errorMessage: isVerified
+                    ? `[RECONNECT_TELEMETRY] Verified ${durationSec}s blackout (${failedCount} requests) for student ${sub.studentId || ''} against incident ${incidentRef}`
+                    : `[RECONNECT_TELEMETRY] Unverified client disconnect (${durationSec}s, ${failedCount} requests) for student ${sub.studentId || ''}`
+            }).catch(() => {});
+        } else {
+            // Local JSON DB fallback
+            const db = getJSONData();
+            db.testSubmissions = db.testSubmissions || [];
+            const subDoc = db.testSubmissions.find(s => !s.isDeleted && String(s.id || s._id) === String(sub.id || sub._id));
+            if (subDoc) {
+                if (!subDoc.offlineSyncMetadata) subDoc.offlineSyncMetadata = {};
+                subDoc.offlineSyncMetadata.outageVerified = true;
+                if (!subDoc.proctoringLog) subDoc.proctoringLog = {};
+                if (!Array.isArray(subDoc.proctoringLog.events)) subDoc.proctoringLog.events = [];
+                subDoc.proctoringLog.events.push({
+                    timestamp: new Date(),
+                    type: 'SERVER_OUTAGE_VERIFIED',
+                    details: `Server outage verified via local JSON fallback mode.`,
+                    durationSeconds: outageWindow?.durationSeconds || 0
+                });
+                saveJSONData(db);
+                isVerified = true;
+            }
+        }
+
+        return res.json({
+            success: true,
+            verified: isVerified,
+            incidentId: matchedIncident ? matchedIncident._id : null,
+            message: isVerified ? "Client reconnect telemetry verified against infrastructure outage incident." : "Telemetry recorded."
+        });
+    } catch (e) {
+        console.error("[RECONNECT_TELEMETRY] Error recording telemetry:", e.message);
+        return res.status(500).json({ error: "Failed to record reconnect telemetry" });
+    }
+});
+
 // 4.1b Candidate Active Draft Autosave (Segregated from Final /submit)
 const handleDraftSave = async (req, res) => {
     const { submissionId } = req.params;
@@ -2208,14 +2329,19 @@ router.post('/submit', requireAuth, async (req, res) => {
                                     type: 'OVERTIME_SUBMISSION',
                                     details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
                                 });
-                            } else if (req.body.isOfflineSync) {
+                            } else if (req.body.isOfflineSync || req.body.reconnectTelemetry) {
                                 let isVerifiedOutage = false;
                                 let matchingOutageId = null;
+                                const telemetry = req.body.reconnectTelemetry;
                                 try {
-                                    const offlineStart = req.body.lastCheckpointServerTime
-                                        ? new Date(Number(req.body.lastCheckpointServerTime))
-                                        : new Date(Date.now() - 300000);
-                                    const offlineEnd = new Date();
+                                    const offlineStart = telemetry?.outageWindow?.clientObservedStart
+                                        ? new Date(telemetry.outageWindow.clientObservedStart)
+                                        : (req.body.lastCheckpointServerTime
+                                            ? new Date(Number(req.body.lastCheckpointServerTime))
+                                            : new Date(Date.now() - 300000));
+                                    const offlineEnd = telemetry?.outageWindow?.clientObservedEnd
+                                        ? new Date(telemetry.outageWindow.clientObservedEnd)
+                                        : new Date();
 
                                     const matchingIncident = await ServerOutageIncidentModel.findOne({
                                         $or: [
@@ -2224,20 +2350,25 @@ router.post('/submit', requireAuth, async (req, res) => {
                                         ]
                                     }).lean();
 
-                                    if (matchingIncident) {
+                                    const serverBootTime = Date.now() - (process.uptime() * 1000);
+                                    const isRebootMatch = serverBootTime >= (offlineStart.getTime() - 45000) && serverBootTime <= (offlineEnd.getTime() + 45000);
+
+                                    if (matchingIncident || isRebootMatch) {
                                         isVerifiedOutage = true;
-                                        matchingOutageId = matchingIncident._id;
-                                        console.log(`[OFFLINE VERIFICATION] Submission ${submissionId} offline window verified against ServerOutageIncident ${matchingIncident._id} (${matchingIncident.cause}).`);
+                                        matchingOutageId = matchingIncident ? matchingIncident._id : 'REBOOT_VERIFIED';
+                                        console.log(`[OFFLINE VERIFICATION] Submission ${submissionId} offline window verified against ServerOutageIncident ${matchingOutageId}.`);
                                     }
                                 } catch (outageErr) {
                                     console.error('[OFFLINE VERIFICATION] Error checking outage incidents:', outageErr.message);
                                 }
 
+                                const failedReqCount = telemetry?.failedRequestsCount || 0;
                                 submission.offlineSyncMetadata = {
                                     wasSyncedOffline: true,
                                     outageVerified: isVerifiedOutage,
                                     outageIncidentId: matchingOutageId,
-                                    verifiedAt: new Date()
+                                    verifiedAt: new Date(),
+                                    telemetryLogged: Boolean(telemetry)
                                 };
 
                                 if (!submission.proctoringLog) submission.proctoringLog = {};
@@ -2246,7 +2377,7 @@ router.post('/submit', requireAuth, async (req, res) => {
                                     timestamp: new Date(),
                                     type: isVerifiedOutage ? 'SERVER_OUTAGE_VERIFIED' : 'OFFLINE_SYNC_ACCEPTED',
                                     details: isVerifiedOutage
-                                        ? `Offline gap verified against infrastructure outage incident ${matchingOutageId}. Server-side outage confirmed.`
+                                        ? `Offline gap verified against infrastructure outage incident ${matchingOutageId}. Server-side outage confirmed (${failedReqCount} requests buffered).`
                                         : `Cached examination payload accepted and verified against server-signed checkpoint.`
                                 });
                             }

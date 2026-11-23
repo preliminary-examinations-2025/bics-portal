@@ -35,6 +35,15 @@ import {
   getOfflineDraft,
   deleteOfflineDraft
 } from './utils/offlineDb';
+import {
+  recordFailedRequest,
+  startServerOutage,
+  endServerOutage,
+  getPendingTelemetry,
+  clearPendingTelemetry,
+  dispatchReconnectTelemetry,
+  isServerOutageActive
+} from './utils/telemetryJournal';
 import { API_BASE, safeReadJson } from './api/client';
 
 const getReturnUrl = (targetPath = '/coursework/online-tests') => {
@@ -3545,6 +3554,32 @@ function AppContent() {
 
         if (res.ok) {
           const data = await res.json();
+
+          // Check if a client-tracked server outage was active and just resolved!
+          if (isServerOutageActive()) {
+            const recovery = endServerOutage(subId);
+            if (recovery?.event) {
+              saveOfflineEvent({ submissionId: subId, ...recovery.event }).catch(() => {});
+            }
+            if (recovery?.telemetry) {
+              const activeAuth = getActiveAuthToken();
+              const activeExamToken = getActiveExamToken();
+              dispatchReconnectTelemetry(API_BASE, activeAuth, activeExamToken, recovery.telemetry).then((recRes) => {
+                if (recRes?.verified) {
+                  console.log('[RECONNECT TELEMETRY] Verified by server against incident:', recRes.incidentId);
+                }
+              }).catch(() => {});
+            }
+          } else {
+            // Retry any unacknowledged pending telemetry from earlier attempt
+            const existingPending = getPendingTelemetry();
+            if (existingPending) {
+              const activeAuth = getActiveAuthToken();
+              const activeExamToken = getActiveExamToken();
+              dispatchReconnectTelemetry(API_BASE, activeAuth, activeExamToken, existingPending).catch(() => {});
+            }
+          }
+
           // Store cryptographic server-signed checkpoint for tamper-proof time anchoring
           if (data.checkpointToken && typeof data.serverTime === 'number') {
             lastCheckpointRef.current = {
@@ -3564,6 +3599,17 @@ function AppContent() {
           }
         } else if (res.status >= 500) {
           // Server 5xx: Server is compiling or restarting; physical network is FINE
+          recordFailedRequest({
+            endpoint: `/api/tests/heartbeat/${subId}`,
+            method: 'POST',
+            errorType: `HTTP_${res.status}`,
+            httpStatus: res.status,
+            submissionId: subId
+          });
+          const outageEvt = startServerOutage(subId, `HTTP_${res.status}`);
+          if (outageEvt) {
+            saveOfflineEvent({ submissionId: subId, ...outageEvt }).catch(() => {});
+          }
           setNetworkQuality(rtt >= 2000 ? 'fair' : 'good');
           setServerNotice('Server synchronizing — local auto-save active. Your exam continues uninterrupted.');
           addProctorToast('SERVER_OFFLINE', {
@@ -3591,6 +3637,17 @@ function AppContent() {
           const hasGlobalInternet = await checkGlobalInternetAccess();
           if (hasGlobalInternet) {
             // Student has working internet; BICS backend is down/unreachable!
+            recordFailedRequest({
+              endpoint: `/api/tests/heartbeat/${subId}`,
+              method: 'POST',
+              errorType: 'FETCH_FAILED',
+              httpStatus: null,
+              submissionId: subId
+            });
+            const outageEvt = startServerOutage(subId, 'FETCH_FAILED_SERVER_OFFLINE');
+            if (outageEvt) {
+              saveOfflineEvent({ submissionId: subId, ...outageEvt }).catch(() => {});
+            }
             // Candidate continues exam undisturbed. Local drafts are continuously saved.
             setNetworkQuality('fair');
             setServerNotice('Server offline — local auto-save active. Your exam continues uninterrupted.');
@@ -4015,7 +4072,8 @@ function AppContent() {
       lastCheckpointToken: lastCheckpointRef.current?.checkpointToken || null,
       lastCheckpointServerTime: lastCheckpointRef.current?.serverTime || null,
       elapsedSinceCheckpointMs: elapsedSinceCheckpoint,
-      isOfflineSync: !isActuallyOnline || Boolean(serverNotice)
+      isOfflineSync: !isActuallyOnline || Boolean(serverNotice),
+      reconnectTelemetry: getPendingTelemetry() || null
     };
 
     // Offline / disconnect data is preserved in IndexedDB & localStorage without triggering file downloads
@@ -4099,6 +4157,7 @@ function AppContent() {
     }
 
     if (submitSuccess) {
+      clearPendingTelemetry();
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
       deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});

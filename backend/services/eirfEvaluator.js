@@ -150,6 +150,12 @@ function evaluateEirfIncident(submission, testConfig = {}) {
     // -------------------------------------------------------------
     // RULE 3: Network Disconnection Duration (> 5 seconds)
     // -------------------------------------------------------------
+    // Check if a server-side outage was verified by the health ledger or client reconnect telemetry
+    const isOutageVerified = Boolean(
+        submission.offlineSyncMetadata?.outageVerified === true ||
+        events.some(ev => ev?.type === 'SERVER_OUTAGE_VERIFIED')
+    );
+
     let maxOfflineDurationSec = 0;
 
     // 3A. Check client monotonic duration telemetry
@@ -179,8 +185,11 @@ function evaluateEirfIncident(submission, testConfig = {}) {
     });
 
     ruleBreakdown.details.maxOfflineDurationSec = maxOfflineDurationSec;
+    ruleBreakdown.details.isOutageVerified = isOutageVerified;
 
-    if (maxOfflineDurationSec >= 15) {
+    // If server outage is verified, excuse candidate from Rule 3 network disconnect penalty.
+    // Non-network proctoring flags (Rules 1, 2, 4) remain strictly enforced.
+    if (!isOutageVerified && maxOfflineDurationSec >= 15) {
         ruleBreakdown.rule3_networkDisconnectOver15s = true;
         ruleBreakdown.rule3_networkDisconnectOver5s = true;
         flaggedReasons.push(
