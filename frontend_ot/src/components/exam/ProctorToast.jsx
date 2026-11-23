@@ -167,20 +167,25 @@ function ToastItem({ item, onDismiss }) {
 
       <button
         type="button"
-        onClick={() => onDismiss?.(id)}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onDismiss?.(id);
+        }}
         aria-label="Dismiss notification"
         style={{
           background: 'none',
           border: 'none',
           color: '#ffffff',
           cursor: 'pointer',
-          padding: '2px',
+          padding: '4px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           opacity: 0.85,
           transition: 'opacity 0.15s ease',
-          flexShrink: 0
+          flexShrink: 0,
+          pointerEvents: 'auto'
         }}
         onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
         onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.85')}
@@ -228,7 +233,8 @@ export function ProctorToast({
   const handleDismiss = (id) => {
     if (onDismissToast) {
       onDismissToast(id);
-    } else if (onDismiss) {
+    }
+    if (onDismiss) {
       onDismiss(id);
     }
   };

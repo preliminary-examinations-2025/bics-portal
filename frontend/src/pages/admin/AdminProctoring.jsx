@@ -278,6 +278,34 @@ export default function AdminProctoring({
         </button>
       </div>
 
+      {/* INVIGILATOR TERMINAL BIOS REFERENCE (Admin-Only Reference) */}
+      <div style={{
+        marginBottom: '18px',
+        backgroundColor: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: '8px',
+        padding: '12px 16px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div style={{ width: '22px', height: '22px', borderRadius: '4px', backgroundColor: '#002147', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8.5pt', fontWeight: 'bold' }}>
+              B
+            </div>
+            <span style={{ fontSize: '9pt', fontWeight: 'bold', color: '#002147' }}>Invigilator On-Site Troubleshooting: BICS Terminal BIOS Utility</span>
+            <span style={{ fontSize: '8pt', color: '#64748b' }}>
+              Terminal Secret Key: <kbd style={{ padding: '2px 6px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 'bold', color: '#0f172a' }}>Ctrl + Shift + Alt + B</kbd> or 3x <kbd style={{ padding: '2px 6px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 'bold', color: '#0f172a' }}>F2</kbd>
+            </span>
+          </div>
+          <span style={{ fontSize: '7.5pt', color: '#059669', backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '4px', fontWeight: '600' }}>
+            PIN Protected (Zero Candidate Penalty)
+          </span>
+        </div>
+        <p style={{ margin: '6px 0 0 0', fontSize: '8pt', color: '#475569', lineHeight: '1.45' }}>
+          <strong>Hall Invigilator Guide:</strong> To diagnose an offline terminal, reconfigure Wi-Fi, or extract emergency offline answers: approach the student machine and press the key combination above. Enter your Invigilator PIN (configured in <code style={{ backgroundColor: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>VITE_BIOS_PIN</code>, default: <code style={{ backgroundColor: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>2026</code>). You can launch <strong>Windows Native Wi-Fi Settings</strong> (with zero-strike focus shield), trigger <strong>Force Adapter Re-Probe</strong> (<code style={{ backgroundColor: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>gstatic.com/generate_204</code>), or <strong>Export Encrypted Emergency Bundle</strong> (<code style={{ backgroundColor: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>.bics-vault</code>) to a USB drive. <em>Note: This key combination is strictly confidential and not displayed on student screens.</em>
+        </p>
+      </div>
+
       {adminTab === 'feeds' ? (
         <>
           {/* SPACE-SAVING TOP CONTROL BAR */}

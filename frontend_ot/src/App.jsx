@@ -759,8 +759,17 @@ function AppContent() {
   const lastLoggedCodeRef = useRef({});   // { [qId]: sourceCode }
   const lastLoggedWebRef = useRef({});    // { [qId]: `${html}__${css}__${js}` }
 
+  // Manual dismissal cooldown tracking (15-second grace period prevents background loops from immediately re-badgering candidate)
+  const toastDismissedCooldownRef = useRef({});
+
   // Helper functions for persistent multi-toast proctoring alerts
   const addProctorToast = (id, toastData) => {
+    // If the candidate manually dismissed this toast within the 15-second grace period, suppress re-pop
+    const cooldownExpiry = toastDismissedCooldownRef.current[id] || 0;
+    if (Date.now() < cooldownExpiry) {
+      return;
+    }
+
     setActiveProctorToasts(prev => ({
       ...prev,
       [id]: {
@@ -777,16 +786,25 @@ function AppContent() {
   };
 
   const removeProctorToast = (id) => {
+    // Record 15-second manual dismissal snooze for this warning category
+    if (id && id !== 'legacy_warning') {
+      toastDismissedCooldownRef.current[id] = Date.now() + 15000;
+    }
+
     setActiveProctorToasts(prev => {
-      if (!prev[id]) return prev;
+      if (!prev || typeof prev !== 'object') return {};
       const next = { ...prev };
       delete next[id];
       return next;
     });
+
+    // Synchronously clear webcamProctorWarning so ProctorToast does not re-instantiate it as legacy_warning
+    setWebcamProctorWarning('');
   };
 
   const clearAllProctorToasts = () => {
     setActiveProctorToasts({});
+    setWebcamProctorWarning('');
   };
 
   // Toast Notification for Blocked Actions & Minor Proctoring Alerts
@@ -2456,15 +2474,18 @@ function AppContent() {
     // continue logging it silently to server proctoring telemetry for administrator inspection.
     const isModalOrSilentViolation = eventType === 'FULLSCREEN_EXIT' || eventType === 'TAB_SWITCH' || eventType === 'FACE_MISMATCH';
     if (!isModalOrSilentViolation) {
-      addProctorToast(eventType, {
-        id: eventType,
-        title,
-        message: warningMessage || '',
-        persistent,
-        duration: persistent ? 0 : 6000
-      });
+      const cooldownExpiry = toastDismissedCooldownRef.current[eventType] || 0;
+      if (Date.now() >= cooldownExpiry) {
+        addProctorToast(eventType, {
+          id: eventType,
+          title,
+          message: warningMessage || '',
+          persistent,
+          duration: persistent ? 0 : 6000
+        });
 
-      setWebcamProctorWarning(warningMessage);
+        setWebcamProctorWarning(warningMessage);
+      }
     }
     const now = Date.now();
     const lastTime = lastSnapshotTimeRef.current[eventType] || 0;
@@ -2486,6 +2507,10 @@ function AppContent() {
   // Reset violation tracking when resolved so next occurrence triggers snapshot immediately on first call
   const handleProctorResolved = (eventType) => {
     lastSnapshotTimeRef.current[eventType] = 0;
+    // Clear snooze cooldown because condition is legitimately resolved; future violation should alert immediately
+    if (toastDismissedCooldownRef.current[eventType]) {
+      delete toastDismissedCooldownRef.current[eventType];
+    }
     removeProctorToast(eventType);
   };
 
@@ -2604,7 +2629,8 @@ function AppContent() {
             multiFaceDurationRef.current = 0;
             incrementMinorWarning('FACE_MISSING');
             
-            if (faceMissingDurationRef.current >= 3) { // 3 seconds at 1 FPS
+            // Only trigger violation toast on state entry (duration === 3) or periodic cadence (every 10s)
+            if (faceMissingDurationRef.current >= 3 && (faceMissingDurationRef.current === 3 || faceMissingDurationRef.current % 10 === 0)) {
               handleProctorViolation(
                 'FACE_MISSING',
                 'Your face is not clearly visible in the camera frame. Please position yourself facing the webcam.',
@@ -2618,8 +2644,8 @@ function AppContent() {
             faceAwayDurationRef.current = 0;
             incrementMinorWarning('MULTI_FACE');
             
-            // Multiple faces is a critical proctoring violation: dispatch immediately on confirmed frame
-            if (multiFaceDurationRef.current >= 1) {
+            // Multiple faces is a critical proctoring violation: dispatch on state entry or periodic interval
+            if (multiFaceDurationRef.current === 1 || multiFaceDurationRef.current % 8 === 0) {
               handleProctorViolation(
                 'MULTI_FACE',
                 'More than one face was detected in the camera frame. Please ensure you are alone in the room.',
@@ -2651,7 +2677,7 @@ function AppContent() {
                   faceAwayDurationRef.current += 1;
                   incrementMinorWarning('LOOKING_AWAY');
                   
-                  if (faceAwayDurationRef.current >= LOOKING_AWAY_SUSTAINED_FRAMES) {
+                  if (faceAwayDurationRef.current >= LOOKING_AWAY_SUSTAINED_FRAMES && (faceAwayDurationRef.current === LOOKING_AWAY_SUSTAINED_FRAMES || faceAwayDurationRef.current % 10 === 0)) {
                     handleProctorViolation(
                       'LOOKING_AWAY',
                       'Gaze deviation was detected. Please keep your attention focused forward on the test screen.',
@@ -2854,15 +2880,15 @@ function AppContent() {
             // Sustained speech requirement: require >= 1.0s continuous vocal speech (10 intervals of 100ms)
             if (sustainedVoiceCount >= 10) {
               voiceWarningExpiryRef.current = Date.now() + 5000; // Keep visible for at least 5 seconds
-              // Increment minor warning counter every continuous second of detected voice (Item 3)
+              // Increment minor warning counter and alert toast on initial 1s threshold or periodic 1s intervals
               if (sustainedVoiceCount % 10 === 0) {
                 incrementMinorWarning('VOICE_DETECTED');
+                handleProctorViolation(
+                  'VOICE_DETECTED',
+                  'Background audio or voice activity was detected by the proctoring system. Please maintain silence.',
+                  `High voice detected (${currentDb} dB, RMS: ${rms.toFixed(2)}, Crest Factor: ${crestFactor.toFixed(2)}).`
+                );
               }
-              handleProctorViolation(
-                'VOICE_DETECTED',
-                'Background audio or voice activity was detected by the proctoring system. Please maintain silence.',
-                `High voice detected (${currentDb} dB, RMS: ${rms.toFixed(2)}, Crest Factor: ${crestFactor.toFixed(2)}).`
-              );
             }
           } else {
             sustainedVoiceCount = Math.max(0, sustainedVoiceCount - 1);
