@@ -18,6 +18,7 @@ import { EirfFormView } from './views/EirfFormView';
 import { VerificationReviewView } from './views/VerificationReviewView';
 import { FinishedView } from './views/FinishedView';
 import { CustomAlertModal } from './components/common/CustomAlertModal';
+import ExamBiosModal from './components/exam/ExamBiosModal';
 import { extractComprehensiveClientSecurity } from './utils/clientSecurity';
 import { getBlazeFaceModel, preloadBlazeFaceIdle } from './utils/blazefaceLoader';
 import { encryptPendingStorage, decryptPendingStorage } from './utils/eirfCrypto';
@@ -806,6 +807,12 @@ function AppContent() {
   const lastWindowBlurTimeRef = useRef(0);
   const lastTabWarningTimeRef = useRef(0);
   const DEDUPLICATION_WINDOW_MS = 600;
+
+  // BICS BIOS Utility State & Invigilator Focus Guard
+  const [isBiosOpen, setIsBiosOpen] = useState(false);
+  const isInvigilatorActionRef = useRef(false);
+  const f2PressCountRef = useRef(0);
+  const lastF2PressTimeRef = useRef(0);
 
   // Auto-commit draft tracking refs (Item 3)
   const prevSelectedQuestionIndexRef = useRef(0);
@@ -1873,6 +1880,10 @@ function AppContent() {
       
       if (flow === 'active_exam') {
         if (!fs) {
+          if (isInvigilatorActionRef.current || isBiosOpen) {
+            console.log('[Proctoring Focus Guard] Fullscreen exit suppressed for invigilator action or BIOS mode.');
+            return;
+          }
           const now = Date.now();
           fsExitStartTimeRef.current = now;
           lastFullscreenExitTimeRef.current = now;
@@ -1913,12 +1924,17 @@ function AppContent() {
       document.removeEventListener('fullscreenchange', onFSChange);
       document.removeEventListener('webkitfullscreenchange', onFSChange);
     };
-  }, [flow, proctoringWarnings]);
+  }, [flow, proctoringWarnings, isBiosOpen]);
 
   // Check Window Focus and Tab Visibility state with duration tracking & Deduplication (Item 3.1)
   useEffect(() => {
     const handleFocusLost = (source = 'blur') => {
       if (flow !== 'active_exam') return;
+      if (isInvigilatorActionRef.current || isBiosOpen) {
+        console.log('[Proctoring Focus Guard] Focus loss suppressed for invigilator action or BIOS mode.');
+        tabExitStartTimeRef.current = null;
+        return;
+      }
       const now = Date.now();
 
       // Immediately record start timestamp if not already tracked
@@ -1962,6 +1978,13 @@ function AppContent() {
 
     const handleFocusGained = (source = 'focus') => {
       if (flow !== 'active_exam') return;
+      if (isInvigilatorActionRef.current) {
+        setTimeout(() => {
+          isInvigilatorActionRef.current = false;
+        }, 1500);
+        setIsFocused(true);
+        return;
+      }
       setIsFocused(true);
       handleProctorResolved('TAB_SWITCH');
 
@@ -1983,6 +2006,7 @@ function AppContent() {
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        if (isInvigilatorActionRef.current || isBiosOpen) return;
         handleFocusLost('visibility');
       } else if (document.visibilityState === 'visible') {
         handleFocusGained('visibility');
@@ -1997,7 +2021,7 @@ function AppContent() {
       window.removeEventListener('focus', handleFocusGained);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [flow, proctoringWarnings]);
+  }, [flow, proctoringWarnings, isBiosOpen]);
 
   // Start active exam and transition (Calls backend to register submission only when Start Test is clicked)
   const handleStartExam = async () => {
@@ -2486,6 +2510,74 @@ function AppContent() {
     }));
   };
 
+  // BICS BIOS Diagnostic Utility Event Handlers
+  const handleBeforeInvigilatorAction = () => {
+    isInvigilatorActionRef.current = true;
+  };
+
+  const handleBiosUnauthorizedAccess = (attempts = 1) => {
+    incrementMinorWarning('PROCTOR_BIOS_UNAUTHORIZED_ACCESS');
+    handleProctorViolation(
+      'PROCTOR_BIOS_UNAUTHORIZED_ACCESS',
+      'Unauthorized attempt to access system BIOS diagnostic terminal.',
+      `Candidate triggered BIOS utility and failed security PIN challenge (${attempts} attempt(s)).`
+    );
+  };
+
+  const handleBiosAuthorizedAccess = () => {
+    isInvigilatorActionRef.current = true;
+    syncProctoringLogs(
+      proctoringWarnings,
+      'INVIGILATOR_BIOS_ACCESS',
+      'Authorized invigilator accessed BICS BIOS terminal diagnostics. Zero candidate penalty.'
+    );
+  };
+
+  const handleForceSyncAnswersFromBios = async () => {
+    if (test && candidate && submission) {
+      const subId = submission._id || submission.id;
+      const current = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
+      await saveOfflineDraft(`bics_draft_${test?.id || test?._id}_${candidate?.id || candidate?._id}_${subId}`, current);
+    }
+  };
+
+  // Global BICS BIOS Trigger (Available across all exam lifecycle states: Ctrl+Shift+Alt+B or 3x F2)
+  useEffect(() => {
+    const handleGlobalBiosKey = (e) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      const key = (e.key || '').toLowerCase();
+
+      if (
+        (isModifier && e.shiftKey && e.altKey && key === 'b') ||
+        (key === 'f2' && e.ctrlKey && e.altKey)
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsBiosOpen(prev => !prev);
+        return;
+      }
+
+      if (key === 'f2') {
+        const now = Date.now();
+        if (now - lastF2PressTimeRef.current < 1500) {
+          f2PressCountRef.current += 1;
+        } else {
+          f2PressCountRef.current = 1;
+        }
+        lastF2PressTimeRef.current = now;
+        if (f2PressCountRef.current >= 3) {
+          f2PressCountRef.current = 0;
+          e.preventDefault();
+          e.stopPropagation();
+          setIsBiosOpen(prev => !prev);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalBiosKey, true);
+    return () => window.removeEventListener('keydown', handleGlobalBiosKey, true);
+  }, []);
+
   // ML webcam face proctoring loop
   useEffect(() => {
     if (flow !== 'active_exam' || !submission) return;
@@ -2848,6 +2940,41 @@ function AppContent() {
       const isModifier = e.ctrlKey || e.metaKey;
       const key = (e.key || '').toLowerCase();
       const isInsert = e.key === 'Insert';
+
+      // BICS BIOS Diagnostic Utility Trigger: Ctrl + Shift + Alt + B or Ctrl + Alt + F2
+      if (
+        (isModifier && e.shiftKey && e.altKey && key === 'b') ||
+        (key === 'f2' && e.ctrlKey && e.altKey)
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
+        setIsBiosOpen(prev => !prev);
+        return false;
+      }
+
+      // Lab Alternative: Rapid 3-tap of F2 within 1.5s
+      if (key === 'f2') {
+        const now = Date.now();
+        if (now - lastF2PressTimeRef.current < 1500) {
+          f2PressCountRef.current += 1;
+        } else {
+          f2PressCountRef.current = 1;
+        }
+        lastF2PressTimeRef.current = now;
+        if (f2PressCountRef.current >= 3) {
+          f2PressCountRef.current = 0;
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+          }
+          setIsBiosOpen(prev => !prev);
+          return false;
+        }
+      }
 
       // Block Inspect / Developer Tools / View Source shortcuts
       if (
@@ -4857,6 +4984,23 @@ function AppContent() {
     <>
       {renderFlowView()}
       <CustomAlertModal customModal={customModal} setCustomModal={setCustomModal} />
+      <ExamBiosModal
+        isOpen={isBiosOpen}
+        onClose={() => setIsBiosOpen(false)}
+        candidate={candidate}
+        test={test}
+        submission={submission}
+        examTimeLeft={examTimeLeft}
+        answers={examAnswersRef.current || examAnswers}
+        questions={test?.questions || []}
+        apiBase={API_BASE}
+        authToken={getActiveAuthToken()}
+        examToken={getActiveExamToken()}
+        onUnauthorizedAccess={handleBiosUnauthorizedAccess}
+        onAuthorizedAccess={handleBiosAuthorizedAccess}
+        onBeforeInvigilatorAction={handleBeforeInvigilatorAction}
+        onForceSyncAnswers={handleForceSyncAnswersFromBios}
+      />
     </>
   );
 }

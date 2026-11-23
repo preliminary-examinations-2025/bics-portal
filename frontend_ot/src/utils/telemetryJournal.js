@@ -188,6 +188,20 @@ export function clearPendingTelemetry() {
 }
 
 /**
+ * Get in-memory journal entries for diagnostics
+ */
+export function getJournalEntries() {
+  return [...inMemoryJournal];
+}
+
+/**
+ * Get active outage metadata
+ */
+export function getActiveOutage() {
+  return activeOutage ? { ...activeOutage } : null;
+}
+
+/**
  * Helper to dispatch Client Reconnect Telemetry fire-and-forget to the backend
  */
 export async function dispatchReconnectTelemetry(apiBase, authToken, examToken, payload = null) {

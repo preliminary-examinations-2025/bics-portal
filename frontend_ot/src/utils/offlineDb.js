@@ -262,3 +262,57 @@ export async function deleteOfflineDraft(key) {
     store.delete(String(key));
   });
 }
+
+export async function getAllOfflineDrafts() {
+  return new Promise(async (resolve) => {
+    try {
+      const db = await getDb();
+      const tx = db.transaction('drafts', 'readonly');
+      const store = tx.objectStore('drafts');
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+export async function getOfflineDbStats() {
+  try {
+    const db = await getDb();
+    const countStore = (storeName) => new Promise((res) => {
+      try {
+        const tx = db.transaction(storeName, 'readonly');
+        const store = tx.objectStore(storeName);
+        const req = store.count();
+        req.onsuccess = () => res(req.result || 0);
+        req.onerror = () => res(0);
+      } catch {
+        res(0);
+      }
+    });
+
+    const [submissionsCount, eventsCount, snapshotsCount, draftsCount] = await Promise.all([
+      countStore('submissions'),
+      countStore('proctoringEvents'),
+      countStore('proctoringSnapshots'),
+      countStore('drafts')
+    ]);
+
+    return {
+      submissionsCount,
+      eventsCount,
+      snapshotsCount,
+      draftsCount
+    };
+  } catch (err) {
+    return {
+      submissionsCount: 0,
+      eventsCount: 0,
+      snapshotsCount: 0,
+      draftsCount: 0
+    };
+  }
+}
+
