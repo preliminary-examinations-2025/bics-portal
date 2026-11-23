@@ -428,49 +428,147 @@ export default function ExamBiosModal({
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  // Shared font & color tokens
+  const FONT_STACK = "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+  const COLOR_NAVY = '#002147';
+  const COLOR_BORDER = '#e2e8f0';
+  const COLOR_BG_SUBTLE = '#f8fafc';
+
   return (
     <div
-      className="fixed inset-0 z-[999999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 select-none"
-      style={{ fontFamily: "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" }}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(5px)',
+        WebkitBackdropFilter: 'blur(5px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999999,
+        padding: '16px',
+        boxSizing: 'border-box',
+        fontFamily: FONT_STACK,
+        userSelect: 'none'
+      }}
     >
-      {/* If Not Authenticated: Light Subtle PIN Challenge Card */}
+      {/* If Not Authenticated: Subtle, Light PIN Challenge Card */}
       {!isAuthenticated ? (
-        <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div
+          style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+            border: `1px solid ${COLOR_BORDER}`,
+            width: '100%',
+            maxWidth: '430px',
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+            textAlign: 'left'
+          }}
+        >
           {/* Header */}
-          <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center space-x-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#002147]/5 border border-[#002147]/15 flex items-center justify-center text-[#002147]">
-                <Shield className="w-4 h-4" />
+          <div
+            style={{
+              backgroundColor: COLOR_BG_SUBTLE,
+              borderBottom: `1px solid ${COLOR_BORDER}`,
+              padding: '14px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(0, 33, 71, 0.06)',
+                  border: '1px solid rgba(0, 33, 71, 0.15)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: COLOR_NAVY
+                }}
+              >
+                <Shield size={16} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-[#002147]">BICS BIOS Diagnostic Utility</h3>
-                <p className="text-[11px] text-slate-500">Security Clearance Required</p>
+                <h3 style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: COLOR_NAVY, lineHeight: 1.25 }}>
+                  BICS BIOS Diagnostic Utility
+                </h3>
+                <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#64748b' }}>
+                  Security Clearance Required
+                </p>
               </div>
             </div>
             <button
+              type="button"
               onClick={handleCloseModal}
-              className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
               title="Close (ESC)"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#64748b',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background-color 0.15s ease'
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f1f5f9')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
             >
-              <X className="w-4 h-4" />
+              <X size={16} />
             </button>
           </div>
 
           {/* Body */}
-          <form onSubmit={handleVerifyPin} className="p-6">
-            <div className="text-center mb-5">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-slate-100 text-slate-600 mb-3 border border-slate-200">
-                <Lock className="w-5 h-5 text-slate-500" />
+          <form onSubmit={handleVerifyPin} style={{ padding: '24px 22px', margin: 0 }}>
+            <div style={{ textAlign: 'center', marginBottom: '18px' }}>
+              <div
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '50%',
+                  backgroundColor: '#f1f5f9',
+                  border: `1px solid ${COLOR_BORDER}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 12px',
+                  color: '#64748b'
+                }}
+              >
+                <Lock size={20} />
               </div>
-              <h4 className="text-base font-semibold text-slate-900">Invigilator PIN Challenge</h4>
-              <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+              <h4 style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: '#0f172a' }}>
+                Invigilator PIN Challenge
+              </h4>
+              <p style={{ margin: '6px auto 0', fontSize: '12px', color: '#64748b', maxWidth: '300px', lineHeight: '1.45' }}>
                 Enter the authorized technician PIN to inspect local cache vault and network interfaces.
               </p>
             </div>
 
-            <div className="space-y-4">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    color: '#475569',
+                    marginBottom: '6px'
+                  }}
+                >
                   4-Digit Access PIN
                 </label>
                 <input
@@ -483,35 +581,111 @@ export default function ExamBiosModal({
                     if (pinError) setPinError('');
                   }}
                   placeholder="••••"
-                  className="w-full text-center text-lg tracking-widest font-mono py-2.5 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#002147]/20 focus:border-[#002147] text-slate-800 bg-slate-50/50"
                   autoComplete="off"
                   autoFocus
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    textAlign: 'center',
+                    fontSize: '22px',
+                    letterSpacing: '0.35em',
+                    fontFamily: 'monospace',
+                    padding: '10px 14px',
+                    border: '1.5px solid #cbd5e1',
+                    borderRadius: '8px',
+                    outline: 'none',
+                    color: '#0f172a',
+                    backgroundColor: COLOR_BG_SUBTLE,
+                    transition: 'border-color 0.15s ease, box-shadow 0.15s ease'
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = COLOR_NAVY;
+                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 33, 71, 0.1)';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
                 />
               </div>
 
               {pinError && (
-                <div className="flex items-center space-x-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2.5">
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '11.5px',
+                    color: '#be123c',
+                    backgroundColor: '#fff1f2',
+                    border: '1px solid #fecdd3',
+                    borderRadius: '8px',
+                    padding: '9px 12px'
+                  }}
+                >
+                  <AlertTriangle size={15} style={{ flexShrink: 0 }} />
                   <span>{pinError}</span>
                 </div>
               )}
 
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-[11px] text-slate-500">
-                <span className="font-semibold text-slate-700">Notice:</span> Unauthorized candidate access attempts are permanently audited and submitted with the examination record.
+              <div
+                style={{
+                  backgroundColor: COLOR_BG_SUBTLE,
+                  border: `1px solid ${COLOR_BORDER}`,
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  fontSize: '11px',
+                  color: '#64748b',
+                  lineHeight: '1.45'
+                }}
+              >
+                <span style={{ fontWeight: '700', color: '#334155' }}>Notice:</span> Unauthorized candidate access attempts are permanently audited and submitted with the examination record.
               </div>
 
-              <div className="flex space-x-2.5 pt-1">
+              <div style={{ display: 'flex', gap: '10px', paddingTop: '4px' }}>
                 <button
                   type="button"
                   onClick={handleCloseModal}
-                  className="w-1/2 py-2 px-3 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  style={{
+                    flex: 1,
+                    padding: '9px 14px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#475569',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '7px',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc')}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#ffffff')}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={!pinInput.trim()}
-                  className="w-1/2 py-2 px-3 text-xs font-medium text-white bg-[#002147] rounded-lg hover:bg-[#001733] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  style={{
+                    flex: 1,
+                    padding: '9px 14px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#ffffff',
+                    backgroundColor: COLOR_NAVY,
+                    border: `1px solid ${COLOR_NAVY}`,
+                    borderRadius: '7px',
+                    cursor: pinInput.trim() ? 'pointer' : 'not-allowed',
+                    opacity: pinInput.trim() ? 1 : 0.5,
+                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+                    transition: 'background-color 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (pinInput.trim()) e.currentTarget.style.backgroundColor = '#001733';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = COLOR_NAVY;
+                  }}
                 >
                   Authorize Entry
                 </button>
@@ -521,61 +695,149 @@ export default function ExamBiosModal({
         </div>
       ) : (
         /* Authenticated: Professional Light Institutional BIOS Dashboard */
-        <div className="w-full max-w-5xl h-[88vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+        <div
+          style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+            border: `1px solid #cbd5e1`,
+            width: '95%',
+            maxWidth: '1040px',
+            height: '86vh',
+            maxHeight: '860px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+            textAlign: 'left'
+          }}
+        >
           {/* Top Header Bar */}
-          <div className="bg-slate-50 border-b border-slate-200 px-6 py-3.5 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-9 h-9 rounded-lg bg-[#002147] text-white flex items-center justify-center font-bold text-xs shadow-sm">
+          <div
+            style={{
+              backgroundColor: COLOR_BG_SUBTLE,
+              borderBottom: `1px solid ${COLOR_BORDER}`,
+              padding: '12px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexShrink: 0
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div
+                style={{
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '7px',
+                  backgroundColor: COLOR_NAVY,
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: '700',
+                  fontSize: '11px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                }}
+              >
                 BICS
               </div>
               <div>
-                <div className="flex items-center space-x-2">
-                  <h2 className="text-sm font-bold text-[#002147]">Terminal BIOS & Vault Diagnostics</h2>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-700 border border-slate-300">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: COLOR_NAVY }}>
+                    Terminal BIOS & Vault Diagnostics
+                  </h2>
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      fontFamily: 'monospace',
+                      padding: '2px 8px',
+                      borderRadius: '999px',
+                      backgroundColor: '#e2e8f0',
+                      color: '#334155',
+                      border: '1px solid #cbd5e1'
+                    }}
+                  >
                     v2.4 Live
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500">
+                <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#64748b' }}>
                   Read-Only Inspection • Invigilator Diagnostic Mode • Zero Penalty Active
                 </p>
               </div>
             </div>
 
             {/* Candidate & Timer Live Badge */}
-            <div className="flex items-center space-x-4">
-              <div className="hidden sm:flex flex-col text-right">
-                <span className="text-xs font-semibold text-slate-800">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'right' }}>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: '#1e293b' }}>
                   {candidate?.name || 'Candidate Session'}
                 </span>
-                <span className="text-[11px] text-slate-500 font-mono">
+                <span style={{ fontSize: '10.5px', color: '#64748b', fontFamily: 'monospace' }}>
                   ID: {candidate?.studentId || candidate?.rollNumber || 'ID-PENDING'}
                 </span>
               </div>
 
               {/* Running Timer Badge (Proves exam clock never stops) */}
-              <div className="flex items-center space-x-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
-                <Clock className="w-3.5 h-3.5 text-emerald-700 animate-pulse" />
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-medium text-emerald-700 uppercase tracking-wider">Exam Clock</span>
-                  <span className="text-xs font-mono font-bold text-emerald-800">
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  backgroundColor: '#ecfdf5',
+                  border: '1px solid #a7f3d0',
+                  borderRadius: '8px',
+                  padding: '5px 12px'
+                }}
+              >
+                <Clock size={14} style={{ color: '#047857' }} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '9px', fontWeight: '600', color: '#047857', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Exam Clock
+                  </span>
+                  <span style={{ fontSize: '11.5px', fontFamily: 'monospace', fontWeight: '700', color: '#065f46' }}>
                     {formatTimer(examTimeLeft)} left
                   </span>
                 </div>
               </div>
 
               <button
+                type="button"
                 onClick={handleCloseModal}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
                 title="Exit BIOS & Resume Exam (ESC)"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  padding: '6px',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background-color 0.15s ease'
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f1f5f9')}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
-                <X className="w-5 h-5" />
+                <X size={18} />
               </button>
             </div>
           </div>
 
           {/* Navigation Tab Bar */}
-          <div className="bg-white border-b border-slate-200 px-6 flex items-center justify-between">
-            <div className="flex space-x-1">
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderBottom: `1px solid ${COLOR_BORDER}`,
+              padding: '0 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexShrink: 0
+            }}
+          >
+            <div style={{ display: 'flex', gap: '4px' }}>
               {[
                 { id: 'vault', label: 'Local Storage Vault', icon: HardDrive },
                 { id: 'journal', label: 'Telemetry Journal', icon: Activity },
@@ -587,22 +849,32 @@ export default function ExamBiosModal({
                 return (
                   <button
                     key={tab.id}
+                    type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center space-x-2 py-3 px-4 text-xs font-medium border-b-2 transition-colors ${
-                      isActive
-                        ? 'border-[#002147] text-[#002147] font-semibold bg-slate-50/50'
-                        : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50/30'
-                    }`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '11px 16px',
+                      fontSize: '12px',
+                      fontWeight: isActive ? '700' : '500',
+                      color: isActive ? COLOR_NAVY : '#64748b',
+                      backgroundColor: isActive ? COLOR_BG_SUBTLE : 'transparent',
+                      border: 'none',
+                      borderBottom: isActive ? `2.5px solid ${COLOR_NAVY}` : '2.5px solid transparent',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
                   >
-                    <IconComponent className={`w-3.5 h-3.5 ${isActive ? 'text-[#002147]' : 'text-slate-400'}`} />
+                    <IconComponent size={14} style={{ color: isActive ? COLOR_NAVY : '#94a3b8' }} />
                     <span>{tab.label}</span>
                   </button>
                 );
               })}
             </div>
 
-            <div className="flex items-center space-x-2 text-[11px] text-slate-500">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#64748b' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981' }}></span>
               <span>Local Vault Active</span>
             </div>
           </div>
@@ -610,18 +882,36 @@ export default function ExamBiosModal({
           {/* Notice Banner */}
           {actionNotice && (
             <div
-              className={`px-6 py-2 text-xs flex items-center justify-between border-b ${
-                actionNotice.type === 'success'
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                  : actionNotice.type === 'warning'
-                  ? 'bg-amber-50 text-amber-800 border-amber-200'
-                  : 'bg-sky-50 text-sky-800 border-sky-200'
-              }`}
+              style={{
+                padding: '9px 20px',
+                fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: `1px solid ${
+                  actionNotice.type === 'success' ? '#a7f3d0' : actionNotice.type === 'warning' ? '#fde68a' : '#bae6fd'
+                }`,
+                backgroundColor:
+                  actionNotice.type === 'success' ? '#ecfdf5' : actionNotice.type === 'warning' ? '#fffbeb' : '#f0f9ff',
+                color:
+                  actionNotice.type === 'success' ? '#065f46' : actionNotice.type === 'warning' ? '#92400e' : '#0369a1',
+                flexShrink: 0
+              }}
             >
               <span>{actionNotice.message}</span>
               <button
+                type="button"
                 onClick={() => setActionNotice(null)}
-                className="text-xs opacity-60 hover:opacity-100 ml-4 font-bold"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'inherit',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  padding: '2px 6px',
+                  opacity: 0.7
+                }}
               >
                 ✕
               </button>
@@ -629,111 +919,207 @@ export default function ExamBiosModal({
           )}
 
           {/* Tab Content Container */}
-          <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '20px',
+              backgroundColor: COLOR_BG_SUBTLE,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px'
+            }}
+          >
             {/* TAB 1: LOCAL STORAGE VAULT */}
             {activeTab === 'vault' && (
-              <div className="space-y-6">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 {/* Metric Summary Cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-white rounded-lg p-4 border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-slate-500 uppercase">Cached Answers</span>
-                      <span className="p-1 rounded bg-sky-50 text-sky-700">
-                        <FileText className="w-3.5 h-3.5" />
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+                    gap: '14px'
+                  }}
+                >
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      padding: '14px 16px',
+                      border: `1px solid ${COLOR_BORDER}`,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>
+                        Cached Answers
+                      </span>
+                      <span style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#f0f9ff', color: '#0284c7' }}>
+                        <FileText size={15} />
                       </span>
                     </div>
-                    <div className="mt-2 flex items-baseline space-x-2">
-                      <span className="text-2xl font-bold font-mono text-slate-800">
+                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                      <span style={{ fontSize: '24px', fontWeight: '700', fontFamily: 'monospace', color: '#1e293b' }}>
                         {dbStats.draftsCount || Object.keys(answers || {}).length}
                       </span>
-                      <span className="text-xs text-slate-500 font-mono">
+                      <span style={{ fontSize: '12px', color: '#64748b', fontFamily: 'monospace' }}>
                         / {questions.length || '—'} total
                       </span>
                     </div>
-                    <p className="text-[11px] text-emerald-600 font-medium mt-1">Safely persistent in IndexedDB</p>
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#059669', fontWeight: '500' }}>
+                      Safely persistent in IndexedDB
+                    </p>
                   </div>
 
-                  <div className="bg-white rounded-lg p-4 border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-slate-500 uppercase">Pending Submissions</span>
-                      <span className="p-1 rounded bg-amber-50 text-amber-700">
-                        <Database className="w-3.5 h-3.5" />
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      padding: '14px 16px',
+                      border: `1px solid ${COLOR_BORDER}`,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>
+                        Pending Submissions
+                      </span>
+                      <span style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#fffbeb', color: '#d97706' }}>
+                        <Database size={15} />
                       </span>
                     </div>
-                    <div className="mt-2 flex items-baseline space-x-2">
-                      <span className="text-2xl font-bold font-mono text-slate-800">
+                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                      <span style={{ fontSize: '24px', fontWeight: '700', fontFamily: 'monospace', color: '#1e293b' }}>
                         {dbStats.submissionsCount}
                       </span>
-                      <span className="text-xs text-slate-500">queued packages</span>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>queued packages</span>
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-1">Ready for reconnect sync</p>
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#64748b' }}>
+                      Ready for reconnect sync
+                    </p>
                   </div>
 
-                  <div className="bg-white rounded-lg p-4 border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-slate-500 uppercase">Proctoring Telemetry</span>
-                      <span className="p-1 rounded bg-slate-100 text-slate-700">
-                        <Layers className="w-3.5 h-3.5" />
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      padding: '14px 16px',
+                      border: `1px solid ${COLOR_BORDER}`,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>
+                        Proctoring Telemetry
+                      </span>
+                      <span style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#475569' }}>
+                        <Layers size={15} />
                       </span>
                     </div>
-                    <div className="mt-2 flex items-baseline space-x-2">
-                      <span className="text-2xl font-bold font-mono text-slate-800">
+                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                      <span style={{ fontSize: '24px', fontWeight: '700', fontFamily: 'monospace', color: '#1e293b' }}>
                         {dbStats.eventsCount}
                       </span>
-                      <span className="text-xs text-slate-500">events buffered</span>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>events buffered</span>
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-1">{dbStats.snapshotsCount} evidence snapshots</p>
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#64748b' }}>
+                      {dbStats.snapshotsCount} evidence snapshots
+                    </p>
                   </div>
 
-                  <div className="bg-white rounded-lg p-4 border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-slate-500 uppercase">Browser Storage Quota</span>
-                      <span className="p-1 rounded bg-emerald-50 text-emerald-700">
-                        <HardDrive className="w-3.5 h-3.5" />
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      padding: '14px 16px',
+                      border: `1px solid ${COLOR_BORDER}`,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>
+                        Browser Storage Quota
+                      </span>
+                      <span style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#ecfdf5', color: '#059669' }}>
+                        <HardDrive size={15} />
                       </span>
                     </div>
-                    <div className="mt-2 flex items-baseline space-x-2">
-                      <span className="text-xl font-bold font-mono text-slate-800">
+                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                      <span style={{ fontSize: '20px', fontWeight: '700', fontFamily: 'monospace', color: '#1e293b' }}>
                         {storageEstimate.usedMb} MB
                       </span>
-                      <span className="text-xs text-slate-400 font-mono">
+                      <span style={{ fontSize: '12px', color: '#94a3b8', fontFamily: 'monospace' }}>
                         / {storageEstimate.quotaMb} MB
                       </span>
                     </div>
-                    <p className="text-[11px] text-emerald-600 font-medium mt-1">
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#059669', fontWeight: '500' }}>
                       {storageEstimate.percent}% used (ample capacity)
                     </p>
                   </div>
                 </div>
 
                 {/* Question Answers State Table */}
-                <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                <div
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '8px',
+                    border: `1px solid ${COLOR_BORDER}`,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: '12px 18px',
+                      borderBottom: `1px solid ${COLOR_BORDER}`,
+                      backgroundColor: '#f8fafc',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800">Question Answer Vault Manifest</h4>
-                      <p className="text-[11px] text-slate-500">Live reflection of IndexedDB answer drafts and active memory</p>
+                      <h4 style={{ margin: 0, fontSize: '12.5px', fontWeight: '700', color: '#1e293b' }}>
+                        Question Answer Vault Manifest
+                      </h4>
+                      <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#64748b' }}>
+                        Live reflection of IndexedDB answer drafts and active memory
+                      </p>
                     </div>
                     <button
+                      type="button"
                       onClick={loadDiagnostics}
-                      className="inline-flex items-center space-x-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded hover:bg-slate-50 transition-colors"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '5px 10px',
+                        fontSize: '11.5px',
+                        fontWeight: '500',
+                        color: '#475569',
+                        backgroundColor: '#ffffff',
+                        border: `1px solid ${COLOR_BORDER}`,
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
                     >
-                      <RefreshCw className="w-3 h-3 text-slate-500" />
+                      <RefreshCw size={12} style={{ color: '#64748b' }} />
                       <span>Refresh</span>
                     </button>
                   </div>
 
-                  <div className="overflow-x-auto max-h-72">
-                    <table className="w-full text-left border-collapse text-xs">
+                  <div style={{ overflowX: 'auto', maxHeight: '280px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                       <thead>
-                        <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-500 font-semibold text-[11px]">
-                          <th className="py-2.5 px-4 w-16">#</th>
-                          <th className="py-2.5 px-4">Question Key / Title</th>
-                          <th className="py-2.5 px-4 w-28">Vault Status</th>
-                          <th className="py-2.5 px-4 w-32">Answer Size</th>
-                          <th className="py-2.5 px-4 w-40 text-right">Last Cached</th>
+                        <tr style={{ backgroundColor: '#f8fafc', borderBottom: `1px solid ${COLOR_BORDER}`, color: '#64748b', fontSize: '11px', fontWeight: '600' }}>
+                          <th style={{ padding: '9px 16px', width: '60px' }}>#</th>
+                          <th style={{ padding: '9px 16px' }}>Question Key / Title</th>
+                          <th style={{ padding: '9px 16px', width: '120px' }}>Vault Status</th>
+                          <th style={{ padding: '9px 16px', width: '130px' }}>Answer Size</th>
+                          <th style={{ padding: '9px 16px', width: '160px', textAlign: 'right' }}>Last Cached</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                      <tbody>
                         {questions.length > 0 ? (
                           questions.map((q, idx) => {
                             const qId = q._id || q.id || `q_${idx}`;
@@ -742,27 +1128,59 @@ export default function ExamBiosModal({
                             const ansLength = hasAnswer ? (typeof inMemoryAns === 'object' ? JSON.stringify(inMemoryAns).length : String(inMemoryAns).length) : 0;
 
                             return (
-                              <tr key={qId} className="hover:bg-slate-50/60 transition-colors">
-                                <td className="py-2 px-4 font-mono text-slate-500">{idx + 1}</td>
-                                <td className="py-2 px-4 font-medium text-slate-800">
+                              <tr
+                                key={qId}
+                                style={{
+                                  borderBottom: '1px solid #f1f5f9',
+                                  transition: 'background-color 0.15s ease'
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc')}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#ffffff')}
+                              >
+                                <td style={{ padding: '9px 16px', fontFamily: 'monospace', color: '#64748b' }}>{idx + 1}</td>
+                                <td style={{ padding: '9px 16px', fontWeight: '500', color: '#1e293b' }}>
                                   {q.title || `Question ${idx + 1}`}
-                                  <span className="block text-[10px] text-slate-400 font-mono">ID: {qId}</span>
+                                  <span style={{ display: 'block', fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' }}>
+                                    ID: {qId}
+                                  </span>
                                 </td>
-                                <td className="py-2 px-4">
+                                <td style={{ padding: '9px 16px' }}>
                                   {hasAnswer ? (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span
+                                      style={{
+                                        display: 'inline-block',
+                                        padding: '2px 8px',
+                                        borderRadius: '4px',
+                                        fontSize: '10.5px',
+                                        fontWeight: '600',
+                                        backgroundColor: '#ecfdf5',
+                                        color: '#047857',
+                                        border: '1px solid #a7f3d0'
+                                      }}
+                                    >
                                       Preserved
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                                    <span
+                                      style={{
+                                        display: 'inline-block',
+                                        padding: '2px 8px',
+                                        borderRadius: '4px',
+                                        fontSize: '10.5px',
+                                        fontWeight: '600',
+                                        backgroundColor: '#f1f5f9',
+                                        color: '#64748b',
+                                        border: '1px solid #e2e8f0'
+                                      }}
+                                    >
                                       Unanswered
                                     </span>
                                   )}
                                 </td>
-                                <td className="py-2 px-4 font-mono text-slate-600">
+                                <td style={{ padding: '9px 16px', fontFamily: 'monospace', color: '#475569' }}>
                                   {hasAnswer ? `${ansLength} chars` : '—'}
                                 </td>
-                                <td className="py-2 px-4 font-mono text-slate-500 text-right text-[11px]">
+                                <td style={{ padding: '9px 16px', fontFamily: 'monospace', color: '#64748b', textAlign: 'right', fontSize: '11px' }}>
                                   {hasAnswer ? 'Active memory + IDB' : '—'}
                                 </td>
                               </tr>
@@ -770,7 +1188,7 @@ export default function ExamBiosModal({
                           })
                         ) : (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-slate-400">
+                            <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: '#94a3b8' }}>
                               No active questions loaded in context.
                             </td>
                           </tr>
@@ -784,98 +1202,177 @@ export default function ExamBiosModal({
 
             {/* TAB 2: TELEMETRY JOURNAL */}
             {activeTab === 'journal' && (
-              <div className="space-y-6">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 {/* Outage Banner */}
                 <div
-                  className={`p-4 rounded-lg border flex items-center justify-between ${
-                    activeOutageInfo
-                      ? 'bg-amber-50 border-amber-200 text-amber-900'
-                      : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  }`}
+                  style={{
+                    padding: '14px 18px',
+                    borderRadius: '8px',
+                    border: `1px solid ${activeOutageInfo ? '#fde68a' : '#a7f3d0'}`,
+                    backgroundColor: activeOutageInfo ? '#fffbeb' : '#ecfdf5',
+                    color: activeOutageInfo ? '#92400e' : '#065f46',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px'
+                  }}
                 >
-                  <div className="flex items-center space-x-3">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     {activeOutageInfo ? (
-                      <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                      <AlertTriangle size={20} style={{ color: '#d97706', flexShrink: 0 }} />
                     ) : (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                      <CheckCircle2 size={20} style={{ color: '#059669', flexShrink: 0 }} />
                     )}
                     <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider">
+                      <h4 style={{ margin: 0, fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                         {activeOutageInfo ? 'Active Server Blackout Window' : 'Server Connectivity Normal'}
                       </h4>
-                      <p className="text-xs mt-0.5 opacity-90">
+                      <p style={{ margin: '3px 0 0', fontSize: '11.5px', opacity: 0.9 }}>
                         {activeOutageInfo
                           ? `Started: ${activeOutageInfo.startTimeIso} (${Math.round((Date.now() - activeOutageInfo.startTime) / 1000)}s ago). Cause: ${activeOutageInfo.reason || 'Server Unreachable'}.`
                           : 'No server outage currently detected. Heartbeats and background telemetry are reaching backend.'}
                       </p>
                     </div>
                   </div>
-                  <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded bg-white/80 border border-current">
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontFamily: 'monospace',
+                      fontWeight: '600',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                      border: '1px solid currentColor',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
                     {telemetryLogs.length} buffered in journal
                   </span>
                 </div>
 
                 {/* Telemetry Ring-Buffer Table */}
-                <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                <div
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '8px',
+                    border: `1px solid ${COLOR_BORDER}`,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: '12px 18px',
+                      borderBottom: `1px solid ${COLOR_BORDER}`,
+                      backgroundColor: '#f8fafc',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800">Failed API Requests Journal (Ring-Buffer Capped at 100)</h4>
-                      <p className="text-[11px] text-slate-500">Chronological history of requests shielded during backend downtime</p>
+                      <h4 style={{ margin: 0, fontSize: '12.5px', fontWeight: '700', color: '#1e293b' }}>
+                        Failed API Requests Journal (Ring-Buffer Capped at 100)
+                      </h4>
+                      <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#64748b' }}>
+                        Chronological history of requests shielded during backend downtime
+                      </p>
                     </div>
                     <button
+                      type="button"
                       onClick={loadDiagnostics}
-                      className="inline-flex items-center space-x-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded hover:bg-slate-50 transition-colors"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '5px 10px',
+                        fontSize: '11.5px',
+                        fontWeight: '500',
+                        color: '#475569',
+                        backgroundColor: '#ffffff',
+                        border: `1px solid ${COLOR_BORDER}`,
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
                     >
-                      <RefreshCw className="w-3 h-3 text-slate-500" />
+                      <RefreshCw size={12} style={{ color: '#64748b' }} />
                       <span>Refresh</span>
                     </button>
                   </div>
 
-                  <div className="overflow-x-auto max-h-80">
-                    <table className="w-full text-left border-collapse text-xs">
+                  <div style={{ overflowX: 'auto', maxHeight: '300px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                       <thead>
-                        <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-500 font-semibold text-[11px]">
-                          <th className="py-2.5 px-4 w-28">Timestamp</th>
-                          <th className="py-2.5 px-4 w-20">Method</th>
-                          <th className="py-2.5 px-4">Endpoint</th>
-                          <th className="py-2.5 px-4 w-32">Error Type</th>
-                          <th className="py-2.5 px-4 w-24 text-right">HTTP Status</th>
+                        <tr style={{ backgroundColor: '#f8fafc', borderBottom: `1px solid ${COLOR_BORDER}`, color: '#64748b', fontSize: '11px', fontWeight: '600' }}>
+                          <th style={{ padding: '9px 16px', width: '120px' }}>Timestamp</th>
+                          <th style={{ padding: '9px 16px', width: '80px' }}>Method</th>
+                          <th style={{ padding: '9px 16px' }}>Endpoint</th>
+                          <th style={{ padding: '9px 16px', width: '140px' }}>Error Type</th>
+                          <th style={{ padding: '9px 16px', width: '100px', textAlign: 'right' }}>HTTP Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                      <tbody>
                         {telemetryLogs.length > 0 ? (
                           telemetryLogs.slice().reverse().map((entry) => (
-                            <tr key={entry.id} className="hover:bg-slate-50/60 transition-colors">
-                              <td className="py-2 px-4 font-mono text-[11px] text-slate-500">
+                            <tr
+                              key={entry.id}
+                              style={{
+                                borderBottom: '1px solid #f1f5f9',
+                                transition: 'background-color 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8fafc')}
+                              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#ffffff')}
+                            >
+                              <td style={{ padding: '9px 16px', fontFamily: 'monospace', fontSize: '11px', color: '#64748b' }}>
                                 {entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '—'}
                               </td>
-                              <td className="py-2 px-4 font-mono font-semibold text-slate-700">
+                              <td style={{ padding: '9px 16px', fontFamily: 'monospace', fontWeight: '600', color: '#334155' }}>
                                 {entry.method || 'POST'}
                               </td>
-                              <td className="py-2 px-4 font-mono text-slate-800 text-[11px]">
+                              <td style={{ padding: '9px 16px', fontFamily: 'monospace', color: '#0f172a', fontSize: '11.5px' }}>
                                 {entry.endpoint}
                               </td>
-                              <td className="py-2 px-4">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                              <td style={{ padding: '9px 16px' }}>
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '2px 8px',
+                                    borderRadius: '4px',
+                                    fontSize: '10.5px',
+                                    fontWeight: '600',
+                                    backgroundColor: '#fff1f2',
+                                    color: '#be123c',
+                                    border: '1px solid #fecdd3'
+                                  }}
+                                >
                                   {entry.errorType || 'FETCH_FAILED'}
                                 </span>
                               </td>
-                              <td className="py-2 px-4 font-mono text-right font-bold text-slate-700">
+                              <td style={{ padding: '9px 16px', textAlign: 'right', fontFamily: 'monospace', fontWeight: '700' }}>
                                 {entry.httpStatus ? (
-                                  <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                  <span
+                                    style={{
+                                      display: 'inline-block',
+                                      padding: '2px 8px',
+                                      borderRadius: '4px',
+                                      backgroundColor: '#fffbeb',
+                                      color: '#b45309',
+                                      border: '1px solid #fde68a'
+                                    }}
+                                  >
                                     {entry.httpStatus}
                                   </span>
                                 ) : (
-                                  <span className="text-slate-400 font-normal">Offline</span>
+                                  <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>Offline</span>
                                 )}
                               </td>
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={5} className="py-8 text-center text-slate-400">
-                              <div className="flex flex-col items-center justify-center space-y-1">
-                                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                            <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                <CheckCircle2 size={20} style={{ color: '#10b981' }} />
                                 <span>No failed requests recorded. All API transactions succeeded.</span>
                               </div>
                             </td>
@@ -890,82 +1387,189 @@ export default function ExamBiosModal({
 
             {/* TAB 3: NETWORK & WI-FI TOOLS (FEATURES 2 & 3) */}
             {activeTab === 'network' && (
-              <div className="space-y-6">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 {/* Feature 2 Banner: OS Wi-Fi Settings Deep-Link */}
-                <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-2">
-                        <Wifi className="w-4 h-4 text-[#002147]" />
-                        <h4 className="text-sm font-bold text-[#002147]">Feature 2: Native Windows Wi-Fi Settings</h4>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <div
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '8px',
+                    border: `1px solid ${COLOR_BORDER}`,
+                    padding: '18px 20px',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Wifi size={16} style={{ color: COLOR_NAVY }} />
+                        <h4 style={{ margin: 0, fontSize: '13.5px', fontWeight: '700', color: COLOR_NAVY }}>
+                          Feature 2: Native Windows Wi-Fi Settings
+                        </h4>
+                        <span
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '10px',
+                            fontWeight: '600',
+                            backgroundColor: '#ecfdf5',
+                            color: '#047857',
+                            border: '1px solid #a7f3d0'
+                          }}
+                        >
                           Proctor-Exempt
                         </span>
                       </div>
-                      <p className="text-xs text-slate-600 max-w-xl">
-                        Open native Windows Wi-Fi flyout (<code className="font-mono text-slate-700">ms-settings:network-wifi</code>) to connect to backup hotspot or switch networks. The technician focus guard suppresses fullscreen and tab-switch penalties.
+                      <p style={{ margin: 0, fontSize: '12px', color: '#475569', maxWidth: '580px', lineHeight: '1.45' }}>
+                        Open native Windows Wi-Fi flyout (<code style={{ fontFamily: 'monospace', backgroundColor: '#f1f5f9', padding: '1px 5px', borderRadius: '4px', color: '#0f172a' }}>ms-settings:network-wifi</code>) to connect to backup hotspot or switch networks. The technician focus guard suppresses fullscreen and tab-switch penalties.
                       </p>
                     </div>
 
                     <button
+                      type="button"
                       onClick={handleOpenWifiSettings}
-                      className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#002147] rounded-lg hover:bg-[#001733] transition-colors shadow-sm flex-shrink-0"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '10px 18px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        color: '#ffffff',
+                        backgroundColor: COLOR_NAVY,
+                        border: `1px solid ${COLOR_NAVY}`,
+                        borderRadius: '7px',
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        flexShrink: 0,
+                        transition: 'background-color 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#001733')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = COLOR_NAVY)}
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink size={14} />
                       <span>Open Windows Wi-Fi Settings</span>
                     </button>
                   </div>
                 </div>
 
                 {/* Feature 3: Real-Time Network Adapter & Dual-Probe Ping */}
-                <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm space-y-5">
-                  <div className="flex items-center justify-between">
+                <div
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderRadius: '8px',
+                    border: `1px solid ${COLOR_BORDER}`,
+                    padding: '18px 20px',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '16px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div className="flex items-center space-x-2">
-                        <Radio className="w-4 h-4 text-[#002147]" />
-                        <h4 className="text-sm font-bold text-[#002147]">Feature 3: Live Network Adapter & Dual-Probe Ping</h4>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Radio size={16} style={{ color: COLOR_NAVY }} />
+                        <h4 style={{ margin: 0, fontSize: '13.5px', fontWeight: '700', color: COLOR_NAVY }}>
+                          Feature 3: Live Network Adapter & Dual-Probe Ping
+                        </h4>
                       </div>
-                      <p className="text-xs text-slate-500 mt-0.5">
+                      <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b' }}>
                         Continuous latency testing isolating local client Wi-Fi link vs remote BICS server cluster
                       </p>
                     </div>
                     <button
+                      type="button"
                       onClick={runNetworkProbes}
                       disabled={isProbing}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        color: '#334155',
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
+                        cursor: isProbing ? 'not-allowed' : 'pointer',
+                        opacity: isProbing ? 0.6 : 1
+                      }}
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isProbing ? 'animate-spin' : ''}`} />
+                      <RefreshCw size={13} style={{ color: '#64748b' }} className={isProbing ? 'animate-spin' : ''} />
                       <span>{isProbing ? 'Probing...' : 'Re-Probe Network'}</span>
                     </button>
                   </div>
 
                   {/* Dual Probe Results Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
                     {/* Probe 1: Global Internet Canary */}
-                    <div className="p-4 rounded-lg border border-slate-200 bg-slate-50/50 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Radio className="w-4 h-4 text-slate-500" />
-                          <span className="text-xs font-semibold text-slate-800">Global Internet Canary</span>
+                    <div
+                      style={{
+                        padding: '14px 16px',
+                        borderRadius: '8px',
+                        border: `1px solid ${COLOR_BORDER}`,
+                        backgroundColor: COLOR_BG_SUBTLE,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Radio size={15} style={{ color: '#64748b' }} />
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#1e293b' }}>
+                            Global Internet Canary
+                          </span>
                         </div>
                         {canaryResult.status === 'reachable' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#ecfdf5',
+                              color: '#047857',
+                              border: '1px solid #a7f3d0'
+                            }}
+                          >
                             Reachable ({canaryResult.rttMs} ms)
                           </span>
                         ) : canaryResult.status === 'unreachable' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#fff1f2',
+                              color: '#be123c',
+                              border: '1px solid #fecdd3'
+                            }}
+                          >
                             Unreachable (Offline)
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#f1f5f9',
+                              color: '#64748b',
+                              border: '1px solid #e2e8f0'
+                            }}
+                          >
                             Checking...
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500">
-                        Target: <code className="font-mono text-slate-600">gstatic.com/generate_204</code>
+                      <p style={{ margin: 0, fontSize: '11px', color: '#64748b' }}>
+                        Target: <code style={{ fontFamily: 'monospace', color: '#334155' }}>gstatic.com/generate_204</code>
                       </p>
-                      <p className="text-[11px] text-slate-600">
+                      <p style={{ margin: '4px 0 0', fontSize: '11.5px', color: '#475569', lineHeight: '1.4' }}>
                         {canaryResult.status === 'reachable'
                           ? `Local Wi-Fi / Ethernet adapter is connected to the internet with ${canaryResult.rttMs}ms RTT.`
                           : 'Local network interface cannot reach the global web. Check Wi-Fi cable or router.'}
@@ -973,34 +1577,86 @@ export default function ExamBiosModal({
                     </div>
 
                     {/* Probe 2: BICS Backend API Health */}
-                    <div className="p-4 rounded-lg border border-slate-200 bg-slate-50/50 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Server className="w-4 h-4 text-slate-500" />
-                          <span className="text-xs font-semibold text-slate-800">BICS Backend API</span>
+                    <div
+                      style={{
+                        padding: '14px 16px',
+                        borderRadius: '8px',
+                        border: `1px solid ${COLOR_BORDER}`,
+                        backgroundColor: COLOR_BG_SUBTLE,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Server size={15} style={{ color: '#64748b' }} />
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#1e293b' }}>
+                            BICS Backend API
+                          </span>
                         </div>
                         {backendResult.status === 'healthy' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#ecfdf5',
+                              color: '#047857',
+                              border: '1px solid #a7f3d0'
+                            }}
+                          >
                             200 OK ({backendResult.rttMs} ms)
                           </span>
                         ) : backendResult.status === 'degraded' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#fffbeb',
+                              color: '#b45309',
+                              border: '1px solid #fde68a'
+                            }}
+                          >
                             Degraded (HTTP {backendResult.httpStatus})
                           </span>
                         ) : backendResult.status === 'unreachable' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#fff1f2',
+                              color: '#be123c',
+                              border: '1px solid #fecdd3'
+                            }}
+                          >
                             Unreachable (Server Down)
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10.5px',
+                              fontWeight: '600',
+                              backgroundColor: '#f1f5f9',
+                              color: '#64748b',
+                              border: '1px solid #e2e8f0'
+                            }}
+                          >
                             Checking...
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500">
-                        Target: <code className="font-mono text-slate-600">{apiBase}/health</code>
+                      <p style={{ margin: 0, fontSize: '11px', color: '#64748b' }}>
+                        Target: <code style={{ fontFamily: 'monospace', color: '#334155' }}>{apiBase}/health</code>
                       </p>
-                      <p className="text-[11px] text-slate-600">
+                      <p style={{ margin: '4px 0 0', fontSize: '11.5px', color: '#475569', lineHeight: '1.4' }}>
                         {backendResult.status === 'healthy'
                           ? `BICS backend is operational. Round-trip time: ${backendResult.rttMs}ms.`
                           : backendResult.status === 'degraded'
@@ -1011,24 +1667,41 @@ export default function ExamBiosModal({
                   </div>
 
                   {/* Local Hardware Interface Details */}
-                  <div className="pt-2 border-t border-slate-200 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div
+                    style={{
+                      paddingTop: '10px',
+                      borderTop: `1px solid ${COLOR_BORDER}`,
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                      gap: '12px',
+                      fontSize: '12px'
+                    }}
+                  >
                     <div>
-                      <span className="text-slate-400 text-[10px] block uppercase">Interface Status</span>
-                      <span className="font-medium text-slate-700">
+                      <span style={{ color: '#94a3b8', fontSize: '10px', display: 'block', textTransform: 'uppercase' }}>
+                        Interface Status
+                      </span>
+                      <span style={{ fontWeight: '600', color: '#334155' }}>
                         {networkInfo.onLine ? 'Connected (Online)' : 'Disconnected (Offline)'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-400 text-[10px] block uppercase">Connection Type</span>
-                      <span className="font-medium text-slate-700">{networkInfo.effectiveType}</span>
+                      <span style={{ color: '#94a3b8', fontSize: '10px', display: 'block', textTransform: 'uppercase' }}>
+                        Connection Type
+                      </span>
+                      <span style={{ fontWeight: '600', color: '#334155' }}>{networkInfo.effectiveType}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 text-[10px] block uppercase">Downlink Speed</span>
-                      <span className="font-medium text-slate-700">{networkInfo.downlink}</span>
+                      <span style={{ color: '#94a3b8', fontSize: '10px', display: 'block', textTransform: 'uppercase' }}>
+                        Downlink Speed
+                      </span>
+                      <span style={{ fontWeight: '600', color: '#334155' }}>{networkInfo.downlink}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 text-[10px] block uppercase">Estimated RTT</span>
-                      <span className="font-medium text-slate-700">{networkInfo.rtt}</span>
+                      <span style={{ color: '#94a3b8', fontSize: '10px', display: 'block', textTransform: 'uppercase' }}>
+                        Estimated RTT
+                      </span>
+                      <span style={{ fontWeight: '600', color: '#334155' }}>{networkInfo.rtt}</span>
                     </div>
                   </div>
                 </div>
@@ -1037,53 +1710,122 @@ export default function ExamBiosModal({
 
             {/* TAB 4: DISASTER RECOVERY */}
             {activeTab === 'disaster' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
                   {/* Action 1: Force Vault Flush */}
-                  <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm space-y-3">
-                    <div className="flex items-center space-x-2 text-[#002147]">
-                      <RefreshCw className="w-4 h-4" />
-                      <h4 className="text-sm font-bold">Action 1: Force Vault Synchronization</h4>
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      border: `1px solid ${COLOR_BORDER}`,
+                      padding: '18px 20px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: COLOR_NAVY }}>
+                      <RefreshCw size={16} />
+                      <h4 style={{ margin: 0, fontSize: '13.5px', fontWeight: '700' }}>
+                        Action 1: Force Vault Synchronization
+                      </h4>
                     </div>
-                    <p className="text-xs text-slate-600">
+                    <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.45' }}>
                       Force-drain all queued answer drafts and pending reconnect telemetry to the server immediately without waiting for the next automated heartbeat cycle.
                     </p>
                     <button
+                      type="button"
                       onClick={handleForceFlush}
                       disabled={isFlushing}
-                      className="w-full inline-flex items-center justify-center space-x-2 py-2 px-3 text-xs font-semibold text-white bg-[#002147] rounded-lg hover:bg-[#001733] transition-colors disabled:opacity-50"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '9px 14px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        color: '#ffffff',
+                        backgroundColor: COLOR_NAVY,
+                        border: `1px solid ${COLOR_NAVY}`,
+                        borderRadius: '7px',
+                        cursor: isFlushing ? 'not-allowed' : 'pointer',
+                        opacity: isFlushing ? 0.6 : 1,
+                        marginTop: 'auto'
+                      }}
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isFlushing ? 'animate-spin' : ''}`} />
+                      <RefreshCw size={13} className={isFlushing ? 'animate-spin' : ''} />
                       <span>{isFlushing ? 'Flushing Vault...' : 'Force Flush Vault to Server'}</span>
                     </button>
                   </div>
 
                   {/* Action 2: Export Disaster Bundle */}
-                  <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm space-y-3">
-                    <div className="flex items-center space-x-2 text-[#002147]">
-                      <Download className="w-4 h-4" />
-                      <h4 className="text-sm font-bold">Action 2: Export Disaster Recovery Bundle</h4>
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      border: `1px solid ${COLOR_BORDER}`,
+                      padding: '18px 20px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: COLOR_NAVY }}>
+                      <Download size={16} />
+                      <h4 style={{ margin: 0, fontSize: '13.5px', fontWeight: '700' }}>
+                        Action 2: Export Disaster Recovery Bundle
+                      </h4>
                     </div>
-                    <p className="text-xs text-slate-600">
+                    <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.45' }}>
                       If the lab machine's network card is completely dead, export a signed JSON bundle to a USB drive. Exam administrators can import it into the server directly.
                     </p>
                     <button
+                      type="button"
                       onClick={handleExportDisasterBundle}
-                      className="w-full inline-flex items-center justify-center space-x-2 py-2 px-3 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '9px 14px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        color: '#334155',
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '7px',
+                        cursor: 'pointer',
+                        marginTop: 'auto'
+                      }}
                     >
-                      <Download className="w-3.5 h-3.5 text-slate-500" />
+                      <Download size={13} style={{ color: '#64748b' }} />
                       <span>Export Encrypted Vault (.bics-vault)</span>
                     </button>
                   </div>
                 </div>
 
                 {/* Disaster Manifest / Cryptographic Guarantee Card */}
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2 text-xs text-slate-600">
-                  <div className="flex items-center space-x-2 text-slate-800 font-semibold">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <div
+                  style={{
+                    backgroundColor: '#f1f5f9',
+                    border: `1px solid ${COLOR_BORDER}`,
+                    borderRadius: '8px',
+                    padding: '14px 18px',
+                    fontSize: '12px',
+                    color: '#475569',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a', fontWeight: '600' }}>
+                    <ShieldCheck size={16} style={{ color: '#059669' }} />
                     <span>Cryptographic Integrity & Non-Repudiation Guarantee</span>
                   </div>
-                  <p className="text-[11px] leading-relaxed">
+                  <p style={{ margin: 0, fontSize: '11.5px', lineHeight: '1.5' }}>
                     All drafts stored in this terminal are timestamped and signed with the session token. Even in catastrophic power or internet collapse, local answers cannot be silently modified or lost. The submission timestamp preserves the candidate's exact completion time regardless of when the file reaches the central server.
                   </p>
                 </div>
@@ -1092,19 +1834,55 @@ export default function ExamBiosModal({
           </div>
 
           {/* Bottom Footer Status Bar */}
-          <div className="bg-slate-50 border-t border-slate-200 px-6 py-3 flex items-center justify-between text-xs text-slate-500">
-            <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span className="font-medium text-slate-600">
+          <div
+            style={{
+              backgroundColor: COLOR_BG_SUBTLE,
+              borderTop: `1px solid ${COLOR_BORDER}`,
+              padding: '10px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: '12px',
+              color: '#64748b',
+              flexShrink: 0
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981' }}></span>
+              <span style={{ fontWeight: '500', color: '#475569' }}>
                 Exam timer running uninterrupted in background • Read-only vault isolation
               </span>
             </div>
             <button
+              type="button"
               onClick={handleCloseModal}
-              className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                fontSize: '12px',
+                fontWeight: '600',
+                color: '#334155',
+                backgroundColor: '#ffffff',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
             >
               <span>Exit BIOS & Return to Exam</span>
-              <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1 rounded ml-1">ESC</span>
+              <span
+                style={{
+                  fontFamily: 'monospace',
+                  fontSize: '10px',
+                  color: '#64748b',
+                  backgroundColor: '#f1f5f9',
+                  padding: '1px 5px',
+                  borderRadius: '3px'
+                }}
+              >
+                ESC
+              </span>
             </button>
           </div>
         </div>
