@@ -57,17 +57,18 @@ const cleanCodeStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
 
 /**
  * Resolves whether a question has been answered by the candidate.
+ * Strictly checks actually stored values according to the question type.
  * Handles Array format (examAnswers[idx]), Dictionary format (answers[qId]),
- * live in-progress active drafts, and IndexedDB cached drafts.
+ * and live in-progress active drafts.
  */
-function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
+export function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
   if (!q) return { hasAnswer: false, summary: '—', raw: null };
   const qId = q._id || q.id || `q_${idx}`;
 
-  // 1. Locate answer object from memory
+  // 1. Locate answer object from memory (Authoritative truth)
   let ans = null;
   if (Array.isArray(answers)) {
-    ans = answers[idx] ?? answers.find(a => a && (a.questionId === qId || a.questionId === q._id || a.questionId === q.id));
+    ans = answers.find(a => a && (String(a.questionId) === String(qId) || String(a.questionId) === String(q._id) || String(a.questionId) === String(q.id))) ?? answers[idx];
   } else if (answers && typeof answers === 'object') {
     ans = answers[qId] ?? answers[q._id] ?? answers[q.id] ?? answers[idx] ?? answers[String(idx)];
   }
@@ -75,9 +76,9 @@ function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
   // Clone or initialize answer object
   let workingAns = ans && typeof ans === 'object' ? { ...ans } : (ans !== undefined && ans !== null ? { answer: ans } : {});
 
-  // 2. If activeDraft matches this question, overlay activeDraft values
+  // 2. If activeDraft matches this question, overlay live activeDraft values
   let draftsMap = {};
-  if (activeDraft && (activeDraft.qIndex === idx || activeDraft.questionId === qId)) {
+  if (activeDraft && (activeDraft.qIndex === idx || String(activeDraft.questionId) === String(qId))) {
     draftsMap = {
       draftMCQ: activeDraft.draftMCQ,
       draftCode: activeDraft.draftCode,
@@ -87,91 +88,67 @@ function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
       draftJs: activeDraft.draftJs
     };
 
-    if (activeDraft.draftMCQ !== undefined && activeDraft.draftMCQ !== null) {
-      if (Array.isArray(activeDraft.draftMCQ)) {
+    if (activeDraft.draftMCQ !== undefined) {
+      if (activeDraft.draftMCQ === null) {
+        workingAns.selectedOptionIndex = null;
+        workingAns.selectedOptionIndices = [];
+      } else if (Array.isArray(activeDraft.draftMCQ)) {
         workingAns.selectedOptionIndices = activeDraft.draftMCQ;
-        workingAns.selectedOptionIndex = activeDraft.draftMCQ[0] ?? null;
-      } else {
+        workingAns.selectedOptionIndex = activeDraft.draftMCQ.length > 0 ? activeDraft.draftMCQ[0] : null;
+      } else if (typeof activeDraft.draftMCQ === 'number') {
         workingAns.selectedOptionIndex = activeDraft.draftMCQ;
         workingAns.selectedOptionIndices = [activeDraft.draftMCQ];
       }
     }
-    if (activeDraft.draftCode) workingAns.submittedCode = activeDraft.draftCode;
+    if (activeDraft.draftCode !== undefined) workingAns.submittedCode = activeDraft.draftCode;
     if (activeDraft.draftLanguage) workingAns.selectedLanguage = activeDraft.draftLanguage;
-    if (activeDraft.draftHtml) workingAns.submittedHtml = activeDraft.draftHtml;
-    if (activeDraft.draftCss) workingAns.submittedCss = activeDraft.draftCss;
-    if (activeDraft.draftJs) workingAns.submittedJs = activeDraft.draftJs;
+    if (activeDraft.draftHtml !== undefined) workingAns.submittedHtml = activeDraft.draftHtml;
+    if (activeDraft.draftCss !== undefined) workingAns.submittedCss = activeDraft.draftCss;
+    if (activeDraft.draftJs !== undefined) workingAns.submittedJs = activeDraft.draftJs;
   }
 
-  // 3. Fallback to cached drafts in IndexedDB if memory answer has no selection
-  if (Array.isArray(cachedDrafts)) {
-    for (const draft of cachedDrafts) {
-      const val = draft?.data || draft?.value || draft;
-      let cachedAns = null;
-      if (Array.isArray(val)) {
-        cachedAns = val[idx] ?? val.find(a => a && (a.questionId === qId || a.questionId === q._id || a.questionId === q.id));
-      } else if (val && typeof val === 'object') {
-        cachedAns = val[qId] ?? val[q._id] ?? val[q.id] ?? val[idx];
-      }
-      if (cachedAns && typeof cachedAns === 'object') {
-        if (workingAns.selectedOptionIndex === null || workingAns.selectedOptionIndex === undefined) {
-          if (cachedAns.selectedOptionIndex !== null && cachedAns.selectedOptionIndex !== undefined) {
-            workingAns.selectedOptionIndex = cachedAns.selectedOptionIndex;
-          }
-        }
-        if (!workingAns.selectedOptionIndices || workingAns.selectedOptionIndices.length === 0) {
-          if (Array.isArray(cachedAns.selectedOptionIndices) && cachedAns.selectedOptionIndices.length > 0) {
-            workingAns.selectedOptionIndices = cachedAns.selectedOptionIndices;
-          }
-        }
-        if (!workingAns.submittedCode && cachedAns.submittedCode) {
-          workingAns.submittedCode = cachedAns.submittedCode;
-        }
-        if (!workingAns.submittedHtml && cachedAns.submittedHtml) {
-          workingAns.submittedHtml = cachedAns.submittedHtml;
-        }
-        if (cachedAns.isSavedByUser) {
-          workingAns.isSavedByUser = true;
-        }
-      }
+  // 3. Evaluate strictly by question type against actually stored values
+  const isMCC = Boolean(q.type === 'mcc' || q.isMultiChoice === true || (Array.isArray(q.correctOptionIndices) && q.correctOptionIndices.length > 1));
+  const isMCQ = Boolean(q.type === 'mcq' || q.type === 'scc' || (Array.isArray(q.options) && q.options.length > 0)) && !isMCC;
+  const isWeb = q.type === 'web';
+  const isCoding = q.type === 'coding' || (!isMCQ && !isMCC && !isWeb);
+
+  // 3A. Multi-Choice Multi-Correct (MCC)
+  if (isMCC) {
+    const rawOpts = (draftsMap.draftMCQ !== undefined && Array.isArray(draftsMap.draftMCQ))
+      ? draftsMap.draftMCQ
+      : (Array.isArray(workingAns.selectedOptionIndices) && workingAns.selectedOptionIndices.length > 0
+          ? workingAns.selectedOptionIndices
+          : (Array.isArray(workingAns.selectedOptionIndex) ? workingAns.selectedOptionIndex : []));
+    const validOpts = rawOpts.filter(o => typeof o === 'number' && o >= 0 && o < (q.options?.length || 26));
+    if (validOpts.length === 0) {
+      return { hasAnswer: false, summary: '—', raw: workingAns };
     }
+    const labels = validOpts.map(o => String.fromCharCode(65 + Number(o))).join(', ');
+    return { hasAnswer: true, summary: `Selected [${labels}]`, raw: workingAns };
   }
 
-  // 4. Primary Source of Truth: Standard platform checker
-  const isPlatformAnswered = checkIsQuestionAnswered(q, workingAns, draftsMap);
-  const isExplicitlySaved = Boolean(workingAns.isSavedByUser);
-  const hasTextAnswer = typeof workingAns.answer === 'string' && workingAns.answer.trim().length > 0;
-
-  if (!isPlatformAnswered && !isExplicitlySaved && !hasTextAnswer) {
-    return { hasAnswer: false, summary: '—', raw: workingAns };
-  }
-
-  // 5. Build descriptive summary for verified answered question
-  const isMulti = q.isMultiChoice || q.type === 'mcc' || q.category === 'Multiple Choice';
-  const hasOptions = Array.isArray(q.options) && q.options.length > 0;
-  if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc' || hasOptions) {
-    if (isMulti) {
-      const opts = draftsMap.draftMCQ !== undefined
-        ? draftsMap.draftMCQ
-        : (workingAns.selectedOptionIndices ?? (workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined ? [workingAns.selectedOptionIndex] : []));
-      if (Array.isArray(opts) && opts.length > 0) {
-        const labels = opts.map(o => String.fromCharCode(65 + Number(o))).join(', ');
-        return { hasAnswer: true, summary: `Selected [${labels}]`, raw: workingAns };
-      }
-    } else {
-      const opt = draftsMap.draftMCQ !== undefined
-        ? draftsMap.draftMCQ
-        : (workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined && workingAns.selectedOptionIndex !== -1
-            ? workingAns.selectedOptionIndex
-            : (typeof workingAns.answer === 'number' && workingAns.answer >= 0 ? workingAns.answer : null));
-      if (opt !== null && opt !== undefined && opt >= 0) {
-        return { hasAnswer: true, summary: `Option ${String.fromCharCode(65 + Number(opt))}`, raw: workingAns };
-      }
+  // 3B. Single-Choice Single-Correct (MCQ / SCC)
+  if (isMCQ) {
+    const rawOpt = (draftsMap.draftMCQ !== undefined && typeof draftsMap.draftMCQ === 'number')
+      ? draftsMap.draftMCQ
+      : ((typeof workingAns.selectedOptionIndex === 'number' && workingAns.selectedOptionIndex >= 0)
+          ? workingAns.selectedOptionIndex
+          : (Array.isArray(workingAns.selectedOptionIndices) && workingAns.selectedOptionIndices.length > 0 && typeof workingAns.selectedOptionIndices[0] === 'number'
+              ? workingAns.selectedOptionIndices[0]
+              : null));
+    if (rawOpt === null || rawOpt === undefined || rawOpt < 0 || rawOpt >= (q.options?.length || 26)) {
+      return { hasAnswer: false, summary: '—', raw: workingAns };
     }
+    return { hasAnswer: true, summary: `Option ${String.fromCharCode(65 + Number(rawOpt))}`, raw: workingAns };
   }
 
-  // Web Development
-  if (q.type === 'web') {
+  // 3C. Web Development
+  if (isWeb) {
+    const isAnswered = checkIsQuestionAnswered(q, workingAns, draftsMap);
+    if (!isAnswered) {
+      return { hasAnswer: false, summary: '—', raw: workingAns };
+    }
     const curH = cleanCodeStr(draftsMap.draftHtml !== undefined ? draftsMap.draftHtml : workingAns.submittedHtml);
     const curC = cleanCodeStr(draftsMap.draftCss !== undefined ? draftsMap.draftCss : workingAns.submittedCss);
     const curJ = cleanCodeStr(draftsMap.draftJs !== undefined ? draftsMap.draftJs : workingAns.submittedJs);
@@ -179,20 +156,23 @@ function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
     return { hasAnswer: true, summary: `Web code (${totalChars} chars)`, raw: workingAns };
   }
 
-  // Algorithmic Coding
-  if (q.type !== 'mcq' && q.type !== 'scc' && q.type !== 'mcc' && !hasOptions && q.type !== 'web') {
-    const code = cleanCodeStr(draftsMap.draftCode !== undefined ? draftsMap.draftCode : workingAns.submittedCode);
-    if (code) {
-      const lang = draftsMap.draftLanguage || workingAns.selectedLanguage || workingAns.language || 'cpp';
-      return { hasAnswer: true, summary: `${lang} (${code.length} chars)`, raw: workingAns };
+  // 3D. Algorithmic Coding
+  if (isCoding) {
+    const isAnswered = checkIsQuestionAnswered(q, workingAns, draftsMap);
+    if (!isAnswered) {
+      return { hasAnswer: false, summary: '—', raw: workingAns };
     }
+    const code = cleanCodeStr(draftsMap.draftCode !== undefined ? draftsMap.draftCode : workingAns.submittedCode);
+    const lang = draftsMap.draftLanguage || workingAns.selectedLanguage || workingAns.language || 'cpp';
+    return { hasAnswer: true, summary: `${lang} (${code.length} chars)`, raw: workingAns };
   }
 
-  if (hasTextAnswer) {
+  // 3E. Free-text response
+  if (typeof workingAns.answer === 'string' && workingAns.answer.trim().length > 0) {
     return { hasAnswer: true, summary: `${workingAns.answer.trim().length} chars`, raw: workingAns };
   }
 
-  return { hasAnswer: true, summary: 'Marked answered', raw: workingAns };
+  return { hasAnswer: false, summary: '—', raw: workingAns };
 }
 
 export default function ExamBiosModal({

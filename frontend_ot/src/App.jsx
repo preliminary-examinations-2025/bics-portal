@@ -19,6 +19,7 @@ import { VerificationReviewView } from './views/VerificationReviewView';
 import { FinishedView } from './views/FinishedView';
 import { CustomAlertModal } from './components/common/CustomAlertModal';
 import ExamBiosModal from './components/exam/ExamBiosModal';
+import { isQuestionAnswered } from './utils/examAnswerStatus.js';
 import { extractComprehensiveClientSecurity } from './utils/clientSecurity';
 import { getBlazeFaceModel, preloadBlazeFaceIdle } from './utils/blazefaceLoader';
 import { encryptPendingStorage, decryptPendingStorage } from './utils/eirfCrypto';
@@ -3735,20 +3736,33 @@ function AppContent() {
       ? ((draftJsRef.current !== undefined && draftJsRef.current !== null && draftJsRef.current !== '') ? draftJsRef.current : (existing.submittedJs || starterJs))
       : (existing.submittedJs || starterJs);
 
+    const hasAnswered = isQuestionAnswered(
+      activeQuestion,
+      existing,
+      {
+        draftMCQ: curMCQ,
+        draftCode: curCode,
+        draftLanguage: curLang,
+        draftHtml: curHtml,
+        draftCss: curCss,
+        draftJs: curJs
+      }
+    );
+
     if (activeQuestion?.type === 'web') {
       updated[selectedQuestionIndex] = {
         ...existing,
         submittedHtml: curHtml,
         submittedCss: curCss,
         submittedJs: curJs,
-        isSavedByUser: true
+        isSavedByUser: hasAnswered
       };
     } else if (activeQuestion?.type === 'coding') {
       updated[selectedQuestionIndex] = {
         ...existing,
         submittedCode: curCode,
         selectedLanguage: curLang,
-        isSavedByUser: true
+        isSavedByUser: hasAnswered
       };
     } else {
       const isMulti = Boolean(activeQuestion && (activeQuestion.type === 'mcc' || activeQuestion.isMultiChoice === true || (Array.isArray(activeQuestion.correctOptionIndices) && activeQuestion.correctOptionIndices.length > 1)));
@@ -3763,7 +3777,7 @@ function AppContent() {
         ...existing,
         selectedOptionIndex: selOptIndex,
         selectedOptionIndices: multiIndices,
-        isSavedByUser: true
+        isSavedByUser: hasAnswered
       };
     }
     examAnswersRef.current = updated;
