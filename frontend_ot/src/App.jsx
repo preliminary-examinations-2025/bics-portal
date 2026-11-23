@@ -2578,6 +2578,9 @@ function AppContent() {
       ) {
         e.preventDefault();
         e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
         setIsBiosOpen(prev => !prev);
         return;
       }
@@ -2594,6 +2597,9 @@ function AppContent() {
           f2PressCountRef.current = 0;
           e.preventDefault();
           e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+          }
           setIsBiosOpen(prev => !prev);
         }
       }
@@ -2967,7 +2973,7 @@ function AppContent() {
       const key = (e.key || '').toLowerCase();
       const isInsert = e.key === 'Insert';
 
-      // BICS BIOS Diagnostic Utility Trigger: Ctrl + Shift + Alt + B or Ctrl + Alt + F2
+      // BICS BIOS Diagnostic Utility Trigger: Handled by handleGlobalBiosKey, allow through without double-trigger
       if (
         (isModifier && e.shiftKey && e.altKey && key === 'b') ||
         (key === 'f2' && e.ctrlKey && e.altKey)
@@ -2977,29 +2983,13 @@ function AppContent() {
         if (typeof e.stopImmediatePropagation === 'function') {
           e.stopImmediatePropagation();
         }
-        setIsBiosOpen(prev => !prev);
         return false;
       }
 
-      // Lab Alternative: Rapid 3-tap of F2 within 1.5s
+      // Rapid 3-tap of F2 handled globally by handleGlobalBiosKey
       if (key === 'f2') {
-        const now = Date.now();
-        if (now - lastF2PressTimeRef.current < 1500) {
-          f2PressCountRef.current += 1;
-        } else {
-          f2PressCountRef.current = 1;
-        }
-        lastF2PressTimeRef.current = now;
-        if (f2PressCountRef.current >= 3) {
-          f2PressCountRef.current = 0;
-          e.preventDefault();
-          e.stopPropagation();
-          if (typeof e.stopImmediatePropagation === 'function') {
-            e.stopImmediatePropagation();
-          }
-          setIsBiosOpen(prev => !prev);
-          return false;
-        }
+        e.preventDefault();
+        return false;
       }
 
       // Block Inspect / Developer Tools / View Source shortcuts
@@ -5012,7 +5002,13 @@ function AppContent() {
       <CustomAlertModal customModal={customModal} setCustomModal={setCustomModal} />
       <ExamBiosModal
         isOpen={isBiosOpen}
-        onClose={() => setIsBiosOpen(false)}
+        onClose={() => {
+          setIsBiosOpen(false);
+          // Grace period for window focus to settle after modal closes
+          setTimeout(() => {
+            isInvigilatorActionRef.current = false;
+          }, 1500);
+        }}
         candidate={candidate}
         test={test}
         submission={submission}
