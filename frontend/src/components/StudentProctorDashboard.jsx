@@ -94,32 +94,70 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const [journalFilter, setJournalFilter] = useState('ALL'); // 'ALL' | '5XX' | '4XX' | 'TIMEOUT'
   const pcRef = useRef(null);
   const statusRef = useRef(sub.status || 'started');
-  const subId = sub.id || sub._id;
+  const subId = sub._id || sub.id || sub.submissionRefId || sub.candidateId;
 
   const fetchJournalDetails = useCallback(async () => {
-    if (!subId) return;
+    if (!subId || subId === 'undefined') return;
     setJournalLoading(true);
     setJournalError('');
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE}/tests/client-error-journal/${subId}`, {
+      const res = await fetch(`${API_BASE}/tests/client-error-journal/${encodeURIComponent(subId)}`, {
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         }
       });
       if (res.ok) {
         const data = await res.json();
-        setJournalData(data.journal || null);
+        if (data.journal) {
+          setJournalData(data.journal);
+        } else if (sub.clientNetworkErrors) {
+          setJournalData({
+            submissionId: subId,
+            totalErrorsCount: sub.clientNetworkErrors.totalCount || 0,
+            errors5xxCount: sub.clientNetworkErrors.errors5xxCount || 0,
+            errors4xxCount: sub.clientNetworkErrors.errors4xxCount || 0,
+            timeoutCount: 0,
+            hasServerRejections: sub.clientNetworkErrors.hasServerRejections || false,
+            entries: sub.clientNetworkErrors.recentErrors || []
+          });
+        } else {
+          setJournalData(null);
+        }
       } else {
         const errJson = await res.json().catch(() => ({}));
-        setJournalError(errJson.error || 'Failed to load client error journal');
+        if (sub.clientNetworkErrors) {
+          setJournalData({
+            submissionId: subId,
+            totalErrorsCount: sub.clientNetworkErrors.totalCount || 0,
+            errors5xxCount: sub.clientNetworkErrors.errors5xxCount || 0,
+            errors4xxCount: sub.clientNetworkErrors.errors4xxCount || 0,
+            timeoutCount: 0,
+            hasServerRejections: sub.clientNetworkErrors.hasServerRejections || false,
+            entries: sub.clientNetworkErrors.recentErrors || []
+          });
+        } else {
+          setJournalError(errJson.error || 'Failed to load client error journal');
+        }
       }
     } catch (err) {
-      setJournalError(err.message || 'Network error fetching journal');
+      if (sub.clientNetworkErrors) {
+        setJournalData({
+          submissionId: subId,
+          totalErrorsCount: sub.clientNetworkErrors.totalCount || 0,
+          errors5xxCount: sub.clientNetworkErrors.errors5xxCount || 0,
+          errors4xxCount: sub.clientNetworkErrors.errors4xxCount || 0,
+          timeoutCount: 0,
+          hasServerRejections: sub.clientNetworkErrors.hasServerRejections || false,
+          entries: sub.clientNetworkErrors.recentErrors || []
+        });
+      } else {
+        setJournalError(err.message || 'Network error fetching journal');
+      }
     } finally {
       setJournalLoading(false);
     }
-  }, [subId]);
+  }, [subId, sub.clientNetworkErrors]);
 
   useEffect(() => {
     setLogs(sub.proctoringLog?.events || []);

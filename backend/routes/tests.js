@@ -3662,24 +3662,57 @@ router.get('/client-error-journal/:submissionId', requireAuth, async (req, res) 
 
         let journalDoc = null;
         if (dbState.useMongo) {
-            journalDoc = await ClientNetworkErrorLogModel.findOne({
-                $or: [
-                    { submissionId: submission._id },
-                    { submissionId: String(submission._id) },
-                    { submissionId: String(submission.id) },
-                    { submissionId: String(submissionId) },
-                    ...(submission.submissionRefId ? [{ submissionRefId: submission.submissionRefId }] : [])
-                ]
-            }).lean();
+            const queryConditions = [];
+            if (submission._id) {
+                queryConditions.push({ submissionId: submission._id });
+                queryConditions.push({ submissionId: String(submission._id) });
+            }
+            if (submission.id && String(submission.id) !== 'undefined') {
+                queryConditions.push({ submissionId: submission.id });
+                queryConditions.push({ submissionId: String(submission.id) });
+            }
+            if (submissionId && String(submissionId) !== 'undefined') {
+                queryConditions.push({ submissionId: submissionId });
+                if (mongoose.Types.ObjectId.isValid(submissionId)) {
+                    queryConditions.push({ submissionId: new mongoose.Types.ObjectId(submissionId) });
+                }
+            }
+            if (submission.submissionRefId) {
+                queryConditions.push({ submissionRefId: submission.submissionRefId });
+            }
+            if (submission.clientNetworkErrors?.journalRef && mongoose.Types.ObjectId.isValid(submission.clientNetworkErrors.journalRef)) {
+                queryConditions.push({ _id: submission.clientNetworkErrors.journalRef });
+            }
+
+            if (queryConditions.length > 0) {
+                journalDoc = await ClientNetworkErrorLogModel.findOne({ $or: queryConditions }).lean().catch(err => {
+                    console.warn('[CLIENT_ERROR_JOURNAL] Mongo lookup warning:', err.message);
+                    return null;
+                });
+            }
         } else {
             const db = getJSONData();
             const list = db.clientNetworkErrorLogs || [];
             journalDoc = list.find(j => 
-                String(j.submissionId) === String(submission._id) ||
-                String(j.submissionId) === String(submission.id) ||
-                String(j.submissionId) === String(submissionId) ||
-                (j.submissionRefId && j.submissionRefId === submission.submissionRefId)
+                (submission._id && String(j.submissionId) === String(submission._id)) ||
+                (submission.id && String(j.submissionId) === String(submission.id)) ||
+                (submissionId && String(j.submissionId) === String(submissionId)) ||
+                (submission.submissionRefId && j.submissionRefId === submission.submissionRefId)
             ) || null;
+        }
+
+        // Seamless fallback to embedded clientNetworkErrors if journal document is not found
+        if (!journalDoc && submission.clientNetworkErrors) {
+            journalDoc = {
+                submissionId: submission._id || submission.id || submissionId,
+                totalErrorsCount: submission.clientNetworkErrors.totalCount || 0,
+                errors5xxCount: submission.clientNetworkErrors.errors5xxCount || 0,
+                errors4xxCount: submission.clientNetworkErrors.errors4xxCount || 0,
+                timeoutCount: (submission.clientNetworkErrors.recentErrors || []).filter(e => e.errorType === 'TIMEOUT' || !e.httpStatus).length,
+                hasServerRejections: submission.clientNetworkErrors.hasServerRejections || false,
+                lastReportedAt: submission.submittedAt || new Date(),
+                entries: submission.clientNetworkErrors.recentErrors || []
+            };
         }
 
         return res.json({
@@ -3690,7 +3723,14 @@ router.get('/client-error-journal/:submissionId', requireAuth, async (req, res) 
         });
     } catch (e) {
         console.error('[CLIENT_ERROR_JOURNAL_ROUTE] Error:', e);
-        return res.status(500).json({ error: e.message });
+        return res.status(200).json({
+            success: false,
+            submissionId: req.params?.submissionId,
+            clientNetworkErrors: null,
+            journal: null,
+            error: null,
+            warning: e.message
+        });
     }
 });
 

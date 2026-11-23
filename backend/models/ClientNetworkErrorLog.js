@@ -24,9 +24,9 @@ const ClientNetworkErrorEntrySchema = new mongoose.Schema({
 }, { _id: false });
 
 const ClientNetworkErrorLogSchema = new mongoose.Schema({
-    submissionId: { type: mongoose.Schema.Types.ObjectId, ref: 'TestSubmissionV3', required: true, index: true },
-    testId: { type: mongoose.Schema.Types.ObjectId, ref: 'TestConfig', index: true },
-    candidateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Candidate', index: true },
+    submissionId: { type: mongoose.Schema.Types.Mixed, required: true, index: true },
+    testId: { type: mongoose.Schema.Types.Mixed, index: true },
+    candidateId: { type: mongoose.Schema.Types.Mixed, index: true },
     studentId: { type: String, index: true },
 
     // Summary Metrics
