@@ -44,7 +44,8 @@ import {
   getPendingTelemetry,
   clearPendingTelemetry,
   dispatchReconnectTelemetry,
-  isServerOutageActive
+  isServerOutageActive,
+  getJournalEntries
 } from './utils/telemetryJournal';
 import { API_BASE, safeReadJson } from './api/client';
 
@@ -3916,6 +3917,37 @@ function AppContent() {
                 }
               }).catch(() => {});
             }
+            logProctoringEvent(
+              submission,
+              'SERVER_SYNCING_RECOVERED',
+              `Backend connection restored after ${recovery?.telemetry?.outageWindow?.durationSeconds || 0}s outage (${recovery?.telemetry?.failedRequestsCount || 0} requests buffered). Amber Wi-Fi and server sync banner dismissed.`,
+              null,
+              null,
+              recovery?.telemetry?.outageWindow?.durationSeconds || 0
+            );
+
+            // Proactively drain queued offline events without waiting for window.ononline
+            getOfflineEvents(subId).then(async (events) => {
+              if (events && events.length > 0) {
+                const userAuth = getActiveAuthToken();
+                const examToken = getActiveExamToken();
+                const uploads = events.map(ev => 
+                  fetch(`${API_BASE}/tests/proctoring/event/${subId}`, {
+                    method: 'POST',
+                    headers: { 
+                      'Content-Type': 'application/json',
+                      ...(userAuth ? { 'Authorization': `Bearer ${userAuth}` } : {}),
+                      ...(examToken ? { 'x-exam-token': examToken } : {})
+                    },
+                    body: JSON.stringify(ev)
+                  }).then(r => r.ok).catch(() => false)
+                );
+                const results = await Promise.all(uploads);
+                if (results.every(Boolean)) {
+                  clearOfflineEvents(subId);
+                }
+              }
+            }).catch(() => {});
           } else {
             // Retry any unacknowledged pending telemetry from earlier attempt
             const existingPending = getPendingTelemetry();
@@ -3944,17 +3976,31 @@ function AppContent() {
             setFinishedStep(1);
           }
         } else if (res.status >= 500) {
-          // Server 5xx: Server is compiling or restarting; physical network is FINE
+          // Server 5xx: Server is compiling, crashing, or restarting; physical network is FINE
+          let errText = '';
+          try { errText = await res.text(); } catch (_) {}
           recordFailedRequest({
             endpoint: `/api/tests/heartbeat/${subId}`,
             method: 'POST',
-            errorType: `HTTP_${res.status}`,
+            errorType: 'HTTP_5XX',
             httpStatus: res.status,
-            submissionId: subId
+            submissionId: subId,
+            durationMs: rtt,
+            responseSnippet: errText,
+            canaryProbe: 'UNCHECKED',
+            networkQuality: 'fair'
           });
           const outageEvt = startServerOutage(subId, `HTTP_${res.status}`);
           if (outageEvt) {
             saveOfflineEvent({ submissionId: subId, ...outageEvt }).catch(() => {});
+            logProctoringEvent(
+              submission,
+              'SERVER_SYNCING_ENGAGED',
+              `Backend returned HTTP ${res.status}. Physical network link operational (Amber Wi-Fi). Server synchronizing banner displayed. Keystrokes safely cached locally.`,
+              null,
+              null,
+              0
+            );
           }
           setNetworkQuality(rtt >= 2000 ? 'fair' : 'good');
           setServerNotice('Server synchronizing — local auto-save active. Your exam continues uninterrupted.');
@@ -3966,33 +4012,75 @@ function AppContent() {
             persistent: true
           });
           // Do NOT start disconnect countdown!
+        } else if (res.status >= 400) {
+          // 4xx Client Error / Server Rejection (e.g. 429 Throttle, 409 Conflict, 403 Forbidden)
+          let errText = '';
+          try { errText = await res.text(); } catch (_) {}
+          recordFailedRequest({
+            endpoint: `/api/tests/heartbeat/${subId}`,
+            method: 'POST',
+            errorType: 'HTTP_4XX',
+            httpStatus: res.status,
+            submissionId: subId,
+            durationMs: rtt,
+            responseSnippet: errText,
+            canaryProbe: 'UNCHECKED',
+            networkQuality: 'good'
+          });
+          setNetworkQuality('good');
+          setServerNotice('');
+          removeProctorToast('SERVER_OFFLINE');
         } else {
-          // 4xx or other HTTP reply: Network link is alive
           setNetworkQuality('good');
           setServerNotice('');
           removeProctorToast('SERVER_OFFLINE');
         }
       } catch (err) {
         // Request timed out or network error. Distinguish Client-Side vs Server-Side failure!
+        const rtt = performance.now() - startTime;
         if (!navigator.onLine) {
+          recordFailedRequest({
+            endpoint: `/api/tests/heartbeat/${subId}`,
+            method: 'POST',
+            errorType: 'FETCH_FAILED',
+            httpStatus: null,
+            submissionId: subId,
+            durationMs: rtt,
+            responseSnippet: err.message,
+            canaryProbe: 'GSTATIC_UNREACHABLE',
+            networkQuality: 'disconnected'
+          });
           consecutiveMissesRef.current += 1;
           setNetworkQuality('disconnected');
           startDisconnectCountdown();
         } else {
-          // Test global internet reachability
+          // Test global internet reachability via gstatic 204 canary
           const hasGlobalInternet = await checkGlobalInternetAccess();
+          recordFailedRequest({
+            endpoint: `/api/tests/heartbeat/${subId}`,
+            method: 'POST',
+            errorType: err.name === 'TimeoutError' || err.name === 'AbortError' ? 'TIMEOUT' : 'FETCH_FAILED',
+            httpStatus: null,
+            submissionId: subId,
+            durationMs: rtt,
+            responseSnippet: err.message,
+            canaryProbe: hasGlobalInternet ? 'GSTATIC_REACHABLE' : 'GSTATIC_UNREACHABLE',
+            networkQuality: hasGlobalInternet ? 'fair' : 'disconnected'
+          });
+
           if (hasGlobalInternet) {
-            // Student has working internet; BICS backend is down/unreachable!
-            recordFailedRequest({
-              endpoint: `/api/tests/heartbeat/${subId}`,
-              method: 'POST',
-              errorType: 'FETCH_FAILED',
-              httpStatus: null,
-              submissionId: subId
-            });
+            // Student has verified global internet via Google 204; BICS backend is down/unreachable!
             const outageEvt = startServerOutage(subId, 'FETCH_FAILED_SERVER_OFFLINE');
             if (outageEvt) {
               saveOfflineEvent({ submissionId: subId, ...outageEvt }).catch(() => {});
+              logProctoringEvent(
+                submission,
+                'SERVER_SYNCING_ENGAGED',
+                `Backend heartbeat timed out/unreachable. Global internet access confirmed via gstatic.com 204 (Amber Wi-Fi). Keystrokes safely cached locally.`,
+                null,
+                null,
+                0
+              );
             }
             // Candidate continues exam undisturbed. Local drafts are continuously saved.
             setNetworkQuality('fair');
@@ -4419,7 +4507,11 @@ function AppContent() {
       lastCheckpointServerTime: lastCheckpointRef.current?.serverTime || null,
       elapsedSinceCheckpointMs: elapsedSinceCheckpoint,
       isOfflineSync: !isActuallyOnline || Boolean(serverNotice),
-      reconnectTelemetry: getPendingTelemetry() || null
+      reconnectTelemetry: getPendingTelemetry() || (getJournalEntries().length > 0 ? {
+        submissionId: subId,
+        failedRequestsCount: getJournalEntries().length,
+        failedRequestsJournal: getJournalEntries()
+      } : null)
     };
 
     // Offline / disconnect data is preserved in IndexedDB & localStorage without triggering file downloads

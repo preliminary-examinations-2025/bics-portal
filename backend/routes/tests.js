@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel, ServerOutageIncidentModel, AuditLogModel } = require('../models');
+const { TestConfigModel, TestSubmissionModel, TestTokenModel, CandidateModel, ConfigModel, ServerOutageIncidentModel, AuditLogModel, ClientNetworkErrorLogModel } = require('../models');
 const { dbState, getJSONData, saveJSONData } = require('../config/db');
 const { buildCandidateQueryFilter } = require('../config/constants');
 const { logSystemAction } = require('../utils/logger');
@@ -1431,9 +1431,64 @@ router.post('/telemetry/reconnect', requireAuth, async (req, res) => {
 
         let isVerified = false;
         let matchedIncident = null;
+        let incidentRef = 'NONE';
+
+        // 1. Ingest strictly non-2xx client error journal entries
+        const non2xxEntries = (Array.isArray(failedRequestsJournal) ? failedRequestsJournal : [])
+            .filter(e => e && (!e.httpStatus || e.httpStatus < 200 || e.httpStatus >= 300));
+        const errors5xx = non2xxEntries.filter(e => (e.httpStatus >= 500 && e.httpStatus <= 599) || String(e.errorType).includes('5XX'));
+        const errors4xx = non2xxEntries.filter(e => (e.httpStatus >= 400 && e.httpStatus < 500) || String(e.errorType).includes('4XX'));
+        const timeouts = non2xxEntries.filter(e => e.errorType === 'TIMEOUT' || e.errorType === 'FETCH_FAILED' || !e.httpStatus);
+        const serverRejections = non2xxEntries.filter(e => e.isServerReject || (e.httpStatus && [429, 409, 403, 500, 502, 503, 504].includes(e.httpStatus)));
+        const hasCanaryReachable = non2xxEntries.some(e => e.canaryProbe === 'GSTATIC_REACHABLE' || e.canaryProbe === 'CLOUDFLARE_REACHABLE');
+
+        const durationSec = outageWindow?.durationSeconds || Math.max(1, Math.round((clientEnd.getTime() - clientStart.getTime()) / 1000));
+        const failedCount = typeof failedRequestsCount === 'number' ? failedRequestsCount : non2xxEntries.length;
 
         if (dbState.useMongo) {
-            // Check overlapping ServerOutageIncident in MongoDB
+            // Persist client error journal entries into dedicated ClientNetworkErrorLogModel
+            if (non2xxEntries.length > 0) {
+                await ClientNetworkErrorLogModel.findOneAndUpdate(
+                    { submissionId: sub._id },
+                    {
+                        $set: {
+                            testId: sub.testId,
+                            candidateId: sub.candidateId,
+                            studentId: sub.studentId,
+                            lastReportedAt: new Date(),
+                            hasServerRejections: serverRejections.length > 0
+                        },
+                        $inc: {
+                            totalErrorsCount: non2xxEntries.length,
+                            errors5xxCount: errors5xx.length,
+                            errors4xxCount: errors4xx.length,
+                            timeoutCount: timeouts.length
+                        },
+                        $push: {
+                            entries: {
+                                $each: non2xxEntries.map(e => ({
+                                    timestamp: e.timestamp ? new Date(e.timestamp) : new Date(),
+                                    clientMonotonic: e.clientMonotonic || 0,
+                                    epochMs: e.epochMs || Date.now(),
+                                    endpoint: e.endpoint || '/api/unknown',
+                                    method: e.method || 'POST',
+                                    httpStatus: e.httpStatus || null,
+                                    errorType: e.errorType || (e.httpStatus >= 500 ? 'HTTP_5XX' : (e.httpStatus >= 400 ? 'HTTP_4XX' : 'FETCH_FAILED')),
+                                    durationMs: e.durationMs || 0,
+                                    responseSnippet: (e.responseSnippet || '').substring(0, 300),
+                                    networkQualityAtTime: e.networkQualityAtTime || 'fair',
+                                    isServerReject: Boolean(e.isServerReject || (e.httpStatus && [429, 409, 403, 500, 502, 503, 504].includes(e.httpStatus))),
+                                    canaryProbe: e.canaryProbe || 'UNCHECKED'
+                                }))
+                            }
+                        }
+                    },
+                    { upsert: true, new: true }
+                ).catch(err => console.error('[CLIENT_ERROR_JOURNAL] Persistence error:', err.message));
+            }
+
+            // 5-Way Truth Matrix Evaluation:
+            // Vector A: Check overlapping ServerOutageIncident in MongoDB (aligned 20s threshold)
             matchedIncident = await ServerOutageIncidentModel.findOne({
                 $or: [
                     { outageStart: { $lte: clientEnd }, outageEnd: { $gte: clientStart } },
@@ -1441,17 +1496,37 @@ router.post('/telemetry/reconnect', requireAuth, async (req, res) => {
                 ]
             }).lean();
 
-            // Check if server rebooted within/near the reported client window (±45s tolerance)
+            // Vector B: Check if server rebooted within/near the reported client window (±60s tolerance)
             const serverBootTime = Date.now() - (process.uptime() * 1000);
-            const isRebootMatch = serverBootTime >= (clientStart.getTime() - 45000) && serverBootTime <= (clientEnd.getTime() + 45000);
+            const isRebootMatch = serverBootTime >= (clientStart.getTime() - 60000) && serverBootTime <= (clientEnd.getTime() + 60000);
 
-            if (matchedIncident || isRebootMatch) {
+            // Vector C: Check server's own AuditLogModel for 5xx errors during reported window (±30s)
+            const server5xxInAudit = await AuditLogModel.findOne({
+                timestamp: { $gte: new Date(clientStart.getTime() - 30000), $lte: new Date(clientEnd.getTime() + 30000) },
+                statusCode: { $gte: 500 }
+            }).lean();
+
+            // Vector D: Check client journal proof of HTTP 5xx errors OR gstatic canary verified
+            const clientSaw5xx = errors5xx.length > 0;
+            const clientCanaryVerified = hasCanaryReachable && timeouts.length > 0;
+
+            // Vector E: Check client journal proof of server-side rejections (429 Throttle / 503 Busy / 409)
+            const clientSawServerReject = serverRejections.length > 0;
+
+            if (matchedIncident || isRebootMatch || server5xxInAudit || clientSaw5xx || clientCanaryVerified || clientSawServerReject) {
                 isVerified = true;
+                incidentRef = matchedIncident
+                    ? String(matchedIncident._id)
+                    : (isRebootMatch
+                        ? 'REBOOT_VERIFIED'
+                        : (clientSaw5xx
+                            ? 'CLIENT_5XX_VERIFIED'
+                            : (server5xxInAudit
+                                ? 'SERVER_AUDIT_5XX_VERIFIED'
+                                : (clientSawServerReject
+                                    ? 'SERVER_REJECT_THROTTLE_VERIFIED'
+                                    : 'CANARY_GSTATIC_204_VERIFIED'))));
             }
-
-            const incidentRef = matchedIncident ? String(matchedIncident._id) : (isRebootMatch ? 'REBOOT_VERIFIED' : 'NONE');
-            const durationSec = outageWindow?.durationSeconds || Math.max(1, Math.round((clientEnd.getTime() - clientStart.getTime()) / 1000));
-            const failedCount = typeof failedRequestsCount === 'number' ? failedRequestsCount : (Array.isArray(failedRequestsJournal) ? failedRequestsJournal.length : 0);
 
             if (matchedIncident) {
                 await ServerOutageIncidentModel.findByIdAndUpdate(matchedIncident._id, {
@@ -1460,20 +1535,48 @@ router.post('/telemetry/reconnect', requireAuth, async (req, res) => {
                 }).catch(() => {});
             }
 
+            // Retroactively reconcile and excuse any overlapping serverOfflineGaps that occurred during this verified outage
+            let updatedServerOfflineGaps = sub.proctoringLog?.serverOfflineGaps;
+            if (isVerified && Array.isArray(sub.proctoringLog?.serverOfflineGaps)) {
+                updatedServerOfflineGaps = sub.proctoringLog.serverOfflineGaps.map(gap => {
+                    const gapTime = gap.timestamp ? new Date(gap.timestamp).getTime() : 0;
+                    if (gapTime >= (clientStart.getTime() - 45000) && gapTime <= (clientEnd.getTime() + 45000)) {
+                        return { ...gap, isExcused: true, excuseReason: incidentRef };
+                    }
+                    return gap;
+                });
+            }
+
             const updateOps = {
                 $set: {
                     'offlineSyncMetadata.wasSyncedOffline': true,
                     'offlineSyncMetadata.outageVerified': isVerified,
-                    'offlineSyncMetadata.outageIncidentId': matchedIncident ? matchedIncident._id : null,
-                    'offlineSyncMetadata.verifiedAt': new Date()
+                    'offlineSyncMetadata.outageIncidentId': matchedIncident ? matchedIncident._id : incidentRef,
+                    'offlineSyncMetadata.verifiedAt': new Date(),
+                    'clientNetworkErrors.totalCount': non2xxEntries.length,
+                    'clientNetworkErrors.errors5xxCount': errors5xx.length,
+                    'clientNetworkErrors.errors4xxCount': errors4xx.length,
+                    'clientNetworkErrors.hasServerRejections': Boolean(clientSaw5xx || clientSawServerReject),
+                    'clientNetworkErrors.recentErrors': non2xxEntries.slice(-15).map(e => ({
+                        timestamp: e.timestamp ? new Date(e.timestamp) : new Date(),
+                        clientMonotonic: e.clientMonotonic || 0,
+                        endpoint: e.endpoint || '/api/unknown',
+                        method: e.method || 'POST',
+                        httpStatus: e.httpStatus || null,
+                        errorType: e.errorType || (e.httpStatus >= 500 ? 'HTTP_5XX' : (e.httpStatus >= 400 ? 'HTTP_4XX' : 'FETCH_FAILED')),
+                        durationMs: e.durationMs || 0,
+                        responseSnippet: (e.responseSnippet || '').substring(0, 300),
+                        canaryProbe: e.canaryProbe || 'UNCHECKED'
+                    })),
+                    ...(updatedServerOfflineGaps ? { 'proctoringLog.serverOfflineGaps': updatedServerOfflineGaps } : {})
                 },
                 $push: {
                     'proctoringLog.events': {
                         timestamp: new Date(),
                         type: isVerified ? 'SERVER_OUTAGE_VERIFIED' : 'CLIENT_DISCONNECT_JOURNALED',
                         details: isVerified
-                            ? `Server outage (${durationSec}s, ${failedCount} buffered requests) verified against infrastructure incident ${incidentRef}. Excused from network disconnect penalty.`
-                            : `Client reported ${durationSec}s blackout (${failedCount} buffered requests). No matching infrastructure outage in server ledger.`,
+                            ? `Server outage (${durationSec}s, ${failedCount} buffered requests) verified against ${incidentRef}. Excused from network disconnect penalty.`
+                            : `Client reported ${durationSec}s blackout (${failedCount} buffered requests). Preserved in client error journal.`,
                         durationSeconds: durationSec,
                         failedAttempts: failedCount,
                         incidentRef
@@ -1521,7 +1624,7 @@ router.post('/telemetry/reconnect', requireAuth, async (req, res) => {
         return res.json({
             success: true,
             verified: isVerified,
-            incidentId: matchedIncident ? matchedIncident._id : null,
+            incidentId: matchedIncident ? matchedIncident._id : incidentRef,
             message: isVerified ? "Client reconnect telemetry verified against infrastructure outage incident." : "Telemetry recorded."
         });
     } catch (e) {
@@ -2579,8 +2682,58 @@ router.post('/submit', requireAuth, async (req, res) => {
                                 });
                             } else if (req.body.isOfflineSync || req.body.reconnectTelemetry) {
                                 let isVerifiedOutage = false;
-                                let matchingOutageId = null;
+                                let matchingOutageId = 'NONE';
                                 const telemetry = req.body.reconnectTelemetry;
+
+                                const non2xxEntries = (Array.isArray(telemetry?.failedRequestsJournal) ? telemetry.failedRequestsJournal : [])
+                                    .filter(e => e && (!e.httpStatus || e.httpStatus < 200 || e.httpStatus >= 300));
+                                const errors5xx = non2xxEntries.filter(e => (e.httpStatus >= 500 && e.httpStatus <= 599) || String(e.errorType).includes('5XX'));
+                                const errors4xx = non2xxEntries.filter(e => (e.httpStatus >= 400 && e.httpStatus < 500) || String(e.errorType).includes('4XX'));
+                                const timeouts = non2xxEntries.filter(e => e.errorType === 'TIMEOUT' || e.errorType === 'FETCH_FAILED' || !e.httpStatus);
+                                const serverRejections = non2xxEntries.filter(e => e.isServerReject || (e.httpStatus && [429, 409, 403, 500, 502, 503, 504].includes(e.httpStatus)));
+                                const hasCanaryReachable = non2xxEntries.some(e => e.canaryProbe === 'GSTATIC_REACHABLE' || e.canaryProbe === 'CLOUDFLARE_REACHABLE');
+
+                                // Persist into ClientNetworkErrorLogModel
+                                if (non2xxEntries.length > 0) {
+                                    await ClientNetworkErrorLogModel.findOneAndUpdate(
+                                        { submissionId: submission._id || submission.id },
+                                        {
+                                            $set: {
+                                                testId: submission.testId,
+                                                candidateId: submission.candidateId,
+                                                studentId: submission.studentId,
+                                                lastReportedAt: new Date(),
+                                                hasServerRejections: serverRejections.length > 0
+                                            },
+                                            $inc: {
+                                                totalErrorsCount: non2xxEntries.length,
+                                                errors5xxCount: errors5xx.length,
+                                                errors4xxCount: errors4xx.length,
+                                                timeoutCount: timeouts.length
+                                            },
+                                            $push: {
+                                                entries: {
+                                                    $each: non2xxEntries.map(e => ({
+                                                        timestamp: e.timestamp ? new Date(e.timestamp) : new Date(),
+                                                        clientMonotonic: e.clientMonotonic || 0,
+                                                        epochMs: e.epochMs || Date.now(),
+                                                        endpoint: e.endpoint || '/api/unknown',
+                                                        method: e.method || 'POST',
+                                                        httpStatus: e.httpStatus || null,
+                                                        errorType: e.errorType || (e.httpStatus >= 500 ? 'HTTP_5XX' : (e.httpStatus >= 400 ? 'HTTP_4XX' : 'FETCH_FAILED')),
+                                                        durationMs: e.durationMs || 0,
+                                                        responseSnippet: (e.responseSnippet || '').substring(0, 300),
+                                                        networkQualityAtTime: e.networkQualityAtTime || 'fair',
+                                                        isServerReject: Boolean(e.isServerReject || (e.httpStatus && [429, 409, 403, 500, 502, 503, 504].includes(e.httpStatus))),
+                                                        canaryProbe: e.canaryProbe || 'UNCHECKED'
+                                                    }))
+                                                }
+                                            }
+                                        },
+                                        { upsert: true, new: true }
+                                    ).catch(err => console.error('[CLIENT_ERROR_JOURNAL] Final submit persistence error:', err.message));
+                                }
+
                                 try {
                                     const offlineStart = telemetry?.outageWindow?.clientObservedStart
                                         ? new Date(telemetry.outageWindow.clientObservedStart)
@@ -2591,6 +2744,7 @@ router.post('/submit', requireAuth, async (req, res) => {
                                         ? new Date(telemetry.outageWindow.clientObservedEnd)
                                         : new Date();
 
+                                    // Vector A: Overlapping ServerOutageIncident (20s threshold)
                                     const matchingIncident = await ServerOutageIncidentModel.findOne({
                                         $or: [
                                             { outageStart: { $lte: offlineEnd }, outageEnd: { $gte: offlineStart } },
@@ -2598,25 +2752,77 @@ router.post('/submit', requireAuth, async (req, res) => {
                                         ]
                                     }).lean();
 
+                                    // Vector B: Server reboot match (±60s)
                                     const serverBootTime = Date.now() - (process.uptime() * 1000);
-                                    const isRebootMatch = serverBootTime >= (offlineStart.getTime() - 45000) && serverBootTime <= (offlineEnd.getTime() + 45000);
+                                    const isRebootMatch = serverBootTime >= (offlineStart.getTime() - 60000) && serverBootTime <= (offlineEnd.getTime() + 60000);
 
-                                    if (matchingIncident || isRebootMatch) {
+                                    // Vector C: Server AuditLog 5xx check (±30s)
+                                    const server5xxInAudit = await AuditLogModel.findOne({
+                                        timestamp: { $gte: new Date(offlineStart.getTime() - 30000), $lte: new Date(offlineEnd.getTime() + 30000) },
+                                        statusCode: { $gte: 500 }
+                                    }).lean();
+
+                                    // Vector D: Client saw 5xx OR verified canary with timeouts
+                                    const clientSaw5xx = errors5xx.length > 0;
+                                    const clientCanaryVerified = hasCanaryReachable && timeouts.length > 0;
+
+                                    // Vector E: Client saw server rejection
+                                    const clientSawServerReject = serverRejections.length > 0;
+
+                                    if (matchingIncident || isRebootMatch || server5xxInAudit || clientSaw5xx || clientCanaryVerified || clientSawServerReject) {
                                         isVerifiedOutage = true;
-                                        matchingOutageId = matchingIncident ? matchingIncident._id : 'REBOOT_VERIFIED';
-                                        console.log(`[OFFLINE VERIFICATION] Submission ${submissionId} offline window verified against ServerOutageIncident ${matchingOutageId}.`);
+                                        matchingOutageId = matchingIncident
+                                            ? matchingIncident._id
+                                            : (isRebootMatch
+                                                ? 'REBOOT_VERIFIED'
+                                                : (clientSaw5xx
+                                                    ? 'CLIENT_5XX_VERIFIED'
+                                                    : (server5xxInAudit
+                                                        ? 'SERVER_AUDIT_5XX_VERIFIED'
+                                                        : (clientSawServerReject
+                                                            ? 'SERVER_REJECT_THROTTLE_VERIFIED'
+                                                            : 'CANARY_GSTATIC_204_VERIFIED'))));
+                                        console.log(`[OFFLINE VERIFICATION] Submission ${submissionId} offline window verified against ${matchingOutageId}.`);
+                                    }
+
+                                    // Retroactively excuse overlapping serverOfflineGaps
+                                    if (isVerifiedOutage && Array.isArray(submission.proctoringLog?.serverOfflineGaps)) {
+                                        submission.proctoringLog.serverOfflineGaps = submission.proctoringLog.serverOfflineGaps.map(gap => {
+                                            const gapTime = gap.timestamp ? new Date(gap.timestamp).getTime() : 0;
+                                            if (gapTime >= (offlineStart.getTime() - 45000) && gapTime <= (offlineEnd.getTime() + 45000)) {
+                                                return { ...gap, isExcused: true, excuseReason: matchingOutageId };
+                                            }
+                                            return gap;
+                                        });
                                     }
                                 } catch (outageErr) {
                                     console.error('[OFFLINE VERIFICATION] Error checking outage incidents:', outageErr.message);
                                 }
 
-                                const failedReqCount = telemetry?.failedRequestsCount || 0;
+                                const failedReqCount = telemetry?.failedRequestsCount || non2xxEntries.length;
                                 submission.offlineSyncMetadata = {
                                     wasSyncedOffline: true,
                                     outageVerified: isVerifiedOutage,
                                     outageIncidentId: matchingOutageId,
                                     verifiedAt: new Date(),
-                                    telemetryLogged: Boolean(telemetry)
+                                    telemetryLogged: Boolean(telemetry || non2xxEntries.length > 0)
+                                };
+                                submission.clientNetworkErrors = {
+                                    totalCount: non2xxEntries.length,
+                                    errors5xxCount: errors5xx.length,
+                                    errors4xxCount: errors4xx.length,
+                                    hasServerRejections: Boolean(errors5xx.length > 0 || serverRejections.length > 0),
+                                    recentErrors: non2xxEntries.slice(-15).map(e => ({
+                                        timestamp: e.timestamp ? new Date(e.timestamp) : new Date(),
+                                        clientMonotonic: e.clientMonotonic || 0,
+                                        endpoint: e.endpoint || '/api/unknown',
+                                        method: e.method || 'POST',
+                                        httpStatus: e.httpStatus || null,
+                                        errorType: e.errorType || (e.httpStatus >= 500 ? 'HTTP_5XX' : (e.httpStatus >= 400 ? 'HTTP_4XX' : 'FETCH_FAILED')),
+                                        durationMs: e.durationMs || 0,
+                                        responseSnippet: (e.responseSnippet || '').substring(0, 300),
+                                        canaryProbe: e.canaryProbe || 'UNCHECKED'
+                                    }))
                                 };
 
                                 if (!submission.proctoringLog) submission.proctoringLog = {};
@@ -2625,7 +2831,7 @@ router.post('/submit', requireAuth, async (req, res) => {
                                     timestamp: new Date(),
                                     type: isVerifiedOutage ? 'SERVER_OUTAGE_VERIFIED' : 'OFFLINE_SYNC_ACCEPTED',
                                     details: isVerifiedOutage
-                                        ? `Offline gap verified against infrastructure outage incident ${matchingOutageId}. Server-side outage confirmed (${failedReqCount} requests buffered).`
+                                        ? `Offline gap verified against infrastructure incident ${matchingOutageId}. Server-side outage confirmed (${failedReqCount} requests buffered). Excused from network penalty.`
                                         : `Cached examination payload accepted and verified against server-signed checkpoint.`
                                 });
                             }
@@ -3435,6 +3641,56 @@ router.get('/otrf-report/:idParam', requireAuth, async (req, res) => {
     } catch (err) {
         console.error('[OTRF_REPORT_ROUTE] Error generating OTRF PDF:', err);
         return res.status(500).json({ error: `Failed to generate OTRF document: ${err.message}` });
+    }
+});
+
+// Client Network Error Journal inspection endpoint
+router.get('/client-error-journal/:submissionId', requireAuth, async (req, res) => {
+    try {
+        const { submissionId } = req.params;
+        const { findSubmissionByAnyId } = require('../utils/submissionMigrator');
+        const { ClientNetworkErrorLogModel } = require('../models');
+
+        const submission = await findSubmissionByAnyId(submissionId);
+        if (!submission) {
+            return res.status(404).json({ error: 'Submission not found' });
+        }
+
+        if (!isSubmissionOwnerForUser(req.user, submission)) {
+            return res.status(403).json({ error: 'Forbidden: You are not authorized to view this diagnostic journal.' });
+        }
+
+        let journalDoc = null;
+        if (dbState.useMongo) {
+            journalDoc = await ClientNetworkErrorLogModel.findOne({
+                $or: [
+                    { submissionId: submission._id },
+                    { submissionId: String(submission._id) },
+                    { submissionId: String(submission.id) },
+                    { submissionId: String(submissionId) },
+                    ...(submission.submissionRefId ? [{ submissionRefId: submission.submissionRefId }] : [])
+                ]
+            }).lean();
+        } else {
+            const db = getJSONData();
+            const list = db.clientNetworkErrorLogs || [];
+            journalDoc = list.find(j => 
+                String(j.submissionId) === String(submission._id) ||
+                String(j.submissionId) === String(submission.id) ||
+                String(j.submissionId) === String(submissionId) ||
+                (j.submissionRefId && j.submissionRefId === submission.submissionRefId)
+            ) || null;
+        }
+
+        return res.json({
+            success: true,
+            submissionId,
+            clientNetworkErrors: submission.clientNetworkErrors || null,
+            journal: journalDoc || null
+        });
+    } catch (e) {
+        console.error('[CLIENT_ERROR_JOURNAL_ROUTE] Error:', e);
+        return res.status(500).json({ error: e.message });
     }
 });
 

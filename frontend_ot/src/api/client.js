@@ -1,3 +1,5 @@
+import { recordFailedRequest } from '../utils/telemetryJournal';
+
 export const API_BASE = (() => {
   const envBase = import.meta.env.VITE_API_BASE;
   if (envBase && !envBase.includes('onrender.com')) {
@@ -200,7 +202,9 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
             : (typeof resource.clone === 'function'
                 ? resource.clone()
                 : (typeof Request !== 'undefined' ? new Request(urlString, reqInit) : urlString));
+          const reqStartTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
           const response = await originalFetch.call(this, targetArg, reqInit);
+          const reqDuration = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - reqStartTime);
 
           if (timeoutHandle) clearTimeout(timeoutHandle);
           if (externalSignal && onExternalAbort) {
@@ -213,8 +217,31 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
             continue;
           }
 
+          // Universal capture of all non-2xx backend API responses
+          if (response.status >= 400 && !urlString.includes('/api/tests/telemetry/reconnect')) {
+            try {
+              let snippet = '';
+              try {
+                const cloned = response.clone();
+                snippet = await cloned.text();
+              } catch (_) {}
+
+              recordFailedRequest({
+                endpoint: urlString,
+                method,
+                errorType: response.status >= 500 ? 'HTTP_5XX' : 'HTTP_4XX',
+                httpStatus: response.status,
+                durationMs: reqDuration,
+                responseSnippet: snippet,
+                canaryProbe: (typeof navigator !== 'undefined' && navigator.onLine) ? 'GSTATIC_REACHABLE' : 'UNCHECKED',
+                networkQuality: (typeof navigator !== 'undefined' && navigator.onLine) ? 'good' : 'disconnected'
+              });
+            } catch (_) {}
+          }
+
           return response;
         } catch (err) {
+          const reqDuration = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - reqStartTime);
           if (timeoutHandle) clearTimeout(timeoutHandle);
           if (externalSignal && onExternalAbort) {
             externalSignal.removeEventListener('abort', onExternalAbort);
@@ -234,6 +261,22 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
             lastError = err;
             await delayWithSignal(attempt === 0 ? 600 : 1400, externalSignal);
             continue;
+          }
+
+          // Universal capture of network errors / timeouts / aborts
+          if (!urlString.includes('/api/tests/telemetry/reconnect')) {
+            try {
+              recordFailedRequest({
+                endpoint: urlString,
+                method,
+                errorType: (timedOut || err?.name === 'TimeoutError' || err?.name === 'AbortError') ? 'TIMEOUT' : 'FETCH_FAILED',
+                httpStatus: null,
+                durationMs: reqDuration,
+                responseSnippet: err?.message || 'Network request failed',
+                canaryProbe: (typeof navigator !== 'undefined' && !navigator.onLine) ? 'GSTATIC_UNREACHABLE' : 'UNCHECKED',
+                networkQuality: (typeof navigator !== 'undefined' && navigator.onLine) ? 'fair' : 'disconnected'
+              });
+            } catch (_) {}
           }
 
           throw err;

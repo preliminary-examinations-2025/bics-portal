@@ -240,6 +240,24 @@ const TestSubmissionSchema = new mongoose.Schema({
         lastAttemptAt: { type: Date, default: null },
         lastAttemptType: { type: String, default: '' },
         lastError: { type: String, default: '' }
+    },
+    clientNetworkErrors: {
+        totalCount: { type: Number, default: 0 },
+        errors5xxCount: { type: Number, default: 0 },
+        errors4xxCount: { type: Number, default: 0 },
+        hasServerRejections: { type: Boolean, default: false },
+        journalRef: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientNetworkErrorLog' },
+        recentErrors: [{
+            timestamp: { type: Date, default: Date.now },
+            clientMonotonic: { type: Number },
+            endpoint: { type: String },
+            method: { type: String },
+            httpStatus: { type: Number },
+            errorType: { type: String },
+            durationMs: { type: Number },
+            responseSnippet: { type: String },
+            canaryProbe: { type: String }
+        }]
     }
 });
 

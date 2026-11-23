@@ -23,6 +23,7 @@ const { MediaAssetModel, MediaAssetSchema } = require('./MediaAsset');
 const { ServerHealthLogModel, ServerHealthLogSchema } = require('./ServerHealthLog');
 const { ServerOutageIncidentModel, ServerOutageIncidentSchema } = require('./ServerOutageIncident');
 const { AuditLogModel, AuditLogSchema } = require('./AuditLog');
+const { ClientNetworkErrorLogModel, ClientNetworkErrorLogSchema } = require('./ClientNetworkErrorLog');
 
 module.exports = {
     CandidateModel,
@@ -81,6 +82,8 @@ module.exports = {
     ServerOutageIncidentModel,
     ServerOutageIncidentSchema,
     AuditLogModel,
-    AuditLogSchema
+    AuditLogSchema,
+    ClientNetworkErrorLogModel,
+    ClientNetworkErrorLogSchema
 };
 

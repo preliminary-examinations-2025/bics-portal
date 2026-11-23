@@ -150,10 +150,12 @@ function evaluateEirfIncident(submission, testConfig = {}) {
     // -------------------------------------------------------------
     // RULE 3: Network Disconnection Duration (> 5 seconds)
     // -------------------------------------------------------------
-    // Check if a server-side outage was verified by the health ledger or client reconnect telemetry
+    // Check if a server-side outage was verified by the health ledger, client reconnect telemetry, or error journal
     const isOutageVerified = Boolean(
         submission.offlineSyncMetadata?.outageVerified === true ||
-        events.some(ev => ev?.type === 'SERVER_OUTAGE_VERIFIED')
+        events.some(ev => ev?.type === 'SERVER_OUTAGE_VERIFIED') ||
+        submission.clientNetworkErrors?.hasServerRejections === true ||
+        (Number(submission.clientNetworkErrors?.errors5xxCount || 0) > 0)
     );
 
     let maxOfflineDurationSec = 0;
@@ -174,9 +176,10 @@ function evaluateEirfIncident(submission, testConfig = {}) {
         }
     });
 
-    // 3B. Check server-observed heartbeat gaps (>= 10s gap proves >= 5s downtime on 5s heartbeat pulse)
+    // 3B. Check server-observed heartbeat gaps (skipping any gaps excused by verified server downtime)
     const serverOfflineGaps = Array.isArray(proctoringLog.serverOfflineGaps) ? proctoringLog.serverOfflineGaps : [];
     serverOfflineGaps.forEach(gap => {
+        if (gap?.isExcused) return; // Excused server gap - skip from candidate penalty calculation!
         const gapSec = Number(gap.gapSeconds || 0);
         const downtimeSec = Number(gap.downtimeSeconds || (gapSec >= 10 ? gapSec - 5 : 0));
         if (downtimeSec > maxOfflineDurationSec) {

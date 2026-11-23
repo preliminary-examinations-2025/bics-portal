@@ -10,8 +10,8 @@ const { ServerHealthLogModel, ServerOutageIncidentModel, TestSubmissionModel } =
 const { dbState } = require('../config/db');
 
 const INSTANCE_ID = process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || 'primary';
-const HEARTBEAT_INTERVAL_MS = 30000; // 30s heartbeat
-const OUTAGE_THRESHOLD_SECONDS = 75; // 2.5 missed heartbeats = outage
+const HEARTBEAT_INTERVAL_MS = 15000; // 15s heartbeat pulse (doubled detection granularity)
+const OUTAGE_THRESHOLD_SECONDS = 20; // 20s gap = official outage (harmonized with candidate proctoring threshold)
 
 let pulseIntervalId = null;
 let lastSuccessfulPulseTime = null;

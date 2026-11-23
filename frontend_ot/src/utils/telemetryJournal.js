@@ -2,8 +2,9 @@
  * telemetryJournal.js
  * Client-Side Outage Journal & Reconnect Telemetry Manager for BICS OT Examination Terminal.
  * 
- * Captures all failed API requests during server downtime, tracks blackout windows,
- * and compiles authoritative Client Reconnect Telemetry payloads for server reconciliation.
+ * Captures strictly non-2xx failed API requests (HTTP 5xx, 4xx, timeouts, fetch failures)
+ * during server downtime or request rejections, tracks blackout windows, and compiles
+ * authoritative Client Reconnect Telemetry payloads for server reconciliation.
  */
 
 const MAX_JOURNAL_ENTRIES = 100;
@@ -53,17 +54,68 @@ function persistState() {
 }
 
 /**
- * Record a failed request in the client-side journal
+ * Clean & truncate response snippets to prevent storing sensitive data or large HTML error pages
  */
-export function recordFailedRequest({ endpoint, method = 'POST', errorType = 'FETCH_FAILED', httpStatus = null, submissionId = null }) {
+function sanitizeResponseSnippet(str) {
+  if (!str) return '';
+  const clean = String(str)
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean.substring(0, 300);
+}
+
+/**
+ * Record a non-2xx failed request in the client-side journal.
+ * STRICT NOISE BOUNDARY: 2xx requests are NEVER stored here!
+ */
+export function recordFailedRequest({
+  endpoint,
+  method = 'POST',
+  errorType = 'FETCH_FAILED',
+  httpStatus = null,
+  submissionId = null,
+  durationMs = 0,
+  responseSnippet = '',
+  canaryProbe = 'UNCHECKED',
+  networkQuality = 'fair'
+}) {
+  // Hard Filter: Skip all 2xx success requests!
+  if (typeof httpStatus === 'number' && httpStatus >= 200 && httpStatus <= 299) {
+    return null;
+  }
+
+  const statusNum = typeof httpStatus === 'number' ? httpStatus : null;
+
+  // Classify error type if not explicitly set
+  let resolvedErrorType = errorType;
+  if (statusNum >= 500) {
+    resolvedErrorType = 'HTTP_5XX';
+  } else if (statusNum >= 400) {
+    resolvedErrorType = 'HTTP_4XX';
+  }
+
+  // Determine if server was up and actively rejecting requests
+  const isServerReject = Boolean(
+    statusNum && (statusNum === 429 || statusNum === 500 || statusNum === 502 || statusNum === 503 || statusNum === 504 || statusNum === 409)
+  );
+
   const entry = {
     id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     timestamp: new Date().toISOString(),
+    clientMonotonic: typeof performance !== 'undefined' ? performance.now() : Date.now(),
     epochMs: Date.now(),
     endpoint: endpoint || '/api/unknown',
     method,
-    errorType,
-    httpStatus: typeof httpStatus === 'number' ? httpStatus : null
+    httpStatus: statusNum,
+    errorType: resolvedErrorType,
+    durationMs: Math.round(durationMs || 0),
+    responseSnippet: sanitizeResponseSnippet(responseSnippet),
+    networkQualityAtTime: networkQuality || 'fair',
+    isServerReject,
+    canaryProbe: canaryProbe || 'UNCHECKED'
   };
 
   inMemoryJournal.push(entry);
@@ -108,7 +160,7 @@ export function startServerOutage(submissionId, reason = 'SERVER_UNREACHABLE') {
     type: 'SERVER_OUTAGE_SUSPECTED',
     timestamp: startTimeIso,
     severity: 'INFO',
-    details: `Backend unreachable (${reason}). Global internet access confirmed. Server outage journal activated locally.`
+    details: `Backend unreachable (${reason}). Global internet access confirmed via gstatic.com 204. Server outage journal activated locally.`
   };
 }
 
@@ -129,7 +181,7 @@ export function endServerOutage(submissionId) {
 
   // Collect entries that occurred during this outage window
   const windowJournal = inMemoryJournal.filter(
-    (e) => e.epochMs >= startTime - 1000 && e.epochMs <= now + 1000
+    (e) => e.epochMs >= startTime - 1500 && e.epochMs <= now + 1500
   );
 
   const subId = submissionId || activeOutage.submissionId || null;
@@ -142,13 +194,21 @@ export function endServerOutage(submissionId) {
       durationSeconds
     },
     failedRequestsCount: windowJournal.length,
-    failedRequestsJournal: windowJournal.map(({ id, timestamp, endpoint, method, errorType, httpStatus }) => ({
+    failedRequestsJournal: windowJournal.map(({
+      id, timestamp, clientMonotonic, epochMs, endpoint, method, httpStatus, errorType, durationMs, responseSnippet, isServerReject, canaryProbe
+    }) => ({
       id,
       timestamp,
+      clientMonotonic,
+      epochMs,
       endpoint,
       method,
+      httpStatus,
       errorType,
-      httpStatus
+      durationMs,
+      responseSnippet,
+      isServerReject,
+      canaryProbe
     }))
   };
 
@@ -188,7 +248,7 @@ export function clearPendingTelemetry() {
 }
 
 /**
- * Get in-memory journal entries for diagnostics
+ * Get all in-memory journal entries for diagnostics or submission payload
  */
 export function getJournalEntries() {
   return [...inMemoryJournal];

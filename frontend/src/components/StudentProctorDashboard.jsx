@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { 
   Video, Loader2, VolumeX, Volume2, ClipboardList, Camera, CameraOff, Eye, 
   ZoomIn, X, ShieldAlert, Laptop, CheckCircle2, Clock, Image as ImageIcon, ExternalLink, AlertTriangle,
-  Send, Copy, Check
+  Send, Copy, Check, Wifi, WifiOff, Server, Activity, Filter, RefreshCw, ShieldCheck
 } from 'lucide-react';
 import { API_BASE } from '../config';
 import { getAuthToken } from '../api/client';
@@ -88,9 +88,38 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const [dispatchError, setDispatchError] = useState('');
   const [dispatchSuccess, setDispatchSuccess] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [journalData, setJournalData] = useState(null);
+  const [journalLoading, setJournalLoading] = useState(false);
+  const [journalError, setJournalError] = useState('');
+  const [journalFilter, setJournalFilter] = useState('ALL'); // 'ALL' | '5XX' | '4XX' | 'TIMEOUT'
   const pcRef = useRef(null);
   const statusRef = useRef(sub.status || 'started');
   const subId = sub.id || sub._id;
+
+  const fetchJournalDetails = useCallback(async () => {
+    if (!subId) return;
+    setJournalLoading(true);
+    setJournalError('');
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/tests/client-error-journal/${subId}`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setJournalData(data.journal || null);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setJournalError(errJson.error || 'Failed to load client error journal');
+      }
+    } catch (err) {
+      setJournalError(err.message || 'Network error fetching journal');
+    } finally {
+      setJournalLoading(false);
+    }
+  }, [subId]);
 
   useEffect(() => {
     setLogs(sub.proctoringLog?.events || []);
@@ -107,6 +136,8 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
     setProofImgError(false);
     setIsCourseModalOpen(false);
     setActionSuccess('');
+    setJournalData(null);
+    setJournalError('');
   }, [subId]);
 
   useEffect(() => {
@@ -227,6 +258,12 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
       fetchEirfDetails();
     }
   }, [subId, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'network' || Number(sub.clientNetworkErrors?.totalCount || 0) > 0) {
+      fetchJournalDetails();
+    }
+  }, [subId, activeTab, fetchJournalDetails]);
 
   const handleOpenVerdictPdf = async () => {
     const targetId = eirfData?.existingReport?.reportId || eirfData?.bicsId || subId;
@@ -510,42 +547,76 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
             onClick={() => setActiveTab('proctoring')}
             className="cf-btn-secondary"
             style={{
-              padding: '4px 10px',
+              padding: '5px 12px',
               fontSize: '8.5pt',
               margin: 0,
-              backgroundColor: activeTab === 'proctoring' ? '#e0f2fe' : '#ffffff',
-              borderColor: activeTab === 'proctoring' ? '#0284c7' : '#cbd5e1',
-              color: activeTab === 'proctoring' ? '#0284c7' : '#475569',
-              fontWeight: 'bold'
+              backgroundColor: activeTab === 'proctoring' ? '#f0f9ff' : '#ffffff',
+              borderColor: activeTab === 'proctoring' ? '#bae6fd' : '#e2e8f0',
+              color: activeTab === 'proctoring' ? '#0369a1' : '#475569',
+              fontWeight: '600',
+              borderRadius: '5px'
             }}
           >
-            Live Proctoring Stream
+            Proctoring Logs
+          </button>
+          <button
+            onClick={() => setActiveTab('network')}
+            className="cf-btn-secondary"
+            style={{
+              padding: '5px 12px',
+              fontSize: '8.5pt',
+              margin: 0,
+              backgroundColor: activeTab === 'network' ? '#f8fafc' : '#ffffff',
+              borderColor: activeTab === 'network' ? '#cbd5e1' : '#e2e8f0',
+              color: activeTab === 'network' ? '#1e293b' : '#475569',
+              fontWeight: '600',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              borderRadius: '5px'
+            }}
+          >
+            <Wifi size={13} style={{ color: '#64748b' }} />
+            Client Logs
+            {Number(sub.clientNetworkErrors?.totalCount || journalData?.totalErrorsCount || 0) > 0 && (
+              <span style={{
+                fontSize: '7pt',
+                padding: '1px 6px',
+                borderRadius: '10px',
+                backgroundColor: (sub.clientNetworkErrors?.errors5xxCount > 0 || journalData?.errors5xxCount > 0) ? '#ffe4e6' : '#fef3c7',
+                color: (sub.clientNetworkErrors?.errors5xxCount > 0 || journalData?.errors5xxCount > 0) ? '#9f1239' : '#92400e',
+                fontWeight: '600'
+              }}>
+                {sub.clientNetworkErrors?.totalCount || journalData?.totalErrorsCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab('eirf')}
             className="cf-btn-secondary"
             style={{
-              padding: '4px 10px',
+              padding: '5px 12px',
               fontSize: '8.5pt',
               margin: 0,
-              backgroundColor: activeTab === 'eirf' ? '#fffbeb' : '#ffffff',
-              borderColor: activeTab === 'eirf' ? '#fde68a' : '#cbd5e1',
-              color: activeTab === 'eirf' ? '#b45309' : '#475569',
-              fontWeight: 'bold',
+              backgroundColor: activeTab === 'eirf' ? '#fefce8' : '#ffffff',
+              borderColor: activeTab === 'eirf' ? '#fef08a' : '#e2e8f0',
+              color: activeTab === 'eirf' ? '#854d0e' : '#475569',
+              fontWeight: '600',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '4px'
+              gap: '6px',
+              borderRadius: '5px'
             }}
           >
             EIRF Forensic Center {
               (sub.eirfStatus === 'approved' || eirfData?.existingReport?.status === 'approved') ? (
-                <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981' }} title="EIRF Report Approved" />
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#22c55e' }} title="EIRF Report Approved" />
               ) : (sub.hasEirfFlag || eirfData?.existingReport) ? (
-                <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#d97706' }} title="EIRF Review Pending" />
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#eab308' }} title="EIRF Review Pending" />
               ) : null
             }
           </button>
-          <button onClick={onClose} className="cf-btn-secondary" style={{ padding: '4px 8px', fontSize: '8.5pt', margin: 0 }}>Close</button>
+          <button onClick={onClose} className="cf-btn-secondary" style={{ padding: '5px 10px', fontSize: '8.5pt', margin: 0, borderRadius: '5px' }}>Close</button>
         </div>
       </div>
 
@@ -968,6 +1039,38 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                         });
                       }
 
+                      const isServerOutageVerified = log.type === 'SERVER_OUTAGE_VERIFIED';
+                      const isServerSyncEngaged = log.type === 'SERVER_SYNCING_ENGAGED';
+                      const isServerSyncRecovered = log.type === 'SERVER_SYNCING_RECOVERED';
+                      const isClientDisconnect = log.type === 'CLIENT_DISCONNECT_JOURNALED';
+
+                      let rowBg = isWarning ? '#fff7ed' : '#f8fafc';
+                      let rowBorder = isWarning ? '#ffedd5' : '#e2e8f0';
+                      let badgeBg = isWarning ? '#ffedd5' : '#f1f5f9';
+                      let badgeColor = isWarning ? '#9a3412' : '#475569';
+
+                      if (isServerOutageVerified) {
+                        rowBg = '#f0fdf4';
+                        rowBorder = '#dcfce7';
+                        badgeBg = '#dcfce7';
+                        badgeColor = '#166534';
+                      } else if (isServerSyncEngaged) {
+                        rowBg = '#fffbeb';
+                        rowBorder = '#fef3c7';
+                        badgeBg = '#fef3c7';
+                        badgeColor = '#92400e';
+                      } else if (isServerSyncRecovered) {
+                        rowBg = '#f0fdf4';
+                        rowBorder = '#dcfce7';
+                        badgeBg = '#dcfce7';
+                        badgeColor = '#166534';
+                      } else if (isClientDisconnect) {
+                        rowBg = '#f8fafc';
+                        rowBorder = '#e2e8f0';
+                        badgeBg = '#f1f5f9';
+                        badgeColor = '#475569';
+                      }
+
                       return (
                         <div 
                           key={idx} 
@@ -976,8 +1079,8 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '8px 12px',
-                            backgroundColor: isWarning ? '#fff7ed' : '#f8fafc',
-                            border: `1px solid ${isWarning ? '#fed7aa' : '#e2e8f0'}`,
+                            backgroundColor: rowBg,
+                            border: `1px solid ${rowBorder}`,
                             borderRadius: '4px',
                             gap: '12px'
                           }}
@@ -988,9 +1091,16 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
                               fontWeight: 'bold',
                               padding: '2px 6px',
                               borderRadius: '3px',
-                              backgroundColor: isWarning ? '#ffedd5' : '#e2e8f0',
-                              color: isWarning ? '#9a3412' : '#334155'
+                              backgroundColor: badgeBg,
+                              color: badgeColor,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
                             }}>
+                              {isServerOutageVerified && <CheckCircle2 size={11} />}
+                              {isServerSyncEngaged && <Wifi size={11} />}
+                              {isServerSyncRecovered && <CheckCircle2 size={11} />}
+                              {isClientDisconnect && <Clock size={11} />}
                               {log.type}
                             </span>
                             <span style={{ fontSize: '8.5pt', color: '#1e293b' }}>
@@ -1076,6 +1186,307 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
               </div>
             )}
           </div>
+
+        </div>
+      ) : activeTab === 'network' ? (
+        /* Client Network Journal Forensic View */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: "'Plus Jakarta Sans', -apple-system, sans-serif" }}>
+          
+          {/* Header Card with Exoneration Banner */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 20px',
+            backgroundColor: sub.offlineSyncMetadata?.outageVerified ? '#f0fdf4' : '#f8fafc',
+            border: `1px solid ${sub.offlineSyncMetadata?.outageVerified ? '#bbf7d0' : '#e2e8f0'}`,
+            borderRadius: '6px'
+          }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Activity size={18} style={{ color: '#002147' }} />
+                <h4 style={{ margin: 0, fontSize: '11pt', fontWeight: 'bold', color: '#002147' }}>
+                  Client Non-2xx Network Diagnostic Journal
+                </h4>
+              </div>
+              <p style={{ margin: '4px 0 0 0', fontSize: '8pt', color: '#64748b' }}>
+                Granular client-side log of origin 5xx outages, HTTP rate/conflict rejections, and network blackouts. Success requests (2xx) are excluded by design to prevent noise.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {sub.offlineSyncMetadata?.outageVerified ? (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  backgroundColor: '#dcfce7',
+                  border: '1px solid #86efac',
+                  borderRadius: '4px',
+                  color: '#15803d',
+                  fontSize: '8pt',
+                  fontWeight: 'bold'
+                }}>
+                  <ShieldCheck size={14} />
+                  <span>Verified Infrastructure Outage ({sub.offlineSyncMetadata.outageIncidentId || 'Cluster Incident'})</span>
+                </div>
+              ) : sub.offlineSyncMetadata?.wasSyncedOffline ? (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  backgroundColor: '#fef3c7',
+                  border: '1px solid #fde68a',
+                  borderRadius: '4px',
+                  color: '#b45309',
+                  fontSize: '8pt',
+                  fontWeight: 'bold'
+                }}>
+                  <AlertTriangle size={14} />
+                  <span>Unmatched Local Blackout</span>
+                </div>
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  backgroundColor: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '4px',
+                  color: '#475569',
+                  fontSize: '8pt',
+                  fontWeight: '600'
+                }}>
+                  <CheckCircle2 size={14} />
+                  <span>Normal Connection Status</span>
+                </div>
+              )}
+
+              <button
+                onClick={fetchJournalDetails}
+                disabled={journalLoading}
+                className="cf-btn-secondary"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '5px 10px',
+                  fontSize: '8pt',
+                  margin: 0,
+                  cursor: 'pointer'
+                }}
+              >
+                <RefreshCw size={12} className={journalLoading ? 'cf-spinner' : ''} />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Metric Cards (4 KPIs) */}
+          {(() => {
+            const totalErrors = Number(journalData?.totalErrorsCount ?? sub.clientNetworkErrors?.totalCount ?? 0);
+            const count5xx = Number(journalData?.errors5xxCount ?? sub.clientNetworkErrors?.errors5xxCount ?? 0);
+            const count4xx = Number(journalData?.errors4xxCount ?? sub.clientNetworkErrors?.errors4xxCount ?? 0);
+            const countTimeouts = Number(journalData?.timeoutCount ?? 0);
+
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                <div style={{ padding: '12px 14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '7.5pt', color: '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Total Logged Errors</div>
+                  <div style={{ fontSize: '15pt', fontWeight: 'bold', color: '#1e293b', marginTop: '2px' }}>{totalErrors}</div>
+                  <div style={{ fontSize: '7pt', color: '#94a3b8', marginTop: '2px' }}>Non-2xx client attempts</div>
+                </div>
+
+                <div style={{ padding: '12px 14px', backgroundColor: count5xx > 0 ? '#fff1f2' : '#f8fafc', border: `1px solid ${count5xx > 0 ? '#ffe4e6' : '#e2e8f0'}`, borderRadius: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '7.5pt', color: count5xx > 0 ? '#9f1239' : '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>5xx Server Outages</span>
+                    {count5xx > 0 && <span style={{ fontSize: '6.5pt', backgroundColor: '#ffe4e6', color: '#9f1239', padding: '1px 5px', borderRadius: '3px', fontWeight: '600' }}>Candidate WAN OK</span>}
+                  </div>
+                  <div style={{ fontSize: '15pt', fontWeight: 'bold', color: count5xx > 0 ? '#9f1239' : '#1e293b', marginTop: '2px' }}>{count5xx}</div>
+                  <div style={{ fontSize: '7pt', color: count5xx > 0 ? '#be123c' : '#94a3b8', marginTop: '2px' }}>Origin crashes / 502 Bad Gateway</div>
+                </div>
+
+                <div style={{ padding: '12px 14px', backgroundColor: count4xx > 0 ? '#fffbeb' : '#f8fafc', border: `1px solid ${count4xx > 0 ? '#fef3c7' : '#e2e8f0'}`, borderRadius: '4px' }}>
+                  <div style={{ fontSize: '7.5pt', color: count4xx > 0 ? '#92400e' : '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>4xx Rejections / Throttles</div>
+                  <div style={{ fontSize: '15pt', fontWeight: 'bold', color: count4xx > 0 ? '#92400e' : '#1e293b', marginTop: '2px' }}>{count4xx}</div>
+                  <div style={{ fontSize: '7pt', color: count4xx > 0 ? '#b45309' : '#94a3b8', marginTop: '2px' }}>429 Rate / 409 Conflict / 403</div>
+                </div>
+
+                <div style={{ padding: '12px 14px', backgroundColor: countTimeouts > 0 ? '#f5f3ff' : '#f8fafc', border: `1px solid ${countTimeouts > 0 ? '#ede9fe' : '#e2e8f0'}`, borderRadius: '4px' }}>
+                  <div style={{ fontSize: '7.5pt', color: countTimeouts > 0 ? '#5b21b6' : '#64748b', textTransform: 'uppercase', fontWeight: 'bold' }}>Timeouts & Drops</div>
+                  <div style={{ fontSize: '15pt', fontWeight: 'bold', color: countTimeouts > 0 ? '#5b21b6' : '#1e293b', marginTop: '2px' }}>{countTimeouts}</div>
+                  <div style={{ fontSize: '7pt', color: countTimeouts > 0 ? '#6d28d9' : '#94a3b8', marginTop: '2px' }}>Socket timeout / DNS drop</div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Filter Pills & Status bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {[
+                { id: 'ALL', label: 'All Errors', count: journalData?.entries?.length || 0 },
+                { id: '5XX', label: '5xx Server Failures', count: (journalData?.entries || []).filter(e => (e.httpStatus >= 500 && e.httpStatus < 600) || String(e.errorType).includes('5XX')).length },
+                { id: '4XX', label: '4xx Rejections', count: (journalData?.entries || []).filter(e => (e.httpStatus >= 400 && e.httpStatus < 500) || String(e.errorType).includes('4XX') || e.isServerReject).length },
+                { id: 'TIMEOUT', label: 'Timeouts & Drops', count: (journalData?.entries || []).filter(e => e.errorType === 'TIMEOUT' || e.errorType === 'FETCH_FAILED' || !e.httpStatus).length }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setJournalFilter(f.id)}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '8pt',
+                    fontWeight: journalFilter === f.id ? '600' : 'normal',
+                    backgroundColor: journalFilter === f.id ? '#f1f5f9' : '#ffffff',
+                    color: journalFilter === f.id ? '#1e293b' : '#64748b',
+                    border: `1px solid ${journalFilter === f.id ? '#cbd5e1' : '#e2e8f0'}`,
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {f.label} ({f.count})
+                </button>
+              ))}
+            </div>
+
+            <div style={{ fontSize: '7.5pt', color: '#64748b' }}>
+              {journalData?.lastReportedAt ? `Last reported: ${new Date(journalData.lastReportedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` : ''}
+            </div>
+          </div>
+
+          {/* Entries Forensic Table */}
+          {journalLoading ? (
+            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+              <Loader2 className="cf-spinner" size={24} style={{ marginBottom: '8px' }} />
+              <div>Fetching client network error journal...</div>
+            </div>
+          ) : journalError ? (
+            <div style={{ padding: '20px', backgroundColor: '#fff1f2', border: '1px solid #ffe4e6', borderRadius: '4px', color: '#9f1239', fontSize: '8.5pt' }}>
+              <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+              {journalError}
+            </div>
+          ) : (() => {
+            const entries = (journalData?.entries || []).filter(entry => {
+              if (journalFilter === '5XX') {
+                return (entry.httpStatus >= 500 && entry.httpStatus < 600) || String(entry.errorType).includes('5XX');
+              }
+              if (journalFilter === '4XX') {
+                return (entry.httpStatus >= 400 && entry.httpStatus < 500) || String(entry.errorType).includes('4XX') || entry.isServerReject;
+              }
+              if (journalFilter === 'TIMEOUT') {
+                return entry.errorType === 'TIMEOUT' || entry.errorType === 'FETCH_FAILED' || !entry.httpStatus;
+              }
+              return true;
+            });
+
+            if (entries.length === 0) {
+              return (
+                <div style={{ padding: '36px', textAlign: 'center', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', color: '#64748b' }}>
+                  <CheckCircle2 size={24} style={{ color: '#16a34a', margin: '0 auto 8px auto', display: 'block' }} />
+                  <div style={{ fontSize: '9pt', fontWeight: '600', color: '#1e293b' }}>No Network Errors Matching Filter</div>
+                  <div style={{ fontSize: '8pt', marginTop: '4px', color: '#64748b' }}>
+                    All requests completed successfully within normal operational parameters (or 2xx noise excluded).
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div style={{ maxHeight: '420px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '4px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8pt' }}>
+                  <thead style={{ position: 'sticky', top: 0, backgroundColor: '#f8fafc', zIndex: 2 }}>
+                    <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#475569' }}>
+                      <th style={{ padding: '8px 10px', width: '110px' }}>Timestamp</th>
+                      <th style={{ padding: '8px 10px', width: '70px' }}>Method</th>
+                      <th style={{ padding: '8px 10px' }}>Endpoint</th>
+                      <th style={{ padding: '8px 10px', width: '90px' }}>Status</th>
+                      <th style={{ padding: '8px 10px', width: '130px' }}>Canary Probe</th>
+                      <th style={{ padding: '8px 10px', width: '70px' }}>Latency</th>
+                      <th style={{ padding: '8px 10px' }}>Response Snippet / Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map((entry, idx) => {
+                      const is5xx = (entry.httpStatus >= 500 && entry.httpStatus < 600) || String(entry.errorType).includes('5XX');
+                      const is4xx = (entry.httpStatus >= 400 && entry.httpStatus < 500) || String(entry.errorType).includes('4XX');
+                      const statusBg = is5xx ? '#ffe4e6' : is4xx ? '#fef3c7' : '#f1f5f9';
+                      const statusColor = is5xx ? '#9f1239' : is4xx ? '#92400e' : '#475569';
+                      const statusBorder = is5xx ? '#fecdd3' : is4xx ? '#fde68a' : '#e2e8f0';
+
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                          <td style={{ padding: '7px 10px', color: '#334155', whiteSpace: 'nowrap' }}>
+                            <div>{new Date(entry.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</div>
+                            {entry.clientMonotonic > 0 && (
+                              <div style={{ fontSize: '6.5pt', color: '#94a3b8' }}>+{(entry.clientMonotonic / 1000).toFixed(1)}s monotonic</div>
+                            )}
+                          </td>
+                          <td style={{ padding: '7px 10px', fontWeight: '600', color: '#1e293b' }}>
+                            {entry.method || 'POST'}
+                          </td>
+                          <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#334155' }}>
+                            {entry.endpoint}
+                          </td>
+                          <td style={{ padding: '7px 10px' }}>
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              fontSize: '7.5pt',
+                              fontWeight: '600',
+                              backgroundColor: statusBg,
+                              color: statusColor,
+                              border: `1px solid ${statusBorder}`
+                            }}>
+                              {entry.httpStatus || entry.errorType || 'ERR'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '7px 10px' }}>
+                            {entry.canaryProbe === 'GSTATIC_REACHABLE' ? (
+                              <span style={{ fontSize: '7pt', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', fontWeight: '600' }}>
+                                Reachable (WAN OK)
+                              </span>
+                            ) : entry.canaryProbe === 'UNREACHABLE' ? (
+                              <span style={{ fontSize: '7pt', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#ffe4e6', color: '#9f1239', border: '1px solid #fecdd3', fontWeight: '600' }}>
+                                Blocked (LAN/WAN)
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '7pt', color: '#94a3b8' }}>Unchecked</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '7px 10px', color: '#64748b' }}>
+                            {entry.durationMs ? `${entry.durationMs}ms` : '—'}
+                          </td>
+                          <td style={{ padding: '7px 10px' }}>
+                            <div 
+                              style={{
+                                fontFamily: 'monospace',
+                                fontSize: '7pt',
+                                backgroundColor: '#f8fafc',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '3px',
+                                padding: '3px 6px',
+                                maxWidth: '380px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                color: '#334155'
+                              }}
+                              title={entry.responseSnippet}
+                            >
+                              {entry.responseSnippet || (entry.errorType ? `[${entry.errorType}]` : 'No payload returned')}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
 
         </div>
       ) : (
