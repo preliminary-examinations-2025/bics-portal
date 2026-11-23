@@ -37,6 +37,7 @@ import {
   getActiveOutage,
   dispatchReconnectTelemetry
 } from '../../utils/telemetryJournal';
+import { isQuestionAnswered as checkIsQuestionAnswered } from '../../utils/examAnswerStatus';
 
 const BIOS_PIN_CONFIG = import.meta.env.VITE_BIOS_PIN || '2026';
 
@@ -44,9 +45,10 @@ const cleanCodeStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
 
 /**
  * Resolves whether a question has been answered by the candidate.
- * Handles Array format (examAnswers[idx]), Dictionary format (answers[qId]), and IndexedDB cached drafts.
+ * Handles Array format (examAnswers[idx]), Dictionary format (answers[qId]),
+ * live in-progress active drafts, and IndexedDB cached drafts.
  */
-function resolveQuestionAnswer(q, idx, answers, cachedDrafts) {
+function resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft) {
   if (!q) return { hasAnswer: false, summary: '—', raw: null };
   const qId = q._id || q.id || `q_${idx}`;
 
@@ -58,81 +60,129 @@ function resolveQuestionAnswer(q, idx, answers, cachedDrafts) {
     ans = answers[qId] ?? answers[q._id] ?? answers[q.id] ?? answers[idx] ?? answers[String(idx)];
   }
 
-  // 2. Fallback to cached drafts in IndexedDB if not found in memory
-  if (!ans && Array.isArray(cachedDrafts)) {
+  // Clone or initialize answer object
+  let workingAns = ans && typeof ans === 'object' ? { ...ans } : (ans !== undefined && ans !== null ? { answer: ans } : {});
+
+  // 2. If activeDraft matches this question, overlay activeDraft values
+  let draftsMap = {};
+  if (activeDraft && (activeDraft.qIndex === idx || activeDraft.questionId === qId)) {
+    draftsMap = {
+      draftMCQ: activeDraft.draftMCQ,
+      draftCode: activeDraft.draftCode,
+      draftLanguage: activeDraft.draftLanguage,
+      draftHtml: activeDraft.draftHtml,
+      draftCss: activeDraft.draftCss,
+      draftJs: activeDraft.draftJs
+    };
+
+    if (activeDraft.draftMCQ !== undefined && activeDraft.draftMCQ !== null) {
+      if (Array.isArray(activeDraft.draftMCQ)) {
+        workingAns.selectedOptionIndices = activeDraft.draftMCQ;
+        workingAns.selectedOptionIndex = activeDraft.draftMCQ[0] ?? null;
+      } else {
+        workingAns.selectedOptionIndex = activeDraft.draftMCQ;
+        workingAns.selectedOptionIndices = [activeDraft.draftMCQ];
+      }
+    }
+    if (activeDraft.draftCode) workingAns.submittedCode = activeDraft.draftCode;
+    if (activeDraft.draftLanguage) workingAns.selectedLanguage = activeDraft.draftLanguage;
+    if (activeDraft.draftHtml) workingAns.submittedHtml = activeDraft.draftHtml;
+    if (activeDraft.draftCss) workingAns.submittedCss = activeDraft.draftCss;
+    if (activeDraft.draftJs) workingAns.submittedJs = activeDraft.draftJs;
+  }
+
+  // 3. Fallback to cached drafts in IndexedDB if memory answer has no selection
+  if (Array.isArray(cachedDrafts)) {
     for (const draft of cachedDrafts) {
       const val = draft?.data || draft?.value || draft;
+      let cachedAns = null;
       if (Array.isArray(val)) {
-        const found = val[idx] ?? val.find(a => a && (a.questionId === qId || a.questionId === q._id || a.questionId === q.id));
-        if (found) { ans = found; break; }
+        cachedAns = val[idx] ?? val.find(a => a && (a.questionId === qId || a.questionId === q._id || a.questionId === q.id));
       } else if (val && typeof val === 'object') {
-        const found = val[qId] ?? val[q._id] ?? val[q.id] ?? val[idx];
-        if (found) { ans = found; break; }
+        cachedAns = val[qId] ?? val[q._id] ?? val[q.id] ?? val[idx];
+      }
+      if (cachedAns && typeof cachedAns === 'object') {
+        if (workingAns.selectedOptionIndex === null || workingAns.selectedOptionIndex === undefined) {
+          if (cachedAns.selectedOptionIndex !== null && cachedAns.selectedOptionIndex !== undefined) {
+            workingAns.selectedOptionIndex = cachedAns.selectedOptionIndex;
+          }
+        }
+        if (!workingAns.selectedOptionIndices || workingAns.selectedOptionIndices.length === 0) {
+          if (Array.isArray(cachedAns.selectedOptionIndices) && cachedAns.selectedOptionIndices.length > 0) {
+            workingAns.selectedOptionIndices = cachedAns.selectedOptionIndices;
+          }
+        }
+        if (!workingAns.submittedCode && cachedAns.submittedCode) {
+          workingAns.submittedCode = cachedAns.submittedCode;
+        }
+        if (!workingAns.submittedHtml && cachedAns.submittedHtml) {
+          workingAns.submittedHtml = cachedAns.submittedHtml;
+        }
+        if (cachedAns.isSavedByUser) {
+          workingAns.isSavedByUser = true;
+        }
       }
     }
   }
 
-  if (ans === null || ans === undefined) {
-    return { hasAnswer: false, summary: '—', raw: null };
-  }
+  // 4. Evaluate using standard platform checker
+  const isPlatformAnswered = checkIsQuestionAnswered(q, workingAns, draftsMap);
 
-  // 3. Evaluate according to question type
-  // MCQ / Multiple Choice / Single Choice
+  // 5. Evaluate according to question type and build descriptive summary
   const isMulti = q.isMultiChoice || q.type === 'mcc' || q.category === 'Multiple Choice';
   const hasOptions = Array.isArray(q.options) && q.options.length > 0;
   if (q.type === 'mcq' || q.type === 'scc' || q.type === 'mcc' || hasOptions) {
     if (isMulti) {
-      const opts = ans.selectedOptionIndices ?? (ans.selectedOptionIndex !== null && ans.selectedOptionIndex !== undefined ? [ans.selectedOptionIndex] : (Array.isArray(ans) ? ans : []));
+      const opts = workingAns.selectedOptionIndices ?? (workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined ? [workingAns.selectedOptionIndex] : []);
       if (Array.isArray(opts) && opts.length > 0) {
         const labels = opts.map(o => String.fromCharCode(65 + Number(o))).join(', ');
-        return { hasAnswer: true, summary: `Selected [${labels}]`, raw: ans };
+        return { hasAnswer: true, summary: `Selected [${labels}]`, raw: workingAns };
       }
     } else {
-      const opt = ans.selectedOptionIndex !== undefined ? ans.selectedOptionIndex : (typeof ans === 'number' ? ans : (typeof ans?.answer === 'number' ? ans.answer : null));
+      const opt = workingAns.selectedOptionIndex !== null && workingAns.selectedOptionIndex !== undefined && workingAns.selectedOptionIndex !== -1
+        ? workingAns.selectedOptionIndex
+        : (typeof workingAns.answer === 'number' && workingAns.answer >= 0 ? workingAns.answer : (typeof workingAns === 'number' && workingAns >= 0 ? workingAns : null));
       if (opt !== null && opt !== undefined && opt >= 0) {
-        return { hasAnswer: true, summary: `Option ${String.fromCharCode(65 + Number(opt))}`, raw: ans };
+        return { hasAnswer: true, summary: `Option ${String.fromCharCode(65 + Number(opt))}`, raw: workingAns };
       }
     }
   }
 
   // Web Development
   if (q.type === 'web') {
-    const h = cleanCodeStr(ans.submittedHtml || ans.html);
-    const c = cleanCodeStr(ans.submittedCss || ans.css);
-    const j = cleanCodeStr(ans.submittedJs || ans.js);
+    const h = cleanCodeStr(workingAns.submittedHtml || workingAns.html);
+    const c = cleanCodeStr(workingAns.submittedCss || workingAns.css);
+    const j = cleanCodeStr(workingAns.submittedJs || workingAns.js);
     const initH = cleanCodeStr(q.initialHtml || q.initialCode?.html);
     const initC = cleanCodeStr(q.initialCss || q.initialCode?.css);
     const initJ = cleanCodeStr(q.initialJs || q.initialCode?.js);
     const modified = (h && h !== initH) || (c && c !== initC) || (j && j !== initJ);
     const totalChars = h.length + c.length + j.length;
-    if (modified || ans.isSavedByUser) {
-      return { hasAnswer: true, summary: `Web code (${totalChars} chars)`, raw: ans };
+    if (modified || isPlatformAnswered || workingAns.isSavedByUser) {
+      return { hasAnswer: true, summary: `Web code (${totalChars} chars)`, raw: workingAns };
     }
   }
 
   // Algorithmic Coding
-  const code = cleanCodeStr(ans.submittedCode || ans.code);
+  const code = cleanCodeStr(workingAns.submittedCode || workingAns.code);
   if (code) {
     const init = cleanCodeStr(q.initialTemplate || '');
     const isDefaultBoilerplate = code.startsWith('// Write your') || code.startsWith('/* Write your');
-    if ((code !== init && !isDefaultBoilerplate) || ans.isSavedByUser) {
-      const lang = ans.selectedLanguage || ans.language || 'code';
-      return { hasAnswer: true, summary: `${lang} (${code.length} chars)`, raw: ans };
+    if ((code !== init && !isDefaultBoilerplate) || isPlatformAnswered || workingAns.isSavedByUser) {
+      const lang = workingAns.selectedLanguage || workingAns.language || 'code';
+      return { hasAnswer: true, summary: `${lang} (${code.length} chars)`, raw: workingAns };
     }
   }
 
-  // Direct primitive or explicitly saved
-  if (typeof ans === 'string' && ans.trim().length > 0) {
-    return { hasAnswer: true, summary: `${ans.trim().length} chars`, raw: ans };
-  }
-  if (typeof ans === 'number') {
-    return { hasAnswer: true, summary: `Value: ${ans}`, raw: ans };
-  }
-  if (ans.isSavedByUser) {
-    return { hasAnswer: true, summary: 'Marked answered', raw: ans };
+  if (isPlatformAnswered || workingAns.isSavedByUser) {
+    return { hasAnswer: true, summary: 'Marked answered', raw: workingAns };
   }
 
-  return { hasAnswer: false, summary: '—', raw: ans };
+  if (typeof workingAns.answer === 'string' && workingAns.answer.trim().length > 0) {
+    return { hasAnswer: true, summary: `${workingAns.answer.trim().length} chars`, raw: workingAns };
+  }
+
+  return { hasAnswer: false, summary: '—', raw: workingAns };
 }
 
 export default function ExamBiosModal({
@@ -142,8 +192,9 @@ export default function ExamBiosModal({
   test,
   submission,
   examTimeLeft = 0,
-  answers = {},
+  answers = [],
   questions = [],
+  activeDraft = null,
   apiBase = 'http://127.0.0.1:5000/api',
   authToken = '',
   examToken = '',
@@ -408,6 +459,21 @@ export default function ExamBiosModal({
     setPinError('');
     setAttemptCount(0);
     setActionNotice(null);
+
+    // Make full screen on exit if not already (user gesture grants full permission)
+    try {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+      if (!fsEl) {
+        const el = document.documentElement;
+        const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+        if (req) {
+          req.call(el).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.warn('[ExamBiosModal] Exit fullscreen request:', err);
+    }
+
     onClose();
   };
 
@@ -441,73 +507,6 @@ export default function ExamBiosModal({
     }
   };
 
-  // Export Encrypted Disaster Bundle (.bics-vault)
-  const handleExportDisasterBundle = async () => {
-    try {
-      const subId = submission?._id || submission?.id || 'unknown_sub';
-      const [offlineSub, offlineEvts, offlineSnaps, allDrafts] = await Promise.all([
-        getOfflineSubmission(subId),
-        getOfflineEvents(subId),
-        getOfflineSnapshots(subId),
-        getAllOfflineDrafts()
-      ]);
-
-      const disasterBundle = {
-        meta: {
-          bicsVersion: '2.4',
-          exportedAt: new Date().toISOString(),
-          epochMs: Date.now(),
-          type: 'BICS_DISASTER_RECOVERY_VAULT'
-        },
-        candidate: {
-          name: candidate?.name || 'Unknown Candidate',
-          studentId: candidate?.studentId || candidate?.rollNumber || 'Unknown ID',
-          email: candidate?.email || ''
-        },
-        test: {
-          id: test?._id || test?.id || '',
-          title: test?.title || 'Examination',
-          remainingSeconds: examTimeLeft
-        },
-        submissionId: subId,
-        inMemoryAnswers: answers || {},
-        indexedDbVault: {
-          submissionRecord: offlineSub,
-          drafts: allDrafts,
-          proctoringEventsCount: offlineEvts.length,
-          proctoringEvents: offlineEvts,
-          proctoringSnapshotsCount: offlineSnaps.length
-        },
-        telemetryJournal: getJournalEntries(),
-        activeOutage: getActiveOutage(),
-        clientSystem: {
-          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-          screenResolution: typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : '',
-          onlineStatus: typeof navigator !== 'undefined' ? navigator.onLine : true
-        }
-      };
-
-      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(disasterBundle, null, 2));
-      const downloadAnchor = document.createElement('a');
-      const filename = `bics_vault_${(candidate?.studentId || 'emergency').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}.json`;
-      downloadAnchor.setAttribute('href', dataStr);
-      downloadAnchor.setAttribute('download', filename);
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      document.body.removeChild(downloadAnchor);
-
-      setActionNotice({
-        type: 'success',
-        message: `Emergency vault bundle exported successfully: ${filename}`
-      });
-    } catch (err) {
-      setActionNotice({
-        type: 'warning',
-        message: `Failed to export disaster bundle: ${err.message}`
-      });
-    }
-  };
-
   if (!isOpen) return null;
 
   // Format seconds into MM:SS
@@ -520,7 +519,7 @@ export default function ExamBiosModal({
 
   // Calculate actual answered count from questions
   const answeredCount = questions.length > 0
-    ? questions.filter((q, idx) => resolveQuestionAnswer(q, idx, answers, cachedDrafts).hasAnswer).length
+    ? questions.filter((q, idx) => resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft).hasAnswer).length
     : (Array.isArray(answers) ? answers.filter(a => a && (a.isSavedByUser || a.selectedOptionIndex !== null || a.submittedCode)).length : Object.keys(answers || {}).length);
 
   return (
@@ -1200,7 +1199,7 @@ export default function ExamBiosModal({
                           {questions.length > 0 ? (
                             questions.map((q, idx) => {
                               const qId = q._id || q.id || `q_${idx}`;
-                              const status = resolveQuestionAnswer(q, idx, answers, cachedDrafts);
+                              const status = resolveQuestionAnswer(q, idx, answers, cachedDrafts, activeDraft);
 
                               return (
                                 <tr
@@ -1777,29 +1776,26 @@ export default function ExamBiosModal({
               {/* TAB 4: DISASTER RECOVERY */}
               {activeTab === 'disaster' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                    {/* Action 1: Force Vault Flush with Subtle Light Button */}
-                    <div
-                      style={{
-                        backgroundColor: '#ffffff',
-                        borderRadius: '8px',
-                        border: '1px solid #e2e8f0',
-                        padding: '18px 20px',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '12px'
-                      }}
-                    >
+                  {/* Action 1: Force Vault Flush with Subtle Light Button */}
+                  <div
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '8px',
+                      border: '1px solid #e2e8f0',
+                      padding: '20px 22px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#2563eb' }}>
-                        <RefreshCw size={16} />
-                        <h4 style={{ margin: 0, fontSize: '13.5px', fontWeight: '700', color: '#0f172a' }}>
-                          Action 1: Force Vault Synchronization
+                        <RefreshCw size={18} />
+                        <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: '#0f172a' }}>
+                          Force Vault Synchronization & Reconnect Flush
                         </h4>
                       </div>
-                      <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.45' }}>
-                        Force-drain all queued answer drafts and pending reconnect telemetry to the server immediately without waiting for the next automated heartbeat cycle.
-                      </p>
                       <button
                         type="button"
                         onClick={handleForceFlush}
@@ -1810,63 +1806,22 @@ export default function ExamBiosModal({
                           alignItems: 'center',
                           justifyContent: 'center',
                           gap: '8px',
-                          padding: '10px 14px',
-                          fontSize: '12px',
+                          padding: '10px 18px',
+                          fontSize: '12.5px',
                           fontWeight: '600',
                           borderRadius: '7px',
                           cursor: isFlushing ? 'not-allowed' : 'pointer',
                           opacity: isFlushing ? 0.6 : 1,
-                          marginTop: 'auto'
+                          boxShadow: '0 1px 2px rgba(37, 99, 235, 0.08)'
                         }}
                       >
                         <RefreshCw size={13} className={isFlushing ? 'animate-spin' : ''} />
                         <span>{isFlushing ? 'Flushing Vault...' : 'Force Flush Vault to Server'}</span>
                       </button>
                     </div>
-
-                    {/* Action 2: Export Disaster Bundle with Subtle Secondary Button */}
-                    <div
-                      style={{
-                        backgroundColor: '#ffffff',
-                        borderRadius: '8px',
-                        border: '1px solid #e2e8f0',
-                        padding: '18px 20px',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '12px'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#2563eb' }}>
-                        <Download size={16} />
-                        <h4 style={{ margin: 0, fontSize: '13.5px', fontWeight: '700', color: '#0f172a' }}>
-                          Action 2: Export Disaster Recovery Bundle
-                        </h4>
-                      </div>
-                      <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.45' }}>
-                        If the lab machine's network card is completely dead, export a signed JSON bundle to a USB drive. Exam administrators can import it into the server directly.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleExportDisasterBundle}
-                        className="bics-bios-btn-secondary"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '8px',
-                          padding: '10px 14px',
-                          fontSize: '12px',
-                          fontWeight: '600',
-                          borderRadius: '7px',
-                          cursor: 'pointer',
-                          marginTop: 'auto'
-                        }}
-                      >
-                        <Download size={13} style={{ color: '#64748b' }} />
-                        <span>Export Encrypted Vault (.bics-vault)</span>
-                      </button>
-                    </div>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#475569', lineHeight: '1.5', maxWidth: '750px' }}>
+                      Force-drain all queued answer drafts and pending reconnect telemetry to the server immediately without waiting for the next automated heartbeat cycle. If the server is reachable, all buffered candidate entries are synced atomically.
+                    </p>
                   </div>
 
                   {/* Disaster Manifest / Cryptographic Guarantee Card */}

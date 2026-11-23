@@ -1918,12 +1918,14 @@ function AppContent() {
           } else {
             setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
           }
+          setShowWarningModal(true);
         } else if (fsExitStartTimeRef.current) {
           const startTime = fsExitStartTimeRef.current;
           const endTime = Date.now();
           const durationSeconds = Math.max(1, Math.round((endTime - startTime) / 1000));
           fsExitStartTimeRef.current = null;
           handleProctorResolved('FULLSCREEN_EXIT');
+          setShowWarningModal(false);
           syncProctoringLogs(
             proctoringWarnings,
             'FULLSCREEN_RETURNED',
@@ -1997,9 +1999,9 @@ function AppContent() {
     const handleFocusGained = (source = 'focus') => {
       if (flow !== 'active_exam') return;
       if (isInvigilatorActionRef.current) {
-        setTimeout(() => {
+        if (!isBiosOpen) {
           isInvigilatorActionRef.current = false;
-        }, 1500);
+        }
         setIsFocused(true);
         return;
       }
@@ -2566,6 +2568,34 @@ function AppContent() {
     }
   };
 
+  const handleCloseBios = async () => {
+    setIsBiosOpen(false);
+    isInvigilatorActionRef.current = false;
+
+    // Immediately restore fullscreen if not already fullscreen
+    const fsEl = getActiveFullscreenElement();
+    if (!fsEl) {
+      try {
+        const el = document.documentElement;
+        const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+        if (req) {
+          await req.call(el);
+          setIsFullscreen(true);
+          setShowWarningModal(false);
+        }
+      } catch (err) {
+        console.warn('[BIOS Exit] Auto-fullscreen attempt error:', err);
+        if (flow === 'active_exam') {
+          const now = Date.now();
+          fsExitStartTimeRef.current = now;
+          lastFullscreenExitTimeRef.current = now;
+          setProctoringWarnings(prev => ({ ...prev, fullscreenExits: prev.fullscreenExits + 1 }));
+          setShowWarningModal(true);
+        }
+      }
+    }
+  };
+
   // Global BICS BIOS Trigger (Available across all exam lifecycle states: Ctrl+Shift+Alt+B or 3x F2)
   useEffect(() => {
     const handleGlobalBiosKey = (e) => {
@@ -2581,7 +2611,15 @@ function AppContent() {
         if (typeof e.stopImmediatePropagation === 'function') {
           e.stopImmediatePropagation();
         }
-        setIsBiosOpen(prev => !prev);
+        if (isBiosOpen) {
+          handleCloseBios();
+        } else {
+          if (typeof commitActiveDraftToAnswers === 'function') {
+            commitActiveDraftToAnswers();
+          }
+          isInvigilatorActionRef.current = true;
+          setIsBiosOpen(true);
+        }
         return;
       }
 
@@ -2600,14 +2638,22 @@ function AppContent() {
           if (typeof e.stopImmediatePropagation === 'function') {
             e.stopImmediatePropagation();
           }
-          setIsBiosOpen(prev => !prev);
+          if (isBiosOpen) {
+            handleCloseBios();
+          } else {
+            if (typeof commitActiveDraftToAnswers === 'function') {
+              commitActiveDraftToAnswers();
+            }
+            isInvigilatorActionRef.current = true;
+            setIsBiosOpen(true);
+          }
         }
       }
     };
 
     window.addEventListener('keydown', handleGlobalBiosKey, true);
     return () => window.removeEventListener('keydown', handleGlobalBiosKey, true);
-  }, []);
+  }, [isBiosOpen]);
 
   // ML webcam face proctoring loop
   useEffect(() => {
@@ -5002,19 +5048,22 @@ function AppContent() {
       <CustomAlertModal customModal={customModal} setCustomModal={setCustomModal} />
       <ExamBiosModal
         isOpen={isBiosOpen}
-        onClose={() => {
-          setIsBiosOpen(false);
-          // Grace period for window focus to settle after modal closes
-          setTimeout(() => {
-            isInvigilatorActionRef.current = false;
-          }, 1500);
-        }}
+        onClose={handleCloseBios}
         candidate={candidate}
         test={test}
         submission={submission}
         examTimeLeft={examTimeLeft}
         answers={examAnswersRef.current || examAnswers}
         questions={test?.questions || []}
+        activeDraft={{
+          qIndex: selectedQuestionIndex,
+          draftMCQ: draftMCQRef.current ?? draftMCQ,
+          draftCode: draftCodeRef.current ?? draftCode,
+          draftLanguage: draftLanguageRef.current ?? draftLanguage,
+          draftHtml: draftHtmlRef.current ?? draftHtml,
+          draftCss: draftCssRef.current ?? draftCss,
+          draftJs: draftJsRef.current ?? draftJs
+        }}
         apiBase={API_BASE}
         authToken={getActiveAuthToken()}
         examToken={getActiveExamToken()}
