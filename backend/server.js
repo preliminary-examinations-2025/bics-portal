@@ -49,6 +49,7 @@ const { selectiveAuditMiddleware } = require('./middleware/selectiveAudit');
 const { startHealthLedgerWorker, recordGracefulShutdown } = require('./workers/healthLedgerWorker');
 
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 5000;
 
 // Global Middleware

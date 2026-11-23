@@ -117,6 +117,8 @@ const TestSubmissionSchema = new mongoose.Schema({
         evaluatedAt: { type: Date }
     },
     securityMetadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+    biosPinAttempts: { type: Number, default: 0 },
+    biosLockedAt: { type: Date, default: null },
     hasEirfFlag: { type: Boolean, default: false },
     eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },
     flaggedReasons: [String],

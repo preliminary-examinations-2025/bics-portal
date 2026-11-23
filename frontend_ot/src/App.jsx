@@ -2559,7 +2559,7 @@ function AppContent() {
     }
     biosAutoExpiryTimeoutRef.current = setTimeout(() => {
       console.log(`[BICS BIOS] Authorized invigilator session expired (${expirySec}s). Restoring proctoring.`);
-      handleCloseBios();
+      handleCloseBios('auto_expiry');
     }, expirySec * 1000);
 
     syncProctoringLogs(
@@ -2612,7 +2612,7 @@ function AppContent() {
     }
   };
 
-  const handleCloseBios = async () => {
+  const handleCloseBios = async (reason = 'manual') => {
     if (biosAutoExpiryTimeoutRef.current) {
       clearTimeout(biosAutoExpiryTimeoutRef.current);
       biosAutoExpiryTimeoutRef.current = null;
@@ -2620,9 +2620,44 @@ function AppContent() {
     setIsBiosOpen(false);
     isInvigilatorActionRef.current = false;
 
-    // Immediately restore fullscreen if not already fullscreen
+    if (reason === 'auto_expiry') {
+      syncProctoringLogs(
+        proctoringWarnings,
+        'INVIGILATOR_BIOS_AUTO_EXPIRED',
+        'Authorized invigilator session expired after 180s. Return to fullscreen prompt displayed to candidate without penalty.'
+      );
+    }
+
+    // Check if fullscreen is currently active
     const fsEl = getActiveFullscreenElement();
     if (!fsEl) {
+      if (reason === 'auto_expiry') {
+        // Zero penalty on auto-expiry: prompt candidate politely with user gesture permission
+        setCustomModal({
+          isOpen: true,
+          title: 'Invigilator Session Expired',
+          message: 'The invigilator diagnostic session has ended. Please click "Resume Fullscreen Exam" to continue your examination.',
+          confirmText: 'Resume Fullscreen Exam',
+          cancelText: '',
+          isAlert: true,
+          onConfirm: async () => {
+            try {
+              const el = document.documentElement;
+              const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+              if (req) {
+                await req.call(el);
+                setIsFullscreen(true);
+                setShowWarningModal(false);
+              }
+            } catch (fsErr) {
+              console.warn('[Prompt Fullscreen] Error returning to fullscreen:', fsErr);
+            }
+          }
+        });
+        return;
+      }
+
+      // Manual close attempt with user gesture
       try {
         const el = document.documentElement;
         const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;

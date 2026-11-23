@@ -1703,7 +1703,7 @@ const handleDraftSave = async (req, res) => {
 router.put('/draft/:submissionId', requireAuth, handleDraftSave);
 router.post('/draft/:submissionId', requireAuth, handleDraftSave);
 
-// BICS Terminal BIOS Invigilator PIN Verification (Item 2.2 Security Hardening)
+// BICS Terminal BIOS Invigilator PIN Verification (Hardened Security)
 const biosRateLimitMap = new Map();
 const BIOS_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const BIOS_MAX_ATTEMPTS = 5;
@@ -1723,8 +1723,9 @@ function checkBiosPinRateLimit(ip) {
     return { allowed: true, remaining: BIOS_MAX_ATTEMPTS - recent.length };
 }
 
-router.post('/bios/verify-pin', async (req, res) => {
-    const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+router.post('/bios/verify-pin', requireAuth, async (req, res) => {
+    // 1. IP Rate Limiting using Express req.ip (backed by trust proxy)
+    const clientIp = req.ip || req.socket?.remoteAddress || '127.0.0.1';
     const rateCheck = checkBiosPinRateLimit(String(clientIp));
     if (!rateCheck.allowed) {
         return res.status(429).json({
@@ -1734,6 +1735,7 @@ router.post('/bios/verify-pin', async (req, res) => {
         });
     }
 
+    // 2. Fail-closed secret PIN configuration
     const serverPin = process.env.INVIGILATOR_BIOS_SECRET_PIN;
     if (!serverPin || typeof serverPin !== 'string' || serverPin.trim() === '') {
         console.error('[BICS BIOS Security] INVIGILATOR_BIOS_SECRET_PIN is not configured on server. Failing closed.');
@@ -1744,10 +1746,55 @@ router.post('/bios/verify-pin', async (req, res) => {
         });
     }
 
-    const { pin } = req.body || {};
+    const { pin, submissionId } = req.body || {};
     const candidatePin = String(pin || '').trim();
 
-    // Constant-time length and timing comparison to prevent side-channel timing attacks
+    // 3. Resolve active submission to track server-side attempts & lockouts
+    let submission = null;
+    if (submissionId) {
+        submission = await findActiveSubmissionByParam(submissionId);
+    }
+    if (!submission && req.user) {
+        if (dbState.useMongo) {
+            submission = await TestSubmissionModel.findOne({
+                candidateId: resolveToObjectId(req.user.id) || req.user.id,
+                status: 'started'
+            });
+        } else {
+            const db = getJSONData();
+            submission = (db.testSubmissions || []).find(s => 
+                (String(s.candidateId) === String(req.user.id) || String(s.studentId) === String(req.user.studentId)) &&
+                s.status === 'started'
+            );
+        }
+    }
+
+    // 4. Check if terminal is already locked out on server
+    const currentAttempts = Number(submission?.biosPinAttempts || 0);
+    const isLockedOut = currentAttempts >= 3 || !!submission?.biosLockedAt;
+    if (isLockedOut) {
+        await logSystemAction({
+            actor: 'system_security',
+            actorId: req.user?.id || 'candidate_terminal',
+            actorRole: req.user?.role || 'candidate',
+            action: 'INVIGILATOR_BIOS_LOCKED_ACCESS_ATTEMPT',
+            resourceType: 'submission',
+            resourceId: submission?._id || submission?.id || 'unknown',
+            details: `Terminal access attempted on locked submission. IP: ${clientIp}`,
+            ipAddress: clientIp,
+            severity: 'warn'
+        });
+
+        return res.status(403).json({
+            success: false,
+            authorized: false,
+            lockedOut: true,
+            attemptsRemaining: 0,
+            error: 'Terminal BIOS is locked out (3 failed attempts recorded on server). Please request an exam administrator to unlock this terminal from the proctoring dashboard.'
+        });
+    }
+
+    // 5. Constant-time length and timing comparison
     const expectedBuffer = Buffer.from(serverPin.trim());
     const candidateBuffer = Buffer.from(candidatePin);
 
@@ -1757,11 +1804,36 @@ router.post('/bios/verify-pin', async (req, res) => {
     }
 
     if (isMatch) {
-        // Reset rate limit attempts upon successful technician authentication
+        // Reset rate limit and submission attempts on successful authentication
         biosRateLimitMap.delete(String(clientIp));
-        logSystemAction('INVIGILATOR_BIOS_AUTH_SUCCESS', {
-            ip: clientIp,
-            authorizedAt: new Date().toISOString()
+
+        if (submission) {
+            if (dbState.useMongo) {
+                await TestSubmissionModel.updateOne(
+                    { _id: submission._id },
+                    { $set: { biosPinAttempts: 0, biosLockedAt: null } }
+                );
+            } else {
+                const db = getJSONData();
+                const sub = (db.testSubmissions || []).find(s => String(s.id || s._id) === String(submission._id || submission.id));
+                if (sub) {
+                    sub.biosPinAttempts = 0;
+                    sub.biosLockedAt = null;
+                    saveJSONData(db);
+                }
+            }
+        }
+
+        await logSystemAction({
+            actor: 'invigilator',
+            actorId: req.user?.id || 'invigilator',
+            actorRole: 'invigilator',
+            action: 'INVIGILATOR_BIOS_AUTH_SUCCESS',
+            resourceType: 'submission',
+            resourceId: submission?._id || submission?.id || 'terminal_bios',
+            details: `Authorized invigilator access granted for terminal IP: ${clientIp}`,
+            ipAddress: clientIp,
+            severity: 'info'
         });
 
         return res.json({
@@ -1772,17 +1844,110 @@ router.post('/bios/verify-pin', async (req, res) => {
         });
     }
 
-    logSystemAction('INVIGILATOR_BIOS_AUTH_FAILED', {
-        ip: clientIp,
-        remainingAttempts: rateCheck.remaining,
-        failedAt: new Date().toISOString()
+    // 6. Handle Failed Attempt on Server
+    const nextAttempts = currentAttempts + 1;
+    const nowLocked = nextAttempts >= 3;
+
+    if (submission) {
+        const updateFields = { biosPinAttempts: nextAttempts };
+        if (nowLocked) updateFields.biosLockedAt = new Date();
+
+        if (dbState.useMongo) {
+            await TestSubmissionModel.updateOne(
+                { _id: submission._id },
+                { $set: updateFields }
+            );
+        } else {
+            const db = getJSONData();
+            const sub = (db.testSubmissions || []).find(s => String(s.id || s._id) === String(submission._id || submission.id));
+            if (sub) {
+                sub.biosPinAttempts = nextAttempts;
+                if (nowLocked) sub.biosLockedAt = new Date();
+                saveJSONData(db);
+            }
+        }
+    }
+
+    if (nowLocked) {
+        await logSystemAction({
+            actor: 'system_security',
+            actorId: req.user?.id || 'system',
+            actorRole: 'system',
+            action: 'INVIGILATOR_BIOS_LOCKOUT',
+            resourceType: 'submission',
+            resourceId: submission?._id || submission?.id || 'terminal_bios',
+            details: `Terminal BIOS locked out after 3 failed PIN attempts. IP: ${clientIp}`,
+            ipAddress: clientIp,
+            severity: 'error'
+        });
+
+        return res.status(403).json({
+            success: false,
+            authorized: false,
+            lockedOut: true,
+            attemptsRemaining: 0,
+            error: 'Security lockdown: 3 failed attempts. Terminal BIOS locked. An exam administrator must reset the lockout from the proctoring dashboard.'
+        });
+    }
+
+    await logSystemAction({
+        actor: 'candidate_terminal',
+        actorId: req.user?.id || 'candidate_terminal',
+        actorRole: req.user?.role || 'candidate',
+        action: 'INVIGILATOR_BIOS_AUTH_FAILED',
+        resourceType: 'submission',
+        resourceId: submission?._id || submission?.id || 'terminal_bios',
+        details: `Invalid PIN attempt (${nextAttempts} of 3). IP: ${clientIp}`,
+        ipAddress: clientIp,
+        severity: 'warn'
     });
 
     return res.status(401).json({
         success: false,
         authorized: false,
-        remainingAttempts: rateCheck.remaining,
-        error: 'Invalid invigilator access PIN.'
+        lockedOut: false,
+        attemptsRemaining: 3 - nextAttempts,
+        error: `Incorrect PIN. Attempt ${nextAttempts} of 3.`
+    });
+});
+
+// Admin endpoint: Reset Terminal BIOS Lockout for a candidate submission
+router.post('/bios/reset-lockout/:submissionId', requireAdmin, async (req, res) => {
+    const { submissionId } = req.params;
+    const submission = await findActiveSubmissionByParam(submissionId);
+    if (!submission) {
+        return res.status(404).json({ success: false, error: "Submission session not found" });
+    }
+
+    if (dbState.useMongo) {
+        await TestSubmissionModel.updateOne(
+            { _id: submission._id },
+            { $set: { biosPinAttempts: 0, biosLockedAt: null } }
+        );
+    } else {
+        const db = getJSONData();
+        const sub = (db.testSubmissions || []).find(s => String(s.id || s._id) === String(submission._id || submission.id));
+        if (sub) {
+            sub.biosPinAttempts = 0;
+            sub.biosLockedAt = null;
+            saveJSONData(db);
+        }
+    }
+
+    await logSystemAction({
+        actor: req.user?.username || 'admin',
+        actorId: req.user?.id || 'admin',
+        actorRole: req.user?.role || 'admin',
+        action: 'INVIGILATOR_BIOS_LOCKOUT_RESET',
+        resourceType: 'submission',
+        resourceId: submission._id || submission.id,
+        details: `Administrator ${req.user?.username || ''} reset Terminal BIOS lockout for submission ${submissionId}`,
+        severity: 'info'
+    });
+
+    return res.json({
+        success: true,
+        message: "Terminal BIOS lockout has been reset successfully. Invigilator can now re-attempt access."
     });
 });
 

@@ -253,6 +253,17 @@ export default function ExamBiosModal({
 
   const pinInputRef = useRef(null);
 
+  // Reset authentication and input state whenever modal is closed (Prevents PIN bypass on reopen)
+  useEffect(() => {
+    if (!isOpen) {
+      setIsAuthenticated(false);
+      setPinInput('');
+      setPinError('');
+      setIsVerifyingPin(false);
+      setActionNotice(null);
+    }
+  }, [isOpen]);
+
   // Focus PIN input on open and restore session-persisted attempt count
   useEffect(() => {
     if (isOpen && !isAuthenticated) {
@@ -260,7 +271,7 @@ export default function ExamBiosModal({
       const savedAttempts = getStoredBiosAttemptCount();
       setAttemptCount(savedAttempts);
       if (savedAttempts >= 3) {
-        setPinError('Security lockdown: 3 failed attempts. Access permanently locked.');
+        setPinError('Security lockdown: 3 failed attempts. Terminal BIOS locked. Contact administrator.');
       } else {
         setPinError('');
         setTimeout(() => {
@@ -436,14 +447,14 @@ export default function ExamBiosModal({
 
   const [isVerifyingPin, setIsVerifyingPin] = useState(false);
 
-  // PIN Authentication Verification via Backend API (Fail-Closed, Rate-Limited)
+  // PIN Authentication Verification via Backend API (Fail-Closed, Rate-Limited, Server-Authoritative)
   const handleVerifyPin = async (e) => {
     e?.preventDefault();
     if (isVerifyingPin) return;
 
     const currentAttempts = getStoredBiosAttemptCount();
     if (currentAttempts >= 3) {
-      setPinError('Security lockdown: 3 failed attempts. Access permanently locked.');
+      setPinError('Security lockdown: 3 failed attempts. Terminal BIOS locked. Contact administrator to reset.');
       return;
     }
 
@@ -457,6 +468,7 @@ export default function ExamBiosModal({
     setPinError('');
 
     try {
+      const subId = submission?._id || submission?.id || '';
       const response = await fetch(`${apiBase}/tests/bios/verify-pin`, {
         method: 'POST',
         headers: {
@@ -464,7 +476,10 @@ export default function ExamBiosModal({
           ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
           ...(examToken ? { 'x-exam-token': examToken } : {})
         },
-        body: JSON.stringify({ pin: cleanEntered })
+        body: JSON.stringify({
+          pin: cleanEntered,
+          submissionId: subId
+        })
       });
 
       const data = await response.json().catch(() => ({}));
@@ -478,23 +493,35 @@ export default function ExamBiosModal({
           onAuthorizedAccess(data.sessionExpirySeconds || 180);
         }
       } else {
-        const nextAttempts = currentAttempts + 1;
-        setStoredBiosAttemptCount(nextAttempts);
-        setAttemptCount(nextAttempts);
-
-        if (nextAttempts >= 3) {
-          setPinError('Security lockdown: 3 failed attempts. Incident logged to proctoring ledger.');
+        if (data.lockedOut) {
+          setStoredBiosAttemptCount(3);
+          setAttemptCount(3);
+          setPinError(data.error || 'Security lockdown: 3 failed attempts. Terminal BIOS locked. Contact administrator to reset.');
           if (typeof onUnauthorizedAccess === 'function') {
-            onUnauthorizedAccess(nextAttempts);
+            onUnauthorizedAccess(3);
           }
           setTimeout(() => {
             handleCloseModal();
           }, 2000);
         } else {
-          const errMsg = data.error || `Incorrect PIN. Attempt ${nextAttempts} of 3.`;
-          setPinError(errMsg);
-          setPinInput('');
-          pinInputRef.current?.focus();
+          const nextAttempts = data.attemptsRemaining !== undefined ? (3 - data.attemptsRemaining) : (currentAttempts + 1);
+          setStoredBiosAttemptCount(nextAttempts);
+          setAttemptCount(nextAttempts);
+
+          if (nextAttempts >= 3) {
+            setPinError('Security lockdown: 3 failed attempts. Incident logged to proctoring ledger.');
+            if (typeof onUnauthorizedAccess === 'function') {
+              onUnauthorizedAccess(nextAttempts);
+            }
+            setTimeout(() => {
+              handleCloseModal();
+            }, 2000);
+          } else {
+            const errMsg = data.error || `Incorrect PIN. Attempt ${nextAttempts} of 3.`;
+            setPinError(errMsg);
+            setPinInput('');
+            pinInputRef.current?.focus();
+          }
         }
       }
     } catch (err) {
