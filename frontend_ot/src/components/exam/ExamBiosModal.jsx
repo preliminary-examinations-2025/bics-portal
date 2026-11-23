@@ -39,7 +39,19 @@ import {
 } from '../../utils/telemetryJournal';
 import { isQuestionAnswered as checkIsQuestionAnswered } from '../../utils/examAnswerStatus';
 
-const BIOS_PIN_CONFIG = import.meta.env.VITE_BIOS_PIN || '2026';
+const getStoredBiosAttemptCount = () => {
+  try {
+    return parseInt(sessionStorage.getItem('bics_bios_attempt_count') || '0', 10) || 0;
+  } catch (_) {
+    return 0;
+  }
+};
+
+const setStoredBiosAttemptCount = (count) => {
+  try {
+    sessionStorage.setItem('bics_bios_attempt_count', String(count));
+  } catch (_) {}
+};
 
 const cleanCodeStr = (str) => (str || '').replace(/\r\n/g, '\n').trim();
 
@@ -241,15 +253,20 @@ export default function ExamBiosModal({
 
   const pinInputRef = useRef(null);
 
-  // Focus PIN input on open
+  // Focus PIN input on open and restore session-persisted attempt count
   useEffect(() => {
     if (isOpen && !isAuthenticated) {
       setPinInput('');
-      setPinError('');
-      setAttemptCount(0);
-      setTimeout(() => {
-        pinInputRef.current?.focus();
-      }, 100);
+      const savedAttempts = getStoredBiosAttemptCount();
+      setAttemptCount(savedAttempts);
+      if (savedAttempts >= 3) {
+        setPinError('Security lockdown: 3 failed attempts. Access permanently locked.');
+      } else {
+        setPinError('');
+        setTimeout(() => {
+          pinInputRef.current?.focus();
+        }, 100);
+      }
     }
   }, [isOpen, isAuthenticated]);
 
@@ -417,47 +434,81 @@ export default function ExamBiosModal({
     }
   };
 
-  // PIN Authentication Verification
-  const handleVerifyPin = (e) => {
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
+
+  // PIN Authentication Verification via Backend API (Fail-Closed, Rate-Limited)
+  const handleVerifyPin = async (e) => {
     e?.preventDefault();
+    if (isVerifyingPin) return;
+
+    const currentAttempts = getStoredBiosAttemptCount();
+    if (currentAttempts >= 3) {
+      setPinError('Security lockdown: 3 failed attempts. Access permanently locked.');
+      return;
+    }
+
     const cleanEntered = (pinInput || '').trim();
+    if (!cleanEntered) {
+      setPinError('Please enter the 4-digit access PIN.');
+      return;
+    }
 
-    if (cleanEntered === BIOS_PIN_CONFIG) {
-      setIsAuthenticated(true);
-      setPinError('');
-      if (typeof onAuthorizedAccess === 'function') {
-        onAuthorizedAccess();
-      }
-    } else {
-      const nextAttempts = attemptCount + 1;
-      setAttemptCount(nextAttempts);
+    setIsVerifyingPin(true);
+    setPinError('');
 
-      if (nextAttempts >= 3) {
-        setPinError('Security lockdown: 3 failed attempts. Incident logged to proctoring ledger.');
-        if (typeof onUnauthorizedAccess === 'function') {
-          onUnauthorizedAccess(nextAttempts);
+    try {
+      const response = await fetch(`${apiBase}/tests/bios/verify-pin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          ...(examToken ? { 'x-exam-token': examToken } : {})
+        },
+        body: JSON.stringify({ pin: cleanEntered })
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.authorized) {
+        setIsAuthenticated(true);
+        setPinError('');
+        setStoredBiosAttemptCount(0);
+        setAttemptCount(0);
+        if (typeof onAuthorizedAccess === 'function') {
+          onAuthorizedAccess(data.sessionExpirySeconds || 180);
         }
-        setTimeout(() => {
-          handleCloseModal();
-        }, 1800);
       } else {
-        setPinError(`Incorrect PIN. Attempt ${nextAttempts} of 3.`);
-        setPinInput('');
-        pinInputRef.current?.focus();
+        const nextAttempts = currentAttempts + 1;
+        setStoredBiosAttemptCount(nextAttempts);
+        setAttemptCount(nextAttempts);
+
+        if (nextAttempts >= 3) {
+          setPinError('Security lockdown: 3 failed attempts. Incident logged to proctoring ledger.');
+          if (typeof onUnauthorizedAccess === 'function') {
+            onUnauthorizedAccess(nextAttempts);
+          }
+          setTimeout(() => {
+            handleCloseModal();
+          }, 2000);
+        } else {
+          const errMsg = data.error || `Incorrect PIN. Attempt ${nextAttempts} of 3.`;
+          setPinError(errMsg);
+          setPinInput('');
+          pinInputRef.current?.focus();
+        }
       }
+    } catch (err) {
+      console.error('[BICS BIOS] PIN verification network error:', err);
+      setPinError('Verification failed: Server unreachable or offline.');
+    } finally {
+      setIsVerifyingPin(false);
     }
   };
 
   const handleCloseModal = () => {
-    if (!isAuthenticated && attemptCount > 0) {
-      if (typeof onUnauthorizedAccess === 'function') {
-        onUnauthorizedAccess(attemptCount);
-      }
-    }
     setIsAuthenticated(false);
     setPinInput('');
     setPinError('');
-    setAttemptCount(0);
     setActionNotice(null);
 
     // Make full screen on exit if not already (user gesture grants full permission)
@@ -477,7 +528,7 @@ export default function ExamBiosModal({
     onClose();
   };
 
-  // Force Vault Flush
+  // Force Vault Flush with Truthful Status Feedback
   const handleForceFlush = async () => {
     setIsFlushing(true);
     setActionNotice({ type: 'info', message: 'Flushing pending telemetry and answer drafts to server...' });
@@ -487,20 +538,35 @@ export default function ExamBiosModal({
       if (submission && submission._id) {
         dispatched = await dispatchReconnectTelemetry(apiBase, authToken, examToken);
       }
+      
+      let syncResult = null;
       if (typeof onForceSyncAnswers === 'function') {
-        await onForceSyncAnswers();
+        syncResult = await onForceSyncAnswers();
       }
       await loadDiagnostics();
-      setActionNotice({
-        type: 'success',
-        message: dispatched
-          ? 'Successfully flushed telemetry and synchronized with server.'
-          : 'Vault sync executed. Server acknowledged current state.'
-      });
+
+      if (syncResult && syncResult.success) {
+        setActionNotice({
+          type: 'success',
+          message: `Successfully synchronized ${syncResult.answersCount ?? 'all'} answer(s) and telemetry with central server.`
+        });
+      } else if (syncResult && syncResult.error) {
+        setActionNotice({
+          type: 'warning',
+          message: `Server status: ${syncResult.error}. Answers preserved in local vault.`
+        });
+      } else {
+        setActionNotice({
+          type: dispatched ? 'success' : 'info',
+          message: dispatched
+            ? 'Successfully flushed telemetry and synchronized with server.'
+            : 'Vault state refreshed. Answers preserved in local vault.'
+        });
+      }
     } catch (err) {
       setActionNotice({
         type: 'warning',
-        message: `Flush attempted. Server response: ${err.message || 'Offline queue preserved in vault.'}`
+        message: `Flush attempted: ${err.message || 'Server unreachable'}. All drafts preserved in local vault.`
       });
     } finally {
       setIsFlushing(false);
@@ -766,7 +832,7 @@ export default function ExamBiosModal({
                   </button>
                   <button
                     type="submit"
-                    disabled={!pinInput.trim()}
+                    disabled={!pinInput.trim() || isVerifyingPin}
                     className="bics-bios-btn-subtle"
                     style={{
                       flex: 1,
@@ -774,12 +840,12 @@ export default function ExamBiosModal({
                       fontSize: '12px',
                       fontWeight: '600',
                       borderRadius: '7px',
-                      cursor: pinInput.trim() ? 'pointer' : 'not-allowed',
-                      opacity: pinInput.trim() ? 1 : 0.5,
+                      cursor: pinInput.trim() && !isVerifyingPin ? 'pointer' : 'not-allowed',
+                      opacity: pinInput.trim() && !isVerifyingPin ? 1 : 0.5,
                       boxShadow: '0 1px 2px rgba(37, 99, 235, 0.08)'
                     }}
                   >
-                    Authorize Entry
+                    {isVerifyingPin ? 'Verifying...' : 'Authorize Entry'}
                   </button>
                 </div>
               </div>

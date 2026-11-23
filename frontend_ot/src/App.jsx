@@ -785,9 +785,9 @@ function AppContent() {
     }));
   };
 
-  const removeProctorToast = (id) => {
-    // Record 15-second manual dismissal snooze for this warning category
-    if (id && id !== 'legacy_warning') {
+  const removeProctorToast = (id, isManualDismiss = false) => {
+    // Record 15-second manual dismissal snooze for this warning category ONLY when candidate explicitly clicks dismiss (X)
+    if (isManualDismiss && id && id !== 'legacy_warning') {
       toastDismissedCooldownRef.current[id] = Date.now() + 15000;
     }
 
@@ -829,6 +829,7 @@ function AppContent() {
   // BICS BIOS Utility State & Invigilator Focus Guard
   const [isBiosOpen, setIsBiosOpen] = useState(false);
   const isInvigilatorActionRef = useRef(false);
+  const biosAutoExpiryTimeoutRef = useRef(null);
   const f2PressCountRef = useRef(0);
   const lastF2PressTimeRef = useRef(0);
 
@@ -1898,8 +1899,8 @@ function AppContent() {
       
       if (flow === 'active_exam') {
         if (!fs) {
-          if (isInvigilatorActionRef.current || isBiosOpen) {
-            console.log('[Proctoring Focus Guard] Fullscreen exit suppressed for invigilator action or BIOS mode.');
+          if (isInvigilatorActionRef.current) {
+            console.log('[Proctoring Focus Guard] Fullscreen exit suppressed for authorized invigilator action.');
             return;
           }
           const now = Date.now();
@@ -1950,8 +1951,8 @@ function AppContent() {
   useEffect(() => {
     const handleFocusLost = (source = 'blur') => {
       if (flow !== 'active_exam') return;
-      if (isInvigilatorActionRef.current || isBiosOpen) {
-        console.log('[Proctoring Focus Guard] Focus loss suppressed for invigilator action or BIOS mode.');
+      if (isInvigilatorActionRef.current) {
+        console.log('[Proctoring Focus Guard] Focus loss suppressed for authorized invigilator action.');
         tabExitStartTimeRef.current = null;
         return;
       }
@@ -2026,7 +2027,7 @@ function AppContent() {
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        if (isInvigilatorActionRef.current || isBiosOpen) return;
+        if (isInvigilatorActionRef.current) return;
         handleFocusLost('visibility');
       } else if (document.visibilityState === 'visible') {
         handleFocusGained('visibility');
@@ -2513,7 +2514,7 @@ function AppContent() {
     if (toastDismissedCooldownRef.current[eventType]) {
       delete toastDismissedCooldownRef.current[eventType];
     }
-    removeProctorToast(eventType);
+    removeProctorToast(eventType, false);
   };
 
   // Handle major proctoring violations for Inspect / Developer Tools access
@@ -2551,24 +2552,71 @@ function AppContent() {
     );
   };
 
-  const handleBiosAuthorizedAccess = () => {
+  const handleBiosAuthorizedAccess = (expirySec = 180) => {
     isInvigilatorActionRef.current = true;
+    if (biosAutoExpiryTimeoutRef.current) {
+      clearTimeout(biosAutoExpiryTimeoutRef.current);
+    }
+    biosAutoExpiryTimeoutRef.current = setTimeout(() => {
+      console.log(`[BICS BIOS] Authorized invigilator session expired (${expirySec}s). Restoring proctoring.`);
+      handleCloseBios();
+    }, expirySec * 1000);
+
     syncProctoringLogs(
       proctoringWarnings,
       'INVIGILATOR_BIOS_ACCESS',
-      'Authorized invigilator accessed BICS BIOS terminal diagnostics. Zero candidate penalty.'
+      `Authorized invigilator accessed BICS BIOS terminal diagnostics (${expirySec}s authorization). Zero candidate penalty.`
     );
   };
 
   const handleForceSyncAnswersFromBios = async () => {
-    if (test && candidate && submission) {
-      const subId = submission._id || submission.id;
-      const current = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
-      await saveOfflineDraft(`bics_draft_${test?.id || test?._id}_${candidate?.id || candidate?._id}_${subId}`, current);
+    if (!test || !candidate || !submission) {
+      return { success: false, error: 'No active submission found' };
+    }
+    const subId = submission._id || submission.id;
+    const current = typeof commitActiveDraftToAnswers === 'function' ? commitActiveDraftToAnswers() : (examAnswersRef.current || examAnswers);
+    
+    // 1. Always ensure local vault backup
+    await saveOfflineDraft(`bics_draft_${test?.id || test?._id}_${candidate?.id || candidate?._id}_${subId}`, current);
+
+    // 2. Dispatch to central server draft API
+    try {
+      const token = getActiveAuthToken();
+      const examToken = getActiveExamToken();
+      const res = await fetch(`${API_BASE}/tests/draft/${subId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          ...(examToken ? { 'x-exam-token': examToken } : {})
+        },
+        body: JSON.stringify({
+          answers: current,
+          proctoringLog: {
+            ...proctoringWarnings,
+            flushedAt: new Date().toISOString(),
+            flushSource: 'invigilator_bios'
+          }
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { success: true, answersCount: data.answersCount || (Array.isArray(current) ? current.filter(Boolean).length : 0) };
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || `HTTP ${res.status}` };
+      }
+    } catch (netErr) {
+      return { success: false, error: netErr.message || 'Network unreachable' };
     }
   };
 
   const handleCloseBios = async () => {
+    if (biosAutoExpiryTimeoutRef.current) {
+      clearTimeout(biosAutoExpiryTimeoutRef.current);
+      biosAutoExpiryTimeoutRef.current = null;
+    }
     setIsBiosOpen(false);
     isInvigilatorActionRef.current = false;
 
@@ -2617,7 +2665,8 @@ function AppContent() {
           if (typeof commitActiveDraftToAnswers === 'function') {
             commitActiveDraftToAnswers();
           }
-          isInvigilatorActionRef.current = true;
+          // Do NOT suppress guards prior to server PIN verification
+          isInvigilatorActionRef.current = false;
           setIsBiosOpen(true);
         }
         return;
@@ -2644,7 +2693,8 @@ function AppContent() {
             if (typeof commitActiveDraftToAnswers === 'function') {
               commitActiveDraftToAnswers();
             }
-            isInvigilatorActionRef.current = true;
+            // Do NOT suppress guards prior to server PIN verification
+            isInvigilatorActionRef.current = false;
             setIsBiosOpen(true);
           }
         }
@@ -2889,6 +2939,11 @@ function AppContent() {
 
         intervalId = setInterval(() => {
           if (!active) return;
+
+          // Proactive keep-alive: if browser suspended AudioContext due to modal focus shift, auto-resume immediately
+          if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+          }
 
           // 1. Time-domain RMS & Peak Amplitude for Crest Factor Impulse Rejection (Item 3.3)
           analyser.getByteTimeDomainData(timeData);
@@ -4889,7 +4944,7 @@ function AppContent() {
             webcamProctorWarning={webcamProctorWarning}
             onDismissProctorWarning={() => setWebcamProctorWarning('')}
             activeProctorToasts={activeProctorToasts}
-            onDismissProctorToast={(id) => removeProctorToast(id)}
+            onDismissProctorToast={(id) => removeProctorToast(id, true)}
             onNetworkDropToast={(msg) => addProctorToast('NETWORK_OFFLINE', {
               id: 'NETWORK_OFFLINE',
               title: 'Network Notice',

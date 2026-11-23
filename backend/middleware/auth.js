@@ -191,6 +191,7 @@ const isWhitelisted = (urlPath, method = 'GET') => {
         fullPath === '/api/candidate/login' ||
         fullPath === '/api/config' || fullPath === '/api/system-config' ||
         fullPath === '/api/tests/verify-token' ||
+        fullPath === '/api/tests/bios/verify-pin' ||
         fullPath === '/api/tests/beacon-disconnect' ||
         fullPath === '/api/log-client-error' ||
         fullPath.startsWith('/api/kata/') ||

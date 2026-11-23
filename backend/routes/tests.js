@@ -1703,6 +1703,89 @@ const handleDraftSave = async (req, res) => {
 router.put('/draft/:submissionId', requireAuth, handleDraftSave);
 router.post('/draft/:submissionId', requireAuth, handleDraftSave);
 
+// BICS Terminal BIOS Invigilator PIN Verification (Item 2.2 Security Hardening)
+const biosRateLimitMap = new Map();
+const BIOS_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const BIOS_MAX_ATTEMPTS = 5;
+
+function checkBiosPinRateLimit(ip) {
+    const now = Date.now();
+    const attempts = biosRateLimitMap.get(ip) || [];
+    const recent = attempts.filter(t => (now - t) < BIOS_RATE_LIMIT_WINDOW_MS);
+    if (recent.length >= BIOS_MAX_ATTEMPTS) {
+        biosRateLimitMap.set(ip, recent);
+        const oldest = recent[0];
+        const waitSec = Math.ceil(((oldest + BIOS_RATE_LIMIT_WINDOW_MS) - now) / 1000);
+        return { allowed: false, waitSec };
+    }
+    recent.push(now);
+    biosRateLimitMap.set(ip, recent);
+    return { allowed: true, remaining: BIOS_MAX_ATTEMPTS - recent.length };
+}
+
+router.post('/bios/verify-pin', async (req, res) => {
+    const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+    const rateCheck = checkBiosPinRateLimit(String(clientIp));
+    if (!rateCheck.allowed) {
+        return res.status(429).json({
+            success: false,
+            authorized: false,
+            error: `Security lockdown: Too many failed PIN attempts. Access suspended for ${rateCheck.waitSec} seconds.`
+        });
+    }
+
+    const serverPin = process.env.INVIGILATOR_BIOS_SECRET_PIN;
+    if (!serverPin || typeof serverPin !== 'string' || serverPin.trim() === '') {
+        console.error('[BICS BIOS Security] INVIGILATOR_BIOS_SECRET_PIN is not configured on server. Failing closed.');
+        return res.status(500).json({
+            success: false,
+            authorized: false,
+            error: 'BICS BIOS Terminal is administratively disabled: Missing server PIN configuration.'
+        });
+    }
+
+    const { pin } = req.body || {};
+    const candidatePin = String(pin || '').trim();
+
+    // Constant-time length and timing comparison to prevent side-channel timing attacks
+    const expectedBuffer = Buffer.from(serverPin.trim());
+    const candidateBuffer = Buffer.from(candidatePin);
+
+    let isMatch = false;
+    if (expectedBuffer.length === candidateBuffer.length) {
+        isMatch = crypto.timingSafeEqual(expectedBuffer, candidateBuffer);
+    }
+
+    if (isMatch) {
+        // Reset rate limit attempts upon successful technician authentication
+        biosRateLimitMap.delete(String(clientIp));
+        logSystemAction('INVIGILATOR_BIOS_AUTH_SUCCESS', {
+            ip: clientIp,
+            authorizedAt: new Date().toISOString()
+        });
+
+        return res.json({
+            success: true,
+            authorized: true,
+            message: 'Invigilator authorization granted.',
+            sessionExpirySeconds: 180
+        });
+    }
+
+    logSystemAction('INVIGILATOR_BIOS_AUTH_FAILED', {
+        ip: clientIp,
+        remainingAttempts: rateCheck.remaining,
+        failedAt: new Date().toISOString()
+    });
+
+    return res.status(401).json({
+        success: false,
+        authorized: false,
+        remainingAttempts: rateCheck.remaining,
+        error: 'Invalid invigilator access PIN.'
+    });
+});
+
 // 4.2 Browser Beacon on Disconnect / Tab Close (Item 2.4 & Issue B3)
 router.post('/beacon-disconnect', express.json({ type: ['application/json', 'text/plain', '*/*'] }), async (req, res) => {
     let payload = req.body;
