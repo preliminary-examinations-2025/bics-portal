@@ -144,8 +144,8 @@ export function VerificationReviewView({
         {/* Left: Logo + Portal title */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1', minWidth: 0 }}>
           <img
-            src="/bics_logo.png"
-            onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }}
+            src={`${import.meta.env.BASE_URL}bics_logo.png`}
+            onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = 'true'; e.currentTarget.src = '/bics_logo.png'; } }}
             alt="BICS Logo"
             style={{ height: '36px', width: '36px', objectFit: 'contain', flexShrink: 0 }}
           />
@@ -940,8 +940,8 @@ export function VerificationReviewView({
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <img 
-                  src="/bics_logo.png" 
-                  onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }} 
+                  src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+                  onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = 'true'; e.currentTarget.src = '/bics_logo.png'; } }} 
                   alt="BICS Logo" 
                   style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
                 />

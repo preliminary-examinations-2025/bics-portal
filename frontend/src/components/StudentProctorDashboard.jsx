@@ -97,7 +97,11 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
   const subId = sub._id || sub.id || sub.submissionRefId || sub.candidateId;
 
   const fetchJournalDetails = useCallback(async () => {
-    if (!subId || subId === 'undefined') return;
+    if (!subId || subId === 'undefined' || String(subId) === 'undefined' || String(subId) === 'null') {
+      setJournalData(null);
+      setJournalError('');
+      return;
+    }
     setJournalLoading(true);
     setJournalError('');
     try {
@@ -136,8 +140,11 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
             hasServerRejections: sub.clientNetworkErrors.hasServerRejections || false,
             entries: sub.clientNetworkErrors.recentErrors || []
           });
-        } else {
+        } else if (res.status !== 404) {
           setJournalError(errJson.error || 'Failed to load client error journal');
+        } else {
+          setJournalData(null);
+          setJournalError('');
         }
       }
     } catch (err) {
@@ -152,7 +159,7 @@ export default function StudentProctorDashboard({ sub, onClose, fetchLiveSubmiss
           entries: sub.clientNetworkErrors.recentErrors || []
         });
       } else {
-        setJournalError(err.message || 'Network error fetching journal');
+        setJournalData(null);
       }
     } finally {
       setJournalLoading(false);

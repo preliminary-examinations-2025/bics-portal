@@ -4875,8 +4875,8 @@ function AppContent() {
         <header className="app-header">
           <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <img 
-              src="/bics_logo.png" 
-              onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }} 
+              src={`${import.meta.env.BASE_URL}bics_logo.png`} 
+              onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = 'true'; e.currentTarget.src = '/bics_logo.png'; } }} 
               alt="BICS Logo" 
               style={{ height: '34px', width: '34px', objectFit: 'contain' }} 
             />
@@ -4884,8 +4884,8 @@ function AppContent() {
           </div>
           <div className="header-right">
             <img 
-              src="/logo.png" 
-              onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}logo.png`; }} 
+              src={`${import.meta.env.BASE_URL}logo.png`} 
+              onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = 'true'; e.currentTarget.src = '/logo.png'; } }} 
               alt="Portal Logo" 
               className="pe-logo" 
               style={{ height: '34px' }} 

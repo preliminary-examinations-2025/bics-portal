@@ -94,6 +94,7 @@ async function ensureSubmissionRefIds() {
 async function findSubmissionByAnyId(idParam) {
     if (!idParam) return null;
     const strId = String(idParam).trim();
+    if (!strId || strId === 'undefined' || strId === 'null') return null;
 
     if (dbState.useMongo) {
         // 1. Direct 12-digit numeric Reference ID lookup

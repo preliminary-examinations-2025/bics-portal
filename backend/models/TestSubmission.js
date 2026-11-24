@@ -120,7 +120,7 @@ const TestSubmissionSchema = new mongoose.Schema({
     biosPinAttempts: { type: Number, default: 0 },
     biosLockedAt: { type: Date, default: null },
     hasEirfFlag: { type: Boolean, default: false },
-    eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected'], default: 'none' },
+    eirfStatus: { type: String, enum: ['none', 'pending', 'verified', 'discrepancy', 'expired', 'approved', 'rejected', 'cleared'], default: 'none' },
     flaggedReasons: [String],
     pipelineStatus: { 
         type: String, 

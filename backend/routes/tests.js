@@ -2864,12 +2864,12 @@ router.post('/submit', requireAuth, async (req, res) => {
 
                             if (wasNetworkOnlyFlag) {
                                 submission.hasEirfFlag = false;
-                                submission.eirfStatus = 'cleared';
+                                submission.eirfStatus = 'none';
                                 submission.flaggedReasons = [];
                                 submission.pipelineStatus = 'CLEARED';
                             } else {
                                 submission.hasEirfFlag = filteredReasons.length > 0;
-                                submission.eirfStatus = filteredReasons.length > 0 ? eirfEval.eirfStatus : 'cleared';
+                                submission.eirfStatus = filteredReasons.length > 0 ? eirfEval.eirfStatus : 'none';
                                 submission.flaggedReasons = filteredReasons;
                                 submission.pipelineStatus = filteredReasons.length > 0 ? 'FLAGGED' : 'CLEARED';
                             }
@@ -3648,6 +3648,14 @@ router.get('/otrf-report/:idParam', requireAuth, async (req, res) => {
 router.get('/client-error-journal/:submissionId', requireAuth, async (req, res) => {
     try {
         const { submissionId } = req.params;
+        if (!submissionId || submissionId === 'undefined' || submissionId === 'null') {
+            return res.json({
+                success: true,
+                submissionId: null,
+                clientNetworkErrors: null,
+                journal: null
+            });
+        }
         const { findSubmissionByAnyId } = require('../utils/submissionMigrator');
         const { ClientNetworkErrorLogModel } = require('../models');
 
@@ -3663,21 +3671,21 @@ router.get('/client-error-journal/:submissionId', requireAuth, async (req, res) 
         let journalDoc = null;
         if (dbState.useMongo) {
             const queryConditions = [];
-            if (submission._id) {
+            if (submission._id && String(submission._id) !== 'undefined' && String(submission._id) !== 'null') {
                 queryConditions.push({ submissionId: submission._id });
                 queryConditions.push({ submissionId: String(submission._id) });
             }
-            if (submission.id && String(submission.id) !== 'undefined') {
+            if (submission.id && String(submission.id) !== 'undefined' && String(submission.id) !== 'null') {
                 queryConditions.push({ submissionId: submission.id });
                 queryConditions.push({ submissionId: String(submission.id) });
             }
-            if (submissionId && String(submissionId) !== 'undefined') {
+            if (submissionId && String(submissionId) !== 'undefined' && String(submissionId) !== 'null') {
                 queryConditions.push({ submissionId: submissionId });
                 if (mongoose.Types.ObjectId.isValid(submissionId)) {
                     queryConditions.push({ submissionId: new mongoose.Types.ObjectId(submissionId) });
                 }
             }
-            if (submission.submissionRefId) {
+            if (submission.submissionRefId && String(submission.submissionRefId) !== 'undefined') {
                 queryConditions.push({ submissionRefId: submission.submissionRefId });
             }
             if (submission.clientNetworkErrors?.journalRef && mongoose.Types.ObjectId.isValid(submission.clientNetworkErrors.journalRef)) {
@@ -3724,12 +3732,10 @@ router.get('/client-error-journal/:submissionId', requireAuth, async (req, res) 
     } catch (e) {
         console.error('[CLIENT_ERROR_JOURNAL_ROUTE] Error:', e);
         return res.status(200).json({
-            success: false,
+            success: true,
             submissionId: req.params?.submissionId,
             clientNetworkErrors: null,
-            journal: null,
-            error: null,
-            warning: e.message
+            journal: null
         });
     }
 });

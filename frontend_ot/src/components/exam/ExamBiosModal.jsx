@@ -658,8 +658,8 @@ export default function ExamBiosModal({
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <img
-                  src="/bics_logo.png"
-                  onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }}
+                  src={`${import.meta.env.BASE_URL}bics_logo.png`}
+                  onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = 'true'; e.currentTarget.src = '/bics_logo.png'; } }}
                   alt="BICS Logo"
                   style={{ width: '28px', height: '28px', objectFit: 'contain', flexShrink: 0 }}
                 />
@@ -873,8 +873,8 @@ export default function ExamBiosModal({
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <img
-                  src="/bics_logo.png"
-                  onError={(e) => { e.currentTarget.src = `${import.meta.env.BASE_URL}bics_logo.png`; }}
+                  src={`${import.meta.env.BASE_URL}bics_logo.png`}
+                  onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = 'true'; e.currentTarget.src = '/bics_logo.png'; } }}
                   alt="BICS Logo"
                   style={{ width: '32px', height: '32px', objectFit: 'contain', flexShrink: 0 }}
                 />
