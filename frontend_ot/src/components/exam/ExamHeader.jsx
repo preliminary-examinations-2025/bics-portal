@@ -8,7 +8,7 @@ import { isQuestionAnswered } from '../../utils/examAnswerStatus';
  * - Circular BICS logo on clean background (no dark container)
  * - Original title, candidate identity, and DEV MODE tag
  * - Dynamic answered questions counter (✔ X/Y)
- * - 4-state subtle WiFi telemetry badge with 70s countdown timer on disconnect
+ * - 4-state subtle WiFi telemetry badge with 120s countdown timer on disconnect
  * - Original centered timer display widget
  * - Original submit test CTA with 5m unlock logic
  */

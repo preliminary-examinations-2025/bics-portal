@@ -148,7 +148,7 @@ function evaluateEirfIncident(submission, testConfig = {}) {
     }
 
     // -------------------------------------------------------------
-    // RULE 3: Network Disconnection Duration (> 5 seconds)
+    // RULE 3: Network Disconnection Duration (>= 15 seconds)
     // -------------------------------------------------------------
     // Check if a server-side outage was verified by the health ledger, client reconnect telemetry, or error journal
     const isOutageVerified = Boolean(

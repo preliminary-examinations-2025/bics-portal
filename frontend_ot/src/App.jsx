@@ -2267,11 +2267,9 @@ function AppContent() {
           candidateName: candidate?.name || submission.candidateName,
           studentId: candidate?.studentId || submission.studentId,
           answers: examAnswers || [],
-          proctoringLog: getProctoringLogPayload(proctoringWarnings),
-          hasEirfFlag: true,
-          eirfStatus: 'pending'
+          proctoringLog: getProctoringLogPayload(proctoringWarnings)
         }).catch(() => {});
-        // Mid-exam: strictly set hasEirfFlag; physical EIRF payload download is deferred exclusively to final test submission
+        // Mid-exam: log proctoring telemetry; authoritative EIRF evaluation is performed exclusively by the server upon submission
       }
     }
   };
@@ -4671,8 +4669,8 @@ function AppContent() {
     // Only if all online submission attempts failed:
     console.error("Submission failed across all attempts, caching payload locally in IndexedDB:", submitErrorMsg);
     const pendingSubmitKey = `bics_pending_submit_${subId}`;
-    payload.hasEirfFlag = true;
-    payload.eirfStatus = 'pending';
+    payload.hasEirfFlag = Boolean(submission?.hasEirfFlag);
+    payload.eirfStatus = submission?.eirfStatus || 'none';
 
     saveOfflineSubmission(payload).catch(() => {});
     try {
@@ -4682,7 +4680,7 @@ function AppContent() {
       localStorage.setItem(pendingSubmitKey, JSON.stringify(payload));
     }
     setHasPendingSubmit(true);
-    setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: true, eirfStatus: 'pending' }) : prev);
+    setSubmission(prev => prev ? ({ ...prev, hasEirfFlag: payload.hasEirfFlag, eirfStatus: payload.eirfStatus }) : prev);
 
     stopActiveMediaStreams();
     localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
