@@ -9,8 +9,10 @@ import {
   getOfflineSnapshots, 
   clearOfflineSnapshots, 
   getOfflineEvents, 
-  clearOfflineEvents 
+  clearOfflineEvents,
+  flushAllOfflineStorage
 } from '../utils/offlineDb';
+import { flushTelemetryJournal } from '../utils/telemetryJournal';
 
 export function FinishedView({
   finishedStep,
@@ -355,6 +357,10 @@ export function FinishedView({
                             }
                           }
                         });
+
+                        // Completely flush all offline storage and client telemetry journal
+                        flushTelemetryJournal();
+                        flushAllOfflineStorage(subId).catch(() => {});
 
                         setSyncStatus('completed');
                         setHasPendingSubmit(false);

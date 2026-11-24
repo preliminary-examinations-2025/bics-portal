@@ -23,19 +23,22 @@ import {
   X,
   Server,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Trash2
 } from 'lucide-react';
 import {
   getOfflineDbStats,
   getAllOfflineDrafts,
   getOfflineSubmission,
   getOfflineEvents,
-  getOfflineSnapshots
+  getOfflineSnapshots,
+  flushAllOfflineStorage
 } from '../../utils/offlineDb';
 import {
   getJournalEntries,
   getActiveOutage,
-  dispatchReconnectTelemetry
+  dispatchReconnectTelemetry,
+  flushTelemetryJournal
 } from '../../utils/telemetryJournal';
 import { isQuestionAnswered as checkIsQuestionAnswered } from '../../utils/examAnswerStatus';
 
@@ -560,6 +563,35 @@ export default function ExamBiosModal({
       });
     } finally {
       setIsFlushing(false);
+    }
+  };
+
+  // Purge Client Network Diagnostic Journal
+  const handlePurgeJournal = () => {
+    flushTelemetryJournal();
+    setTelemetryLogs([]);
+    setActiveOutageInfo(null);
+    setActionNotice({
+      type: 'success',
+      message: 'Client non-2xx network failure journal has been completely cleared.'
+    });
+  };
+
+  // Full Purge of Cleared Offline Storage & Local Cache
+  const handlePurgeAllStorage = async () => {
+    try {
+      flushTelemetryJournal();
+      await flushAllOfflineStorage(submission?._id || submission?.id || null).catch(() => {});
+      await loadDiagnostics();
+      setActionNotice({
+        type: 'success',
+        message: 'All local offline draft caches and network failure journals have been completely flushed.'
+      });
+    } catch (err) {
+      setActionNotice({
+        type: 'warning',
+        message: `Failed to purge local cache: ${err.message}`
+      });
     }
   };
 
@@ -1220,24 +1252,49 @@ export default function ExamBiosModal({
                           Live reflection of IndexedDB answer drafts and active memory
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={loadDiagnostics}
-                        className="bics-bios-btn-secondary"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '5px 10px',
-                          fontSize: '11.5px',
-                          fontWeight: '500',
-                          borderRadius: '6px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <RefreshCw size={12} style={{ color: '#64748b' }} />
-                        <span>Refresh</span>
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {cachedDrafts.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handlePurgeAllStorage}
+                            className="bics-bios-btn-secondary"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '5px 10px',
+                              fontSize: '11.5px',
+                              fontWeight: '500',
+                              color: '#9f1239',
+                              backgroundColor: '#fff1f2',
+                              border: '1px solid #ffe4e6',
+                              borderRadius: '6px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <Trash2 size={12} style={{ color: '#be123c' }} />
+                            <span>Purge Vault Drafts</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={loadDiagnostics}
+                          className="bics-bios-btn-secondary"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '5px 10px',
+                            fontSize: '11.5px',
+                            fontWeight: '500',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <RefreshCw size={12} style={{ color: '#64748b' }} />
+                          <span>Refresh</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div style={{ overflowX: 'auto', maxHeight: '280px' }}>
@@ -1408,24 +1465,49 @@ export default function ExamBiosModal({
                           Chronological history of requests shielded during backend downtime
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={loadDiagnostics}
-                        className="bics-bios-btn-secondary"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '5px 10px',
-                          fontSize: '11.5px',
-                          fontWeight: '500',
-                          borderRadius: '6px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <RefreshCw size={12} style={{ color: '#64748b' }} />
-                        <span>Refresh</span>
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {telemetryLogs.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handlePurgeJournal}
+                            className="bics-bios-btn-secondary"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '5px 10px',
+                              fontSize: '11.5px',
+                              fontWeight: '500',
+                              color: '#9f1239',
+                              backgroundColor: '#fff1f2',
+                              border: '1px solid #ffe4e6',
+                              borderRadius: '6px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <Trash2 size={12} style={{ color: '#be123c' }} />
+                            <span>Purge Journal</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={loadDiagnostics}
+                          className="bics-bios-btn-secondary"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '5px 10px',
+                            fontSize: '11.5px',
+                            fontWeight: '500',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <RefreshCw size={12} style={{ color: '#64748b' }} />
+                          <span>Refresh</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div style={{ overflowX: 'auto', maxHeight: '300px' }}>

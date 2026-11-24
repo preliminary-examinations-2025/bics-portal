@@ -35,7 +35,9 @@ import {
   clearOfflineEvents,
   saveOfflineDraft,
   getOfflineDraft,
-  deleteOfflineDraft
+  deleteOfflineDraft,
+  clearOfflineDrafts,
+  flushAllOfflineStorage
 } from './utils/offlineDb';
 import {
   recordFailedRequest,
@@ -43,6 +45,7 @@ import {
   endServerOutage,
   getPendingTelemetry,
   clearPendingTelemetry,
+  flushTelemetryJournal,
   dispatchReconnectTelemetry,
   isServerOutageActive,
   getJournalEntries
@@ -2171,6 +2174,8 @@ function AppContent() {
         }).catch(err => console.warn("Baseline photo background upload notice:", err));
       }
 
+      // Ensure local telemetry journal and stale state are fresh for the newly started exam session
+      flushTelemetryJournal();
       setFlow('active_exam');
       setTimeout(() => {
         if (examVideoRef.current && (verifiedStream || webcamStream)) {
@@ -4189,6 +4194,8 @@ function AppContent() {
             if (data.success) {
               localStorage.removeItem(pendingSubmitKey);
               await deleteOfflineSubmission(subId).catch(() => {});
+              flushTelemetryJournal();
+              flushAllOfflineStorage(subId).catch(() => {});
               setSyncStatus('completed');
               setHasPendingSubmit(false);
               setFlow('finished');
@@ -4595,12 +4602,31 @@ function AppContent() {
     }
 
     if (submitSuccess) {
-      clearPendingTelemetry();
+      // 1. Fully flush telemetry journal (in-memory ring buffer, active outage, pending telemetry, and sessionStorage)
+      flushTelemetryJournal();
+
+      // 2. Clear all local storage drafts and pending submit keys
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}`);
       localStorage.removeItem(`bics_draft_${test.id}_${candidate.id}_${subId}`);
-      deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}_${subId}`).catch(() => {});
-      deleteOfflineDraft(`bics_draft_${test.id}_${candidate.id}`).catch(() => {});
-      deleteOfflineSubmission(subId).catch(() => {});
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('bics_pending_submit_') || k.startsWith('bics_draft_'))) {
+          localStorage.removeItem(k);
+        }
+      }
+
+      // 3. Flush IndexedDB storage completely for this submission (submissions, events, snapshots, drafts)
+      flushAllOfflineStorage(subId).catch(() => {});
+
+      // 4. Clean exam session tokens from sessionStorage
+      try {
+        sessionStorage.removeItem('bics_bios_attempt_count');
+        sessionStorage.removeItem('bics_start_ticket');
+        sessionStorage.removeItem('bics_biometric_token');
+        sessionStorage.removeItem('bics_consent_accepted_at');
+        sessionStorage.removeItem('bics_proctoring_allowed_at');
+        sessionStorage.removeItem('bics_exam_token');
+      } catch (e) {}
 
       // Drain any queued offline proctoring snapshots safely
       getOfflineSnapshots(subId).then(async snapshots => {

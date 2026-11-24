@@ -248,6 +248,26 @@ export function clearPendingTelemetry() {
 }
 
 /**
+ * Fully flush in-memory and stored journal entries, active outages, and pending reconnect telemetries.
+ * Called immediately once a submission has been successfully processed and finalized on the backend,
+ * or when preparing the terminal for a fresh examination.
+ */
+export function flushTelemetryJournal() {
+  inMemoryJournal = [];
+  activeOutage = null;
+  pendingTelemetry = null;
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      sessionStorage.removeItem(STORAGE_KEY_JOURNAL);
+      sessionStorage.removeItem(STORAGE_KEY_OUTAGE);
+      sessionStorage.removeItem(STORAGE_KEY_PENDING_TELEMETRY);
+    }
+  } catch (e) {
+    // Non-fatal quota or security restriction
+  }
+}
+
+/**
  * Get all in-memory journal entries for diagnostics or submission payload
  */
 export function getJournalEntries() {

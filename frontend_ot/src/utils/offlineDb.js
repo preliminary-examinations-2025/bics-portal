@@ -263,6 +263,77 @@ export async function deleteOfflineDraft(key) {
   });
 }
 
+/**
+ * Clear offline drafts (either drafts matching submissionId or all drafts)
+ */
+export async function clearOfflineDrafts(submissionId = null) {
+  return new Promise(async (resolve) => {
+    try {
+      const db = await getDb();
+      const tx = db.transaction('drafts', 'readwrite');
+      const store = tx.objectStore('drafts');
+      if (submissionId) {
+        const req = store.openCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) {
+            const keyStr = String(cursor.key || '');
+            if (keyStr.includes(String(submissionId))) {
+              store.delete(cursor.key);
+            }
+            cursor.continue();
+          } else {
+            resolve(true);
+          }
+        };
+        req.onerror = () => resolve(false);
+      } else {
+        const req = store.clear();
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      }
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/**
+ * Complete flush of all offline cache stores associated with a submission (events, snapshots, drafts, pending submit)
+ */
+export async function flushAllOfflineStorage(submissionId = null) {
+  try {
+    const promises = [];
+    if (submissionId) {
+      promises.push(deleteOfflineSubmission(submissionId).catch(() => {}));
+      promises.push(clearOfflineEvents(submissionId).catch(() => {}));
+      promises.push(clearOfflineSnapshots(submissionId).catch(() => {}));
+      promises.push(clearOfflineDrafts(submissionId).catch(() => {}));
+    } else {
+      const db = await getDb();
+      for (const storeName of ['submissions', 'proctoringEvents', 'proctoringSnapshots', 'drafts']) {
+        if (db.objectStoreNames.contains(storeName)) {
+          promises.push(new Promise((res) => {
+            try {
+              const tx = db.transaction(storeName, 'readwrite');
+              tx.objectStore(storeName).clear();
+              tx.oncomplete = () => res(true);
+              tx.onerror = () => res(false);
+            } catch {
+              res(false);
+            }
+          }));
+        }
+      }
+    }
+    await Promise.all(promises);
+    return true;
+  } catch (err) {
+    console.warn('[OfflineDb] Flush error:', err);
+    return false;
+  }
+}
+
 export async function getAllOfflineDrafts() {
   return new Promise(async (resolve) => {
     try {
