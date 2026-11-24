@@ -196,13 +196,14 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
           ...(attemptController ? { signal: attemptController.signal } : {})
         };
 
+        const reqStartTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
         try {
           const targetArg = typeof resource === 'string'
             ? urlString
             : (typeof resource.clone === 'function'
                 ? resource.clone()
                 : (typeof Request !== 'undefined' ? new Request(urlString, reqInit) : urlString));
-          const reqStartTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
           const response = await originalFetch.call(this, targetArg, reqInit);
           const reqDuration = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - reqStartTime);
 
