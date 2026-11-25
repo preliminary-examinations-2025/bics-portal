@@ -2593,14 +2593,29 @@ router.post('/submit', requireAuth, async (req, res) => {
 
                     // Hard Immutability: If exam is already finalized or reaped, strictly reject answer tampering with 409 Conflict
                     // EXCEPTION: If submission was auto-submitted due to dead_man_reaper or disconnect_timeout,
-                    // reverse the reap and accept candidate's genuine cached submission!
+                    // reverse the reap ONLY IF candidate returns within the immediate statutory buffer (<= 180s past deadline)
                     const isReapedByServer = submission.status === 'auto-submitted' && 
                         (submission.submissionReason === 'dead_man_reaper' || submission.submissionReason === 'disconnect_timeout');
 
                     if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
                         if (isReapedByServer) {
-                            console.log(`[SUBMISSION REAP REVERSED] Accepting genuine cached submission for ${submissionId} previously marked as ${submission.submissionReason}`);
-                            submission.status = 'started';
+                            const subStartMs = new Date(submission.startedAt || Date.now()).getTime();
+                            const subDurMs = ((Number(test?.duration || 60)) * 60 * 1000);
+                            const subDeadlineMs = subStartMs + subDurMs;
+                            const REAP_REVERSAL_MAX_BUFFER_MS = 180 * 1000;
+                            if (Date.now() <= subDeadlineMs + REAP_REVERSAL_MAX_BUFFER_MS) {
+                                console.log(`[SUBMISSION REAP REVERSED] Accepting genuine cached submission for ${submissionId} previously marked as ${submission.submissionReason}`);
+                                submission.status = 'started';
+                            } else {
+                                const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                                earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                                return res.status(409).json({ 
+                                    error: `Exam attempt was auto-finalized by server dead-man switch and the statutory reversal window has expired. Answers are permanently frozen.`,
+                                    status: submission.status,
+                                    isFinalized: true,
+                                    submission: earlyPayload 
+                                });
+                            }
                         } else {
                             const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
                             earlyPayload.bicsId = toBicsId(submission._id || submission.id);
@@ -2679,29 +2694,44 @@ router.post('/submit', requireAuth, async (req, res) => {
                     submission.lastHeartbeatAt = new Date();
 
                     const startedAtMs = new Date(submission.startedAt || Date.now()).getTime();
-                    const allowedDurationMs = (Number(test?.duration || 60)) * 60 * 1000;
+                    const allowedDurationMs = (test.duration || 60) * 60 * 1000;
                     const examDeadlineMs = startedAtMs + allowedDurationMs;
                     const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
                     const nowMs = Date.now();
 
                     // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
                     let completionTimeMs = nowMs;
-                    if (req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
-                        const expectedToken = crypto
-                            .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
-                            .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
-                            .digest('hex');
+                    if (req.body.isOfflineSync && req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
+                        const checkpointServerTime = Number(req.body.lastCheckpointServerTime);
+                        const lastHbMs = new Date(submission.lastHeartbeatAt || submission.startedAt || 0).getTime();
+                        
+                        // Checkpoint cannot precede startedAt or exceed current server time
+                        // And cannot be an arbitrary old token if server received recent heartbeats (within 60s tolerance)
+                        const isCheckpointTemporallyValid = checkpointServerTime >= startedAtMs && 
+                            checkpointServerTime <= nowMs && 
+                            (checkpointServerTime >= lastHbMs - 60000);
 
-                        if (expectedToken === req.body.lastCheckpointToken) {
-                            const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
-                            const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
-                            const anchoredElapsedMs = verifiedCompletionTimeMs - startedAtMs;
-                            if (anchoredElapsedMs > 0 && verifiedCompletionTimeMs <= nowMs) {
-                                completionTimeMs = verifiedCompletionTimeMs;
-                                console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(anchoredElapsedMs / 1000)}s elapsed.`);
+                        if (isCheckpointTemporallyValid) {
+                            const expectedToken = crypto
+                                .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                                .update(`${submission._id || submission.id}:${checkpointServerTime}:started`)
+                                .digest('hex');
+
+                            if (expectedToken === req.body.lastCheckpointToken) {
+                                const wallTimeSinceCheckpointMs = Math.max(0, nowMs - checkpointServerTime);
+                                const clientReportedElapsedMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
+                                const verifiedElapsedSinceCheckpointMs = Math.min(clientReportedElapsedMs, wallTimeSinceCheckpointMs);
+                                const verifiedCompletionTimeMs = checkpointServerTime + verifiedElapsedSinceCheckpointMs;
+                                const anchoredElapsedMs = verifiedCompletionTimeMs - startedAtMs;
+                                if (anchoredElapsedMs > 0 && verifiedCompletionTimeMs <= nowMs) {
+                                    completionTimeMs = verifiedCompletionTimeMs;
+                                    console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(anchoredElapsedMs / 1000)}s elapsed.`);
+                                }
+                            } else {
+                                console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
                             }
                         } else {
-                            console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
+                            console.warn(`[CHECKPOINT REPLAY DETECTED] Stale or out-of-order checkpoint rejected for submission ${submissionId} (checkpoint: ${checkpointServerTime}, lastHeartbeat: ${lastHbMs}).`);
                         }
                     }
 
@@ -2722,12 +2752,20 @@ router.post('/submit', requireAuth, async (req, res) => {
                     }
 
                     // Authoritative Server-Clock Duration Capping:
-                    // If candidate completed exam via timer expiration, or packet arrived slightly after deadline
-                    // due to HTTP network latency / bundling buffer (within grace period), cap submittedAt to examDeadlineMs.
+                    // Transit latency protection ONLY applies to legitimate timer-completed submissions:
+                    // If candidate completed exam via timer expiration (submissionReason === 'timer_completed') or auto-submitted,
+                    // and packet arrived within the strict transit latency budget (<= 15 seconds after deadline),
+                    // cap effectiveSubmittedAtMs to examDeadlineMs so network packet travel time is not charged.
+                    // Manual submissions (submissionReason === 'manual') and submissions arriving > 15s late
+                    // MUST preserve their true arrival time so genuine candidate lateness is NEVER hidden.
+                    const TRANSIT_LATENCY_BUDGET_MS = 15 * 1000;
                     let effectiveSubmittedAtMs = completionTimeMs;
                     if (isFinalSubmission) {
-                        if (submission.status === 'auto-submitted' || submission.submissionReason === 'timer_completed' || (effectiveSubmittedAtMs >= examDeadlineMs && effectiveSubmittedAtMs <= examDeadlineMs + GRACE_PERIOD_MS)) {
-                            effectiveSubmittedAtMs = Math.min(effectiveSubmittedAtMs, examDeadlineMs);
+                        const isTimerExpired = submission.status === 'auto-submitted' || submission.submissionReason === 'timer_completed';
+                        const isWithinTransitBudget = effectiveSubmittedAtMs >= examDeadlineMs && effectiveSubmittedAtMs <= (examDeadlineMs + TRANSIT_LATENCY_BUDGET_MS);
+
+                        if (isTimerExpired && isWithinTransitBudget) {
+                            effectiveSubmittedAtMs = examDeadlineMs;
                         }
                         effectiveSubmittedAtMs = Math.max(startedAtMs, Math.min(nowMs, effectiveSubmittedAtMs));
                         submission.submittedAt = new Date(effectiveSubmittedAtMs);
@@ -3033,14 +3071,31 @@ router.post('/submit', requireAuth, async (req, res) => {
 
             // Hard Immutability: If exam is already finalized or reaped, strictly reject answers tampering with 409 Conflict
             // EXCEPTION: If submission was auto-submitted due to dead_man_reaper or disconnect_timeout,
-            // reverse the reap and accept candidate's genuine cached submission!
+            // reverse the reap ONLY IF candidate returns within the immediate statutory buffer (<= 180s past deadline)
             const isReapedByServer = submission.status === 'auto-submitted' && 
                 (submission.submissionReason === 'dead_man_reaper' || submission.submissionReason === 'disconnect_timeout');
 
             if (['submitted', 'auto-submitted', 'evaluated'].includes(submission.status)) {
                 if (isReapedByServer) {
-                    console.log(`[SUBMISSION REAP REVERSED] Accepting genuine cached submission for ${submissionId} previously marked as ${submission.submissionReason}`);
-                    submission.status = 'started';
+                    const subStartMs = new Date(submission.startedAt || Date.now()).getTime();
+                    db.tests = db.tests || [];
+                    const subTargetTest = db.tests.find(t => String(t.id || t._id) === String(submission.testId));
+                    const subDurMs = ((Number(subTargetTest?.duration || 60)) * 60 * 1000);
+                    const subDeadlineMs = subStartMs + subDurMs;
+                    const REAP_REVERSAL_MAX_BUFFER_MS = 180 * 1000;
+                    if (Date.now() <= subDeadlineMs + REAP_REVERSAL_MAX_BUFFER_MS) {
+                        console.log(`[SUBMISSION REAP REVERSED] Accepting genuine cached submission for ${submissionId} previously marked as ${submission.submissionReason}`);
+                        submission.status = 'started';
+                    } else {
+                        const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
+                        earlyPayload.bicsId = toBicsId(submission._id || submission.id);
+                        return res.status(409).json({ 
+                            error: `Exam attempt was auto-finalized by server dead-man switch and the statutory reversal window has expired. Answers are permanently frozen.`,
+                            status: submission.status,
+                            isFinalized: true,
+                            submission: earlyPayload 
+                        });
+                    }
                 } else {
                     const earlyPayload = submission.toObject ? submission.toObject() : { ...submission };
                     earlyPayload.bicsId = toBicsId(submission._id || submission.id);
@@ -3128,29 +3183,44 @@ router.post('/submit', requireAuth, async (req, res) => {
             submission.lastHeartbeatAt = new Date();
 
             const startedAtMs = new Date(submission.startedAt || Date.now()).getTime();
-            const allowedDurationMs = (Number(test?.duration || 60)) * 60 * 1000;
+            const allowedDurationMs = (test.duration || 60) * 60 * 1000;
             const examDeadlineMs = startedAtMs + allowedDurationMs;
             const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
             const nowMs = Date.now();
 
             // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
             let completionTimeMs = nowMs;
-            if (req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
-                const expectedToken = crypto
-                    .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
-                    .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
-                    .digest('hex');
+            if (req.body.isOfflineSync && req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
+                const checkpointServerTime = Number(req.body.lastCheckpointServerTime);
+                const lastHbMs = new Date(submission.lastHeartbeatAt || submission.startedAt || 0).getTime();
+                
+                // Checkpoint cannot precede startedAt or exceed current server time
+                // And cannot be an arbitrary old token if server received recent heartbeats (within 60s tolerance)
+                const isCheckpointTemporallyValid = checkpointServerTime >= startedAtMs && 
+                    checkpointServerTime <= nowMs && 
+                    (checkpointServerTime >= lastHbMs - 60000);
 
-                if (expectedToken === req.body.lastCheckpointToken) {
-                    const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
-                    const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
-                    const anchoredElapsedMs = verifiedCompletionTimeMs - startedAtMs;
-                    if (anchoredElapsedMs > 0 && verifiedCompletionTimeMs <= nowMs) {
-                        completionTimeMs = verifiedCompletionTimeMs;
-                        console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(anchoredElapsedMs / 1000)}s elapsed.`);
+                if (isCheckpointTemporallyValid) {
+                    const expectedToken = crypto
+                        .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                        .update(`${submission._id || submission.id}:${checkpointServerTime}:started`)
+                        .digest('hex');
+
+                    if (expectedToken === req.body.lastCheckpointToken) {
+                        const wallTimeSinceCheckpointMs = Math.max(0, nowMs - checkpointServerTime);
+                        const clientReportedElapsedMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
+                        const verifiedElapsedSinceCheckpointMs = Math.min(clientReportedElapsedMs, wallTimeSinceCheckpointMs);
+                        const verifiedCompletionTimeMs = checkpointServerTime + verifiedElapsedSinceCheckpointMs;
+                        const anchoredElapsedMs = verifiedCompletionTimeMs - startedAtMs;
+                        if (anchoredElapsedMs > 0 && verifiedCompletionTimeMs <= nowMs) {
+                            completionTimeMs = verifiedCompletionTimeMs;
+                            console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(anchoredElapsedMs / 1000)}s elapsed.`);
+                        }
+                    } else {
+                        console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
                     }
                 } else {
-                    console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
+                    console.warn(`[CHECKPOINT REPLAY DETECTED] Stale or out-of-order checkpoint rejected for submission ${submissionId} (checkpoint: ${checkpointServerTime}, lastHeartbeat: ${lastHbMs}).`);
                 }
             }
 
@@ -3169,11 +3239,21 @@ router.post('/submit', requireAuth, async (req, res) => {
                 });
             }
 
-            // Authoritative Server-Clock Duration Capping
+            // Authoritative Server-Clock Duration Capping:
+            // Transit latency protection ONLY applies to legitimate timer-completed submissions:
+            // If candidate completed exam via timer expiration (submissionReason === 'timer_completed') or auto-submitted,
+            // and packet arrived within the strict transit latency budget (<= 15 seconds after deadline),
+            // cap effectiveSubmittedAtMs to examDeadlineMs so network packet travel time is not charged.
+            // Manual submissions (submissionReason === 'manual') and submissions arriving > 15s late
+            // MUST preserve their true arrival time so genuine candidate lateness is NEVER hidden.
+            const TRANSIT_LATENCY_BUDGET_MS = 15 * 1000;
             let effectiveSubmittedAtMs = completionTimeMs;
             if (isFinalSubmission) {
-                if (submission.status === 'auto-submitted' || submission.submissionReason === 'timer_completed' || (effectiveSubmittedAtMs >= examDeadlineMs && effectiveSubmittedAtMs <= examDeadlineMs + GRACE_PERIOD_MS)) {
-                    effectiveSubmittedAtMs = Math.min(effectiveSubmittedAtMs, examDeadlineMs);
+                const isTimerExpired = submission.status === 'auto-submitted' || submission.submissionReason === 'timer_completed';
+                const isWithinTransitBudget = effectiveSubmittedAtMs >= examDeadlineMs && effectiveSubmittedAtMs <= (examDeadlineMs + TRANSIT_LATENCY_BUDGET_MS);
+
+                if (isTimerExpired && isWithinTransitBudget) {
+                    effectiveSubmittedAtMs = examDeadlineMs;
                 }
                 effectiveSubmittedAtMs = Math.max(startedAtMs, Math.min(nowMs, effectiveSubmittedAtMs));
                 submission.submittedAt = new Date(effectiveSubmittedAtMs);

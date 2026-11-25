@@ -91,30 +91,44 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                     submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
                     submission.proctoringLog.events = submission.proctoringLog.events || [];
 
-                    // Authoritative Server-Clock Anchoring (Never trust client machine clock)
+                    // Authoritative Server-Clock Anchoring (Never trust client machine clock for violations)
                     const serverNow = new Date();
                     const serverNowMs = serverNow.getTime();
                     const startedAtMs = submission.startedAt ? new Date(submission.startedAt).getTime() : serverNowMs;
 
                     let authoritativeTimestamp = serverNow;
+                    const isPreExamConsentEvent = (type === 'CONSENT_ACCEPTED' || type === 'PROCTORING_ALLOWED');
+
                     if (type === 'TEST_STARTED') {
                         const hasStarted = submission.proctoringLog.events.some(e => e.type === 'TEST_STARTED');
                         if (hasStarted) {
                             return res.json({ success: true, deduped: true });
                         }
                         authoritativeTimestamp = new Date(startedAtMs);
+                    } else if (isPreExamConsentEvent) {
+                        // Preserve authentic client timestamp for pre-exam consent / permission events
+                        // Must be within reasonable pre-exam window (up to 30 min before start, and not in future)
+                        const clientTimestamp = (req.body && req.body.timestamp) ? new Date(req.body.timestamp).getTime() : NaN;
+                        const MAX_PRE_EXAM_WINDOW_MS = 30 * 60 * 1000;
+                        if (!isNaN(clientTimestamp) && clientTimestamp >= (startedAtMs - MAX_PRE_EXAM_WINDOW_MS) && clientTimestamp <= serverNowMs) {
+                            authoritativeTimestamp = new Date(clientTimestamp);
+                        } else {
+                            authoritativeTimestamp = new Date(startedAtMs);
+                        }
                     } else if (req.body.isOfflineEvent && typeof req.body.clientElapsedMs === 'number') {
                         authoritativeTimestamp = new Date(startedAtMs + Math.max(0, req.body.clientElapsedMs));
                     } else {
                         authoritativeTimestamp = serverNow;
                     }
 
-                    // Strictly clamp timestamp: cannot precede startedAt, and cannot exceed serverNow
-                    if (authoritativeTimestamp.getTime() < startedAtMs) {
-                        authoritativeTimestamp = new Date(startedAtMs);
-                    }
-                    if (authoritativeTimestamp.getTime() > serverNowMs) {
-                        authoritativeTimestamp = serverNow;
+                    // Strictly clamp in-exam violation timestamps: cannot precede startedAt, and cannot exceed serverNow
+                    if (!isPreExamConsentEvent) {
+                        if (authoritativeTimestamp.getTime() < startedAtMs) {
+                            authoritativeTimestamp = new Date(startedAtMs);
+                        }
+                        if (authoritativeTimestamp.getTime() > serverNowMs) {
+                            authoritativeTimestamp = serverNow;
+                        }
                     }
 
                     const eventTimeMs = authoritativeTimestamp.getTime();
@@ -216,30 +230,44 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.events = submission.proctoringLog.events || [];
 
-            // Authoritative Server-Clock Anchoring (Never trust client machine clock)
+            // Authoritative Server-Clock Anchoring (Never trust client machine clock for violations)
             const serverNow = new Date();
             const serverNowMs = serverNow.getTime();
             const startedAtMs = submission.startedAt ? new Date(submission.startedAt).getTime() : serverNowMs;
 
             let authoritativeTimestamp = serverNow;
+            const isPreExamConsentEvent = (type === 'CONSENT_ACCEPTED' || type === 'PROCTORING_ALLOWED');
+
             if (type === 'TEST_STARTED') {
                 const hasStarted = submission.proctoringLog.events.some(e => e.type === 'TEST_STARTED');
                 if (hasStarted) {
                     return res.json({ success: true, deduped: true });
                 }
                 authoritativeTimestamp = new Date(startedAtMs);
+            } else if (isPreExamConsentEvent) {
+                // Preserve authentic client timestamp for pre-exam consent / permission events
+                // Must be within reasonable pre-exam window (up to 30 min before start, and not in future)
+                const clientTimestamp = (req.body && req.body.timestamp) ? new Date(req.body.timestamp).getTime() : NaN;
+                const MAX_PRE_EXAM_WINDOW_MS = 30 * 60 * 1000;
+                if (!isNaN(clientTimestamp) && clientTimestamp >= (startedAtMs - MAX_PRE_EXAM_WINDOW_MS) && clientTimestamp <= serverNowMs) {
+                    authoritativeTimestamp = new Date(clientTimestamp);
+                } else {
+                    authoritativeTimestamp = new Date(startedAtMs);
+                }
             } else if (req.body.isOfflineEvent && typeof req.body.clientElapsedMs === 'number') {
                 authoritativeTimestamp = new Date(startedAtMs + Math.max(0, req.body.clientElapsedMs));
             } else {
                 authoritativeTimestamp = serverNow;
             }
 
-            // Strictly clamp timestamp: cannot precede startedAt, and cannot exceed serverNow
-            if (authoritativeTimestamp.getTime() < startedAtMs) {
-                authoritativeTimestamp = new Date(startedAtMs);
-            }
-            if (authoritativeTimestamp.getTime() > serverNowMs) {
-                authoritativeTimestamp = serverNow;
+            // Strictly clamp in-exam violation timestamps: cannot precede startedAt, and cannot exceed serverNow
+            if (!isPreExamConsentEvent) {
+                if (authoritativeTimestamp.getTime() < startedAtMs) {
+                    authoritativeTimestamp = new Date(startedAtMs);
+                }
+                if (authoritativeTimestamp.getTime() > serverNowMs) {
+                    authoritativeTimestamp = serverNow;
+                }
             }
 
             const eventTimeMs = authoritativeTimestamp.getTime();
