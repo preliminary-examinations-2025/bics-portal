@@ -581,9 +581,16 @@ router.get('/submissions/:testId', async (req, res) => {
             reconcileDiskSnapshotsForSubmission(sub);
             const obj = sub.toObject ? sub.toObject() : { ...sub };
             obj.bicsId = toBicsId(sub._id || sub.id);
-            if (sub.totalScore !== undefined) obj.totalScore = sub.totalScore;
-            if (sub.score !== undefined) obj.score = sub.score;
-            if (sub.evaluation) obj.evaluation = sub.evaluation;
+            const isAnnulled = sub.verificationStatus === 'annulled';
+            obj.totalScore = isAnnulled ? 0 : (sub.totalScore !== undefined ? sub.totalScore : (sub.evaluation?.totalScore || 0));
+            obj.score = isAnnulled ? 0 : (sub.score !== undefined ? sub.score : obj.totalScore);
+            if (sub.evaluation) {
+                obj.evaluation = {
+                    ...sub.evaluation,
+                    totalScore: isAnnulled ? 0 : (sub.evaluation.totalScore ?? obj.totalScore),
+                    score: isAnnulled ? 0 : (sub.evaluation.score ?? obj.score)
+                };
+            }
             if (sub.answers) obj.answers = sub.answers;
             return obj;
         });

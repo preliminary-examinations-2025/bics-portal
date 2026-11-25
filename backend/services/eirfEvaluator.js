@@ -164,7 +164,7 @@ function evaluateEirfIncident(submission, testConfig = {}) {
     events.forEach(ev => {
         if (!ev) return;
         const evType = String(ev.type || '');
-        if (evType === 'NETWORK_OFFLINE' || evType === 'EMERGENCY_SUBMISSION') {
+        if (evType === 'NETWORK_OFFLINE' || evType === 'EMERGENCY_SUBMISSION' || evType === 'DISCONNECT_REAPED') {
             let dur = Number(ev.durationSeconds || 0);
             if (!dur && ev.details) {
                 const match = ev.details.match(/(?:for|after|lasted)\s+(\d+(?:\.\d+)?)\s*s(?:econds)?/i);

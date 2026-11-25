@@ -2146,12 +2146,15 @@ function AppContent() {
       // Retrieve authentic historical user click timestamps
       const consentTime = consentAcceptedTimeRef.current || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_consent_accepted_at') : null) || new Date().toISOString();
       const proctorTime = proctoringAllowedTimeRef.current || (typeof window !== 'undefined' ? sessionStorage.getItem('bics_proctoring_allowed_at') : null) || new Date().toISOString();
-      const startTime = new Date().toISOString();
 
-      // Log initial proctoring events with genuine chronological timestamps
+      // Populate local events with server-provided authoritative initial events (including TEST_STARTED)
+      if (Array.isArray(data.submission?.proctoringLog?.events) && data.submission.proctoringLog.events.length > 0) {
+        proctoringEventsRef.current = [...data.submission.proctoringLog.events];
+      }
+
+      // Log consent and proctoring acceptance
       logProctoringEvent(data.submission, 'CONSENT_ACCEPTED', 'Malpractice undertaking (Clause 4) & Proctoring consent (Clause 2) accepted.', null, null, 0, consentTime);
       logProctoringEvent(data.submission, 'PROCTORING_ALLOWED', 'Webcam and microphone access allowed.', null, null, 0, proctorTime);
-      logProctoringEvent(data.submission, 'TEST_STARTED', `${candidate.name || 'Candidate'} started the test.`, null, null, 0, startTime);
 
       // Upload baseline photograph to server / Cloudinary
       if (baselinePhoto && data.submission) {
@@ -2435,10 +2438,18 @@ function AppContent() {
       if (!targetSub) return;
       const subId = targetSub.id || targetSub._id;
 
+      // Prevent duplicate TEST_STARTED from being pushed or dispatched from client
+      if (type === 'TEST_STARTED' && proctoringEventsRef.current.some(e => e.type === 'TEST_STARTED')) {
+        return;
+      }
+
+      // Always anchor to server-calibrated clock to eliminate client machine time drift
+      const serverSyncedIso = new Date(Date.now() + (serverClockOffsetRef.current || 0)).toISOString();
+
       const evtObj = {
         type,
         details,
-        timestamp: customTimestamp ? new Date(customTimestamp).toISOString() : new Date().toISOString(),
+        timestamp: customTimestamp ? new Date(customTimestamp).toISOString() : serverSyncedIso,
         startTime: startTime ? new Date(startTime).toISOString() : null,
         endTime: endTime ? new Date(endTime).toISOString() : null,
         durationSeconds: durationSeconds ? Number(durationSeconds) : 0

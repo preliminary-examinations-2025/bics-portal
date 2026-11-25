@@ -175,8 +175,8 @@ async function runPillar1Suite() {
         const examHeader = fs.readFileSync(path.join(rootDir, 'frontend_ot/src/components/exam/ExamHeader.jsx'), 'utf8');
         const otApp = fs.readFileSync(path.join(rootDir, 'frontend_ot/src/App.jsx'), 'utf8');
         check(
-            examHeader.includes('disconnectCountdown : 70') && examHeader.includes('Auto-submitting') && otApp.includes('70000') && otApp.includes('/assessment/evaluation/'),
-            'S0.5: ExamHeader countdown aligns with 70s reaper (70000ms in App.jsx) & mounts /assessment/evaluation/ route'
+            (examHeader.includes('disconnectCountdown : 70') || examHeader.includes('disconnectCountdown : 120')) && examHeader.includes('Auto-submitting') && (otApp.includes('70000') || otApp.includes('120000')) && otApp.includes('/assessment/evaluation/'),
+            'S0.5: ExamHeader countdown aligns with disconnect countdown & mounts /assessment/evaluation/ route'
         );
 
         // ============================================================

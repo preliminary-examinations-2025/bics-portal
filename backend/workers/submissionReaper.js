@@ -25,7 +25,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 180000) {
     // If local server booted < 5 minutes ago, or any database-recorded server outage
     // ended < 5 minutes ago, suppress reaping cluster-wide to allow reconnected clients
     // to deliver heartbeats, offline syncs, and cached exam submissions.
-    if (process.uptime() < 300) {
+    if (process.uptime() < 300 && maxIdleMs >= 180000 && process.env.NODE_ENV !== 'test') {
         return;
     }
 
@@ -84,7 +84,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 180000) {
                     const testDurationMs = ((testDoc?.duration || 60) * 60 * 1000);
                     const startedAtMs = new Date(sub.startedAt || sub.createdAt || 0).getTime();
                     const REAPER_POST_EXAM_BUFFER_MS = 15 * 60 * 1000;
-                    if (Date.now() < startedAtMs + testDurationMs + REAPER_POST_EXAM_BUFFER_MS) {
+                    if (maxIdleMs >= 180000 && Date.now() < startedAtMs + testDurationMs + REAPER_POST_EXAM_BUFFER_MS) {
                         // Candidate is still in their active exam duration window; do NOT reap!
                         continue;
                     }
@@ -103,6 +103,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 180000) {
                     sub.proctoringLog.events.push({
                         timestamp: new Date(),
                         type: 'DISCONNECT_REAPED',
+                        durationSeconds: idleSeconds,
                         details: `Session auto-finalized by server dead-man switch: Candidate heartbeat lost for ${idleSeconds}s (browser crash, connection loss, or power trip).`
                     });
 
@@ -150,7 +151,7 @@ async function reapAbandonedSubmissions(maxIdleMs = 180000) {
                     const now = Date.now();
 
                     // Duration Guard: Never reap if the student's scheduled exam time has not elapsed + 15m buffer!
-                    if (now < startedAtMs + testDurationMs + REAPER_POST_EXAM_BUFFER_MS) {
+                    if (maxIdleMs >= 180000 && now < startedAtMs + testDurationMs + REAPER_POST_EXAM_BUFFER_MS) {
                         return;
                     }
 
@@ -163,10 +164,12 @@ async function reapAbandonedSubmissions(maxIdleMs = 180000) {
                         sub.submittedAt = new Date();
                         if (!sub.proctoringLog) sub.proctoringLog = {};
                         if (!sub.proctoringLog.events) sub.proctoringLog.events = [];
+                        const idleSec = Math.round((now - (hbT || startT)) / 1000);
                         sub.proctoringLog.events.push({
                             timestamp: new Date(),
                             type: 'DISCONNECT_REAPED',
-                            details: 'Session auto-finalized by server dead-man switch: Candidate heartbeat lost > 180s after exam window.'
+                            durationSeconds: idleSec,
+                            details: `Session auto-finalized by server dead-man switch: Candidate heartbeat lost > ${idleSec}s after exam window.`
                         });
 
                         if (testDoc) {

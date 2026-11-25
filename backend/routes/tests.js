@@ -495,10 +495,14 @@ function reconcileProctoringLog(existingLog = {}, incomingLog = {}) {
 
             // Strict deduplication:
             // a) Disallow multiple TEST_SUBMITTED / TEST_AUTO_SUBMITTED events entirely
-            // b) Disallow identical type & details within 4 seconds
+            // b) Disallow multiple TEST_STARTED events entirely (authoritative server-recorded start event)
+            // c) Disallow identical type & details within 4 seconds
             const isDuplicate = log.events.some(existing => {
                 if (ev.type === 'TEST_SUBMITTED' || ev.type === 'TEST_AUTO_SUBMITTED') {
                     return existing.type === 'TEST_SUBMITTED' || existing.type === 'TEST_AUTO_SUBMITTED';
+                }
+                if (ev.type === 'TEST_STARTED') {
+                    return existing.type === 'TEST_STARTED';
                 }
                 if (existing.type !== ev.type) return false;
                 if (existing.details !== ev.details) return false;
@@ -1139,6 +1143,7 @@ router.post('/start/:id', requireAuth, async (req, res) => {
             const resolvedCandName = candidateName || candDoc?.name || 'Candidate';
             const resolvedStudId = studentId || candDoc?.studentId || req.user?.studentId || '';
             const submissionRefId = await allocateUniqueSubmissionRefId();
+            const sessionStartTime = new Date();
 
             submission = new TestSubmissionModel({
                 submissionRefId,
@@ -1149,15 +1154,32 @@ router.post('/start/:id', requireAuth, async (req, res) => {
                 testId: targetTestId,
                 testTitle: test.title,
                 durationMinutes: Number(test.duration || 60),
-                startedAt: new Date(),
-                lastHeartbeatAt: new Date(),
+                startedAt: sessionStartTime,
+                lastHeartbeatAt: sessionStartTime,
                 status: 'started',
                 verificationStatus: 'active',
                 isDeleted: false,
                 baselinePhotoUrl: baselinePhotoUrl || '',
                 biometricResult: submissionBiometrics,
                 securityMetadata: enrichedSecurityMetadata,
-                proctoringLog: { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0, clipboardAttempts: 0, webcamStatus: 'active', events: [], snapshots: [] },
+                proctoringLog: {
+                    fullscreenExits: 0,
+                    tabSwitches: 0,
+                    inspectAttempts: 0,
+                    clipboardAttempts: 0,
+                    webcamStatus: 'active',
+                    events: [
+                        {
+                            type: 'TEST_STARTED',
+                            details: `${resolvedCandName} initialized and started examination "${test.title}".`,
+                            timestamp: sessionStartTime,
+                            startTime: sessionStartTime,
+                            endTime: null,
+                            durationSeconds: 0
+                        }
+                    ],
+                    snapshots: []
+                },
                 answers: []
             });
             await submission.save();
@@ -1197,6 +1219,7 @@ router.post('/start/:id', requireAuth, async (req, res) => {
             const resolvedStudId = studentId || candDoc?.studentId || req.user?.studentId || '';
             const submissionRefId = await allocateUniqueSubmissionRefId(db);
             const generatedId = new mongoose.Types.ObjectId().toString();
+            const sessionStartTime = new Date();
 
             submission = {
                 id: generatedId,
@@ -1209,15 +1232,32 @@ router.post('/start/:id', requireAuth, async (req, res) => {
                 testId: targetTestId || id,
                 testTitle: test.title,
                 durationMinutes: Number(test.duration || 60),
-                startedAt: new Date(),
-                lastHeartbeatAt: new Date(),
+                startedAt: sessionStartTime,
+                lastHeartbeatAt: sessionStartTime,
                 status: 'started',
                 verificationStatus: 'active',
                 isDeleted: false,
                 baselinePhotoUrl: baselinePhotoUrl || '',
                 biometricResult: submissionBiometrics,
                 securityMetadata: enrichedSecurityMetadata,
-                proctoringLog: { fullscreenExits: 0, tabSwitches: 0, inspectAttempts: 0, clipboardAttempts: 0, webcamStatus: 'active', events: [], snapshots: [] },
+                proctoringLog: {
+                    fullscreenExits: 0,
+                    tabSwitches: 0,
+                    inspectAttempts: 0,
+                    clipboardAttempts: 0,
+                    webcamStatus: 'active',
+                    events: [
+                        {
+                            type: 'TEST_STARTED',
+                            details: `${resolvedCandName} initialized and started examination "${test.title}".`,
+                            timestamp: sessionStartTime,
+                            startTime: sessionStartTime,
+                            endTime: null,
+                            durationSeconds: 0
+                        }
+                    ],
+                    snapshots: []
+                },
                 answers: []
             };
             db.testSubmissions.push(submission);
@@ -2630,57 +2670,73 @@ router.post('/submit', requireAuth, async (req, res) => {
                         submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
                     }
 
+                    const test = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } });
                     const ALLOWED_STATUSES = ['started', 'submitted', 'auto-submitted'];
                     if (submission.status === 'started' || isFinalSubmission) {
                         submission.status = ALLOWED_STATUSES.includes(status) ? status : 'submitted';
                     }
                     submission.submissionReason = submissionReason || (submission.status === 'auto-submitted' ? 'system_auto' : 'manual');
-                    if (status !== 'started') {
-                        submission.submittedAt = new Date();
-                    }
                     submission.lastHeartbeatAt = new Date();
 
-                    const test = await TestConfigModel.findOne({ _id: submission.testId, isDeleted: { $ne: true } });
-                    if (test) {
-                        // Authoritative server-side wall-clock deadline validation (Item 2.3)
-                        if (submission.startedAt && isFinalSubmission) {
-                            let elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+                    const startedAtMs = new Date(submission.startedAt || Date.now()).getTime();
+                    const allowedDurationMs = (Number(test?.duration || 60)) * 60 * 1000;
+                    const examDeadlineMs = startedAtMs + allowedDurationMs;
+                    const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
+                    const nowMs = Date.now();
 
-                            // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
-                            if (req.body.isOfflineSync && req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
-                                const expectedToken = crypto
-                                    .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
-                                    .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
-                                    .digest('hex');
+                    // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
+                    let completionTimeMs = nowMs;
+                    if (req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
+                        const expectedToken = crypto
+                            .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                            .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
+                            .digest('hex');
 
-                                if (expectedToken === req.body.lastCheckpointToken) {
-                                    const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
-                                    const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
-                                    const anchoredElapsedMs = verifiedCompletionTimeMs - new Date(submission.startedAt).getTime();
-                                    if (anchoredElapsedMs > 0) {
-                                        elapsedMs = anchoredElapsedMs;
-                                        console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(elapsedMs / 1000)}s elapsed.`);
-                                    }
-                                } else {
-                                    console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
-                                }
+                        if (expectedToken === req.body.lastCheckpointToken) {
+                            const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
+                            const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
+                            const anchoredElapsedMs = verifiedCompletionTimeMs - startedAtMs;
+                            if (anchoredElapsedMs > 0 && verifiedCompletionTimeMs <= nowMs) {
+                                completionTimeMs = verifiedCompletionTimeMs;
+                                console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(anchoredElapsedMs / 1000)}s elapsed.`);
                             }
+                        } else {
+                            console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
+                        }
+                    }
 
-                            const allowedDurationMs = (test.duration || 60) * 60 * 1000;
-                            const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
-                            if (elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
-                                const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
-                                console.warn(`[EXAM DEADLINE EXCEEDED] Submission ${submissionId} submitted ${overtimeSec}s past deadline. Overriding status to auto-submitted.`);
-                                submission.status = 'auto-submitted';
-                                submission.submissionReason = 'overtime_exceeded';
-                                if (!submission.proctoringLog) submission.proctoringLog = {};
-                                if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
-                                submission.proctoringLog.events.push({
-                                    timestamp: new Date(),
-                                    type: 'OVERTIME_SUBMISSION',
-                                    details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
-                                });
-                            } else if (req.body.isOfflineSync || req.body.reconnectTelemetry) {
+                    let elapsedMs = completionTimeMs - startedAtMs;
+
+                    if (isFinalSubmission && elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
+                        const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
+                        console.warn(`[EXAM DEADLINE EXCEEDED] Submission ${submissionId} submitted ${overtimeSec}s past deadline. Overriding status to auto-submitted.`);
+                        submission.status = 'auto-submitted';
+                        submission.submissionReason = 'overtime_exceeded';
+                        if (!submission.proctoringLog) submission.proctoringLog = {};
+                        if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
+                        submission.proctoringLog.events.push({
+                            timestamp: new Date(examDeadlineMs),
+                            type: 'OVERTIME_SUBMISSION',
+                            details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
+                        });
+                    }
+
+                    // Authoritative Server-Clock Duration Capping:
+                    // If candidate completed exam via timer expiration, or packet arrived slightly after deadline
+                    // due to HTTP network latency / bundling buffer (within grace period), cap submittedAt to examDeadlineMs.
+                    let effectiveSubmittedAtMs = completionTimeMs;
+                    if (isFinalSubmission) {
+                        if (submission.status === 'auto-submitted' || submission.submissionReason === 'timer_completed' || (effectiveSubmittedAtMs >= examDeadlineMs && effectiveSubmittedAtMs <= examDeadlineMs + GRACE_PERIOD_MS)) {
+                            effectiveSubmittedAtMs = Math.min(effectiveSubmittedAtMs, examDeadlineMs);
+                        }
+                        effectiveSubmittedAtMs = Math.max(startedAtMs, Math.min(nowMs, effectiveSubmittedAtMs));
+                        submission.submittedAt = new Date(effectiveSubmittedAtMs);
+                    } else if (status !== 'started') {
+                        submission.submittedAt = new Date(Math.max(startedAtMs, Math.min(nowMs, effectiveSubmittedAtMs)));
+                    }
+
+                    if (test) {
+                        if (req.body.isOfflineSync || req.body.reconnectTelemetry) {
                                 let isVerifiedOutage = false;
                                 let matchingOutageId = 'NONE';
                                 const telemetry = req.body.reconnectTelemetry;
@@ -2835,7 +2891,6 @@ router.post('/submit', requireAuth, async (req, res) => {
                                         : `Cached examination payload accepted and verified against server-signed checkpoint.`
                                 });
                             }
-                        }
 
                         recalculateMCQScore(submission, test);
                         calculateCodingScoreFast(submission, test);
@@ -2895,11 +2950,18 @@ router.post('/submit', requireAuth, async (req, res) => {
                         const finalEvDesc = submission.status === 'auto-submitted'
                             ? `Examination automatically finalized and submitted by proctoring engine (${submission.submissionReason || 'system_auto'}).`
                             : 'Candidate completed, finalized, and submitted examination answers.';
+                        const finalSubmitTime = submission.submittedAt || new Date();
                         if (!submission.proctoringLog.events.some(e => e.type === finalEvType)) {
                             submission.proctoringLog.events.push({
-                                timestamp: new Date(),
+                                timestamp: finalSubmitTime,
                                 type: finalEvType,
                                 details: finalEvDesc
+                            });
+                        } else {
+                            submission.proctoringLog.events.forEach(e => {
+                                if (e.type === 'TEST_SUBMITTED' || e.type === 'TEST_AUTO_SUBMITTED') {
+                                    e.timestamp = finalSubmitTime;
+                                }
                             });
                         }
                     }
@@ -3056,55 +3118,71 @@ router.post('/submit', requireAuth, async (req, res) => {
             if (proctoringLog) {
                 submission.proctoringLog = reconcileProctoringLog(submission.proctoringLog || {}, proctoringLog);
             }
-            const ALLOWED_STATUSES = ['started', 'submitted', 'auto-submitted'];
-            submission.status = ALLOWED_STATUSES.includes(status) ? status : 'submitted';
-            submission.submissionReason = submissionReason || (submission.status === 'auto-submitted' ? 'system_auto' : 'manual');
-            if (status !== 'started') {
-                submission.submittedAt = new Date();
-            }
-            submission.lastHeartbeatAt = new Date();
-
             db.tests = db.tests || [];
             const test = db.tests.find(t => !t.isDeleted && (String(t.id || '') === String(submission.testId) || String(t._id || '') === String(submission.testId)));
-            if (test) {
-                // Authoritative server-side wall-clock deadline validation (Item 2.3)
-                if (submission.startedAt && isFinalSubmission) {
-                    let elapsedMs = Date.now() - new Date(submission.startedAt).getTime();
+            const ALLOWED_STATUSES = ['started', 'submitted', 'auto-submitted'];
+            if (submission.status === 'started' || isFinalSubmission) {
+                submission.status = ALLOWED_STATUSES.includes(status) ? status : 'submitted';
+            }
+            submission.submissionReason = submissionReason || (submission.status === 'auto-submitted' ? 'system_auto' : 'manual');
+            submission.lastHeartbeatAt = new Date();
 
-                    // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
-                    if (req.body.isOfflineSync && req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
-                        const expectedToken = crypto
-                            .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
-                            .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
-                            .digest('hex');
+            const startedAtMs = new Date(submission.startedAt || Date.now()).getTime();
+            const allowedDurationMs = (Number(test?.duration || 60)) * 60 * 1000;
+            const examDeadlineMs = startedAtMs + allowedDurationMs;
+            const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
+            const nowMs = Date.now();
 
-                        if (expectedToken === req.body.lastCheckpointToken) {
-                            const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
-                            const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
-                            const anchoredElapsedMs = verifiedCompletionTimeMs - new Date(submission.startedAt).getTime();
-                            if (anchoredElapsedMs > 0) {
-                                elapsedMs = anchoredElapsedMs;
-                                console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(elapsedMs / 1000)}s elapsed.`);
-                            }
-                        } else {
-                            console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
-                        }
+            // Cryptographic Server-Clock Validation for Offline Sync / Delayed Submissions
+            let completionTimeMs = nowMs;
+            if (req.body.lastCheckpointToken && req.body.lastCheckpointServerTime) {
+                const expectedToken = crypto
+                    .createHmac('sha256', process.env.JWT_SECRET || 'bics_exam_audit_secret')
+                    .update(`${submission._id || submission.id}:${req.body.lastCheckpointServerTime}:started`)
+                    .digest('hex');
+
+                if (expectedToken === req.body.lastCheckpointToken) {
+                    const elapsedSinceCheckpointMs = Math.max(0, Number(req.body.elapsedSinceCheckpointMs) || 0);
+                    const verifiedCompletionTimeMs = Number(req.body.lastCheckpointServerTime) + elapsedSinceCheckpointMs;
+                    const anchoredElapsedMs = verifiedCompletionTimeMs - startedAtMs;
+                    if (anchoredElapsedMs > 0 && verifiedCompletionTimeMs <= nowMs) {
+                        completionTimeMs = verifiedCompletionTimeMs;
+                        console.log(`[CRYPTOGRAPHIC SERVER TIME VERIFIED] Submission ${submissionId} completion anchored to server clock: ${Math.round(anchoredElapsedMs / 1000)}s elapsed.`);
                     }
+                } else {
+                    console.warn(`[CHECKPOINT SIGNATURE INVALID] Checkpoint token mismatch for submission ${submissionId}. Falling back to standard server clock.`);
+                }
+            }
 
-                    const allowedDurationMs = (test.duration || 60) * 60 * 1000;
-                    const GRACE_PERIOD_MS = 180 * 1000; // 3 minutes network/sync buffer
-                    if (elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
-                        const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
-                        submission.status = 'auto-submitted';
-                        submission.submissionReason = 'overtime_exceeded';
-                        if (!submission.proctoringLog) submission.proctoringLog = {};
-                        if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
-                        submission.proctoringLog.events.push({
-                            timestamp: new Date(),
-                            type: 'OVERTIME_SUBMISSION',
-                            details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
-                        });
-                    } else if (req.body.isOfflineSync) {
+            let elapsedMs = completionTimeMs - startedAtMs;
+
+            if (isFinalSubmission && elapsedMs > allowedDurationMs + GRACE_PERIOD_MS) {
+                const overtimeSec = Math.round((elapsedMs - allowedDurationMs) / 1000);
+                submission.status = 'auto-submitted';
+                submission.submissionReason = 'overtime_exceeded';
+                if (!submission.proctoringLog) submission.proctoringLog = {};
+                if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
+                submission.proctoringLog.events.push({
+                    timestamp: new Date(examDeadlineMs),
+                    type: 'OVERTIME_SUBMISSION',
+                    details: `Submission completed ${overtimeSec}s after allowed duration deadline. Auto-finalized by server.`
+                });
+            }
+
+            // Authoritative Server-Clock Duration Capping
+            let effectiveSubmittedAtMs = completionTimeMs;
+            if (isFinalSubmission) {
+                if (submission.status === 'auto-submitted' || submission.submissionReason === 'timer_completed' || (effectiveSubmittedAtMs >= examDeadlineMs && effectiveSubmittedAtMs <= examDeadlineMs + GRACE_PERIOD_MS)) {
+                    effectiveSubmittedAtMs = Math.min(effectiveSubmittedAtMs, examDeadlineMs);
+                }
+                effectiveSubmittedAtMs = Math.max(startedAtMs, Math.min(nowMs, effectiveSubmittedAtMs));
+                submission.submittedAt = new Date(effectiveSubmittedAtMs);
+            } else if (status !== 'started') {
+                submission.submittedAt = new Date(Math.max(startedAtMs, Math.min(nowMs, effectiveSubmittedAtMs)));
+            }
+
+            if (test) {
+                if (req.body.isOfflineSync) {
                         if (!submission.proctoringLog) submission.proctoringLog = {};
                         if (!submission.proctoringLog.events) submission.proctoringLog.events = [];
                         submission.proctoringLog.events.push({
@@ -3113,7 +3191,6 @@ router.post('/submit', requireAuth, async (req, res) => {
                             details: `Cached examination payload accepted and verified against server-signed checkpoint.`
                         });
                     }
-                }
 
                 recalculateMCQScore(submission, test);
                 calculateCodingScoreFast(submission, test);
@@ -3145,11 +3222,18 @@ router.post('/submit', requireAuth, async (req, res) => {
                 const finalEvDesc = submission.status === 'auto-submitted'
                     ? `Examination automatically finalized and submitted by proctoring engine (${submission.submissionReason || 'system_auto'}).`
                     : 'Candidate completed, finalized, and submitted examination answers.';
+                const finalSubmitTime = submission.submittedAt || new Date();
                 if (!submission.proctoringLog.events.some(e => e.type === finalEvType)) {
                     submission.proctoringLog.events.push({
-                        timestamp: new Date(),
+                        timestamp: finalSubmitTime,
                         type: finalEvType,
                         details: finalEvDesc
+                    });
+                } else {
+                    submission.proctoringLog.events.forEach(e => {
+                        if (e.type === 'TEST_SUBMITTED' || e.type === 'TEST_AUTO_SUBMITTED') {
+                            e.timestamp = finalSubmitTime;
+                        }
                     });
                 }
             }

@@ -66,6 +66,9 @@ const FORBIDDEN_HTML_PAGE = `<!DOCTYPE html>
  * Attaches decoded claims to req.user if valid.
  */
 const authenticateToken = (req, res, next) => {
+    if (req.user) {
+        return next();
+    }
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.startsWith('Bearer ') 
         ? authHeader.slice(7).trim() 

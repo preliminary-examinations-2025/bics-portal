@@ -91,8 +91,38 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                     submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
                     submission.proctoringLog.events = submission.proctoringLog.events || [];
 
-                    const eventTimestamp = (req.body && req.body.timestamp) ? new Date(req.body.timestamp) : new Date();
-                    const eventTimeMs = eventTimestamp.getTime();
+                    // Authoritative Server-Clock Anchoring (Never trust client machine clock)
+                    const serverNow = new Date();
+                    const serverNowMs = serverNow.getTime();
+                    const startedAtMs = submission.startedAt ? new Date(submission.startedAt).getTime() : serverNowMs;
+
+                    let authoritativeTimestamp = serverNow;
+                    if (type === 'TEST_STARTED') {
+                        const hasStarted = submission.proctoringLog.events.some(e => e.type === 'TEST_STARTED');
+                        if (hasStarted) {
+                            return res.json({ success: true, deduped: true });
+                        }
+                        authoritativeTimestamp = new Date(startedAtMs);
+                    } else if (req.body.isOfflineEvent && typeof req.body.clientElapsedMs === 'number') {
+                        authoritativeTimestamp = new Date(startedAtMs + Math.max(0, req.body.clientElapsedMs));
+                    } else {
+                        authoritativeTimestamp = serverNow;
+                    }
+
+                    // Strictly clamp timestamp: cannot precede startedAt, and cannot exceed serverNow
+                    if (authoritativeTimestamp.getTime() < startedAtMs) {
+                        authoritativeTimestamp = new Date(startedAtMs);
+                    }
+                    if (authoritativeTimestamp.getTime() > serverNowMs) {
+                        authoritativeTimestamp = serverNow;
+                    }
+
+                    const eventTimeMs = authoritativeTimestamp.getTime();
+                    const validatedDurationSec = Math.max(0, Math.min(Number(durationSeconds || 0), Math.round((serverNowMs - startedAtMs) / 1000)));
+                    const eventEndTime = authoritativeTimestamp;
+                    const eventStartTime = validatedDurationSec > 0
+                        ? new Date(authoritativeTimestamp.getTime() - (validatedDurationSec * 1000))
+                        : (startTime ? new Date(Math.max(startedAtMs, Math.min(eventTimeMs, new Date(startTime).getTime()))) : authoritativeTimestamp);
 
                     // Deduplicate: If an event with identical type and details was logged within 4 seconds, skip appending
                     const isDuplicate = submission.proctoringLog.events.some(existing => {
@@ -112,10 +142,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
                     submission.proctoringLog.events.push({ 
                         type, 
                         details, 
-                        timestamp: eventTimestamp,
-                        startTime: startTime || null,
-                        endTime: endTime || null,
-                        durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+                        timestamp: authoritativeTimestamp,
+                        startTime: eventStartTime,
+                        endTime: eventEndTime,
+                        durationSeconds: validatedDurationSec
                     });
                     submission.proctoringLog.events.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
 
@@ -186,8 +216,38 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             submission.proctoringLog = submission.proctoringLog || { fullscreenExits: 0, tabSwitches: 0, webcamStatus: 'active' };
             submission.proctoringLog.events = submission.proctoringLog.events || [];
 
-            const eventTimestamp = (req.body && req.body.timestamp) ? new Date(req.body.timestamp) : new Date();
-            const eventTimeMs = eventTimestamp.getTime();
+            // Authoritative Server-Clock Anchoring (Never trust client machine clock)
+            const serverNow = new Date();
+            const serverNowMs = serverNow.getTime();
+            const startedAtMs = submission.startedAt ? new Date(submission.startedAt).getTime() : serverNowMs;
+
+            let authoritativeTimestamp = serverNow;
+            if (type === 'TEST_STARTED') {
+                const hasStarted = submission.proctoringLog.events.some(e => e.type === 'TEST_STARTED');
+                if (hasStarted) {
+                    return res.json({ success: true, deduped: true });
+                }
+                authoritativeTimestamp = new Date(startedAtMs);
+            } else if (req.body.isOfflineEvent && typeof req.body.clientElapsedMs === 'number') {
+                authoritativeTimestamp = new Date(startedAtMs + Math.max(0, req.body.clientElapsedMs));
+            } else {
+                authoritativeTimestamp = serverNow;
+            }
+
+            // Strictly clamp timestamp: cannot precede startedAt, and cannot exceed serverNow
+            if (authoritativeTimestamp.getTime() < startedAtMs) {
+                authoritativeTimestamp = new Date(startedAtMs);
+            }
+            if (authoritativeTimestamp.getTime() > serverNowMs) {
+                authoritativeTimestamp = serverNow;
+            }
+
+            const eventTimeMs = authoritativeTimestamp.getTime();
+            const validatedDurationSec = Math.max(0, Math.min(Number(durationSeconds || 0), Math.round((serverNowMs - startedAtMs) / 1000)));
+            const eventEndTime = authoritativeTimestamp;
+            const eventStartTime = validatedDurationSec > 0
+                ? new Date(authoritativeTimestamp.getTime() - (validatedDurationSec * 1000))
+                : (startTime ? new Date(Math.max(startedAtMs, Math.min(eventTimeMs, new Date(startTime).getTime()))) : authoritativeTimestamp);
 
             // Deduplicate: If an event with identical type and details was logged within 4 seconds, skip appending
             const isDuplicate = submission.proctoringLog.events.some(existing => {
@@ -207,10 +267,10 @@ router.post('/event/:submissionId', requireAuth, async (req, res) => {
             submission.proctoringLog.events.push({ 
                 type, 
                 details, 
-                timestamp: eventTimestamp,
-                startTime: startTime || null,
-                endTime: endTime || null,
-                durationSeconds: durationSeconds ? Number(durationSeconds) : 0
+                timestamp: authoritativeTimestamp,
+                startTime: eventStartTime,
+                endTime: eventEndTime,
+                durationSeconds: validatedDurationSec
             });
             submission.proctoringLog.events.sort((a, b) => new Date(a.timestamp || a.startTime || 0) - new Date(b.timestamp || b.startTime || 0));
 

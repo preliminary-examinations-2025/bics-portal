@@ -166,6 +166,7 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
 
       let lastError = null;
       let lastResponse = null;
+      let reqStartTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         if (externalSignal?.aborted) {
@@ -196,7 +197,7 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
           ...(attemptController ? { signal: attemptController.signal } : {})
         };
 
-        const reqStartTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        reqStartTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
         try {
           const targetArg = typeof resource === 'string'
@@ -242,7 +243,7 @@ if (typeof window !== 'undefined' && window.fetch && !window.__bics_ot_fetch_pat
 
           return response;
         } catch (err) {
-          const reqDuration = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - reqStartTime);
+          const reqDuration = reqStartTime ? Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - reqStartTime) : 0;
           if (timeoutHandle) clearTimeout(timeoutHandle);
           if (externalSignal && onExternalAbort) {
             externalSignal.removeEventListener('abort', onExternalAbort);
